@@ -1,0 +1,123 @@
+{
+    "DEFAULT": {
+        "REQUIREMENT": "シンプルに回答することを求められている",
+        "SPELL": ["回答してください"],
+        "NAME": "デジタルMATSUMOTO",
+        "ROLE": "AIの専門家である松本敬史のデジタルツインAI",
+        "CHARACTER": "DigitalMATSUMOTO_ALO.txt",
+        "PROMPT_TEMPLATE": {
+            "PROMPT_FORMAT": "No Template",
+            "WRITING_STYLE": "Polite Form"
+        },
+        "MODEL": "GPT-4-OMNI",
+        "RAG_KNOWLEDGE": {
+            "DATA": ["DigiMATSU_Opinion_INP_RealMPoint","DigiMATSU_Opinion_INP_DigiMPoint"],
+            "FORMAT": "Knowledge Template(Point)",
+            "TEXT_LIMITS": 10000,
+            "DISTANCE_LOGIC": "Cosine"
+        },
+        "RAG_POLICY": {
+            "DATA": ["DigiMATSU_POLICY","DigiMATSU_Policy_RealMPoint"],
+            "FORMAT": "Policy Template",
+            "TEXT_LIMITS": 2000,
+            "DISTANCE_LOGIC": "Cosine"
+        }
+    },
+    "INSIGHT": {
+        "REQUIREMENT": "文章について考察することを求められている",
+        "SPELL": ["考察してください"],
+        "NAME": "デジタルMATSUMOTO",
+        "ROLE": "AIの専門家である松本敬史のデジタルツインAI",
+        "CHARACTER": "DigitalMATSUMOTO_ALO.txt",
+        "PROMPT_TEMPLATE": {
+            "PROMPT_FORMAT": "Insight Template",
+            "WRITING_STYLE": "Polite Form"
+        },
+        "MODEL": "GPT-4-OMNI",
+        "RAG_KNOWLEDGE": {
+            "DATA": ["DigiMATSU_Opinion_INP_RealMPoint","DigiMATSU_Opinion_INP_DigiMPoint"],
+            "FORMAT": "Knowledge Template(Point)",
+            "TEXT_LIMITS": 10000,
+            "DISTANCE_LOGIC": "Cosine"
+        },
+        "RAG_POLICY": {
+            "DATA": ["DigiMATSU_POLICY","DigiMATSU_Policy_RealMPoint"],
+            "FORMAT": "Policy Template",
+            "TEXT_LIMITS": 2000,
+            "DISTANCE_LOGIC": "Cosine"
+        }
+    },
+    "IMAGE_GEN": {
+        "REQUIREMENT": "画像を生成し解説することを求められている",
+        "SPELL": ["画像を生成してください","画像を作成してください"],
+        "NAME": "デジタルMATSUMOTO",
+        "ROLE": "AIの専門家である松本敬史のデジタルツインAI",
+        "CHARACTER": "DigitalMATSUMOTO_ALO.txt",
+        "PROMPT_TEMPLATE": {
+            "PROMPT_FORMAT": "No Template",
+            "WRITING_STYLE": "Polite Form"
+        },
+        "MODEL": "GPT-4-OMNI",
+        "MODEL_IMG": "DALLE-3",
+        "RAG_KNOWLEDGE": {
+            "DATA": ["DigiMATSU_Opinion_INP_RealMPoint","DigiMATSU_Opinion_INP_DigiMPoint"],
+            "FORMAT": "Knowledge Template(Point)",
+            "TEXT_LIMITS": 10000,
+            "DISTANCE_LOGIC": "Cosine"
+        },
+        "RAG_POLICY": {
+            "DATA": ["DigiMATSU_POLICY","DigiMATSU_Policy_RealMPoint"],
+            "FORMAT": "Policy Template",
+            "TEXT_LIMITS": 2000,
+            "DISTANCE_LOGIC": "Cosine"
+        }
+    },
+    "ETHICAL_CHECK": {
+        "REQUIREMENT": "文章について倫理的な面でチェックすることを求められている",
+        "SPELL": ["エシカルチェックしてください"],
+        "NAME": "エシカルチェッカー",
+        "ROLE": "倫理的な価値を重んじるコンプライアンスの専門家",
+        "CHARACTER": "様々なテキストに対して、不適切な表現が含まれていないかを検証することが得意",
+        "PROMPT_TEMPLATE": {
+            "PROMPT_FORMAT": "Ethical Check",
+            "WRITING_STYLE": "Polite Form"
+        },
+        "MODEL": "GPT-4-OMNI-MINI",
+        "RAG_KNOWLEDGE": {
+            "DATA": [""],
+            "FORMAT": "",
+            "TEXT_LIMITS": 0,
+            "DISTANCE_LOGIC": "Cosine"
+        },
+        "RAG_POLICY": {
+            "DATA": [""],
+            "FORMAT": "",
+            "TEXT_LIMITS": 0,
+            "DISTANCE_LOGIC": "Cosine"
+        }
+    },
+    "SENRYU_SENSEI": {
+        "REQUIREMENT": "川柳を作成することを求められている",
+        "SPELL": ["川柳を作成してください"],
+        "NAME": "川柳先生",
+        "ROLE": "センスが良くビジネスマンに人気の川柳の読み手",
+        "CHARACTER": "現代のトピックに対してユーモアのある川柳を考えることが得意",
+        "PROMPT_TEMPLATE": {
+            "PROMPT_FORMAT": "Senryu Template",
+            "WRITING_STYLE": "Polite Form"
+        },
+        "MODEL": "GPT-4-OMNI-MINI",
+        "RAG_KNOWLEDGE": {
+            "DATA": ["DigiMATSU_Opinion_INS_Senryu"],
+            "FORMAT": "Knowledge Template(Senryu)",
+            "TEXT_LIMITS": 1000,
+            "DISTANCE_LOGIC": "Cosine"
+        },
+        "RAG_POLICY": {
+            "DATA": [""],
+            "FORMAT": "",
+            "TEXT_LIMITS": 0,
+            "DISTANCE_LOGIC": "Cosine"
+        }
+    }
+}

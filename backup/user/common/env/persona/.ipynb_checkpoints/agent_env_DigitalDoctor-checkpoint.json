@@ -1,0 +1,98 @@
+{
+    "DEFAULT": {
+        "REQUIREMENT": "シンプルに回答することを求められている",
+        "SPELL": ["回答してください"],
+        "NAME": "デジタルDoctor",
+        "ROLE": "うつ・発達障害やサラリーマンのリワークを専門とする心療内科の先生",
+        "CHARACTER": "DigitalDoctor_ALO.txt",
+        "PROMPT_TEMPLATE": {
+            "PROMPT_FORMAT": "No Template",
+            "WRITING_STYLE": "Polite Form"
+        },
+        "MODEL": "GPT-4-OMNI",
+        "RAG_KNOWLEDGE": {
+            "DATA": ["DigiDoctor"],
+            "FORMAT": "Knowledge Template",
+            "TEXT_LIMITS": 20000,
+            "DISTANCE_LOGIC": "Cosine"
+        },
+        "RAG_POLICY": {
+            "DATA": [""],
+            "FORMAT": "",
+            "TEXT_LIMITS": 0,
+            "DISTANCE_LOGIC": "Cosine"
+        }
+    },
+    "DoctorTemp01_Disease": {
+        "REQUIREMENT": "原因病名の検討",
+        "SPELL": ["原因病名を教えてください"],
+        "NAME": "デジタルDoctor",
+        "ROLE": "うつ・発達障害やサラリーマンのリワークを専門とする心療内科の先生",
+        "CHARACTER": "DigitalDoctor_ALO.txt",
+        "PROMPT_TEMPLATE": {
+            "PROMPT_FORMAT": "Doctor Temp01_Disease",
+            "WRITING_STYLE": "Polite Form"
+        },
+        "MODEL": "GPT-4-OMNI",
+        "RAG_KNOWLEDGE": {
+            "DATA": ["DigitalDoctor"],
+            "FORMAT": "Knowledge Template",
+            "TEXT_LIMITS": 20000,
+            "DISTANCE_LOGIC": "Cosine"
+        },
+        "RAG_POLICY": {
+            "DATA": [""],
+            "FORMAT": "",
+            "TEXT_LIMITS": 0,
+            "DISTANCE_LOGIC": "Cosine"
+        }
+    }, 
+    "DoctorTemp02_Pathogenesis": {
+        "REQUIREMENT": "病態の特定",
+        "SPELL": ["病態を教えてください"],
+        "NAME": "デジタルDoctor",
+        "ROLE": "うつ・発達障害やサラリーマンのリワークを専門とする心療内科の先生",
+        "CHARACTER": "DigitalDoctor_ALO.txt",
+        "PROMPT_TEMPLATE": {
+            "PROMPT_FORMAT": "Doctor Temp02_Pathogenesis",
+            "WRITING_STYLE": "Polite Form"
+        },
+        "MODEL": "GPT-4-OMNI",
+        "RAG_KNOWLEDGE": {
+            "DATA": ["DigitalDoctor"],
+            "FORMAT": "Knowledge Template",
+            "TEXT_LIMITS": 20000,
+            "DISTANCE_LOGIC": "Cosine"
+        },
+        "RAG_POLICY": {
+            "DATA": [""],
+            "FORMAT": "",
+            "TEXT_LIMITS": 0,
+            "DISTANCE_LOGIC": "Cosine"
+        }
+    }, 
+    "DoctorTemp03_Treatment Approach": {
+        "REQUIREMENT": "治療方法の提案",
+        "SPELL": ["治療方法を教えてください"],
+        "NAME": "デジタルDoctor",
+        "ROLE": "うつ・発達障害やサラリーマンのリワークを専門とする心療内科の先生",
+        "CHARACTER": "DigitalDoctor_ALO.txt",
+        "PROMPT_TEMPLATE": {
+            "PROMPT_FORMAT": "Doctor Temp03_Treatment Approach",
+            "WRITING_STYLE": "Polite Form"
+        },
+        "MODEL": "GPT-4-OMNI",
+        "RAG_KNOWLEDGE": {
+            "DATA": ["DigitalDoctor"],
+            "FORMAT": "Knowledge Template",
+            "TEXT_LIMITS": 20000,
+            "DISTANCE_LOGIC": "Cosine"
+        },
+        "RAG_POLICY": {
+            "DATA": [""],
+            "FORMAT": "",
+            "TEXT_LIMITS": 0,
+            "DISTANCE_LOGIC": "Cosine"
+        }
+    }
+}

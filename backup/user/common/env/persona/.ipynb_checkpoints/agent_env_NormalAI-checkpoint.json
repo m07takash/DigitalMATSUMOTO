@@ -1,0 +1,26 @@
+{
+    "DEFAULT": {
+        "REQUIREMENT": "シンプルに回答することを求められている",
+        "SPELL": ["回答してください"],
+        "NAME": "AIアシスタント",
+        "ROLE": "標準的なチャットAI",
+        "CHARACTER": "",
+        "PROMPT_TEMPLATE": {
+            "PROMPT_FORMAT": "No Template",
+            "WRITING_STYLE": "Polite Form"
+        },
+        "MODEL_CHAT": "GPT-4-OMNI",
+        "RAG_KNOWLEDGE": {
+            "DATA": [""],
+            "FORMAT": "",
+            "TEXT_LIMITS": 0,
+            "DISTANCE_LOGIC": "Cosine"
+        },
+        "RAG_POLICY": {
+            "DATA": [""],
+            "FORMAT": "",
+            "TEXT_LIMITS": 0,
+            "DISTANCE_LOGIC": "Cosine"
+        }
+    }
+}
