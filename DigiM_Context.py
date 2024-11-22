@@ -15,6 +15,8 @@ import DigiM_Notion as dmn
 # system.envファイルをロードして環境変数を設定
 load_dotenv("system.env")
 mst_folder_path = os.getenv("MST_FOLDER")
+prompt_template_mst_file = os.getenv("PROMPT_TEMPLATE_MST_FILE")
+prompt_temp_mst_path = mst_folder_path + prompt_template_mst_file
 rag_mst_file = os.getenv("RAG_MST_FILE")
 rag_folder_path = os.getenv("RAG_FOLDER")
 notion_db_mst_file = os.getenv("NOTION_MST_FILE")
@@ -69,6 +71,16 @@ def get_text_content(agent_data, content, seq, sub_seq, file_seq):
     content_records = {"from": content, "to":{"file_name": file_name, "file_type": file_type, "file_size": file_size, "context": content_context}}
 
     return content_context, content_records, image_file
+
+# プロンプトテンプレートの取得
+def set_prompt_template(prompt_temp_cd):
+    prompt_temp_mst_path = mst_folder_path + prompt_template_mst_file
+    prompt_temps_json = dmu.read_json_file(prompt_temp_mst_path)
+    prompt_temp = prompt_temps_json["PROMPT_TEMPLATE"][prompt_temp_cd]
+    prompt_template = ""
+    if prompt_temp:
+        prompt_template = prompt_template + prompt_temp +"\n"
+    return prompt_template
 
 # RAGデータ一覧の取得
 def get_rag_list():

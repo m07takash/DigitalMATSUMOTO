@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 import streamlit as st
 
-import DigiM_Engine as dme
+import DigiM_Execute as dme
 import DigiM_Session as dms
 import DigiM_Agent as dma
 import DigiM_Context as dmc
@@ -22,7 +22,6 @@ temp_move_flg = os.getenv("TEMP_MOVE_FLG")
 mst_folder_path = os.getenv("MST_FOLDER")
 agent_folder_path = os.getenv("AGENT_FOLDER")
 default_agent = os.getenv("DEFAULT_AGENT")
-default_agent_mode = os.getenv("DEFAULT_AGENT_MODE")
 charactor_folder_path = os.getenv("CHARACTOR_FOLDER")
 prompt_template_mst_file = os.getenv("PROMPT_TEMPLATE_MST_FILE")
 
@@ -54,7 +53,7 @@ def initialize_session_states():
     if 'overwrite_flg_rag' not in st.session_state:
         st.session_state.overwrite_flg_rag = False
 
-# セッションのリフレッシュ
+# セッションのリフレッシュ（ヒストリーを更新するために、同一セッションIDで再度Sessionクラスを呼び出すこともある）
 def refresh_session(session_id, session_name):
     st.session_state.session = dms.DigiMSession(session_id, session_name)
     st.session_state.seq_memory = []
@@ -115,13 +114,12 @@ def main():
     agent_id = agents[agent_list_index]["AGENT"]
     agent_file = agents[agent_list_index]["FILE"]
     agent_data = dmu.read_json_file(agent_file, agent_folder_path)
-    agent_mode = default_agent_mode
     
     # プロンプトテンプレートの初期値
     prompt_temp_mst_path = mst_folder_path + prompt_template_mst_file
     prompt_temps_json = dmu.read_json_file(prompt_temp_mst_path)
-    prompt_format_list = list(prompt_temps_json["PROMPT_FORMAT"].keys())
-    writing_style_list = list(prompt_temps_json["WRITING_STYLE"].keys())
+    prompt_format_list = list(prompt_temps_json["PROMPT_TEMPLATE"].keys())
+    writing_style_list = list(prompt_temps_json["SPEAKING_STYLE"].keys())
 
     # サイドバーの設定
     with st.sidebar:
@@ -154,7 +152,8 @@ def main():
 
     # チャットセッション名の設定
     if session_name := st.text_input("Chat Name:", value=st.session_state.session.session_name):
-        st.session_state.session = dms.DigiMSession(st.session_state.session.session_id, session_name)
+        #st.session_state.session = dms.DigiMSession(st.session_state.session.session_id, session_name)
+        st.session_state.session.session_name = session_name
 
     # オーバーライトの設定
     overwrite_expander = st.expander("Overwrite Setting")
@@ -167,9 +166,9 @@ def main():
         # ペルソナ
         st.subheader("Persona")
         if st.checkbox("Overwrite", key="overwrite_flg_persona"):
-            st.session_state.persona_name = st.text_input("Persona Name:", value=agent_data["MODE"][agent_mode]["NAME"])
-            st.session_state.persona_act = st.text_input("Persona Act:", value=agent_data["MODE"][agent_mode]["ACT"])
-            charactor = agent_data["MODE"][agent_mode]["CHARACTOR"]
+            st.session_state.persona_name = st.text_input("Persona Name:", value=agent_data["NAME"])
+            st.session_state.persona_act = st.text_input("Persona Act:", value=agent_data["ACT"])
+            charactor = agent_data["CHARACTOR"]
             if charactor.strip().endswith(".txt"):
                 charactor_text = str(dmu.read_text_file(charactor, charactor_folder_path))
             else:
@@ -188,11 +187,11 @@ def main():
         st.markdown("----")
         st.subheader("Prompt Template")
         if st.checkbox("Overwrite", key="overwrite_flg_prompt_temp"):
-            st.session_state.prompt_format = st.selectbox("Prompt Format:", prompt_format_list, index=prompt_format_list.index(agent_data["MODE"][agent_mode]["PROMPT_TEMPLATE"]["PROMPT_FORMAT"]))
-            st.session_state.writing_style = st.selectbox("Writing Style:", writing_style_list, index=writing_style_list.index(agent_data["MODE"][agent_mode]["PROMPT_TEMPLATE"]["WRITING_STYLE"]))
+            st.session_state.prompt_format = st.selectbox("Prompt Format:", prompt_format_list, index=prompt_format_list.index(agent_data["PROMPT_TEMPLATE"]["PROMPT_FORMAT"]))
+            st.session_state.speaking_style = st.selectbox("Speaking Style:", speaking_style_list, index=speaking_style_list.index(agent_data["PROMPT_TEMPLATE"]["SPEAKING_STYLE"]))
             overwrite_prompt_temp["PROMPT_TEMPLATE"] = {}
             overwrite_prompt_temp["PROMPT_TEMPLATE"]["PROMPT_FORMAT"] = st.session_state.prompt_format
-            overwrite_prompt_temp["PROMPT_TEMPLATE"]["WRITING_STYLE"] = st.session_state.writing_style
+            overwrite_prompt_temp["PROMPT_TEMPLATE"]["SPEAKING_STYLE"] = st.session_state.speaking_style
         else:
             overwrite_prompt_temp = {}
         st.markdown("")
@@ -208,7 +207,7 @@ def main():
             overwrite_rag_list = []
             overwrite_rag["RAG"] = overwrite_rag_list
             i = 0
-            for rag_dict in agent_data["MODE"][agent_mode]["RAG"]:
+            for rag_dict in agent_data["RAG"]:
                 st.markdown(f"***RAG Dataset {i}:***")
                 rag_selects = rag_dict["DATA"]
                 rag_col1, rag_col2 = st.columns(2)
@@ -337,9 +336,9 @@ def main():
         # ユーザー入力の一時表示
         with st.chat_message("user"):
             st.markdown(user_input.replace("\n", "<br>"), unsafe_allow_html=True)
-            chains=[{"AGENT_MODE":agent_mode, "USER_INPUT": user_input, "CONTENTS": uploaded_contents, "OVERWRITE_ITEMS": overwrite_items, "PreSEQ":"", "PreSubSEQ":""}]
+            chains=[{"USER_INPUT": user_input, "CONTENTS": uploaded_contents, "OVERWRITE_ITEMS": overwrite_items, "PreSEQ":"", "PreSubSEQ":""}]
             #【作成中】UI検討（チェイン部分）＋ボタンでプロンプト追加する or プロンプトテンプレを選択
-            dme.DigiMatsuEngine_Chain(st.session_state.session.session_id, st.session_state.session.session_name, agent_folder_path+agent_file, chains, st.session_state.memory_use, st.session_state.magic_word_use)
+            dme.DigiMatsuExecute_Chain(st.session_state.session.session_id, st.session_state.session.session_name, agent_folder_path+agent_file, chains, st.session_state.memory_use, st.session_state.magic_word_use)
             st.rerun()
 
 if __name__ == "__main__":
