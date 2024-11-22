@@ -1,0 +1,2 @@
+# ターミナルで実行して8892ポートで利用
+streamlit run WebDigiMatsuAgent.py --server.address 0.0.0.0 --server.port 8892
