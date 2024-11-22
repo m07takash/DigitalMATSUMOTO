@@ -163,6 +163,5 @@ cython_debug/
 
 # Digital MATSUMOTO Folder
 session*/
-user/common/agent/charactor/*
-user/common/temp/*
-user/common/rag/*
+user/common/agent/charactor/*.txt
+user/common/rag/*.json
