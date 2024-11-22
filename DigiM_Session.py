@@ -119,7 +119,8 @@ class DigiMSession:
                 if "image" in sub_dict[str(max_subseq)]:
                     chat_history_active_omit_dict[key]["1"]["image"] = sub_dict[str(max_subseq)]["image"]
                 chat_history_active_omit_dict[key]["1"]["response"] = sub_dict[str(max_subseq)]["response"]
-                chat_history_active_omit_dict[key]["1"]["digest"] = sub_dict[str(max_subseq)]["digest"]
+                if "digest" in sub_dict[str(max_subseq)]:
+                    chat_history_active_omit_dict[key]["1"]["digest"] = sub_dict[str(max_subseq)]["digest"]
         return chat_history_active_omit_dict
     
     # 会話メモリを獲得する（トークン制限で切り取り）
@@ -238,11 +239,10 @@ class DigiMSession:
                 chat_detail_info += f"{k}：{v}\n"
 
             chat_detail_info += "\n【実行情報】\n"
-            chat_detail_info += "実行モデル："+chat_history_dict_seq["setting"]["model"]["FUNC_NAME"]+"("+str(chat_history_dict_seq["setting"]["model"]["PARAMETER"])+")\n"
-            chat_detail_info += "プロンプトテンプレート："+chat_history_dict_seq["prompt"]["prompt_template"]["setting"]["PROMPT_FORMAT"]+"\n"
-            chat_detail_info += "口調："+chat_history_dict_seq["prompt"]["prompt_template"]["setting"]["WRITING_STYLE"]+"\n"
+            chat_detail_info += "実行モデル："+chat_history_dict_seq["setting"]["engine"]["FUNC_NAME"]+"("+str(chat_history_dict_seq["setting"]["engine"]["PARAMETER"])+")\n"
+            chat_detail_info += "プロンプトテンプレート："+chat_history_dict_seq["prompt"]["prompt_template"]["setting"]+"\n"
             chat_detail_info += "RAGデータ："
-            for rag_set_dict in chat_history_dict_seq["prompt"]["rag"]["setting"]:
+            for rag_set_dict in chat_history_dict_seq["prompt"]["knowledge_rag"]["setting"]:
                 chat_detail_info += str(rag_set_dict["DATA"])
             chat_detail_info += "\n"
 
@@ -259,7 +259,7 @@ class DigiMSession:
                 chat_detail_info += memory_set_dict["log"]
         
             chat_detail_info += "\n【RAGコンテキスト】\n"
-            for rag_set_dict in chat_history_dict_seq["response"]["reference"]["rag"]:
+            for rag_set_dict in chat_history_dict_seq["response"]["reference"]["knowledge_rag"]:
                 chat_detail_info += rag_set_dict["log"]
 
             chat_detail_info += "\n【コンテンツコンテキスト】"

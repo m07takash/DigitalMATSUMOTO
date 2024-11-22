@@ -12,11 +12,11 @@ openai_api_key = os.getenv("OPENAI_API_KEY")
 
 # 会話のダイジェスト生成
 def dialog_digest(agent_data, query, memories_selected={}):
-    tool_agent_mode = "DIALOG_DIGEST"
-    tool_agent = dma.DigiM_Agent(agent_data, tool_agent_mode)
+    prompt_temp_cd = "Dialog Digest"
+    tool_agent = dma.DigiM_Agent(agent_data)
     
     # エージェントに設定されるプロンプトテンプレートを設定
-    prompt_template = tool_agent.set_prompt_template()
+    prompt_template = tool_agent.set_prompt_template(prompt_temp_cd)
 
     # プロンプトの設定
     prompt = f'{prompt_template}{query}'
