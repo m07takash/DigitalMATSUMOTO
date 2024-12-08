@@ -4,6 +4,7 @@ import math
 import time
 import datetime
 from datetime import datetime, timedelta
+import pytz
 from dotenv import load_dotenv
 import streamlit as st
 
@@ -16,6 +17,7 @@ import DigiM_Util as dmu
 # system.envファイルをロードして環境変数を設定
 load_dotenv("system.env")
 web_title = os.getenv("WEB_TITLE")
+timezone_setting = os.getenv("TIMEZONE")
 session_folder_prefix = os.getenv("SESSION_FOLDER_PREFIX")
 temp_folder_path = os.getenv("TEMP_FOLDER")
 temp_move_flg = os.getenv("TEMP_MOVE_FLG")
@@ -24,6 +26,10 @@ agent_folder_path = os.getenv("AGENT_FOLDER")
 default_agent = os.getenv("DEFAULT_AGENT")
 charactor_folder_path = os.getenv("CHARACTOR_FOLDER")
 prompt_template_mst_file = os.getenv("PROMPT_TEMPLATE_MST_FILE")
+
+# 時刻の設定
+tz = pytz.timezone(timezone_setting)
+now_time = datetime.now(tz)
 
 # Streamlitの設定
 st.set_page_config(page_title=web_title, layout="wide")
@@ -34,10 +40,14 @@ def initialize_session_states():
         st.session_state.sidebar_message = ""
     if 'session' not in st.session_state:
         st.session_state.session = dms.DigiMSession(dms.set_new_session_id(), "New Chat")
+    if 'time_setting' not in st.session_state:
+        st.session_state.time_setting = now_time.strftime("%Y/%m/%d %H:%M:%S")
+    if 'situation_setting' not in st.session_state:
+        st.session_state.situation_setting = ""
     if 'seq_memory' not in st.session_state:
         st.session_state.seq_memory = []
     if 'memory_use' not in st.session_state:
-        st.session_state.memory_use = "Y"
+        st.session_state.memory_use = True
     if 'magic_word_use' not in st.session_state:
         st.session_state.magic_word_use = "Y"
     if 'uploaded_files' not in st.session_state:
@@ -54,8 +64,10 @@ def initialize_session_states():
         st.session_state.overwrite_flg_rag = False
 
 # セッションのリフレッシュ（ヒストリーを更新するために、同一セッションIDで再度Sessionクラスを呼び出すこともある）
-def refresh_session(session_id, session_name):
+def refresh_session(session_id, session_name, situation):
     st.session_state.session = dms.DigiMSession(session_id, session_name)
+    st.session_state.time_setting = situation["TIME"]
+    st.session_state.situation_setting = situation["SITUATION"]
     st.session_state.seq_memory = []
     st.session_state.sidebar_message = ""
     st.session_state.overwrite_flg_persona = False
@@ -108,7 +120,7 @@ def main():
     initialize_session_states()
 
     # エージェントの初期値
-    agents = dma.get_all_agents()
+    agents = dma.get_display_agents()
     agent_list = [a1["AGENT"] for a1 in agents]
     agent_list_index = agent_list.index(default_agent)
     agent_id = agents[agent_list_index]["AGENT"]
@@ -119,7 +131,7 @@ def main():
     prompt_temp_mst_path = mst_folder_path + prompt_template_mst_file
     prompt_temps_json = dmu.read_json_file(prompt_temp_mst_path)
     prompt_format_list = list(prompt_temps_json["PROMPT_TEMPLATE"].keys())
-    writing_style_list = list(prompt_temps_json["SPEAKING_STYLE"].keys())
+    speaking_style_list = list(prompt_temps_json["SPEAKING_STYLE"].keys())
 
     # サイドバーの設定
     with st.sidebar:
@@ -134,7 +146,10 @@ def main():
         if st.button("Create New Chat", key="new_chat"):
             session_id = dms.set_new_session_id()
             session_name = "New Chat"
-            refresh_session(session_id, session_name)
+            situation = {}
+            situation["TIME"] = now_time.strftime("%Y/%m/%d %H:%M:%S")
+            situation["SITUATION"] = ""
+            refresh_session(session_id, session_name, situation)
         if st.button("Update RAG JSON", key="update_json"):
             dmc.generate_rag_vec_json()
             st.session_state.sidebar_message = "RAG用の知識情報(JSON)の更新が完了しました"
@@ -147,13 +162,13 @@ def main():
             session_file_dict = dms.get_session_data(session_id)
             session_name = dms.get_session_name(session_id)
             session_name_btn = session_name[:16]
+            situation = dms.get_situation(session_id)
             if st.button(session_name_btn, key=session_key):
-                refresh_session(session_id, session_name)
+                refresh_session(session_id, session_name, situation)
 
     # チャットセッション名の設定
     if session_name := st.text_input("Chat Name:", value=st.session_state.session.session_name):
-        #st.session_state.session = dms.DigiMSession(st.session_state.session.session_id, session_name)
-        st.session_state.session.session_name = session_name
+        st.session_state.session = dms.DigiMSession(st.session_state.session.session_id, session_name)
 
     # オーバーライトの設定
     overwrite_expander = st.expander("Overwrite Setting")
@@ -168,46 +183,68 @@ def main():
         if st.checkbox("Overwrite", key="overwrite_flg_persona"):
             st.session_state.persona_name = st.text_input("Persona Name:", value=agent_data["NAME"])
             st.session_state.persona_act = st.text_input("Persona Act:", value=agent_data["ACT"])
-            charactor = agent_data["CHARACTOR"]
-            if charactor.strip().endswith(".txt"):
-                charactor_text = str(dmu.read_text_file(charactor, charactor_folder_path))
+            persona_col1, persona_col2, persona_col3 = st.columns(3)
+            persona_sex = agent_data["PERSONALITY"]["SEX"] if agent_data["PERSONALITY"] else ""
+            st.session_state.persona_sex = persona_col1.text_input("Sex:", value=persona_sex)
+            persona_birthday = agent_data["PERSONALITY"]["BIRTHDAY"] if agent_data["PERSONALITY"] else ""
+            st.session_state.persona_birthday = persona_col1.text_input("Birthday:", value=persona_birthday)
+            persona_is_alive = agent_data["PERSONALITY"]["IS_ALIVE"] if agent_data["PERSONALITY"] else True
+            if persona_col1.checkbox("IS_ALIVE", value=persona_is_alive):
+                st.session_state.persona_is_alive = True
             else:
-                charactor_text = charactor
-            st.session_state.persona_charactor = st.text_area("Persona Charactor:", value=charactor_text, height=400)
+                st.session_state.persona_is_alive = False
+            persona_nationality = agent_data["PERSONALITY"]["NATIONALITY"] if agent_data["PERSONALITY"] else ""
+            st.session_state.persona_nationality = persona_col2.text_input("Nationality:", value=persona_nationality)
+            st.session_state.persona_big5 = {}
+            if agent_data["PERSONALITY"]:
+                persona_big5_openness = agent_data["PERSONALITY"]["BIG5"]["Openness"] if agent_data["PERSONALITY"]["BIG5"] else ""
+                st.session_state.persona_big5["Openness"] = persona_col3.number_input("Big5 Openness:", value=persona_big5_openness, step=0.01, format="%.2f")
+                persona_big5_conscientiousness = agent_data["PERSONALITY"]["BIG5"]["Conscientiousness"] if agent_data["PERSONALITY"]["BIG5"] else ""
+                st.session_state.persona_big5["Conscientiousness"] = persona_col3.number_input("Big5 Conscientiousness:", value=persona_big5_conscientiousness, step=0.01, format="%.2f")
+                persona_big5_extraversion = agent_data["PERSONALITY"]["BIG5"]["Extraversion"] if agent_data["PERSONALITY"]["BIG5"] else ""
+                st.session_state.persona_big5["Extraversion"] = persona_col3.number_input("Big5 Extraversion:", value=persona_big5_extraversion, step=0.01, format="%.2f")
+                persona_big5_agreeableness = agent_data["PERSONALITY"]["BIG5"]["Agreeableness"] if agent_data["PERSONALITY"]["BIG5"] else ""
+                st.session_state.persona_big5["Agreeableness"] = persona_col3.number_input("Big5 Agreeableness:", value=persona_big5_agreeableness, step=0.01, format="%.2f")
+                persona_big5_neuroticism = agent_data["PERSONALITY"]["BIG5"]["Neuroticism"] if agent_data["PERSONALITY"]["BIG5"] else ""               
+                st.session_state.persona_big5["Neuroticism"] = persona_col3.number_input("Big5 Neuroticism:", value=persona_big5_neuroticism, step=0.01, format="%.2f")
+            persona_language = agent_data["PERSONALITY"]["LANGUAGE"] if agent_data["PERSONALITY"] else ""
+            st.session_state.persona_language = persona_col2.text_input("Language:", value=persona_language)
+            persona_speaking_style = agent_data["PERSONALITY"]["SPEAKING_STYLE"] if agent_data["PERSONALITY"] else ""
+            index_speaking_style = speaking_style_list.index(persona_speaking_style) if persona_speaking_style in speaking_style_list else 0
+            st.session_state.persona_speaking_style = persona_col2.selectbox("Speaking Style:", speaking_style_list, index=index_speaking_style)
+            persona_charactor = agent_data["PERSONALITY"]["CHARACTOR"] if agent_data["PERSONALITY"] else ""
+            if persona_charactor.strip().endswith(".txt"):
+                persona_charactor_text = str(dmu.read_text_file(persona_charactor, charactor_folder_path))
+            else:
+                persona_charactor_text = persona_charactor
+            st.session_state.persona_charactor = st.text_area("Persona Charactor:", value=persona_charactor_text, height=400)
             overwrite_persona["NAME"] = st.session_state.persona_name
             overwrite_persona["ACT"] = st.session_state.persona_act
-            overwrite_persona["CHARACTOR"] = st.session_state.persona_charactor
+            overwrite_persona["PERSONALITY"] = {}
+            overwrite_persona["PERSONALITY"]["SEX"] = st.session_state.persona_sex
+            overwrite_persona["PERSONALITY"]["BIRTHDAY"] = st.session_state.persona_birthday
+            overwrite_persona["PERSONALITY"]["IS_ALIVE"] = st.session_state.persona_is_alive
+            overwrite_persona["PERSONALITY"]["NATIONALITY"] = st.session_state.persona_nationality
+            overwrite_persona["PERSONALITY"]["BIG5"] = st.session_state.persona_big5
+            overwrite_persona["PERSONALITY"]["LANGUAGE"] = st.session_state.persona_language
+            overwrite_persona["PERSONALITY"]["SPEAKING_STYLE"] = st.session_state.persona_speaking_style
+            overwrite_persona["PERSONALITY"]["CHARACTOR"] = st.session_state.persona_charactor
         else:
             overwrite_persona = {}
         st.markdown("")
         st.markdown("***Agent Setting:***")
         st.markdown(overwrite_persona)
-        
-        # プロンプトテンプレート
-        st.markdown("----")
-        st.subheader("Prompt Template")
-        if st.checkbox("Overwrite", key="overwrite_flg_prompt_temp"):
-            st.session_state.prompt_format = st.selectbox("Prompt Format:", prompt_format_list, index=prompt_format_list.index(agent_data["PROMPT_TEMPLATE"]["PROMPT_FORMAT"]))
-            st.session_state.speaking_style = st.selectbox("Speaking Style:", speaking_style_list, index=speaking_style_list.index(agent_data["PROMPT_TEMPLATE"]["SPEAKING_STYLE"]))
-            overwrite_prompt_temp["PROMPT_TEMPLATE"] = {}
-            overwrite_prompt_temp["PROMPT_TEMPLATE"]["PROMPT_FORMAT"] = st.session_state.prompt_format
-            overwrite_prompt_temp["PROMPT_TEMPLATE"]["SPEAKING_STYLE"] = st.session_state.speaking_style
-        else:
-            overwrite_prompt_temp = {}
-        st.markdown("")
-        st.markdown("***Agent Setting:***")
-        st.markdown(overwrite_prompt_temp)
 
         # RAG
         st.markdown("----")
-        st.subheader("RAG")
+        st.subheader("KNOWLEDGE(RAG)")
         rag_datasets = dmc.get_rag_list()
         rag_distance_logics = ["Cosine", "Euclidean", "Manhattan", "Chebychev"]
         if st.checkbox("Overwrite", key="overwrite_flg_rag"):
             overwrite_rag_list = []
-            overwrite_rag["RAG"] = overwrite_rag_list
+            overwrite_rag["KNOWLEDGE"] = overwrite_rag_list
             i = 0
-            for rag_dict in agent_data["RAG"]:
+            for rag_dict in agent_data["KNOWLEDGE"]:
                 st.markdown(f"***RAG Dataset {i}:***")
                 rag_selects = rag_dict["DATA"]
                 rag_col1, rag_col2 = st.columns(2)
@@ -233,7 +270,7 @@ def main():
                 }
                 overwrite_rag_list.append(overwrite_rag_dict)
                 i += 1
-            overwrite_rag["RAG"] = overwrite_rag_list
+            overwrite_rag["KNOWLEDGE"] = overwrite_rag_list
         else:
             overwrite_rag = {}
         st.markdown("")
@@ -242,15 +279,15 @@ def main():
         
         # Tool
         st.markdown("----")
-        st.subheader("TOOL")
+        st.subheader("SKILL(TOOL)")
         if st.checkbox("Overwrite", key="overwrite_flg_tool"):
             overwrite_tool_list = []
-            overwrite_tool["TOOL"] = {}
-            overwrite_tool["TOOL"]["TOOL_LIST"] = overwrite_tool_list
+            overwrite_tool["SKILL"] = {}
+            overwrite_tool["SKILL"]["TOOL_LIST"] = overwrite_tool_list
             # TOOL_LISTはマルチセレクト
             # CHOICEはシングルセレクト
 #        overwrite_items = {
-#            "TOOL": {
+#            "SKILL": {
 #                "TOOL_LIST": [
 #                    {"type": "function", "function": {"name": "default_tool"}}
 #                ],
@@ -264,20 +301,28 @@ def main():
     # Webパーツのレイアウト
     header_col1, header_col2, header_col3 = st.columns(3)
 
+    # 時刻の設定    
+    selected_date = header_col1.date_input("Situation Date", value=datetime.strptime(st.session_state.time_setting, "%Y/%m/%d %H:%M:%S").date())
+    selected_time = header_col1.time_input("Situation Time", value=datetime.strptime(st.session_state.time_setting, "%Y/%m/%d %H:%M:%S").time())
+    time_setting = str(tz.localize(datetime.combine(selected_date, selected_time)).strftime('%Y/%m/%d %H:%M:%S'))
+
+    # 実行の設定
+    header_col2.markdown("Exec Setting:")
+    
     # 会話メモリ利用の設定
-    if header_col1.checkbox(": Memory Use", value=st.session_state.memory_use):
-        st.session_state.memory_use = "Y"
+    if header_col2.checkbox("Memory Use", value=st.session_state.memory_use):
+        st.session_state.memory_use = True
     else:
-        st.session_state.memory_use = "N"
+        st.session_state.memory_use = False
 
     # マジックワード利用の設定
-    if header_col1.checkbox(": Magic Word", value=st.session_state.magic_word_use):
+    if header_col2.checkbox("Magic Word", value=st.session_state.magic_word_use):
         st.session_state.magic_word_use = "Y"
     else:
         st.session_state.magic_word_use = "N"
 
     # 会話履歴の表示切替
-    option = header_col2.radio("History Visible:", ("NORMAL", "ALL"))
+    option = header_col3.radio("History Visible:", ("NORMAL", "ALL"))
     if option == "ALL":
         st.session_state.chat_history_visible_dict = st.session_state.session.chat_history_active_dict
     elif option == "NORMAL":
@@ -292,11 +337,14 @@ def main():
             st.session_state.seq_memory = []
             st.rerun()
 
+    # シチュエーションの設定
+    situation_setting = st.text_input("Situation Setting:", value=st.session_state.situation_setting)
+
     # 会話履歴の表示
     for k, v in st.session_state.chat_history_visible_dict.items():
         st.markdown("----")
         for k2, v2 in v.items():
-            if k2 != "FLG":
+            if k2 != "SETTING":
                 with st.chat_message(v2["prompt"]["role"]):
                     st.markdown(v2["prompt"]["query"]["input"].replace("\n", "<br>"), unsafe_allow_html=True)
                     for uploaded_content in v2["prompt"]["query"]["contents"]:
@@ -333,13 +381,19 @@ def main():
         overwrite_items.update(overwrite_persona)
         overwrite_items.update(overwrite_prompt_temp)
         overwrite_items.update(overwrite_rag)
+
+        # シチュエーションの設定
+        situation = {}
+        situation["TIME"] = time_setting
+        situation["SITUATION"] = situation_setting
+        
         # ユーザー入力の一時表示
         with st.chat_message("user"):
             st.markdown(user_input.replace("\n", "<br>"), unsafe_allow_html=True)
-            chains=[{"USER_INPUT": user_input, "CONTENTS": uploaded_contents, "OVERWRITE_ITEMS": overwrite_items, "PreSEQ":"", "PreSubSEQ":""}]
-            #【作成中】UI検討（チェイン部分）＋ボタンでプロンプト追加する or プロンプトテンプレを選択
-            dme.DigiMatsuExecute_Chain(st.session_state.session.session_id, st.session_state.session.session_name, agent_folder_path+agent_file, chains, st.session_state.memory_use, st.session_state.magic_word_use)
-            st.rerun()
+            practice=agent_data["HABIT"] 
+            #【作成中】UIでプラクティスを設定（チェイン部分）＋ボタンで追加
+            results = dme.DigiMatsuExecute_Practice(st.session_state.session.session_id, st.session_state.session.session_name, agent_file, user_input, uploaded_contents, situation, overwrite_items, practice, st.session_state.memory_use, st.session_state.magic_word_use)
+            st.rerun()        
 
 if __name__ == "__main__":
     main()

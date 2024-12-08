@@ -1,0 +1,21 @@
+{
+    "NAME": "ImageGen",
+    "CHAINS": [
+        {
+            "TYPE": "LLM",
+            "SETTING": {
+                "AGENT_FILE": "USER",
+                "FUNC_NAME": "generate_image_dalle",
+                "PARAMETER": {
+                    "prompt": "", 
+                    "model": "", 
+                    "file_header": ""
+                },
+                "USER_INPUT": "USER",
+                "CONTENTS": "USER",
+                "SITUATION": "USER",
+                "MEMORY_USE": true
+            }
+        }
+    ]
+}

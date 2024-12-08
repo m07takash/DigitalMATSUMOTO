@@ -1,4 +1,5 @@
 {
+    "DISPLAY": true,
     "NAME": "デジタルMATSUMOTO",
     "ACT": "AIの専門家である松本敬史のデジタルツインAI",
     "PERSONALITY": {
@@ -26,13 +27,33 @@
         "TOKENIZER": "tiktoken",
         "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
     },
-    "HABIT": {  
+    "HABIT": {
+        "DEFAULT": {
+            "MAGIC_WORDS": [""],
+            "PRACTICE": "practice_01Chat.json"
+        },
+        "IMAGE_GEN": {
+            "MAGIC_WORDS": ["画像を生成してください。", "画像を作成してください。"],
+            "PRACTICE": "practice_03Image_Gen.json"
+        },
+        "ETHICAL_CHECK": {
+            "MAGIC_WORDS": ["エシカルチェックしてください。"],
+            "PRACTICE": "practice_04Ethical_Check.json"
+        },
+        "SENRYU_SENSEI": {
+            "MAGIC_WORDS": ["川柳を詠んでください。","川柳を作成してください。"],
+            "PRACTICE": "practice_05Senryu.json"
+        },
+        "INSIGHT": {
+            "MAGIC_WORDS": ["考察してください。", "考察を作成してください。"],
+            "PRACTICE": "practice_10Insight.json"
+        }
     },
     "KNOWLEDGE": [
         {
             "DATA": ["DigiMATSU_Opinion_INP_RealMPoint","DigiMATSU_Opinion_INP_DigiMPoint"],
-            "HEADER_TEMPLATE": "【知識情報】\n",
-            "CHUNK_TEMPLATE": "{title}\n{days_difference}日前（質問との関連の近さ:{similarity}）\n主な論点:\n{text}\n\n",
+            "HEADER_TEMPLATE": "【知識情報】質問に応じて参考にしてください\n",
+            "CHUNK_TEMPLATE": "({create_date}({days_difference}日前)の情報, 質問との関連の近さ:{similarity}){title}\n主な論点:\n{text}\n\n",
             "TEXT_LIMITS": 10000,
             "DISTANCE_LOGIC": "Cosine"
         },

@@ -59,7 +59,7 @@ def get_text_content(agent_data, content, seq, sub_seq, file_seq):
     elif "json" in file_type:
         content_context = "<br>---------<br>ファイル名: "+file_name+"<br><br>"+json.dumps(dmu.read_json_file(content), ensure_ascii=False)
     elif "image" in file_type:
-        response, prompt_tokens, response_tokens = dmt.art_critics(agent_data, image_paths=[content])
+        response, prompt_tokens, response_tokens = dmt.art_critics(image_paths=[content])
         content_context = "<br>---------<br>ファイル名: "+file_name+"<br><br>"+response
         image_file = content
     #elif "video" in file_type:
@@ -107,7 +107,7 @@ def select_rag(query, rag_data_list, chunk_template="{text}", text_limits=10000,
             generate_date = current_date
         
         # 埋め込みベクトルの類似度
-        similarity_prompt = dmu.calculate_similarity_vec(query_vec, rag_data["vector_data_search"], logic)
+        similarity_prompt = dmu.calculate_similarity_vec(query_vec, rag_data["vector_data_key_text"], logic)
 
         # RAGテキストを辞書型で格納
         rag_texts.append(
@@ -117,9 +117,9 @@ def select_rag(query, rag_data_list, chunk_template="{text}", text_limits=10000,
                 "id": rag_data["id"], 
                 "title": rag_data["title"], 
                 "category": rag_data["category"], 
-                "text": rag_data["text"], 
+                "text": rag_data["value_text"], 
                 "url": rag_data["url"], 
-                "vec_text": rag_data["vector_data_text"]
+                "vec_text": rag_data["vector_data_value_text"]
             }
         )
 
@@ -139,7 +139,7 @@ def select_rag(query, rag_data_list, chunk_template="{text}", text_limits=10000,
 
 # RAGのチャンクデータをCSV(utf-8)から生成
 def get_chunk_csv(file_path, file_names):
-    field_names = ["title", "category", "eval", "generate_date", "search_text", "text", "url"]    
+    field_names = ["title", "category", "eval", "generate_date", "key_text", "value_text", "url"]    
     rag_data = []
     for file_name in file_names:
         with open(file_path+file_name, 'r', encoding='utf-8') as csvfile:
@@ -199,12 +199,12 @@ def get_rag_chunk(rag_data, rag_data_file):
     for rag_chunk in rag_data:
         # 対象ドキュメントのベクトルデータを作成
         if rag_chunk['id'] not in rag_data_file:
-            if rag_chunk['text']:
-                vec_search = dmu.embed_text(rag_chunk['search_text'].replace("\n", ""))
-                vec_text = dmu.embed_text(rag_chunk['text'].replace("\n", ""))
+            if rag_chunk['value_text']:
+                vec_key_text = dmu.embed_text(rag_chunk['key_text'].replace("\n", ""))
+                vec_value_text = dmu.embed_text(rag_chunk['value_text'].replace("\n", ""))
                 rag_data_file_updated[rag_chunk['id']] = rag_chunk
-                rag_data_file_updated[rag_chunk['id']]['vector_data_search'] = vec_search
-                rag_data_file_updated[rag_chunk['id']]['vector_data_text'] = vec_text
+                rag_data_file_updated[rag_chunk['id']]['vector_data_key_text'] = vec_key_text
+                rag_data_file_updated[rag_chunk['id']]['vector_data_value_text'] = vec_value_text
                 print(f"{rag_chunk['title']}を知識情報ファイル(JSON)に追加しました。")
                 cnt_add+=1
         else:
@@ -277,8 +277,9 @@ def create_rag_context(query, rags=[]):
         # RAGデータのコンテキスト化
         rag_context += rag["HEADER_TEMPLATE"]
         for rag_text_selected in rag_texts_selected:
+            create_date = rag_text_selected["date"].strftime("%Y年%-m月%-d日")
             days_difference = (current_date - rag_text_selected["date"]).days
-            rag_context += rag["CHUNK_TEMPLATE"].format(days_difference=days_difference, similarity=round(rag_text_selected["similarity_prompt"],3), title=rag_text_selected["title"], text=rag_text_selected["text"])
+            rag_context += rag["CHUNK_TEMPLATE"].format(create_date=create_date, days_difference=days_difference, similarity=round(rag_text_selected["similarity_prompt"],3), title=rag_text_selected["title"], text=rag_text_selected["text"])
         
         # 選択されたRAGデータの格納（ログ出力用）
         rag_selected += rag_texts_selected
