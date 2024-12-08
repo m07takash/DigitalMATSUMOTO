@@ -48,7 +48,10 @@ def get_text_content(agent_data, content, seq, sub_seq, file_seq):
     image_file = ""
 
     # コンテンツに関わる情報を設定
-    file_name = "[seq"+str(seq)+"-"+str(sub_seq)+"]"+str(file_seq)+"_"+os.path.basename(content)
+    if os.path.basename(content).startswith("[OUT]"):
+        file_name = os.path.basename(content)
+    else:
+        file_name = "[IN]seq"+str(seq)+"-"+str(sub_seq)+"_"+str(file_seq)+"_"+os.path.basename(content)
     file_size = os.path.getsize(content)
     file_type, encoding = mimetypes.guess_type(content)
     

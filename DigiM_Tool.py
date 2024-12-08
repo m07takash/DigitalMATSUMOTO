@@ -39,7 +39,7 @@ def dialog_digest(query, memories_selected={}):
     prompt = f'{prompt_template}{query}\n{digest_memories_text}'
 
     # LLMの実行
-    response, completion, prompt_tokens, response_tokens = agent.generate_response(prompt)
+    response, completion, prompt_tokens, response_tokens = agent.generate_response("LLM", prompt)
 
     # 出力形式
     response = "【これまでの会話のダイジェスト】\n" + response
@@ -60,7 +60,7 @@ def art_critics(memories_selected={}, image_paths=[]):
     prompt = f'{prompt_template}'
 
     # LLMの実行
-    response, completion, prompt_tokens, response_tokens = agent.generate_response(prompt, memories_selected, image_paths)
+    response, completion, prompt_tokens, response_tokens = agent.generate_response("LLM", prompt, memories_selected, image_paths)
     
     return response, prompt_tokens, response_tokens
 
@@ -78,7 +78,7 @@ def ethical_check(query, memories_selected={}):
     prompt = f'{prompt_template}{query}'
 
     # LLMの実行
-    response, completion, prompt_tokens, response_tokens = agent.generate_response(prompt, memories_selected)
+    response, completion, prompt_tokens, response_tokens = agent.generate_response("LLM", prompt, memories_selected)
     
     return response, prompt_tokens, response_tokens
 
@@ -99,7 +99,7 @@ def senryu_sensei(query, memories_selected={},):
     prompt = f'{knowledge_context}{prompt_template}{query}'
     
     # LLMの実行
-    response, completion, prompt_tokens, response_tokens = agent.generate_response(prompt, memories_selected)
+    response, completion, prompt_tokens, response_tokens = agent.generate_response("LLM", prompt, memories_selected)
     
     return response, prompt_tokens, response_tokens
 

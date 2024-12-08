@@ -322,7 +322,7 @@ def main():
         st.session_state.magic_word_use = "N"
 
     # 会話履歴の表示切替
-    option = header_col3.radio("History Visible:", ("NORMAL", "ALL"))
+    option = header_col3.radio("History Visible:", ("ALL", "NORMAL"))
     if option == "ALL":
         st.session_state.chat_history_visible_dict = st.session_state.session.chat_history_active_dict
     elif option == "NORMAL":
