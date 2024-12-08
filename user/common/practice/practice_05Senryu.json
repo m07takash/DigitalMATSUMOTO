@@ -1,0 +1,21 @@
+{
+    "NAME": "Senryu Sensei",
+    "CHAINS": [
+        {
+            "TYPE": "LLM",
+            "SETTING": {
+                "AGENT_FILE": "agent_12SenryuSensei.json",
+                "OVERWRITE_ITEMS": {},
+                "ADD_KNOWLEDGE": [],
+                "PROMPT_TEMPLATE": "Senryu Template",
+                "USER_INPUT": "USER",
+                "CONTENTS": "USER",
+                "SITUATION": {
+                    "TIME": "USER",
+                    "SITUATION": "USER"
+                },
+                "MEMORY_USE": true
+            }
+        }
+    ]
+}

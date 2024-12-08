@@ -45,7 +45,7 @@ def get_session_name(session_id):
     session_key = session_folder_prefix + session_id
     session_file_path = user_folder_path + session_key + "/" + session_file_name
     session_file_dict = dmu.read_json_file(session_file_path)   
-    session_file_active_dict = {k: v for k, v in session_file_dict.items() if v.get("FLG") == "Y"}
+    session_file_active_dict = {k: v for k, v in session_file_dict.items() if v["SETTING"].get("FLG") == "Y"}
     session_name = ""
 
     # 最大シーケンス／サブシーケンスからセッション名を取得
@@ -55,6 +55,22 @@ def get_session_name(session_id):
         session_name = session_file_active_dict[max_seq][max_sub_seq]["setting"]["session_name"]
 
     return session_name
+
+# シチュエーションを取得
+def get_situation(session_id):
+    session_key = session_folder_prefix + session_id
+    session_file_path = user_folder_path + session_key + "/" + session_file_name
+    session_file_dict = dmu.read_json_file(session_file_path)   
+    session_file_active_dict = {k: v for k, v in session_file_dict.items() if v["SETTING"].get("FLG") == "Y"}
+    situation = {}
+
+    # 最大シーケンス／サブシーケンスからシチュエーションを取得
+    if session_file_active_dict:
+        max_seq = max_seq_dict(session_file_active_dict)
+        max_sub_seq = max_seq_dict(session_file_active_dict[max_seq])
+        situation = session_file_active_dict[max_seq][max_sub_seq]["setting"]["situation"]
+
+    return situation
 
 # 新しいセッションIDを発番する
 def set_new_session_id():
@@ -69,6 +85,10 @@ class DigiMSession:
         self.session_name = session_name
         self.session_folder_path = user_folder_path + session_folder_prefix + self.session_id +"/" 
         self.session_file_path = self.session_folder_path +"/"+ session_file_name
+        self.set_history()
+
+    # ヒストリーの再読込
+    def set_history(self):
         self.chat_history_dict = self.get_history()
         self.chat_history_active_dict = self.get_history_active()
         self.chat_history_active_omit_dict = self.get_history_active_omit()
@@ -100,7 +120,7 @@ class DigiMSession:
     def get_history_active(self):
         chat_history_active_dict = {}
         if self.chat_history_dict:
-            chat_history_active_dict = {k: v for k, v in self.chat_history_dict.items() if v.get("FLG") == "Y"}
+            chat_history_active_dict = {k: v for k, v in self.chat_history_dict.items() if v["SETTING"].get("FLG") == "Y"}
         return chat_history_active_dict
 
     # Sub_Seqの最大・最小の辞書型データを獲得する
@@ -108,7 +128,7 @@ class DigiMSession:
         chat_history_active_omit_dict = {}
         if self.chat_history_active_dict:
             for key, sub_dict in self.chat_history_active_dict.items():
-                sub_seqs = sorted((int(k) for k in sub_dict if k != "FLG"))
+                sub_seqs = sorted((int(k) for k in sub_dict if k != "SETTING"))
                 # 最小サブキーと最大サブキーを取得
                 min_subseq = str(sub_seqs[0])
                 max_subseq = str(sub_seqs[-1])
@@ -122,6 +142,18 @@ class DigiMSession:
                 if "digest" in sub_dict[str(max_subseq)]:
                     chat_history_active_omit_dict[key]["1"]["digest"] = sub_dict[str(max_subseq)]["digest"]
         return chat_history_active_omit_dict
+
+    # 最新のダイジェストを取得
+    def get_history_max_digest(self, chat_history_active_dict):
+        max_seq = max(chat_history_active_dict.keys(), key=int)
+        max_sub_seq = 0
+        chat_history_max_digest_dict = {}
+        sub_seq_candidates = [k for k, v in chat_history_active_dict[max_seq].items() if isinstance(v, dict) and "digest" in v]
+        if sub_seq_candidates:
+            max_sub_seq = max(sub_seq_candidates, key=int)
+            #if "digest" in chat_history_active_dict[max_seq][max_sub_seq]:
+            chat_history_max_digest_dict = chat_history_active_dict[max_seq][max_sub_seq]["digest"]
+        return max_seq, max_sub_seq, chat_history_max_digest_dict
     
     # 会話メモリを獲得する（トークン制限で切り取り）
     def get_memory(self, query_vec, model_name, tokenizer, memory_limit_tokens, memory_role="both", memory_priority="latest", memory_similarity_logic="cosine", memory_digest="Y", seq_limit="", sub_seq_limit=""):
@@ -133,26 +165,20 @@ class DigiMSession:
         chat_history_active_dict = self.extract_history_by_keys(self.chat_history_active_dict, seq_limit, sub_seq_limit)
 
         if chat_history_active_dict:
-            max_seq = max(chat_history_active_dict.keys(), key=int)
-            
             # 最新のダイジェストを取得
             if memory_digest == "Y":
-                sub_seq_candidates = [k for k, v in chat_history_active_dict[max_seq].items() if isinstance(v, dict) and "digest" in v]
-                if sub_seq_candidates:
-                    max_sub_seq = max(sub_seq_candidates, key=int)
-                    
-                    # digestが含まれているか確認して処理を続ける
-                    if "digest" in chat_history_active_dict[max_seq][max_sub_seq]:
-                        # トークン制限を超えていなければ、ダイジェストを設定
-                        total_tokens += chat_history_active_dict[max_seq][max_sub_seq]["digest"]["token"]
-                        if total_tokens <= memory_limit_tokens:
-                            similarity_prompt = dmu.calculate_similarity_vec(query_vec, chat_history_active_dict[max_seq][max_sub_seq]["digest"]["vec_text"], memory_similarity_logic)
-                            memories_list.append({"seq": max_seq, "sub_seq": max_sub_seq, "type": "digest", "role": chat_history_active_dict[max_seq][max_sub_seq]["digest"]["role"], "timestamp": chat_history_active_dict[max_seq][max_sub_seq]["digest"]["timestamp"], "token": chat_history_active_dict[max_seq][max_sub_seq]["digest"]["token"], "similarity_prompt": similarity_prompt, "text": chat_history_active_dict[max_seq][max_sub_seq]["digest"]["text"], "vec_text": chat_history_active_dict[max_seq][max_sub_seq]["digest"]["vec_text"]})
+                max_seq, max_sub_seq, chat_history_max_digest_dict = self.get_history_max_digest(chat_history_active_dict)
+                if chat_history_max_digest_dict:
+                    # トークン制限を超えていなければ、ダイジェストを設定
+                    total_tokens += chat_history_max_digest_dict["token"]
+                    if total_tokens <= memory_limit_tokens:
+                        similarity_prompt = dmu.calculate_similarity_vec(query_vec, chat_history_max_digest_dict["vec_text"], memory_similarity_logic)
+                        memories_list.append({"seq": max_seq, "sub_seq": max_sub_seq, "type": "digest", "role": chat_history_max_digest_dict["role"], "timestamp": chat_history_max_digest_dict["timestamp"], "token": chat_history_max_digest_dict["token"], "similarity_prompt": similarity_prompt, "text": chat_history_max_digest_dict["text"], "vec_text": chat_history_max_digest_dict["vec_text"]})
         
             # 各履歴を取得
             for k, v in chat_history_active_dict.items():
                 for k2, v2 in v.items():
-                    if k2 != "FLG":
+                    if k2 != "SETTING":
                         if memory_role in ["both", "user"]:
                             similarity_prompt = dmu.calculate_similarity_vec(query_vec, v2["prompt"]["query"]["vec_text"], memory_similarity_logic)
                             memories_list.append({"seq": k, "sub_seq": k2, "type": v2["prompt"]["role"], "role": v2["prompt"]["role"], "timestamp": v2["prompt"]["timestamp"], "token": v2["prompt"]["query"]["token"], "similarity_prompt": similarity_prompt, "text": v2["prompt"]["query"]["text"], "vec_text": v2["prompt"]["query"]["vec_text"]})
@@ -183,7 +209,7 @@ class DigiMSession:
         return memories_list_prompt
     
     # 会話履歴を保存する
-    def save_history(self, seq, chat_dict_key, chat_dict, sub_seq="1"):
+    def save_history(self, seq, chat_dict_key, chat_dict, level="SEQ", sub_seq="1"):
         chat_history_dict = {}
         
         # セッションフォルダがなければ作成
@@ -197,14 +223,16 @@ class DigiMSession:
         # 会話履歴にseqがなければFLGと一緒に設定
         if seq not in chat_history_dict:
             chat_history_dict[seq] = {}
-            chat_history_dict[seq]["FLG"] = "Y"
-
-        # 会話履歴にsub_seqがなければ設定
-        if sub_seq not in chat_history_dict[seq]:
-            chat_history_dict[seq][sub_seq] = {}
+            chat_history_dict[seq]["SETTING"] = {}
+            chat_history_dict[seq]["SETTING"]["FLG"] = "Y"
         
-        # 会話履歴を追加
-        chat_history_dict[seq][sub_seq][chat_dict_key] = chat_dict
+        # 会話履歴にデータを追加
+        if level == "SEQ":
+            chat_history_dict[seq]["SETTING"][chat_dict_key] = chat_dict
+        elif level == "SUB_SEQ":
+            if sub_seq not in chat_history_dict[seq]:
+                chat_history_dict[seq][sub_seq] = {}
+            chat_history_dict[seq][sub_seq][chat_dict_key] = chat_dict
 
         # 会話履歴を保存
         with open(self.session_file_path, 'w', encoding='utf-8') as f:
@@ -223,7 +251,7 @@ class DigiMSession:
         value = "N"
         if os.path.exists(self.session_file_path):
             chat_history_dict = dmu.read_json_file(session_file_name, self.session_folder_path)
-            chat_history_dict[seq]["FLG"] = value
+            chat_history_dict[seq]["SETTING"]["FLG"] = value
         with open(self.session_file_path, 'w', encoding='utf-8') as f:
             json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
 
@@ -251,8 +279,9 @@ class DigiMSession:
             chat_detail_info += "入力トークン数："+str(chat_history_dict_seq["prompt"]["token"])+"\n"
             chat_detail_info += "出力トークン数："+str(chat_history_dict_seq["response"]["token"])+"\n"
 
-            chat_detail_info += "\n【会話のダイジェスト】(出力トークン数："+str(chat_history_dict_seq["digest"]["token"])+")\n"
-            chat_detail_info += str(chat_history_dict_seq["digest"]["text"])+"\n"
+            if "digest" in chat_history_dict_seq:
+                chat_detail_info += "\n【会話のダイジェスト】(出力トークン数："+str(chat_history_dict_seq["digest"]["token"])+")\n"
+                chat_detail_info += str(chat_history_dict_seq["digest"]["text"])+"\n"
 
             chat_detail_info += "\n【メモリ】\n"
             for memory_set_dict in chat_history_dict_seq["response"]["reference"]["memory"]:
