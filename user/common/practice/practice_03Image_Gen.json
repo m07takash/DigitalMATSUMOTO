@@ -2,17 +2,27 @@
     "NAME": "ImageGen",
     "CHAINS": [
         {
+            "TYPE": "VISION",
+            "SETTING": {
+                "AGENT_FILE": "USER",
+                "OVERWRITE_ITEMS": {},
+                "ADD_KNOWLEDGE": [],
+                "PROMPT_TEMPLATE": "Image Gen",
+                "USER_INPUT": "USER",
+                "CONTENTS": "USER",
+                "SITUATION": "USER",
+                "MEMORY_USE": true
+            }
+        },
+        {
             "TYPE": "LLM",
             "SETTING": {
                 "AGENT_FILE": "USER",
-                "FUNC_NAME": "generate_image_dalle",
-                "PARAMETER": {
-                    "prompt": "", 
-                    "model": "", 
-                    "file_header": ""
-                },
-                "USER_INPUT": "USER",
-                "CONTENTS": "USER",
+                "OVERWRITE_ITEMS": {},
+                "ADD_KNOWLEDGE": [],
+                "PROMPT_TEMPLATE": "No Template",
+                "USER_INPUT": "コンテンツについて、300文字程度で解説してください。",
+                "CONTENTS": "EXPORT_1",
                 "SITUATION": "USER",
                 "MEMORY_USE": true
             }

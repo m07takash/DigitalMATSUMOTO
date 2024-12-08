@@ -110,8 +110,8 @@ class DigiM_Agent:
         return context, knowledge_selected, query_vec
 
     # LLMの実行
-    def generate_response(self, query, memories=[], image_paths={}):
-        response, completion, prompt_tokens, response_tokens = dmfm.call_function_by_name(self.agent["ENGINE"]["FUNC_NAME"], query, self.system_prompt, self.agent["ENGINE"], memories, image_paths, self.skill)
+    def generate_response(self, type, query, memories=[], image_paths={}):
+        response, completion, prompt_tokens, response_tokens = dmfm.call_function_by_name(self.agent["ENGINE"][type]["FUNC_NAME"], query, self.system_prompt, self.agent["ENGINE"][type], memories, image_paths, self.skill)
         return response, completion, prompt_tokens, response_tokens 
 
     # クエリに含まれているコマンド(MAGIC_WORD)でエージェントモードを変更【マジックワードはタスクに移行】

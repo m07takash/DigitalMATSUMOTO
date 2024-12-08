@@ -123,16 +123,19 @@ def generate_image_dalle(prompt, system_prompt, model, memories=[], image_paths=
     img_files = []
     num = 0
     for i, d in enumerate(completion.data):
-        img_file = temp_folder_path + f"{str(len(memories))}_dalle{num}.jpg"
+        img_file = temp_folder_path + f"{num}_dalle.jpg"
         with open(img_file, "wb") as f:
             f.write(base64.b64decode(d.b64_json))
         img_files.append(img_file)
         num = num + 1
 
+    response = "画像を生成しました。"
     completion = img_files
+    prompt_tokens = 0
+    response_tokens = 0
 
     # 画像のコンテキスト取得
-    agent_data = dmu.read_json_file(model["CONTEXT_AGENT_FILE"])
-    response, prompt_tokens, response_tokens = dmt.art_critics(agent_data, image_paths=[img_file])
+#    agent_data = dmu.read_json_file(model["CONTEXT_AGENT_FILE"])
+#    response, prompt_tokens, response_tokens = dmt.art_critics(agent_data, image_paths=[img_file])
 
     return response, completion, prompt_tokens, response_tokens

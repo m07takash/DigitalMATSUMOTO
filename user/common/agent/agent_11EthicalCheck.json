@@ -19,13 +19,14 @@
         "CHARACTOR": "様々なテキストに対して、不適切な表現が含まれていないかを検証することが得意"
     },
     "ENGINE": {
-        "TYPE":"LLM",
-        "NAME":"GPT-4o-mini",
-        "FUNC_NAME": "generate_response_T_gpt",
-        "MODEL": "gpt-4o-mini",
-        "PARAMETER": {"temperature": 0.3},
-        "TOKENIZER": "tiktoken",
-        "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+        "LLM": {
+            "NAME":"GPT-4o-mini",
+            "FUNC_NAME": "generate_response_T_gpt",
+            "MODEL": "gpt-4o-mini",
+            "PARAMETER": {"temperature": 0.3},
+            "TOKENIZER": "tiktoken",
+            "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+        }
     },
     "HABIT": {
         "DEFAULT": {
