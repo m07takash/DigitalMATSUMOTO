@@ -56,10 +56,13 @@ def DigiMatsuExecute(session_id, session_name, agent_file, type="LLM", sub_seq=1
             digest_text = "会話履歴のダイジェスト:\n"+chat_history_max_digest_dict["text"]+"\n---\n"
             query_digest = digest_text + query_digest
 
+    # クエリのベクトル化
+    query_vec = dmu.embed_text(query_digest.replace("\n", ""))
+
     # RAGコンテキストを取得(追加ナレッジを反映)
     if add_knowledge:
         agent.knowledge += add_knowledge
-    knowledge_context, knowledge_selected, query_vec = agent.set_knowledge_context(query_digest)
+    knowledge_context, knowledge_selected = agent.set_knowledge_context(query_digest, query_vec)
     
     # プロンプトテンプレートを取得
     prompt_template = agent.set_prompt_template(prompt_temp_cd)

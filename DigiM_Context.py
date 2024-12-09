@@ -1,6 +1,7 @@
 import os
 import csv
 import json
+import re
 import mimetypes
 from datetime import datetime
 from dotenv import load_dotenv
@@ -85,68 +86,159 @@ def set_prompt_template(prompt_temp_cd):
         prompt_template = prompt_template + prompt_temp +"\n"
     return prompt_template
 
+
 # RAGデータ一覧の取得
 def get_rag_list():
     identifier="_vec.json"
     rag_list = [r.replace(identifier, "") for r in dmu.get_files(rag_folder_path, identifier)]
     return rag_list
 
+
 # RAGデータの取得
-def select_rag(query, rag_data_list, chunk_template="{text}", text_limits=10000, logic="Cosine"):
+def select_rag_vector(query_vec, rag_data_list, rag={}):
     total_characters = 0
     buffer = 100
-    rag_texts = []
-    rag_texts_selected = []
-
-    # クエリのベクトル化
-    query_vec = dmu.embed_text(query.replace("\n", ""))
+    rag_all = []
+    rag_selected = []
+    rag_context = ""
 
     # RAGテキストの選択
     for rag_data in rag_data_list:
-        # RAGテキストの生成日
-        if rag_data["generate_date"]:
-            generate_date = datetime.strptime(dmu.convert_to_ymd(rag_data["generate_date"], "%Y-%m-%d"), "%Y-%m-%d")
+        if rag["TIMESTAMP"]=="CREATE_DATE":
+            if rag_data["create_date"]:
+                timestamp = datetime.strptime(dmu.convert_to_ymd(rag_data["create_date"], "%Y-%m-%d"), "%Y-%m-%d")
+            else:
+                timestamp = current_date
+        elif rag["TIMESTAMP"]=="CURRENT_DATE" or not rag["TIMESTAMP"]:
+            timestamp = current_date
         else:
-            generate_date = current_date
+            timestamp = datetime.strptime(dmu.convert_to_ymd(rag["TIMESTAMP"], "%Y-%m-%d"), "%Y-%m-%d")
+        
+        # 埋め込み用の日付設定
+        timestamp_str = timestamp.strftime(rag["TIMESTAMP_STYLE"])
+        days_difference = (current_date - timestamp).days
+        rag_data["timestamp"] = timestamp_str
+        rag_data["days_difference"] = days_difference
         
         # 埋め込みベクトルの類似度
-        similarity_prompt = dmu.calculate_similarity_vec(query_vec, rag_data["vector_data_key_text"], logic)
+        similarity_prompt = dmu.calculate_similarity_vec(query_vec, rag_data["vector_data_key_text"], rag["DISTANCE_LOGIC"])
+        rag_data["similarity_prompt"] = round(similarity_prompt,3)
 
-        # RAGテキストを辞書型で格納
-        rag_texts.append(
+        # チャンクテンプレートでコンテキスト化
+        chunk_item_list = re.findall(r"\{(.*?)\}", rag["CHUNK_TEMPLATE"])
+        chunk_items = {}
+        for item in chunk_item_list:
+            chunk_items[item] = rag_data[item]
+        rag_data["chunk_context"] = rag["CHUNK_TEMPLATE"].format(**chunk_items)
+        rag_data["log_format"] = rag["LOG_TEMPLATE"]
+
+        rag_all.append(rag_data)
+    
+    # 類似度でソート
+    rag_all_sorted = sorted(rag_all, key=lambda x: x["similarity_prompt"])
+    
+    # RAGテキストを選択（テキスト上限値まで取得）
+    rag_context += rag["HEADER_TEMPLATE"]    
+    total_char = len(rag["HEADER_TEMPLATE"])
+    for rag_data in rag_all_sorted:
+        chunk_len = len(rag_data["chunk_context"])
+        if total_char + chunk_len + buffer > rag["TEXT_LIMITS"]:
+            break
+        rag_selected.append(rag_data)
+        rag_context += rag_data["chunk_context"]
+        total_char = total_char + chunk_len + buffer
+
+    return rag_context, rag_selected
+
+
+# RAGからのコンテキスト取得
+def create_rag_context(query, query_vec=[], rags=[]):
+    rag_final_context = "\n------\n"
+    rag_final_selected = []
+
+    # RAGデータセットごとに処理    
+    for rag in rags:
+        rag_data_list = []
+        for rag_data in rag["DATA"]:
+            rag_data_file = rag_data +'_vec.json'
+            rag_data_json = dmu.read_json_file(rag_data_file, rag_folder_path)
+            for k, v in rag_data_json.items():
+                rag_data_list.append(v)
+        
+        # RAGデータの選択       
+        if rag["RETRIEVER"] == "Vector":
+            rag_context, rag_selected = select_rag_vector(query_vec, rag_data_list, rag)    
+            rag_final_context += rag_context
+            rag_final_selected += rag_selected
+
+    rag_final_context += "----\nこれらの情報を踏まえて、次の質問に日本語で回答してください。\n----\n"
+
+    return rag_final_context, rag_final_selected
+
+
+# レスポンスとRAGの類似度評価
+def get_rag_similarity_response(response_vec, rag_selected, logic="Cosine"):
+    rag_ref = []
+    
+    # 各チャンクと類似度評価
+    for rag_data in rag_selected:
+        rag_data["value_text_short"] = rag_data["value_text"][:50] #50文字に絞る
+        similarity_response = dmu.calculate_similarity_vec(response_vec, rag_data["vector_data_value_text"], logic)
+        rag_data["similarity_response"] = round(similarity_response,3)
+
+        # 画面表示用のログ形式
+        chunk_item_list = re.findall(r"\{(.*?)\}", rag_data["log_format"])
+        chunk_items = {}
+        for item in chunk_item_list:
+            chunk_items[item] = rag_data[item]
+        rag_data["log"] = rag_data["log_format"].format(**chunk_items)
+        
+        # 記録用のデータセット(一部のキーを除く)
+        keys_to_remove = ["vector_data_key_text", "vector_data_value_text", "log_format"]
+        for key in keys_to_remove:
+            rag_data.pop(key, None)
+        rag_ref.append(rag_data)
+    return rag_ref
+
+
+# レスポンスと会話メモリの類似度評価
+def get_memory_similarity_response(response_vec, memory_selected, logic="Cosine"):
+    memory_ref = []
+        
+    for memory_data in memory_selected:
+        seq = memory_data["seq"]
+        sub_seq = memory_data["sub_seq"]
+        type = memory_data["type"]
+        timestamp = memory_data["timestamp"]
+        text = memory_data["text"] 
+        similarity_prompt = round(memory_data["similarity_prompt"],3)
+        similarity_response = round(dmu.calculate_similarity_vec(response_vec, memory_data["vec_text"], logic),3)
+        
+        # 画面表示用のログ形式
+        memory_ref_log = f"{timestamp}の会話履歴：{seq}_{sub_seq}_{type}[質問との類似度：{round(similarity_prompt,3)}、回答との類似度：{round(similarity_response,3)}]{text[:50]}<br>"
+        
+        # 記録用のデータセット
+        memory_ref.append(
             {
+                "seq": seq,
+                "sub_seq": sub_seq,
+                "type": type,
+                "timestamp": timestamp,
+                "text": text,
                 "similarity_prompt": similarity_prompt, 
-                "date": generate_date, 
-                "id": rag_data["id"], 
-                "title": rag_data["title"], 
-                "category": rag_data["category"], 
-                "text": rag_data["value_text"], 
-                "url": rag_data["url"], 
-                "vec_text": rag_data["vector_data_value_text"]
+                "similarity_response": similarity_response, 
+                "log": memory_ref_log
             }
         )
-
-    # 類似度でソート
-    rag_texts_sorted = sorted(rag_texts, key=lambda x: x["similarity_prompt"])
-
-    # RAGテキストを選択（テキスト上限値まで取得）
-    for rag_text in rag_texts_sorted:
-        chunk_len = len(rag_text["title"]) + len(rag_text["text"])
-        if total_characters + chunk_len + buffer > text_limits:
-            break
-        rag_texts_selected.append(rag_text)
-        total_characters = total_characters + chunk_len + buffer
-
-    return rag_texts_selected, query_vec
+    return memory_ref
 
 
 # RAGのチャンクデータをCSV(utf-8)から生成
-def get_chunk_csv(file_path, file_names):
-    field_names = ["title", "category", "eval", "generate_date", "key_text", "value_text", "url"]    
+def get_chunk_csv(file_path, file_names, field_items=["title","create_date", "key_text", "value_text"]):   
     rag_data = []
     for file_name in file_names:
         with open(file_path+file_name, 'r', encoding='utf-8') as csvfile:
-            reader = csv.DictReader(csvfile, fieldnames=field_names)
+            reader = csv.DictReader(csvfile, fieldnames=field_items)
             next(reader, None)
             for i, row in enumerate(reader):
                 rag_data.append({**{'id': file_name+""+str(i+1)}, **dict(row)})
@@ -196,8 +288,9 @@ def get_rag_chunk(rag_data, rag_data_file):
     cnt_add = 0 
     cnt_extent = 0
 
-    # RAGデータをgenerate_dateで降順に並び替え
-    rag_data = sorted(rag_data, key=lambda x: x["generate_date"], reverse=True)
+    # RAGデータをcreate_dateで降順に並び替え
+    if "create_date" in rag_data[0]:
+        rag_data = sorted(rag_data, key=lambda x: x["create_date"], reverse=True)
 
     for rag_chunk in rag_data:
         # 対象ドキュメントのベクトルデータを作成
@@ -237,7 +330,7 @@ def generate_rag_vec_json():
             if rag_setting["mode"] == "notion":
                 rag_data = get_chunk_notion(rag_setting["db"], rag_setting["item_dict"], rag_setting["chk_dict"], rag_setting["date_dict"])
             elif rag_setting["mode"] == "csv":
-                rag_data = get_chunk_csv(rag_setting["file_path"], rag_setting["file_names"])
+                rag_data = get_chunk_csv(rag_setting["file_path"], rag_setting["file_names"], rag_setting["field_items"])
             else:
                 print("正しいモードが設定されていません。")
         
@@ -257,103 +350,3 @@ def generate_rag_vec_json():
                 log = log + f"{rag_id}の書き込みが完了しました。追加件数:{cnt_add}, トータル件数:{cnt_total}<br>"
     
     return log
-
-
-# RAGからのコンテキスト取得
-def create_rag_context(query, rags=[]):
-    rag_context = "\n------\n"
-    rag_selected = []
-    query_vec = []
-
-    # RAGデータセットごとに処理    
-    for rag in rags:
-        rag_data_list = []
-        for rag_data in rag["DATA"]:
-            rag_data_file = rag_data +'_vec.json'
-            rag_data_json = dmu.read_json_file(rag_data_file, rag_folder_path)
-            for k, v in rag_data_json.items():
-                rag_data_list.append(v)
-        
-        # RAGデータの選択       
-        rag_texts_selected, query_vec = select_rag(query, rag_data_list, rag["CHUNK_TEMPLATE"], rag["TEXT_LIMITS"], rag["DISTANCE_LOGIC"])    
-        
-        # RAGデータのコンテキスト化
-        rag_context += rag["HEADER_TEMPLATE"]
-        for rag_text_selected in rag_texts_selected:
-            create_date = rag_text_selected["date"].strftime("%Y年%-m月%-d日")
-            days_difference = (current_date - rag_text_selected["date"]).days
-            rag_context += rag["CHUNK_TEMPLATE"].format(create_date=create_date, days_difference=days_difference, similarity=round(rag_text_selected["similarity_prompt"],3), title=rag_text_selected["title"], text=rag_text_selected["text"])
-        
-        # 選択されたRAGデータの格納（ログ出力用）
-        rag_selected += rag_texts_selected
-
-    rag_context += "----\nこれらの情報を踏まえて、次の質問に日本語で回答してください。\n----\n"
-
-    return rag_context, rag_selected, query_vec
-
-
-# レスポンスとRAGの類似度評価
-def get_rag_similarity_response(response_vec, rag_selected, logic="Cosine"):
-    rag_ref = []
-    
-    # 各チャンクと類似度評価
-    for rag_data in rag_selected:
-        id = rag_data["id"]
-        title = rag_data["title"]
-        generate_date = rag_data["date"].isoformat()
-        category = rag_data["category"]
-        text = rag_data["text"] 
-        similarity_prompt = rag_data["similarity_prompt"]
-        similarity_response = dmu.calculate_similarity_vec(response_vec, rag_data["vec_text"], logic)
-        url = rag_data["url"]
-
-        # 画面表示用のログ形式
-        rag_ref_log = f"ID：{id}<br>{generate_date}時点の知識[カテゴリ：{category}、質問との類似度：{round(similarity_prompt,3)}、回答との類似度：{round(similarity_response,3)}]{title}<br>{text[:50]}<br>参考情報：{url}<br>"
-        
-        # 記録用のデータセット
-        rag_ref.append(
-            {
-                "id": id, 
-                "title": title, 
-                "generate_date": generate_date, 
-                "category": category, 
-                "text": text, 
-                "similarity_prompt": similarity_prompt, 
-                "similarity_response": similarity_response, 
-                "url": url,
-                "log": rag_ref_log
-            }
-        )
-    return rag_ref
-
-
-# レスポンスと会話メモリの類似度評価
-def get_memory_similarity_response(response_vec, memory_selected, logic="Cosine"):
-    memory_ref = []
-        
-    for memory_data in memory_selected:
-        seq = memory_data["seq"]
-        sub_seq = memory_data["sub_seq"]
-        type = memory_data["type"]
-        timestamp = memory_data["timestamp"]
-        text = memory_data["text"] 
-        similarity_prompt = memory_data["similarity_prompt"]
-        similarity_response = dmu.calculate_similarity_vec(response_vec, memory_data["vec_text"], logic)
-        
-        # 画面表示用のログ形式
-        memory_ref_log = f"{timestamp}の会話履歴：{seq}_{sub_seq}_{type}[質問との類似度：{round(similarity_prompt,3)}、回答との類似度：{round(similarity_response,3)}]{text[:50]}<br>"
-        
-        # 記録用のデータセット
-        memory_ref.append(
-            {
-                "seq": seq,
-                "sub_seq": sub_seq,
-                "type": type,
-                "timestamp": timestamp,
-                "text": text,
-                "similarity_prompt": similarity_prompt, 
-                "similarity_response": similarity_response, 
-                "log": memory_ref_log
-            }
-        )
-    return memory_ref
