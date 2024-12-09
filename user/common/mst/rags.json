@@ -5,11 +5,11 @@
         "db" : "DigiMATSU_Opinion",
         "item_dict": {
             "title": {"名前": "title"}, 
-            "category": {"カテゴリ": "select"},
-            "eval": {"評価": "select"},
-            "generate_date": {"考察生成日": "date"}, 
+            "create_date": {"考察生成日": "date"}, 
             "key_text": {"インプット": "rich_text"}, 
             "value_text": {"論点": "rich_text"}, 
+            "category": {"カテゴリ": "select"},
+            "eval": {"評価": "select"},
             "url": {"URL": "url"}
         },
         "context_item":[],
@@ -25,12 +25,12 @@
         "mode" : "notion",
         "db" : "DigiMATSU_Opinion",
         "item_dict": {
-            "title": {"名前": "title"}, 
+            "title": {"名前": "title"},
+            "create_date": {"考察生成日": "date"}, 
+            "key_text": {"インプット": "rich_text"}, 
+            "value_text": {"デジM追加論点": "rich_text"},
             "category": {"カテゴリ": "select"},
             "eval": {"評価": "select"},
-            "generate_date": {"考察生成日": "date"}, 
-            "key_text": {"インプット": "rich_text"}, 
-            "value_text": {"デジM追加論点": "rich_text"}, 
             "url": {"URL": "url"}
         },
         "context_item":[],
@@ -46,12 +46,12 @@
         "mode" : "notion",
         "db" : "DigiMATSU_Opinion",
         "item_dict": {
-            "title": {"名前": "title"}, 
-            "category": {"カテゴリ": "select"},
-            "eval": {"評価": "select"},
-            "generate_date": {"考察生成日": "date"}, 
+            "title": {"名前": "title"},
+            "create_date": {"考察生成日": "date"}, 
             "key_text": {"インプット": "rich_text"}, 
             "value_text": {"考察_確定版": "rich_text"}, 
+            "category": {"カテゴリ": "select"},
+            "eval": {"評価": "select"},
             "url": {"URL": "url"} 
         },
         "context_item":["インプット","論点","リアル松本の指摘事項"],
@@ -68,11 +68,11 @@
         "db" : "DigiMATSU_Opinion",
         "item_dict": {
             "title": {"名前": "title"}, 
-            "category": {"カテゴリ": "select"},
-            "eval": {"評価": "select"},
-            "generate_date": {"考察生成日": "date"}, 
+            "create_date": {"考察生成日": "date"}, 
             "key_text": {"考察_確定版": "rich_text"}, 
             "value_text": {"考察_確定版": "rich_text"}, 
+            "category": {"カテゴリ": "select"},
+            "eval": {"評価": "select"},
             "url": {"URL": "url"}
         },
         "context_item":["インプット","論点","リアル松本の指摘事項"],
@@ -88,12 +88,12 @@
         "mode" : "notion",
         "db" : "DigiMATSU_Opinion",
         "item_dict": {
-            "title": {"名前": "title"}, 
-            "category": {"カテゴリ": "select"},
-            "eval": {"評価": "select"},
-            "generate_date": {"考察生成日": "date"}, 
+            "title": {"名前": "title"},
+            "create_date": {"考察生成日": "date"}, 
             "key_text": {"考察_確定版": "rich_text"}, 
             "value_text": {"川柳_選考結果": "rich_text"}, 
+            "category": {"カテゴリ": "select"},
+            "eval": {"評価": "select"},
             "url": {"URL": "url"}
         },
         "context_item":[],
@@ -110,11 +110,11 @@
         "db" : "DigiMATSU_Opinion",
         "item_dict": {
             "title": {"名前": "title"}, 
-            "category": {"カテゴリ": "select"},
-            "eval": {"評価": "select"},
-            "generate_date": {"考察生成日": "date"}, 
+            "create_date": {"考察生成日": "date"}, 
             "key_text": {"リアル松本の指摘事項": "rich_text"}, 
             "value_text": {"リアル松本の指摘事項": "rich_text"}, 
+            "category": {"カテゴリ": "select"},
+            "eval": {"評価": "select"},
             "url": {"URL": "url"}
         },
         "context_item":[],
@@ -129,7 +129,8 @@
         "active": "Y",
         "mode" : "csv",
         "file_path": "user/common/csv/",
-        "file_names": ["digiMATSU_PolicyRAG.csv"]
+        "file_names": ["digiMATSU_PolicyRAG.csv"],
+        "field_items": ["title", "category", "eval", "create_date", "key_text", "value_text", "url"] 
     },
     "DigiMATSU_Articles":{
         "active": "Y",
@@ -137,11 +138,11 @@
         "db" : "DigiMATSU_Articles",
         "item_dict": {
             "title": {"名前": "title"}, 
-            "category": {"カテゴリ": "AI"},
-            "eval": {"評価": "N"},
-            "generate_date": {"作成日": "date"}, 
+            "create_date": {"作成日": "date"}, 
             "key_text": {"要約": "rich_text"}, 
             "value_text": {"要約": "rich_text"}, 
+            "category": {"カテゴリ": "AI"},
+            "eval": {"評価": "N"},
             "url": {"URL": "url"}
         },
         "context_item":[],
