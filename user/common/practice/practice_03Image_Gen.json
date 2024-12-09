@@ -21,7 +21,7 @@
                 "OVERWRITE_ITEMS": {},
                 "ADD_KNOWLEDGE": [],
                 "PROMPT_TEMPLATE": "No Template",
-                "USER_INPUT": "コンテンツについて、300文字程度で解説してください。",
+                "USER_INPUT": "コンテンツについて、これまでの話と関連付けながら300文字程度で解説してください。",
                 "CONTENTS": "EXPORT_1",
                 "SITUATION": "USER",
                 "MEMORY_USE": true

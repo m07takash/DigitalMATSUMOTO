@@ -36,9 +36,13 @@
     },
     "KNOWLEDGE": [
         {
+            "RETRIEVER": "Vector",
             "DATA": ["DigiMATSU_Opinion_INS_Senryu"],
+            "TIMESTAMP": "CREATE_DATE",
+            "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
             "HEADER_TEMPLATE": "【参考】以前に作った川柳\n",
-            "CHUNK_TEMPLATE": "[テーマ:{title}] {text}\n",
+            "CHUNK_TEMPLATE": "[テーマ:{title}] {value_text}\n",
+            "LOG_TEMPLATE": "ID：{id}\n{timestamp}の川柳[カテゴリ：{category}, 質問との類似度：{similarity_prompt}, 回答との類似度：{similarity_response}]{title}\n{value_text}\n参考情報：{url}\n",
             "TEXT_LIMITS": 2000,
             "DISTANCE_LOGIC": "Cosine"
         }

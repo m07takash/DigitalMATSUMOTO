@@ -267,7 +267,7 @@ class DigiMSession:
                 chat_detail_info += f"{k}：{v}\n"
 
             chat_detail_info += "\n【実行情報】\n"
-            chat_detail_info += "実行モデル："+chat_history_dict_seq["setting"]["engine"]["FUNC_NAME"]+"("+str(chat_history_dict_seq["setting"]["engine"]["PARAMETER"])+")\n"
+            chat_detail_info += "実行関数："+chat_history_dict_seq["setting"]["engine"]["FUNC_NAME"]+"\n"
             chat_detail_info += "プロンプトテンプレート："+chat_history_dict_seq["prompt"]["prompt_template"]["setting"]+"\n"
             chat_detail_info += "RAGデータ："
             for rag_set_dict in chat_history_dict_seq["prompt"]["knowledge_rag"]["setting"]:
@@ -275,6 +275,7 @@ class DigiMSession:
             chat_detail_info += "\n"
 
             chat_detail_info += "\n【実行結果】\n"
+            chat_detail_info += "実行モデル："+chat_history_dict_seq["setting"]["engine"]["MODEL"]+"("+str(chat_history_dict_seq["setting"]["engine"]["PARAMETER"])+")\n"
             chat_detail_info += "回答時間："+dmu.get_time_diff(chat_history_dict_seq["prompt"]["timestamp"], chat_history_dict_seq["response"]["timestamp"], format_str="%Y-%m-%d %H:%M:%S.%f")+"\n"
             chat_detail_info += "入力トークン数："+str(chat_history_dict_seq["prompt"]["token"])+"\n"
             chat_detail_info += "出力トークン数："+str(chat_history_dict_seq["response"]["token"])+"\n"

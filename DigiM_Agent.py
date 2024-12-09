@@ -105,9 +105,9 @@ class DigiM_Agent:
         return prompt_template
     
     # ナレッジコンテキスト(RAG)の生成
-    def set_knowledge_context(self, query):
-        context, knowledge_selected, query_vec = dmc.create_rag_context(query, self.knowledge)
-        return context, knowledge_selected, query_vec
+    def set_knowledge_context(self, query, query_vec=[]):
+        knowledge_context, knowledge_selected = dmc.create_rag_context(query, query_vec=query_vec, rags=self.knowledge)
+        return knowledge_context, knowledge_selected
 
     # LLMの実行
     def generate_response(self, type, query, memories=[], image_paths={}):
