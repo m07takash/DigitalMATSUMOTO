@@ -6,9 +6,6 @@ import mimetypes
 from datetime import datetime
 from dotenv import load_dotenv
 
-import openai
-from openai import OpenAI
-
 import DigiM_Util as dmu
 import DigiM_Tool as dmt
 import DigiM_Notion as dmn

@@ -1,11 +1,11 @@
 python-dotenv
 pytz
 pdfplumber
-dateutil
 requests
 jupyterlab
 streamlit
 openai
+tiktoken
 google-generativeai
 notion
 notion_client
