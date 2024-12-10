@@ -9,7 +9,6 @@ load_dotenv("system.env")
 charactor_folder_path = os.getenv("CHARACTOR_FOLDER")
 agent_folder_path = os.getenv("AGENT_FOLDER")
 mst_folder_path = os.getenv("MST_FOLDER")
-openai_api_key = os.getenv("OPENAI_API_KEY")
 
 # 文字列から関数名を取得
 def call_function_by_name(func_name, *args, **kwargs):
@@ -102,32 +101,3 @@ def senryu_sensei(query, memories_selected={},):
     response, completion, prompt_tokens, response_tokens = agent.generate_response("LLM", prompt, memories_selected)
     
     return response, prompt_tokens, response_tokens
-
-# 画像生成
-def generate_image_dalle(prompt, model, file_header="temp"):
-    os.environ["OPENAI_API_KEY"] = openai_api_key
-    openai.api_key = openai_api_key
-    openai_client = OpenAI()
-    
-    # 画像生成モデルの実行
-    completion = openai_client.images.generate(
-        model=model["MODEL"],
-        prompt=prompt,
-        n=model["PARAMETER"]["n"],  #イメージ枚数
-        size=model["PARAMETER"]["size"],
-        response_format=model["PARAMETER"]["response_format"],  # レスポンスフォーマット url or b64_json
-        quality=model["PARAMETER"]["quality"],  # 品質 standard or hd
-        style=model["PARAMETER"]["style"]  # スタイル vivid or natural
-    )
-
-    # TEMPフォルダに保存
-    img_files = []
-    num = 0
-    for i, d in enumerate(completion.data):
-        img_file = temp_folder_path + f"{file_header}_dalle{num}.jpg"
-        with open(img_file, "wb") as f:
-            f.write(base64.b64decode(d.b64_json))
-        img_files.append(img_file)
-        num = num + 1
-    
-    return img_files
