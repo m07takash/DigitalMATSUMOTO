@@ -135,10 +135,12 @@ class DigiMSession:
                 chat_history_active_omit_dict[key] = {}
                 chat_history_active_omit_dict[key]["1"] = {}
                 chat_history_active_omit_dict[key]["1"]["setting"] = sub_dict[str(min_subseq)]["setting"]
-                chat_history_active_omit_dict[key]["1"]["prompt"] = sub_dict[str(min_subseq)]["prompt"]
+                if "prompt" in sub_dict[str(max_subseq)]:
+                    chat_history_active_omit_dict[key]["1"]["prompt"] = sub_dict[str(min_subseq)]["prompt"]
                 if "image" in sub_dict[str(max_subseq)]:
                     chat_history_active_omit_dict[key]["1"]["image"] = sub_dict[str(max_subseq)]["image"]
-                chat_history_active_omit_dict[key]["1"]["response"] = sub_dict[str(max_subseq)]["response"]
+                if "response" in sub_dict[str(max_subseq)]:
+                    chat_history_active_omit_dict[key]["1"]["response"] = sub_dict[str(max_subseq)]["response"]
                 if "digest" in sub_dict[str(max_subseq)]:
                     chat_history_active_omit_dict[key]["1"]["digest"] = sub_dict[str(max_subseq)]["digest"]
         return chat_history_active_omit_dict
@@ -180,11 +182,13 @@ class DigiMSession:
                 for k2, v2 in v.items():
                     if k2 != "SETTING":
                         if memory_role in ["both", "user"]:
-                            similarity_prompt = dmu.calculate_similarity_vec(query_vec, v2["prompt"]["query"]["vec_text"], memory_similarity_logic)
-                            memories_list.append({"seq": k, "sub_seq": k2, "type": v2["prompt"]["role"], "role": v2["prompt"]["role"], "timestamp": v2["prompt"]["timestamp"], "token": v2["prompt"]["query"]["token"], "similarity_prompt": similarity_prompt, "text": v2["prompt"]["query"]["text"], "vec_text": v2["prompt"]["query"]["vec_text"]})
+                            if "vec_text" in v2["prompt"]["query"]:
+                                similarity_prompt = dmu.calculate_similarity_vec(query_vec, v2["prompt"]["query"]["vec_text"], memory_similarity_logic)
+                                memories_list.append({"seq": k, "sub_seq": k2, "type": v2["prompt"]["role"], "role": v2["prompt"]["role"], "timestamp": v2["prompt"]["timestamp"], "token": v2["prompt"]["query"]["token"], "similarity_prompt": similarity_prompt, "text": v2["prompt"]["query"]["text"], "vec_text": v2["prompt"]["query"]["vec_text"]})
                         if memory_role in ["both", "assistant"]:
-                            similarity_prompt = dmu.calculate_similarity_vec(query_vec, v2["response"]["vec_text"], memory_similarity_logic)
-                            memories_list.append({"seq": k, "sub_seq": k2, "type": v2["response"]["role"], "role": v2["response"]["role"], "timestamp": v2["response"]["timestamp"], "token": v2["response"]["token"], "similarity_prompt": similarity_prompt, "text": v2["response"]["text"], "vec_text": v2["response"]["vec_text"]})
+                            if "vec_text" in v2["response"]:
+                                similarity_prompt = dmu.calculate_similarity_vec(query_vec, v2["response"]["vec_text"], memory_similarity_logic)
+                                memories_list.append({"seq": k, "sub_seq": k2, "type": v2["response"]["role"], "role": v2["response"]["role"], "timestamp": v2["response"]["timestamp"], "token": v2["response"]["token"], "similarity_prompt": similarity_prompt, "text": v2["response"]["text"], "vec_text": v2["response"]["vec_text"]})
 
             # 各履歴をプライオリティ順に並び替え
             if memory_priority == "latest":
@@ -246,9 +250,8 @@ class DigiMSession:
             seq = max(int(key) for key in chat_history_dict.keys())
         return seq
     
-    # 会話履歴のシーケンスを論理削除する
-    def del_seq_history(self, seq):
-        value = "N"
+    # 会話履歴のシーケンスを変更する
+    def chg_seq_history(self, seq, value="N"):
         if os.path.exists(self.session_file_path):
             chat_history_dict = dmu.read_json_file(session_file_name, self.session_folder_path)
             chat_history_dict[seq]["SETTING"]["FLG"] = value

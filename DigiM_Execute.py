@@ -118,6 +118,7 @@ def DigiMatsuExecute(session_id, session_name, agent_file, type="LLM", sub_seq=1
     setting_chat_dict = {
         "session_name": session.session_name, 
         "situation": situation,
+        "type": type,
         "agent_file": agent_file,
         "name": agent.name,
         "act": agent.act,
@@ -227,6 +228,7 @@ def DigiMatsuExecute_Practice(session_id, session_name, in_agent_file, query, in
         input = ""
         output = ""
         import_contents = []
+        export_contents = []
 
         # TYPE「LLM」の場合
         if type in ["LLM","VISION"]:
@@ -282,7 +284,53 @@ def DigiMatsuExecute_Practice(session_id, session_name, in_agent_file, query, in
             output = response
 
         elif type =="TOOL":
-            break
+            # セッションの宣言
+            session = dms.DigiMSession(session_id, session_name)
+            
+            # シーケンスの設定(sub_seq=1ならば発番)
+            if sub_seq == 1:
+                seq = session.get_seq_history() + 1
+            else:
+                seq = session.get_seq_history()
+
+            # ツールの実行
+            setting = chain["SETTING"]
+            input = query
+            import_contents = in_contents
+
+            timestamp_begin = str(datetime.now())
+            output, export_contents = dmt.call_function_by_name(setting["FUNC_NAME"], session_id)
+            timestamp_end = str(datetime.now())
+            
+            # ログデータの保存
+            setting_chat_dict = {
+                "session_name": session.session_name, 
+                "situation": in_situation,
+                "type": type,
+                "agent_file": in_agent_file,
+                "name": practice["NAME"],
+                "tool": setting["FUNC_NAME"]
+            }
+            session.save_history(str(seq), "setting", setting_chat_dict, "SUB_SEQ", str(sub_seq))
+
+            prompt_chat_dict = {
+                "role": "user",
+                "timestamp": timestamp_begin,                
+                "text": input,
+                "query": {
+                    "input": input,
+                    "contents": import_contents
+                }
+            }
+            session.save_history(str(seq), "prompt", prompt_chat_dict, "SUB_SEQ", str(sub_seq))
+        
+            response_chat_dict = {
+                "role": "assistant",
+                "timestamp": timestamp_end,
+                "text": output,
+                "export_contents": export_contents
+            }
+            session.save_history(str(seq), "response", response_chat_dict, "SUB_SEQ", str(sub_seq))
         
         # 結果のリストへの格納
         result["SubSEQ"]=sub_seq
