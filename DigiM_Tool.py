@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 import DigiM_Agent as dma
 import DigiM_Util as dmu
 import DigiM_Context as dmc
+import DigiM_Session as dms
 
 # system.envファイルをロードして環境変数を設定
 load_dotenv("system.env")
@@ -17,6 +18,33 @@ def call_function_by_name(func_name, *args, **kwargs):
         return func(*args, **kwargs)  # 引数を関数に渡す
     else:
         return "Function not found"
+
+
+# セッションの会話履歴の削除
+def forget_history(session_id):
+    session = dms.DigiMSession(session_id)
+    chat_history_dict = session.get_history()
+
+    for seq in chat_history_dict.keys():
+        session.chg_seq_history(seq, "N")
+        
+    response = "会話履歴を全て忘れました"
+    export_contents = []
+    return response, export_contents
+
+
+# セッションの会話履歴の回復
+def remember_history(session_id):
+    session = dms.DigiMSession(session_id)
+    chat_history_dict = session.get_history()
+
+    for seq in chat_history_dict.keys():
+        session.chg_seq_history(seq, "Y")
+        
+    response = "会話履歴を全て思い出しました"
+    export_contents = []
+    return response, export_contents
+
 
 # 会話のダイジェスト生成
 def dialog_digest(query, memories_selected={}):
@@ -45,6 +73,8 @@ def dialog_digest(query, memories_selected={}):
     
     return response, prompt_tokens, response_tokens
 
+
+################################################################
 
 # 画像データへの批評の生成
 def art_critics(memories_selected={}, image_paths=[]):

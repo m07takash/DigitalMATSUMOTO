@@ -38,10 +38,6 @@
     "HABIT": {
         "DEFAULT": {
             "MAGIC_WORDS": [""],
-            "PRACTICE": "practice_00Default.json"
-        },
-        "Chat": {
-            "MAGIC_WORDS": ["簡潔に回答して", "簡潔に答えて"],
             "PRACTICE": "practice_01Chat.json"
         },
         "FORGET_HISTORY": {
