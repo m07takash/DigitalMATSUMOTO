@@ -163,6 +163,9 @@ def main():
             session_name = dms.get_session_name(session_id)
             session_name_btn = session_name[:16]
             situation = dms.get_situation(session_id)
+            if not situation:
+                situation["TIME"] = now_time.strftime("%Y/%m/%d %H:%M:%S")
+                situation["SITUATION"] = ""
             if st.button(session_name_btn, key=session_key):
                 refresh_session(session_id, session_name, situation)
 
@@ -332,7 +335,7 @@ def main():
     if header_col3.button("Delete Chat History(Chk)", key="delete_chat_history"):
         if st.session_state.seq_memory:
             for del_seq in st.session_state.seq_memory:
-                st.session_state.session.del_seq_history(del_seq)
+                st.session_state.session.chg_seq_history(del_seq, "N")
             st.session_state.sidebar_message = "会話履歴を削除しました"
             st.session_state.seq_memory = []
             st.rerun()
@@ -354,10 +357,11 @@ def main():
                     if "image" in v2:
                         for gen_content in v2["image"].values():
                            show_uploaded_files_memory(st.session_state.session.session_folder_path +"contents/", gen_content["file_name"], gen_content["file_type"])
-                with st.chat_message("detail"):
-                    chat_expander = st.expander("Detail Information")
-                    with chat_expander:
-                        st.markdown(st.session_state.session.get_detail_info(k, k2).replace("\n", "<br>"), unsafe_allow_html=True)
+                if v2["setting"]["type"] in ["LLM","VISION"]:
+                    with st.chat_message("detail"):
+                        chat_expander = st.expander("Detail Information")
+                        with chat_expander:
+                            st.markdown(st.session_state.session.get_detail_info(k, k2).replace("\n", "<br>"), unsafe_allow_html=True)
         if st.checkbox(f"Delete(seq:{k})", key="del_chat_seq" + k):
             st.session_state.seq_memory.append(k)
 

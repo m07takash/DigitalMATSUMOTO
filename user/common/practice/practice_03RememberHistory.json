@@ -1,0 +1,12 @@
+{
+    "NAME": "RememberHistory",
+    "CHAINS": [
+        {
+            "TYPE": "TOOL",
+            "SETTING": {
+                "FUNC_NAME": "remember_history",
+                "PARAMETER": ["session_id"]
+            }
+        }
+    ]
+}
