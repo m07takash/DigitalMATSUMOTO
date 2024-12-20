@@ -9,3 +9,4 @@ tiktoken
 google-generativeai
 notion
 notion_client
+line-bot-sdk
