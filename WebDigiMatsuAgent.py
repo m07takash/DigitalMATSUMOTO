@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import pytz
 from dotenv import load_dotenv
 import streamlit as st
+import threading
 
 import DigiM_Execute as dme
 import DigiM_Session as dms
@@ -56,13 +57,15 @@ def initialize_session_states():
         st.session_state.file_uploader = st.file_uploader
     if 'chat_history_visible_dict' not in st.session_state:
         st.session_state.chat_history_visible_dict = {}
+    if 'seq_visible_set' not in st.session_state:
+        st.session_state.seq_visible_set = True
     if 'overwrite_flg_persona' not in st.session_state:
         st.session_state.overwrite_flg_persona = False
     if 'overwrite_flg_prompt_temp' not in st.session_state:
         st.session_state.overwrite_flg_prompt_temp = False
     if 'overwrite_flg_rag' not in st.session_state:
         st.session_state.overwrite_flg_rag = False
-
+        
 # セッションのリフレッシュ（ヒストリーを更新するために、同一セッションIDで再度Sessionクラスを呼び出すこともある）
 def refresh_session(session_id, session_name, situation):
     st.session_state.session = dms.DigiMSession(session_id, session_name)
@@ -155,8 +158,10 @@ def main():
             st.session_state.sidebar_message = "RAG用の知識情報(JSON)の更新が完了しました"
         st.write(st.session_state.sidebar_message)
         st.markdown("----")
-        session_nums = dms.get_session_list()
-        for session_num in sorted(session_nums, reverse=True):
+#        session_nums = dms.get_session_list()
+        session_list = dms.get_session_list_visible()
+#        for session_num in sorted(session_nums, reverse=True):
+        for session_num, last_update_date in session_list:
             session_id = str(session_num)
             session_key = session_folder_prefix + session_id
             session_file_dict = dms.get_session_data(session_id)
@@ -304,10 +309,16 @@ def main():
     # Webパーツのレイアウト
     header_col1, header_col2, header_col3 = st.columns(3)
 
-    # 時刻の設定    
-    selected_date = header_col1.date_input("Situation Date", value=datetime.strptime(st.session_state.time_setting, "%Y/%m/%d %H:%M:%S").date())
-    selected_time = header_col1.time_input("Situation Time", value=datetime.strptime(st.session_state.time_setting, "%Y/%m/%d %H:%M:%S").time())
-    time_setting = str(tz.localize(datetime.combine(selected_date, selected_time)).strftime('%Y/%m/%d %H:%M:%S'))
+    # 時刻の設定
+    header_col1.markdown("Time Setting:")
+    selected_time_setting = now_time
+    if header_col1.checkbox("Real Date:", value=True):
+        selected_time_setting = now_time
+    else:
+        selected_date = header_col1.date_input("Situation Date", value=datetime.strptime(st.session_state.time_setting, "%Y/%m/%d %H:%M:%S").date())
+        selected_time = header_col1.time_input("Situation Time", value=datetime.strptime(st.session_state.time_setting, "%Y/%m/%d %H:%M:%S").time())
+        selected_time_setting = tz.localize(datetime.combine(selected_date, selected_time)).strftime('%Y/%m/%d %H:%M:%S')
+    time_setting = str(selected_time_setting)
 
     # 実行の設定
     header_col2.markdown("Exec Setting:")
@@ -324,13 +335,20 @@ def main():
     else:
         st.session_state.magic_word_use = "N"
 
-    # 会話履歴の表示切替
-    option = header_col3.radio("History Visible:", ("ALL", "NORMAL"))
+    # 会話履歴の表示対象切替
+    option = header_col3.radio("History Seq Visible:", ("LATEST", "FULL"))
+    if option == "LATEST":
+        st.session_state.seq_visible_set = True
+    elif option == "FULL":
+        st.session_state.seq_visible_set = False
+
+    # 会話履歴の表示件数
+    option = header_col3.radio("History Detail Visible:", ("ALL", "SUMMARY"))
     if option == "ALL":
         st.session_state.chat_history_visible_dict = st.session_state.session.chat_history_active_dict
-    elif option == "NORMAL":
+    elif option == "SUMMARY":
         st.session_state.chat_history_visible_dict = st.session_state.session.chat_history_active_omit_dict
-
+    
     # 会話履歴の削除（ボタン）
     if header_col3.button("Delete Chat History(Chk)", key="delete_chat_history"):
         if st.session_state.seq_memory:
@@ -343,27 +361,78 @@ def main():
     # シチュエーションの設定
     situation_setting = st.text_input("Situation Setting:", value=st.session_state.situation_setting)
 
+    # 会話履歴の表示件数の設定
+    max_seq = dms.max_seq_dict(st.session_state.chat_history_visible_dict)
+    seq_visible_key = 0
+    if st.session_state.seq_visible_set:
+        seq_visible_key = int(max_seq) - 10
+    else:
+        seq_visible_key = 0
+    
     # 会話履歴の表示
     for k, v in st.session_state.chat_history_visible_dict.items():
-        st.markdown("----")
-        for k2, v2 in v.items():
-            if k2 != "SETTING":
-                with st.chat_message(v2["prompt"]["role"]):
-                    st.markdown(v2["prompt"]["query"]["input"].replace("\n", "<br>"), unsafe_allow_html=True)
-                    for uploaded_content in v2["prompt"]["query"]["contents"]:
-                        show_uploaded_files_memory(st.session_state.session.session_folder_path +"contents/", uploaded_content["file_name"], uploaded_content["file_type"])
-                with st.chat_message(v2["response"]["role"]):
-                    st.markdown("**"+v2["setting"]["name"]+" ("+v2["response"]["timestamp"]+"):**\n\n"+v2["response"]["text"].replace("\n", "<br>"), unsafe_allow_html=True)
-                    if "image" in v2:
-                        for gen_content in v2["image"].values():
-                           show_uploaded_files_memory(st.session_state.session.session_folder_path +"contents/", gen_content["file_name"], gen_content["file_type"])
-                if v2["setting"]["type"] in ["LLM","VISION"]:
-                    with st.chat_message("detail"):
-                        chat_expander = st.expander("Detail Information")
-                        with chat_expander:
-                            st.markdown(st.session_state.session.get_detail_info(k, k2).replace("\n", "<br>"), unsafe_allow_html=True)
-        if st.checkbox(f"Delete(seq:{k})", key="del_chat_seq" + k):
-            st.session_state.seq_memory.append(k)
+        if int(k) >= seq_visible_key:
+            st.markdown("----")
+            for k2, v2 in v.items():
+                if k2 != "SETTING":
+                    with st.chat_message(v2["prompt"]["role"]):
+                        st.markdown(v2["prompt"]["query"]["input"].replace("\n", "<br>"), unsafe_allow_html=True)
+                        for uploaded_content in v2["prompt"]["query"]["contents"]:
+                            show_uploaded_files_memory(st.session_state.session.session_folder_path +"contents/", uploaded_content["file_name"], uploaded_content["file_type"])
+                    with st.chat_message(v2["response"]["role"]):
+                        st.markdown("**"+v2["setting"]["name"]+" ("+v2["response"]["timestamp"]+"):**\n\n"+v2["response"]["text"].replace("\n", "<br>").replace("#", ""), unsafe_allow_html=True)
+                        if "image" in v2:
+                            for gen_content in v2["image"].values():
+                               show_uploaded_files_memory(st.session_state.session.session_folder_path +"contents/", gen_content["file_name"], gen_content["file_type"])
+
+                    if v2["setting"]["type"] in ["LLM","VISION"]:
+                        with st.chat_message("Feedback"):
+                            chat_expander = st.expander("Feedback")
+                            with chat_expander:
+                                feedback_good = False
+                                feedback_likeme = False
+                                feedback_memo = ""
+                                
+                                if "feedback" in v2:
+                                    feedback_good = v2["feedback"]["good"]
+                                    feedback_likeme = v2["feedback"]["likeme"]
+                                    feedback_memo = v2["feedback"]["memo"]
+        
+                                # Feedback(Memo)
+                                feedback_memo = st.text_input("Feedback Memo:", key=f"feedback_memo{k}_{k2}", value=feedback_memo)
+        
+                                col1, col2, col3 = st.columns(3)
+                                
+                                # Feedback(Good)
+                                if col1.checkbox(f"good", key=f"feedback_good{k}_{k2}", value=feedback_good):
+                                    feedback_good = True
+                                else:
+                                    feedback_good = False
+                                
+                                # Feedback(Like me)
+                                if col2.checkbox(f"like me", key=f"feedback_likeme{k}_{k2}", value=feedback_likeme):
+                                    feedback_likeme = True
+                                else:
+                                    feedback_likeme = False
+                                
+                                # Feedback(memo)
+                                if col3.button("Feedback", key=f"feedback_btn{k}_{k2}"):
+                                    feedbacks = {}
+                                    feedbacks["good"] = feedback_good
+                                    feedbacks["likeme"] = feedback_likeme
+                                    feedbacks["memo"] = feedback_memo
+                                    st.session_state.session.set_feedback_history(k, k2, feedbacks)
+                                    st.session_state.sidebar_message = "フィードバックしました"
+                                    st.rerun()
+                        
+                        # Detail
+                        with st.chat_message("detail"):
+                            chat_expander = st.expander("Detail Information")
+                            with chat_expander:
+                                st.markdown(st.session_state.session.get_detail_info(k, k2).replace("\n", "<br>"), unsafe_allow_html=True)
+            # 会話履歴の論理削除設定
+            if st.checkbox(f"Delete(seq:{k})", key="del_chat_seq"+k):
+                st.session_state.seq_memory.append(k)
 
     # ファイルアップローダー
     st.session_state.uploaded_files = st.session_state.file_uploader("Attached Files:", type=["txt", "csv", "xlsx", "jpg", "jpeg", "png", "mp4", "mov", "avi", "mp3", "wav"], accept_multiple_files=True)
