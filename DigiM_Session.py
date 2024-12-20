@@ -23,7 +23,20 @@ def get_session_list():
             if match:
                 session_nums.append(int(match.group(1)))
     session_nums.sort()
-    return session_nums    
+    return session_nums
+
+# セッションの一覧を獲得(画面用)
+def get_session_list_visible():
+    session_list = []
+    for session_folder_name in os.listdir(user_folder_path):
+        if session_folder_name.startswith(session_folder_prefix):
+            match = re.match(rf'{session_folder_prefix}(\d+)', session_folder_name)
+            if match:
+                session_file_dict = get_session_data(match.group(1))
+                last_update_date = get_history_update_date(session_file_dict)
+                session_list.append([int(match.group(1)), last_update_date])
+    session_list_sorted = sorted(session_list, key=lambda x: x[1], reverse=True)
+    return session_list_sorted
 
 # セッションIDを元にセッションの辞書データを取得する関数
 def get_session_data(session_id):
@@ -55,6 +68,19 @@ def get_session_name(session_id):
         session_name = session_file_active_dict[max_seq][max_sub_seq]["setting"]["session_name"]
 
     return session_name
+
+# 会話履歴の最終更新日を取得
+def get_history_update_date(chat_history_active_dict):
+    max_seq = max(chat_history_active_dict.keys(), key=int)
+    max_sub_seq = 0
+    last_update_date = current_date
+    
+    sub_seq_candidates = [k for k, v in chat_history_active_dict[max_seq].items() if isinstance(v, dict) and "digest" in v]
+    if sub_seq_candidates:
+        max_sub_seq = max(sub_seq_candidates, key=int)
+        last_update_date = datetime.strptime(chat_history_active_dict[max_seq][max_sub_seq]["response"]["timestamp"], "%Y-%m-%d %H:%M:%S.%f")
+        
+    return last_update_date
 
 # シチュエーションを取得
 def get_situation(session_id):
@@ -143,6 +169,8 @@ class DigiMSession:
                     chat_history_active_omit_dict[key]["1"]["response"] = sub_dict[str(max_subseq)]["response"]
                 if "digest" in sub_dict[str(max_subseq)]:
                     chat_history_active_omit_dict[key]["1"]["digest"] = sub_dict[str(max_subseq)]["digest"]
+                if "feedback" in sub_dict[str(max_subseq)]:
+                    chat_history_active_omit_dict[key]["1"]["feedback"] = sub_dict[str(max_subseq)]["feedback"]
         return chat_history_active_omit_dict
 
     # 最新のダイジェストを取得
@@ -250,7 +278,7 @@ class DigiMSession:
             seq = max(int(key) for key in chat_history_dict.keys())
         return seq
     
-    # 会話履歴のシーケンスを変更する
+    # 会話履歴のシーケンスのステータスを変更する
     def chg_seq_history(self, seq, value="N"):
         if os.path.exists(self.session_file_path):
             chat_history_dict = dmu.read_json_file(session_file_name, self.session_folder_path)
@@ -258,6 +286,14 @@ class DigiMSession:
         with open(self.session_file_path, 'w', encoding='utf-8') as f:
             json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
 
+    # 会話履歴のシーケンスのステータスを変更する
+    def set_feedback_history(self, seq, sub_seq, feedbacks={}):
+        if os.path.exists(self.session_file_path):
+            chat_history_dict = dmu.read_json_file(session_file_name, self.session_folder_path)
+            chat_history_dict[seq][sub_seq]["feedback"] = feedbacks
+        with open(self.session_file_path, 'w', encoding='utf-8') as f:
+            json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
+            
     # 会話履歴の詳細情報を取得する
     def get_detail_info(self, seq, sub_seq="1"):
         chat_detail_info = ""
