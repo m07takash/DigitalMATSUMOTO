@@ -74,6 +74,44 @@ def dialog_digest(query, memories_selected={}):
     return response, prompt_tokens, response_tokens
 
 
+# 通常LLMの実行
+def generate_pureLLM(agent_file, query, memories_selected={}):
+    agent_file = agent_folder_path + agent_file
+    agent = dma.DigiM_Agent(agent_file)
+
+    # 通常LLMに設定
+    dma.set_normal_agent(agent)
+    
+    # エージェントに設定されるプロンプトテンプレートを設定
+    prompt_temp_cd = "Insight Template Pure"
+    prompt_template = agent.set_prompt_template(prompt_temp_cd)
+
+    # プロンプトの設定
+    prompt = f'{prompt_template}{query}'
+
+    # LLMの実行
+    response, completion, prompt_tokens, response_tokens = agent.generate_response("LLM", prompt, memories_selected)
+    
+    return response, prompt_tokens, response_tokens
+
+
+# テキストの比較
+def compare_texts(head1, text1, head2, text2):
+    agent_file = agent_folder_path + "agent_53CompareTexts.json"
+    agent = dma.DigiM_Agent(agent_file)
+    
+    # エージェントに設定されるプロンプトテンプレートを設定
+    prompt_temp_cd = "Compare Texts"
+    prompt_template = agent.set_prompt_template(prompt_temp_cd)
+
+    # プロンプトの設定
+    prompt = f'{prompt_template}\n\n[{head1}]\n{text1}\n\n[{head2}]\n{text2}'
+
+    # LLMの実行
+    response, completion, prompt_tokens, response_tokens = agent.generate_response("LLM", prompt)
+    
+    return response, prompt_tokens, response_tokens
+
 ################################################################
 
 # 画像データへの批評の生成

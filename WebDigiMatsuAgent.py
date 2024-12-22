@@ -14,6 +14,7 @@ import DigiM_Session as dms
 import DigiM_Agent as dma
 import DigiM_Context as dmc
 import DigiM_Util as dmu
+import ViewAnalytics as va
 
 # system.envファイルをロードして環境変数を設定
 load_dotenv("system.env")
@@ -156,6 +157,9 @@ def main():
         if st.button("Update RAG JSON", key="update_json"):
             dmc.generate_rag_vec_json()
             st.session_state.sidebar_message = "RAG用の知識情報(JSON)の更新が完了しました"
+        if st.button("Insight Analytics", key="insight_analytics"):
+            va.analytics_insights()
+            st.session_state.sidebar_message = "考察の分析が完了しました"
         st.write(st.session_state.sidebar_message)
         st.markdown("----")
 #        session_nums = dms.get_session_list()
@@ -387,43 +391,34 @@ def main():
 
                     if v2["setting"]["type"] in ["LLM","VISION"]:
                         with st.chat_message("Feedback"):
-                            chat_expander = st.expander("Feedback")
-                            with chat_expander:
+                            feedback_good = False
+                            feedback_likeme = False
+                            feedback_memo = ""
+                            
+                            if "feedback" in v2:
+                                feedback_good = v2["feedback"]["good"]
+                                feedback_likeme = v2["feedback"]["likeme"]
+                                feedback_memo = v2["feedback"]["memo"]
+    
+                            # Feedback  
+                            feedback_memo = st.text_input("Feedback Memo:", key=f"feedback_memo{k}_{k2}", value=feedback_memo)
+                            col1, col2, col3 = st.columns(3)
+                            if col1.checkbox(f"good", key=f"feedback_good{k}_{k2}", value=feedback_good):
+                                feedback_good = True
+                            else:
                                 feedback_good = False
+                            if col2.checkbox(f"like me", key=f"feedback_likeme{k}_{k2}", value=feedback_likeme):
+                                feedback_likeme = True
+                            else:
                                 feedback_likeme = False
-                                feedback_memo = ""
-                                
-                                if "feedback" in v2:
-                                    feedback_good = v2["feedback"]["good"]
-                                    feedback_likeme = v2["feedback"]["likeme"]
-                                    feedback_memo = v2["feedback"]["memo"]
-        
-                                # Feedback(Memo)
-                                feedback_memo = st.text_input("Feedback Memo:", key=f"feedback_memo{k}_{k2}", value=feedback_memo)
-        
-                                col1, col2, col3 = st.columns(3)
-                                
-                                # Feedback(Good)
-                                if col1.checkbox(f"good", key=f"feedback_good{k}_{k2}", value=feedback_good):
-                                    feedback_good = True
-                                else:
-                                    feedback_good = False
-                                
-                                # Feedback(Like me)
-                                if col2.checkbox(f"like me", key=f"feedback_likeme{k}_{k2}", value=feedback_likeme):
-                                    feedback_likeme = True
-                                else:
-                                    feedback_likeme = False
-                                
-                                # Feedback(memo)
-                                if col3.button("Feedback", key=f"feedback_btn{k}_{k2}"):
-                                    feedbacks = {}
-                                    feedbacks["good"] = feedback_good
-                                    feedbacks["likeme"] = feedback_likeme
-                                    feedbacks["memo"] = feedback_memo
-                                    st.session_state.session.set_feedback_history(k, k2, feedbacks)
-                                    st.session_state.sidebar_message = "フィードバックしました"
-                                    st.rerun()
+                            if col3.button("Feedback", key=f"feedback_btn{k}_{k2}"):
+                                feedbacks = {}
+                                feedbacks["good"] = feedback_good
+                                feedbacks["likeme"] = feedback_likeme
+                                feedbacks["memo"] = feedback_memo
+                                st.session_state.session.set_feedback_history(k, k2, feedbacks)
+                                st.session_state.sidebar_message = "フィードバックしました"
+                                st.rerun()
                         
                         # Detail
                         with st.chat_message("detail"):

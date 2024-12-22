@@ -208,17 +208,13 @@ def get_pages_done(database_id, chk_dict=None, date_dict=None):
         next_cursor = response_json.get("next_cursor")
     return all_results
 
-# Notionページへのデータ上書き
-def update_notion_property(page_id, property_name, new_value):
+# Notionページへのデータ上書き(リッチテキスト)
+def update_notion_rich_text(page_id, property_name, new_value):
     url = f"https://api.notion.com/v1/pages/{page_id}"
     data = {
         "properties": {
             property_name: {
-                "rich_text": [{
-                    "text": {
-                        "content": new_value
-                    }
-                }]
+                "rich_text":  new_value
             }
         }
     }
@@ -228,13 +224,17 @@ def update_notion_property(page_id, property_name, new_value):
     else:
         return f"Failed to update. Reason: {response.text}"
 
-# Notionページへのデータ上書き(リッチテキスト)
-def update_notion_rich_text(page_id, property_name, new_value):
+# Notionページへのデータ上書き(リッチテキストの内容)
+def update_notion_rich_text_content(page_id, property_name, new_value):
     url = f"https://api.notion.com/v1/pages/{page_id}"
     data = {
         "properties": {
             property_name: {
-                "rich_text":  new_value
+                "rich_text": [{
+                    "text": {
+                        "content": new_value
+                    }
+                }]
             }
         }
     }
