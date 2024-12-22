@@ -13,7 +13,7 @@ agent_folder_path = os.getenv("AGENT_FOLDER")
 practice_folder_path = os.getenv("PRACTICE_FOLDER")
 timezone_setting = os.getenv("TIMEZONE")
 
-# 単体実行用の関数(削除予定)
+# 単体実行用の関数
 def DigiMatsuExecute(session_id, session_name, agent_file, type="LLM", sub_seq=1, user_input="", contents=[], situation={}, overwrite_items={}, add_knowledge=[], prompt_temp_cd="", memory_use=True, seq_limit="", sub_seq_limit=""):
     export_files = []
     

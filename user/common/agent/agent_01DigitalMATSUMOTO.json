@@ -76,8 +76,8 @@
             "TIMESTAMP": "CREATE_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
             "HEADER_TEMPLATE": "【知識情報】質問に応じて参考にしてください\n",
-            "CHUNK_TEMPLATE": "({timestamp}({days_difference}日前)の情報, 質問との関連の近さ:{similarity_prompt}){title}\n主な論点:\n{value_text}\n\n",
-            "LOG_TEMPLATE": "ID：{id}\n{timestamp}時点の知識[カテゴリ：{category}, 質問との類似度：{similarity_prompt}, 回答との類似度：{similarity_response}]{title}\n{value_text_short}\n参考情報：{url}\n",
+            "CHUNK_TEMPLATE": "({timestamp}({days_difference}日前)の情報, 質問との近さ:{similarity_prompt}){title}\n主な論点:\n{value_text}\n\n",
+            "LOG_TEMPLATE": "ID：{id}\n{timestamp}時点の知識[カテゴリ：{category}, 質問との近さ：{similarity_prompt}, 回答との近さ：{similarity_response}]{title}\n{value_text_short}\n参考情報：{url}\n",
             "TEXT_LIMITS": 10000,
             "DISTANCE_LOGIC": "Cosine"
         },
@@ -87,8 +87,8 @@
             "TIMESTAMP": "CURRENT_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
             "HEADER_TEMPLATE": "【ポリシー】以下のポリシーに強く従います。\n",
-            "CHUNK_TEMPLATE": "{title}\n質問との関連の近さ:{similarity_prompt}\n主な論点:\n{value_text}\n\n",
-            "LOG_TEMPLATE": "ID：{id}\n[質問との類似度：{similarity_prompt}, 回答との類似度：{similarity_response}]{title}\n{value_text_short}\n参考情報：{url}\n",
+            "CHUNK_TEMPLATE": "{title}\n質問との近さ:{similarity_prompt}\n主な論点:\n{value_text}\n\n",
+            "LOG_TEMPLATE": "ID：{id}\n[質問との近さ：{similarity_prompt}, 回答との近さ：{similarity_response}]{title}\n{value_text_short}\n参考情報：{url}\n",
             "TEXT_LIMITS": 2000,
             "DISTANCE_LOGIC": "Cosine"
         }
