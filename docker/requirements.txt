@@ -10,3 +10,4 @@ google-generativeai
 notion
 notion_client
 line-bot-sdk
+mecab-python3
