@@ -9,6 +9,12 @@ from dateutil import parser
 from datetime import datetime
 from dotenv import load_dotenv
 
+import MeCab
+from sklearn.feature_extraction.text import TfidfVectorizer
+
+from wordcloud import WordCloud
+import matplotlib.pyplot as plt
+
 import base64
 import tiktoken
 import openai
@@ -118,6 +124,60 @@ def embed_text(text):
     response = openai_client.embeddings.create(model=embedding_model, input=text)
     response_vec = response.data[0].embedding    
     return response_vec
+
+# 形態素解析(Owakati)
+def tokenize_Owakati(text, mode="Default", stop_words=[], grammer=('名詞', '動詞', '形容詞', '副詞')):
+    mecab = MeCab.Tagger("-Owakati")
+    wakati_text = mecab.parse(text)
+    tokens = wakati_text.split()    
+    if mode == "All":
+        # stop_wordsの除去
+        tokens = [word for word in tokens if word not in stop_words]
+    else:
+        mecab = MeCab.Tagger()  # 形態素解析のタグを取得するためにデフォルトのオプションで再度MeCabインスタンスを作成
+        valid_tokens = []
+        for token in tokens:
+            node = mecab.parseToNode(token)  # 各トークンに対して形態素解析を実行
+            while node:
+                pos = node.feature.split(",")[0]
+                if pos.startswith(grammer) and token not in stop_words:
+                    valid_tokens.append(token)
+                    break  # 同じトークンに対する重複検査を避けるためにループを終了
+                node = node.next
+        tokens = valid_tokens
+    return tokens
+
+# テキストの集合からTF-IDFベクトライザーを作成
+def fit_tfidf(texts, mode="Default", stop_words=[], grammer=('名詞', '動詞', '形容詞', '副詞')):
+    vectorizer = TfidfVectorizer(tokenizer=lambda x: tokenize_Owakati(x, mode, stop_words, grammer), lowercase=False)
+    vectorizer.fit(texts)
+    return vectorizer
+
+# キーワードのTF-IDF値を取得
+def get_tfidf(text, vectorizer):
+    tfidf_matrix = vectorizer.transform([text])
+    feature_names = vectorizer.get_feature_names_out()
+    tfidf_scores = tfidf_matrix.toarray()[0]
+    tfidf_pairs = sorted(zip(feature_names, tfidf_scores), key=lambda x: x[1], reverse=True)
+    tfidf_dict = dict(tfidf_pairs)
+    #tfidf_pairs = [(word, score) for word, score in tfidf_dict.items()]
+    return tfidf_pairs, tfidf_dict
+
+# リストからTF-IDFを取得
+def get_tfidf_list(text, vectorizer, TopN):
+    tfidf_pairs, tfidf_dict = get_tfidf(text, vectorizer)
+    tfidf_topN = tfidf_pairs[:TopN] # 上位Nの項目を取得
+    tfidf_topN_list = [i[0] for i in tfidf_topN]
+    tfidf_topN_str = '、'.join([f'{item[0]}：{round(item[1], 10)}' for item in tfidf_topN])
+    return tfidf_dict, tfidf_topN, tfidf_topN_str
+
+# ワードクラウドで可視化
+def get_wordcloud(title, dict, folder_path="user/common/wordcloud/"):
+    font_path = "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf"
+    wc = WordCloud(background_color="white", font_path=font_path, width=800, height=600, max_words=50, contour_color='steelblue')
+    wc.generate_from_frequencies(dict)
+    file_name = folder_path + f"WordCloud_{title}.png"
+    wc.to_file(file_name)
 
 # トークンの計算
 def count_token(tokenizer, model, text):
