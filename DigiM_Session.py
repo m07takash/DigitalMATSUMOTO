@@ -327,9 +327,11 @@ class DigiMSession:
             for memory_set_dict in chat_history_dict_seq["response"]["reference"]["memory"]:
                 chat_detail_info += memory_set_dict["log"]
         
-            chat_detail_info += "\n【RAGコンテキスト】\n"
+            chat_detail_info += "\n【RAGコンテキスト】\n["
             for rag_set_dict in chat_history_dict_seq["response"]["reference"]["knowledge_rag"]:
-                chat_detail_info += rag_set_dict["log"]
+                chat_detail_info += "{"+ rag_set_dict["log"] + "},\n"
+            if chat_detail_info.endswith(",\n"):
+                chat_detail_info = chat_detail_info[:-2] + "]"
 
             chat_detail_info += "\n【コンテンツコンテキスト】"
             for content_dict in chat_history_dict_seq["prompt"]["query"]["contents"]:
