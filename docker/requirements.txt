@@ -11,3 +11,5 @@ notion
 notion_client
 line-bot-sdk
 mecab-python3
+scikit-learn
+wordcloud
