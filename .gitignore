@@ -166,3 +166,4 @@ session*/
 user/common/agent/charactor/*.txt
 user/common/rag/*.json
 notion_db.json
+test/
