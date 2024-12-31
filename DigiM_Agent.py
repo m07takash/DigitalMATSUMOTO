@@ -51,7 +51,7 @@ def set_normal_agent(agent):
 # Agent
 class DigiM_Agent:
     def __init__(self, agent_file):
-        agent_data = dmu.read_json_file(agent_file)
+        agent_data = dmu.read_json_file(agent_folder_path+agent_file)
         self.set_property(agent_data)
 
     # エージェントのプロパティの設定

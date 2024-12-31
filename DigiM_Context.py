@@ -101,6 +101,7 @@ def select_rag_vector(query_vec, rag_data_list, rag={}):
 
     # RAGテキストの選択
     for rag_data in rag_data_list:
+        rag_data["rag_name"] = rag["RAG_NAME"]
         if rag["TIMESTAMP"]=="CREATE_DATE":
             if rag_data["create_date"]:
                 timestamp = datetime.strptime(dmu.convert_to_ymd(rag_data["create_date"], "%Y-%m-%d"), "%Y-%m-%d")
@@ -231,19 +232,33 @@ def get_memory_similarity_response(response_vec, memory_selected, logic="Cosine"
 
 
 # RAGのチャンクデータをCSV(utf-8)から生成
-def get_chunk_csv(file_path, file_names, field_items=["title","create_date", "key_text", "value_text"]):   
+def get_chunk_csv(bucket, file_path, file_names, field_items=["title", "create_date", "key_text", "value_text"]):   
     rag_data = []
     for file_name in file_names:
-        with open(file_path+file_name, 'r', encoding='utf-8') as csvfile:
+        with open(file_path + file_name, 'r', encoding='utf-8') as csvfile:
             reader = csv.DictReader(csvfile, fieldnames=field_items)
             next(reader, None)
             for i, row in enumerate(reader):
-                rag_data.append({**{'id': file_name+""+str(i+1)}, **dict(row)})
+                #【テスト追加】From
+                if 'create_date' in row and row['create_date']:
+                    try:
+                        # Attempt to parse the date
+                        parsed_date = datetime.strptime(row['create_date'], '%Y-%m-%d')
+                        row['create_date'] = parsed_date.strftime('%Y-%m-%d')
+                    except ValueError:
+                        # If parsing fails, set it to a default or handle the error
+                        try:
+                            # Try alternative formats if needed
+                            parsed_date = datetime.strptime(row['create_date'], '%Y/%m/%d')
+                            row['create_date'] = parsed_date.strftime('%Y-%m-%d')
+                        except ValueError:
+                            row['create_date'] = '1970-01-01'  # Default date or handle as needed
+                #【テスト追加】To
+                rag_data.append({**{'id': file_name + str(i + 1)}, **{'bucket': bucket}, **dict(row)})
     return rag_data
 
-
 # RAGのチャンクデータをNotionデータベースから生成
-def get_chunk_notion(db_name, item_dict, chk_dict, date_dict):
+def get_chunk_notion(bucket, db_name, item_dict, chk_dict=None, date_dict=None):
     rag_data = []
     
     # Notion_DBのIDを取得
@@ -260,21 +275,23 @@ def get_chunk_notion(db_name, item_dict, chk_dict, date_dict):
         if item_dict is not None:
             page_items = {}
             page_items.update({'id': page_id})
-            for key, subdict in item_dict.items():
-                if len(subdict) == 1:
-                    for sub_key, sub_value in subdict.items():
-                        if sub_value is not None:
-                            page_items[key] = dmn.get_notion_item_by_id(pages, page_id, sub_key, sub_value)
-                        else:
-                            page_items[key] = sub_value
-                elif len(subdict) > 1:
-                    subitem_dict = {}
-                    for sub_key, sub_value in subdict.items():
-                        if sub_value is not None:
-                            subitem_dict[sub_key] = dmn.get_notion_item_by_id(pages, page_id, sub_key, sub_value)
-                        page_items[key] = subitem_dict
+            page_items.update({'bucket': bucket})
+            for key, value in item_dict.items():
+                if isinstance(value, dict):
+                    for k, v in value.items():
+                        page_items[key] = dmn.get_notion_item_by_id(pages, page_id, k, v)
+                elif isinstance(value, list):
+                    page_item_text = ""
+                    for item in value:
+                        i = 0
+                        for k, v in item.items():
+                            if i == 0:
+                                page_item_text += dmn.get_notion_item_by_id(pages, page_id, k, v)
+                            else:
+                                page_item_text += "\n"+ dmn.get_notion_item_by_id(pages, page_id, k, v)
+                    page_items[key] = page_item_text
                 else:
-                    page_items[key] = subdict
+                    page_items[key] = value
             rag_data.append(page_items)
     return rag_data
 
@@ -325,9 +342,9 @@ def generate_rag_vec_json():
     for rag_id, rag_setting in rag_mst_dict.items():
         if rag_setting["active"] == "Y":
             if rag_setting["mode"] == "notion":
-                rag_data = get_chunk_notion(rag_setting["db"], rag_setting["item_dict"], rag_setting["chk_dict"], rag_setting["date_dict"])
+                rag_data = get_chunk_notion(rag_setting["bucket"], rag_setting["db"], rag_setting["item_dict"], rag_setting["chk_dict"], rag_setting["date_dict"])
             elif rag_setting["mode"] == "csv":
-                rag_data = get_chunk_csv(rag_setting["file_path"], rag_setting["file_names"], rag_setting["field_items"])
+                rag_data = get_chunk_csv(rag_setting["bucket"], rag_setting["file_path"], rag_setting["file_names"], rag_setting["field_items"])
             else:
                 print("正しいモードが設定されていません。")
         

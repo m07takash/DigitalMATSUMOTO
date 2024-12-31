@@ -172,7 +172,7 @@ def get_tfidf_list(text, vectorizer, TopN):
     return tfidf_dict, tfidf_topN, tfidf_topN_str
 
 # ワードクラウドで可視化
-def get_wordcloud(title, dict, folder_path="user/common/wordcloud/"):
+def get_wordcloud(title, dict, folder_path="user/common/analytics/insight/"):
     font_path = "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf"
     wc = WordCloud(background_color="white", font_path=font_path, width=800, height=600, max_words=50, contour_color='steelblue')
     wc.generate_from_frequencies(dict)

@@ -67,25 +67,39 @@
     },
     "KNOWLEDGE": [
         {
+            "RAG_NAME": "Opinion",
             "RETRIEVER": "Vector",
-            "DATA": ["DigiMATSU_Opinion_INP_RealMPoint","DigiMATSU_Opinion_INP_DigiMPoint"],
+            "DATA": ["DigiMATSU_Opinion_Point"],
             "TIMESTAMP": "CREATE_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
             "HEADER_TEMPLATE": "【知識情報】質問に応じて参考にしてください\n",
-            "CHUNK_TEMPLATE": "({timestamp}({days_difference}日前)の情報, 質問との関連の近さ:{similarity_prompt}){title}\n主な論点:\n{value_text}\n\n",
-            "LOG_TEMPLATE": "'ID': '{id}', 'timestamp': '{timestamp}', 'category': '{category}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}', 'url': '{url}'",
-            "TEXT_LIMITS": 10000,
+            "CHUNK_TEMPLATE": "({timestamp}({days_difference}日前)の情報, 質問との近さ:{similarity_prompt}){title}\n主な論点:\n{value_text}\n\n",
+            "LOG_TEMPLATE": "'rag':'{rag_name}', 'ID': '{id}', 'timestamp': '{timestamp}', 'category': '{category}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}', 'url': '{url}'",
+            "TEXT_LIMITS": 8000,
             "DISTANCE_LOGIC": "Cosine"
         },
         {
+            "RAG_NAME": "Policy",
             "RETRIEVER": "Vector",
-            "DATA": ["DigiMATSU_POLICY","DigiMATSU_Policy_RealMPoint"],
+            "DATA": ["DigiMATSU_POLICY","DigiMATSU_Policy_Insight"],
             "TIMESTAMP": "CURRENT_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
             "HEADER_TEMPLATE": "【ポリシー】以下のポリシーに強く従います。\n",
-            "CHUNK_TEMPLATE": "{title}\n質問との関連の近さ:{similarity_prompt}\n主な論点:\n{value_text}\n\n",
-            "LOG_TEMPLATE": "'ID': '{id}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}', 'url': '{url}'",
+            "CHUNK_TEMPLATE": "{title}\n質問との近さ:{similarity_prompt}\n主な論点:\n{value_text}\n\n",
+            "LOG_TEMPLATE": "'rag':'{rag_name}', 'ID': '{id}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}', 'url': '{url}'",
             "TEXT_LIMITS": 2000,
+            "DISTANCE_LOGIC": "Cosine"
+        },
+        {
+            "RAG_NAME": "Communication",
+            "RETRIEVER": "Vector",
+            "DATA": ["DigiMATSU_Communication"],
+            "TIMESTAMP": "CREATE_DATE",
+            "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
+            "HEADER_TEMPLATE": "【デジタルMATSUMOTOの発言】質問に応じて参考にしてください。\n",
+            "CHUNK_TEMPLATE": "「{value_text}」({timestamp}({days_difference}日前)の情報, 質問との近さ:{similarity_prompt}, 発言の良いところ:{memo})\n",
+            "LOG_TEMPLATE": "'rag':'{rag_name}', 'ID': '{id}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}', 'memo': '{memo}'",
+            "TEXT_LIMITS": 3000,
             "DISTANCE_LOGIC": "Cosine"
         }
     ],

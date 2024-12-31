@@ -3,12 +3,16 @@ from dateutil.parser import parse
 from collections import defaultdict
 import requests
 from pathlib import Path
+from dotenv import load_dotenv
 
 import os
 import json
 import calendar
 import datetime
 from datetime import datetime, timedelta
+
+# system.envファイルをロードして環境変数を設定
+load_dotenv("system.env")
 
 # Notion接続情報の設定
 notion_version = os.getenv("NOTION_VERSION")
@@ -92,7 +96,7 @@ def get_notion_item_by_id(pages, page_id, item, item_type):
     item_data = ""
     if item_type == "title":
         item_data = get_title_by_id(pages, page_id, item)
-    elif item_type == "num":
+    elif item_type == "number":
         item_data = get_num_by_id(pages, page_id, item)
     elif item_type == "date":
         item_data = get_date_by_id(pages, page_id, item)
@@ -105,7 +109,7 @@ def get_notion_item_by_id(pages, page_id, item, item_type):
     elif item_type == "url":
         item_data = get_url_by_id(pages, page_id, item)
     else:
-        item_data = "item_type" #NotionDBに無い固定値の場合はSettingファイルの記載文字列を設定
+        item_data = "item_type_error" #NotionDBに無い固定値の場合はSettingファイルの記載文字列を設定
     if isinstance(item_data, str):
         item_data = circlenum_to_dots(item_data)
     return item_data
@@ -227,17 +231,31 @@ def update_notion_rich_text(page_id, property_name, new_value):
 # Notionページへのデータ上書き(リッチテキストの内容)
 def update_notion_rich_text_content(page_id, property_name, new_value):
     url = f"https://api.notion.com/v1/pages/{page_id}"
+
+    # 文字列を2000文字ごとに分割してrich_textブロックの形式に変換
+    max_length = 2000
+    chunks = [new_value[i:i + max_length] for i in range(0, len(new_value), max_length)]
+    rich_text_blocks = [{"text": {"content": chunk}} for chunk in chunks]
+
+    # Notion APIに送信するデータ
     data = {
         "properties": {
             property_name: {
-                "rich_text": [{
-                    "text": {
-                        "content": new_value
-                    }
-                }]
+                "rich_text": rich_text_blocks
             }
         }
     }
+#    data = {
+#        "properties": {
+#            property_name: {
+#                "rich_text": [{
+#                    "text": {
+#                        "content": new_value
+#                    }
+#                }]
+#            }
+#        }
+#    }
     response = requests.patch(url, headers=notion_headers, json=data)
     if response.status_code == 200:
         return "Updated successfully"
@@ -375,17 +393,18 @@ def archive_page(page_id):
     if response.status_code != 200:
         print(f"Error archiving page {page_id}. Response: {response.json()}")
 
-# Notionページ追加処理【不具合ありで修正予定：get_page_title】
+# Notionページ追加処理
 def create_page(db_id, page_title, title_item="名前"):
     page_content = []
 
     # 名前が重複する記事はアーカイブ
-    page_ids = get_all_page_ids(db_id)
-    if page_ids:
-        for page_id in page_ids:
-            entry_title = get_page_title(page_id)
+    #page_ids = get_all_page_ids(db_id)
+    pages = get_all_pages(db_id)
+    if pages:
+        for page in pages:
+            entry_title = get_title_by_id(pages, page["id"], title_item)
             if entry_title == page_title:
-                archive_page(page_id)
+                archive_page(page["id"])
                 print(entry_title+"をアーカイブしました")
 
     # エントリ詳細を追加
