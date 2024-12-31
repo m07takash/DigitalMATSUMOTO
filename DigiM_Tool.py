@@ -8,7 +8,6 @@ import DigiM_Session as dms
 # system.envファイルをロードして環境変数を設定
 load_dotenv("system.env")
 charactor_folder_path = os.getenv("CHARACTOR_FOLDER")
-agent_folder_path = os.getenv("AGENT_FOLDER")
 mst_folder_path = os.getenv("MST_FOLDER")
 
 # 文字列から関数名を取得
@@ -48,7 +47,7 @@ def remember_history(session_id):
 
 # 会話のダイジェスト生成
 def dialog_digest(query, memories_selected={}):
-    agent_file = agent_folder_path+"agent_51DialogDigest.json"
+    agent_file = "agent_51DialogDigest.json"
     agent = dma.DigiM_Agent(agent_file)
 
     # 通常LLMに設定
@@ -76,7 +75,6 @@ def dialog_digest(query, memories_selected={}):
 
 # 通常LLMの実行
 def generate_pureLLM(agent_file, query, memories_selected={}):
-    agent_file = agent_folder_path + agent_file
     agent = dma.DigiM_Agent(agent_file)
 
     # 通常LLMに設定
@@ -97,7 +95,7 @@ def generate_pureLLM(agent_file, query, memories_selected={}):
 
 # テキストの比較
 def compare_texts(head1, text1, head2, text2):
-    agent_file = agent_folder_path + "agent_53CompareTexts.json"
+    agent_file = "agent_53CompareTexts.json"
     agent = dma.DigiM_Agent(agent_file)
     
     # エージェントに設定されるプロンプトテンプレートを設定
@@ -116,7 +114,7 @@ def compare_texts(head1, text1, head2, text2):
 
 # 画像データへの批評の生成
 def art_critics(memories_selected={}, image_paths=[]):
-    agent_file = agent_folder_path+"agent_52ArtCritic.json"
+    agent_file = "agent_52ArtCritic.json"
     agent = dma.DigiM_Agent(agent_file)
     
     # エージェントに設定されるプロンプトテンプレートを設定
@@ -134,7 +132,7 @@ def art_critics(memories_selected={}, image_paths=[]):
 
 # エシカルチェック
 def ethical_check(query, memories_selected={}):
-    agent_file = agent_folder_path+"agent_11EthicalCheck.json"
+    agent_file = "agent_11EthicalCheck.json"
     agent = dma.DigiM_Agent(agent_file)
     
     # エージェントに設定されるプロンプトテンプレートを設定
@@ -152,7 +150,7 @@ def ethical_check(query, memories_selected={}):
 
 # 川柳の作成
 def senryu_sensei(query, memories_selected={},):
-    agent_file = agent_folder_path+"agent_12SenryuSensei.json"
+    agent_file = "agent_12SenryuSensei.json"
     agent = dma.DigiM_Agent(agent_file)
 
     # RAGコンテキストを取得

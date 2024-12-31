@@ -7,7 +7,7 @@
                 "AGENT_FILE": "USER",
                 "OVERWRITE_ITEMS": {},
                 "ADD_KNOWLEDGE": [],
-                "PROMPT_TEMPLATE": "No Template",
+                "PROMPT_TEMPLATE": "Talk Template",
                 "USER_INPUT": "USER",
                 "CONTENTS": "USER",
                 "SITUATION": "USER",

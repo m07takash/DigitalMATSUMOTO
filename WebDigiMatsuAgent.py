@@ -14,7 +14,10 @@ import DigiM_Session as dms
 import DigiM_Agent as dma
 import DigiM_Context as dmc
 import DigiM_Util as dmu
-import ViewAnalytics as va
+import VAnalyticsInsight as vai
+import VAnalyticsMonthlyInsight as vami
+import VAnalyticsMonthlyKnowledge as vamk
+import GeneCommunication as gc
 
 # system.envファイルをロードして環境変数を設定
 load_dotenv("system.env")
@@ -154,17 +157,27 @@ def main():
             situation["TIME"] = now_time.strftime("%Y/%m/%d %H:%M:%S")
             situation["SITUATION"] = ""
             refresh_session(session_id, session_name, situation)
-        if st.button("Update RAG JSON", key="update_json"):
-            dmc.generate_rag_vec_json()
-            st.session_state.sidebar_message = "RAG用の知識情報(JSON)の更新が完了しました"
-        if st.button("Insight Analytics", key="insight_analytics"):
-            va.analytics_insights()
-            st.session_state.sidebar_message = "考察の分析が完了しました"
+        sidemenu_expander = st.expander("Data Processing")
+        with sidemenu_expander:
+            if st.button("Update RAG Data", key="update_rag"):
+                dmc.generate_rag_vec_json()
+                st.session_state.sidebar_message = "RAG用の知識情報(JSON)の更新が完了しました"
+            if st.button("Feedback to DB", key="save_feedback_to_db"):
+                gc.create_pages_communication(st.session_state.session.session_id)
+                st.session_state.sidebar_message = "フィードバックをDBに保存しました"
+            if st.button("Insight Analytics", key="insight_analytics"):
+                vai.analytics_insights()
+                st.session_state.sidebar_message = "考察の分析が完了しました"
+            analyse_date = st.date_input("Monthly Analytics", value=now_time)
+            if st.button("Monthly Analytics", key="monthly_analytics"):
+                analyse_month_str = analyse_date.strftime("%Y-%m")
+                vami.analytics_insights_monthly(analyse_month_str, 12)
+                vamk.analytics_knowledge_monthly(analyse_month_str)
+                st.session_state.sidebar_message = f"{analyse_month_str}の分析が完了しました"
         st.write(st.session_state.sidebar_message)
+        
         st.markdown("----")
-#        session_nums = dms.get_session_list()
         session_list = dms.get_session_list_visible()
-#        for session_num in sorted(session_nums, reverse=True):
         for session_num, last_update_date in session_list:
             session_id = str(session_num)
             session_key = session_folder_prefix + session_id
@@ -340,9 +353,13 @@ def main():
         st.session_state.magic_word_use = "N"
 
     # 会話履歴の表示対象切替
-    option = header_col3.radio("History Seq Visible:", ("LATEST", "FULL"))
+    num_seq_visible = 10
+    sub_header_col1, sub_header_col2 = header_col3.columns(2)
+    option = sub_header_col1.radio("History Seq Visible:", ("LATEST", "FULL"))
     if option == "LATEST":
         st.session_state.seq_visible_set = True
+        if num_seq_visible := sub_header_col2.number_input(label="Visible Seq", value=10, step=1, format="%d"):
+            st.session_state.seq_visible_set = True
     elif option == "FULL":
         st.session_state.seq_visible_set = False
 
@@ -369,7 +386,7 @@ def main():
     max_seq = dms.max_seq_dict(st.session_state.chat_history_visible_dict)
     seq_visible_key = 0
     if st.session_state.seq_visible_set:
-        seq_visible_key = int(max_seq) - 10
+        seq_visible_key = int(max_seq) - num_seq_visible
     else:
         seq_visible_key = 0
     
@@ -417,7 +434,7 @@ def main():
                                 feedbacks["likeme"] = feedback_likeme
                                 feedbacks["memo"] = feedback_memo
                                 st.session_state.session.set_feedback_history(k, k2, feedbacks)
-                                st.session_state.sidebar_message = "フィードバックしました"
+                                st.session_state.sidebar_message = f"フィードバックをログに保存しました({k})"
                                 st.rerun()
                         
                         # Detail
@@ -458,8 +475,7 @@ def main():
         # ユーザー入力の一時表示
         with st.chat_message("user"):
             st.markdown(user_input.replace("\n", "<br>"), unsafe_allow_html=True)
-            practice=agent_data["HABIT"] 
-            #【作成中】UIでプラクティスを設定（チェイン部分）＋ボタンで追加
+            practice=agent_data["HABIT"]
             results = dme.DigiMatsuExecute_Practice(st.session_state.session.session_id, st.session_state.session.session_name, agent_file, user_input, uploaded_contents, situation, overwrite_items, practice, st.session_state.memory_use, st.session_state.magic_word_use)
             st.rerun()        
 

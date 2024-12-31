@@ -9,7 +9,6 @@ import DigiM_Context as dmc
 import DigiM_Tool as dmt
 import DigiM_Session as dms
 
-agent_folder_path = os.getenv("AGENT_FOLDER")
 practice_folder_path = os.getenv("PRACTICE_FOLDER")
 timezone_setting = os.getenv("TIMEZONE")
 
@@ -33,7 +32,7 @@ def DigiMatsuExecute(session_id, session_name, agent_file, type="LLM", sub_seq=1
         seq = session.get_seq_history()
 
     # エージェントの宣言
-    agent = dma.DigiM_Agent(agent_folder_path+agent_file)
+    agent = dma.DigiM_Agent(agent_file)
     
     # オーバーライト（エージェントデータの個別項目を更新）して、エージェントを再度宣言
     if overwrite_items:
@@ -216,7 +215,7 @@ def DigiMatsuExecute_Practice(session_id, session_name, in_agent_file, query, in
     # プラクティスの選択
     habit = "DEFAULT"
     if magic_word_use == "Y":
-        agent = dma.DigiM_Agent(agent_folder_path+in_agent_file)
+        agent = dma.DigiM_Agent(in_agent_file)
         habit = agent.set_practice_by_command(query)
     practice_file = practice[habit]["PRACTICE"]
     practice = dmu.read_json_file(practice_folder_path+practice_file)
