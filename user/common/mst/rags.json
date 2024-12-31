@@ -1,18 +1,18 @@
 {
-    "DigiMATSU_Opinion_INP_RealMPoint":{
+    "DigiMATSU_Opinion_Point":{
         "active": "Y",
         "mode" : "notion",
         "db" : "DigiMATSU_Opinion",
+        "bucket": "Opinion-Point",
         "item_dict": {
             "title": {"名前": "title"}, 
-            "create_date": {"考察生成日": "date"}, 
-            "key_text": {"インプット": "rich_text"}, 
-            "value_text": {"論点": "rich_text"}, 
+            "create_date": {"note公開日": "date"}, 
+            "key_text": [{"インプット": "rich_text"},{"考察_確定版": "rich_text"}], 
+            "value_text": [{"論点": "rich_text"},{"デジM追加論点": "rich_text"}], 
             "category": {"カテゴリ": "select"},
             "eval": {"評価": "select"},
             "url": {"URL": "url"}
         },
-        "context_item":[],
         "chk_dict": {
             "確定Chk": true
         },
@@ -20,62 +20,20 @@
             "考察生成日":["",""]
         }
     },
-    "DigiMATSU_Opinion_INP_DigiMPoint":{
+    "DigiMATSU_Opinion_Insight":{
         "active": "Y",
         "mode" : "notion",
         "db" : "DigiMATSU_Opinion",
-        "item_dict": {
-            "title": {"名前": "title"},
-            "create_date": {"考察生成日": "date"}, 
-            "key_text": {"インプット": "rich_text"}, 
-            "value_text": {"デジM追加論点": "rich_text"},
-            "category": {"カテゴリ": "select"},
-            "eval": {"評価": "select"},
-            "url": {"URL": "url"}
-        },
-        "context_item":[],
-        "chk_dict": {
-            "確定Chk": true
-        },
-        "date_dict": {
-            "考察生成日":["",""]
-        }
-    },
-    "DigiMATSU_Opinion_INP_Insight":{
-        "active": "Y",
-        "mode" : "notion",
-        "db" : "DigiMATSU_Opinion",
-        "item_dict": {
-            "title": {"名前": "title"},
-            "create_date": {"考察生成日": "date"}, 
-            "key_text": {"インプット": "rich_text"}, 
-            "value_text": {"考察_確定版": "rich_text"}, 
-            "category": {"カテゴリ": "select"},
-            "eval": {"評価": "select"},
-            "url": {"URL": "url"} 
-        },
-        "context_item":["インプット","論点","リアル松本の指摘事項"],
-        "chk_dict": {
-            "確定Chk": true
-        },
-        "date_dict": {
-            "考察生成日":["",""]
-        }
-    },
-    "DigiMATSU_Opinion_INS_Insight":{
-        "active": "N",
-        "mode" : "notion",
-        "db" : "DigiMATSU_Opinion",
+        "bucket": "Opinion-Insight",
         "item_dict": {
             "title": {"名前": "title"}, 
-            "create_date": {"考察生成日": "date"}, 
-            "key_text": {"考察_確定版": "rich_text"}, 
-            "value_text": {"考察_確定版": "rich_text"}, 
+            "create_date": {"note公開日": "date"}, 
+            "key_text": [{"インプット": "rich_text"},{"考察_確定版": "rich_text"}], 
+            "value_text": {"考察_確定版": "rich_text"},
             "category": {"カテゴリ": "select"},
             "eval": {"評価": "select"},
             "url": {"URL": "url"}
         },
-        "context_item":["インプット","論点","リアル松本の指摘事項"],
         "chk_dict": {
             "確定Chk": true
         },
@@ -83,41 +41,20 @@
             "考察生成日":["",""]
         }
     },
-    "DigiMATSU_Opinion_INS_Senryu":{
+    "DigiMATSU_Policy_Insight":{
         "active": "Y",
         "mode" : "notion",
         "db" : "DigiMATSU_Opinion",
-        "item_dict": {
-            "title": {"名前": "title"},
-            "create_date": {"考察生成日": "date"}, 
-            "key_text": {"考察_確定版": "rich_text"}, 
-            "value_text": {"川柳_選考結果": "rich_text"}, 
-            "category": {"カテゴリ": "select"},
-            "eval": {"評価": "select"},
-            "url": {"URL": "url"}
-        },
-        "context_item":[],
-        "chk_dict": {
-            "確定Chk": true
-        },
-        "date_dict": {
-            "考察生成日":["",""]
-        }
-    },
-    "DigiMATSU_Policy_RealMPoint":{
-        "active": "Y",
-        "mode" : "notion",
-        "db" : "DigiMATSU_Opinion",
+        "bucket": "Policy-Insight",
         "item_dict": {
             "title": {"名前": "title"}, 
-            "create_date": {"考察生成日": "date"}, 
-            "key_text": {"リアル松本の指摘事項": "rich_text"}, 
+            "create_date": {"note公開日": "date"}, 
+            "key_text": [{"インプット": "rich_text"},{"考察_確定版": "rich_text"}], 
             "value_text": {"リアル松本の指摘事項": "rich_text"}, 
             "category": {"カテゴリ": "select"},
             "eval": {"評価": "select"},
             "url": {"URL": "url"}
         },
-        "context_item":[],
         "chk_dict": {
             "確定Chk": true
         },
@@ -125,17 +62,55 @@
             "考察生成日":["",""]
         }
     },
+    "DigiMATSU_Senryu":{
+        "active": "Y",
+        "mode" : "notion",
+        "db" : "DigiMATSU_Opinion",
+        "bucket": "Senryu",
+        "item_dict": {
+            "title": {"名前": "title"},
+            "create_date": {"note公開日": "date"}, 
+            "key_text": [{"インプット": "rich_text"},{"考察_確定版": "rich_text"}], 
+            "value_text": {"川柳_選考結果": "rich_text"}, 
+            "category": {"カテゴリ": "select"},
+            "eval": {"評価": "select"},
+            "url": {"URL": "url"}
+        },
+        "chk_dict": {
+            "確定Chk": true
+        },
+        "date_dict": {
+            "考察生成日":["",""]
+        }
+    },
+    "DigiMATSU_Communication":{
+        "active": "Y",
+        "mode" : "notion",
+        "db" : "DigiMATSU_Communication",
+        "bucket": "Communication",
+        "item_dict": {
+            "title": {"名前": "title"}, 
+            "create_date": {"タイムスタンプ": "date"}, 
+            "key_text": [{"クエリ": "rich_text"},{"レスポンス": "rich_text"}], 
+            "value_text": [{"レスポンス": "rich_text"}], 
+            "memo": {"メモ": "rich_text"}
+        },
+        "chk_dict": {},
+        "date_dict": {}
+    },
     "DigiMATSU_POLICY":{
         "active": "Y",
         "mode" : "csv",
+        "bucket": "Policy-CSV",
         "file_path": "user/common/csv/",
         "file_names": ["digiMATSU_PolicyRAG.csv"],
         "field_items": ["title", "category", "eval", "create_date", "key_text", "value_text", "url"] 
     },
     "DigiMATSU_Articles":{
-        "active": "Y",
+        "active": "N",
         "mode" : "notion",
         "db" : "DigiMATSU_Articles",
+        "bucket": "Article",
         "item_dict": {
             "title": {"名前": "title"}, 
             "create_date": {"作成日": "date"}, 
@@ -145,7 +120,6 @@
             "eval": {"評価": "N"},
             "url": {"URL": "url"}
         },
-        "context_item":[],
         "chk_dict": {
             "Chk": true
         },
