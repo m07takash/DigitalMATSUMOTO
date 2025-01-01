@@ -63,7 +63,7 @@ def plot_rag_scatter_thisMonth(end_month, rag_name, rag_data_list, category_map_
 # 追加されたテキスト情報のワードクラウド（TF-IDF）
 def wc_knowledge_tfidf(title, analyse_month, rag_data_month_list, TopN=10):
     GRAMMER = ('名詞')#,'動詞','形容詞','副詞')
-    STOP_WORDS = ["と", "の", "が", "で", "て", "に", "お", "は", "。", "、", "・", "<", ">", "【", "】", "(", ")", "（", "）", "Source", "Doc", "id", ":", "的", "等", "こと", "し", "する", "ます", "です", "します", "これ", "あれ", "それ", "どれ", "この", "あの", "その", "どの", "氏", "さん", "くん", "君", "化", "ため", "おり", "もの", "により", "あり", "これら", "あれら", "それら", "*", "#", ":", ";", "「", "」"]
+    STOP_WORDS = ["と", "の", "が", "で", "て", "に", "お", "は", "。", "、", "・", "<", ">", "【", "】", "(", ")", "（", "）", "Source", "Doc", "id", ":", "的", "等", "こと", "し", "する", "ます", "です", "します", "これ", "あれ", "それ", "どれ", "この", "あの", "その", "どの", "氏", "さん", "くん", "君", "化", "ため", "おり", "もの", "により", "あり", "これら", "あれら", "それら", "・・", "*", "#", ":", ";", "「", "」", "感", "性", "ば", "かも", "ごと"]
 
     # TF-IDF用のデータ
     value_text_list = [rag_data["value_text"] for rag_data in rag_data_month_list]    
@@ -86,7 +86,7 @@ def wc_knowledge_tfidf(title, analyse_month, rag_data_month_list, TopN=10):
 # ナレッジデータの分析
 def analytics_knowledge_monthly(end_month, months=1):   
     # エージェントの設定
-    agent_file = "agent_01DigitalMATSUMOTO.json"
+    agent_file = "agent_01DigitalMATSUMOTO_GPT.json"
     agent = dma.DigiM_Agent(agent_file)
 
     # カテゴリーマップの取得
