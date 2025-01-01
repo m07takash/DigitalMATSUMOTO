@@ -15,7 +15,7 @@ analytics_file_path = "user/common/analytics/insight/"
 def analytics_insight_tfidf(page_data, page_data_done, TopN=10):
     # 形態素解析用の定義
     GRAMMER = ('名詞')#,'動詞','形容詞','副詞')
-    STOP_WORDS = ["と", "の", "が", "で", "て", "に", "お", "は", "。", "、", "・", "<", ">", "【", "】", "(", ")", "（", "）", "Source", "Doc", "id", ":", "的", "等", "こと", "し", "する", "ます", "です", "します", "これ", "あれ", "それ", "どれ", "この", "あの", "その", "どの", "氏", "さん", "くん", "君", "化", "ため", "おり", "もの", "により", "あり", "これら", "あれら", "それら", "*", "#", ":", ";", "「", "」"]
+    STOP_WORDS = ["と", "の", "が", "で", "て", "に", "お", "は", "。", "、", "・", "<", ">", "【", "】", "(", ")", "（", "）", "Source", "Doc", "id", ":", "的", "等", "こと", "し", "する", "ます", "です", "します", "これ", "あれ", "それ", "どれ", "この", "あの", "その", "どの", "氏", "さん", "くん", "君", "化", "ため", "おり", "もの", "により", "あり", "これら", "あれら", "それら", "・・", "*", "#", ":", ";", "「", "」", "感", "性", "ば", "かも", "ごと"]
     
     # ページタイトルを取得
     page_title = page_data["title"]
@@ -42,7 +42,7 @@ def analytics_insight_tfidf(page_data, page_data_done, TopN=10):
 # 独自性：通常LLMとの差分
 def analytics_insight_originality(page_data, vec_insight_final, vec_insight_draft, tfidf_topN=[]):
     # 通常LLMを実行してNotionに保存
-    agent_file = "agent_01DigitalMATSUMOTO.json"
+    agent_file = "agent_01DigitalMATSUMOTO_GPT.json"
     insight_pure, prompt_tokens, response_tokens = dmt.generate_pureLLM(agent_file, page_data["Input"])
     vec_insight_pure = dmu.embed_text(insight_pure)
     dmn.update_notion_rich_text_content(page_data["id"], "考察_比較LLM", insight_pure)

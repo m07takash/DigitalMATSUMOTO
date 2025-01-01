@@ -1,11 +1,13 @@
 import os
 import json
 import base64
+import PIL.Image
 from dotenv import load_dotenv
 
 import openai
 from openai import OpenAI
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 import DigiM_Util as dmu
 import DigiM_Tool as dmt
@@ -72,21 +74,48 @@ def generate_response_T_gpt(prompt, system_prompt, model, memories=[], image_pat
     return response, completion, prompt_tokens, response_tokens
 
 
-# Geminiの実行【GPTを参考に修正】
-def generate_response_T_gemini(api_key, persona, model, parameter, prompt, image_urls, memory_docs):   
-    genai.configure(api_key=api_key)
-    
-    #モデルの実行
-    gemini = genai.GenerativeModel(model)
-    completion = gemini.generate_content(
-        prompt,
-        generation_config={"temperature": parameter["temperature"]}
-    )
-    response = completion.text
-    prompt_tokens = gemini.count_tokens(prompt).total_tokens
-    response_tokens = gemini.count_tokens(response).total_tokens
-    return response, completion, prompt_tokens, response_tokens
+# Geminiの実行(https://github.com/google-gemini/cookbook/blob/main/gemini-2/get_started.ipynb)
+def generate_response_T_gemini(prompt, system_prompt, model, memories=[], image_paths=[], agent_tools={}):
+    gemini_client = genai.Client(api_key=gemini_api_key)
 
+    # メモリをプロンプトに設定
+    memory_message = []
+    for memory in memories:
+        memory_message.append(types.Content(role=memory["role"], parts=[types.Part.from_text(memory["text"])]))
+    
+    # イメージ画像をプロンプトに設定
+    image = []
+    for image_path in image_paths:
+        image.append(PIL.Image.open(image_path))
+    
+    # ユーザーのプロンプトを設定
+    user_prompt = prompt
+    if image:
+        user_prompt = [prompt] + image
+
+    # ツールを設定【修正前】
+###    tools = agent_tools["TOOL_LIST"]
+###    tool_choice = agent_tools["CHOICE"]
+    
+    # モデルの実行設定（モデル／システムプロンプト）
+    chat = gemini_client.chats.create(
+        model=model["MODEL"],
+        config=types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            temperature=model["PARAMETER"]["temperature"],
+        ),
+        history=memory_message
+    )
+    
+    # モデルの実行
+    completion = chat.send_message(user_prompt)
+
+    #レスポンスから出力を抽出
+    response = completion.text
+    prompt_tokens = completion.usage_metadata.prompt_token_count
+    response_tokens = completion.usage_metadata.candidates_token_count
+
+    return response, completion, prompt_tokens, response_tokens
 
 # 考察に対する画像生成
 def generate_image_dalle(prompt, system_prompt, model, memories=[], image_paths=[], agent_tools={}):

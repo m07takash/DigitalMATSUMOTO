@@ -19,10 +19,12 @@ import base64
 import tiktoken
 import openai
 from openai import OpenAI
+from google import genai
 
 # system.envファイルをロードして環境変数を設定
 load_dotenv("system.env")
 openai_api_key = os.getenv("OPENAI_API_KEY")
+gemini_api_key = os.getenv("GEMINI_API_KEY")
 embedding_model = os.getenv("EMBEDDING_MODEL")
 
 # ローカルファイルをStreamlitのUploadedFileと同じオブジェクト型に変換
@@ -185,6 +187,10 @@ def count_token(tokenizer, model, text):
     if tokenizer == "tiktoken":
         encoding = tiktoken.encoding_for_model(model)
         tokens = len(encoding.encode(text))
+    elif tokenizer == "gemini":
+        gemini_client = genai.Client(api_key=gemini_api_key)
+        response_tokens = gemini_client.models.count_tokens(model=model, contents=text)
+        tokens = response_tokens.total_tokens
     else:
         tokens = len(text)
     return tokens

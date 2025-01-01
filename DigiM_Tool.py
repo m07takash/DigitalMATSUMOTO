@@ -132,7 +132,7 @@ def art_critics(memories_selected={}, image_paths=[]):
 
 # エシカルチェック
 def ethical_check(query, memories_selected={}):
-    agent_file = "agent_11EthicalCheck.json"
+    agent_file = "agent_21EthicalCheck.json"
     agent = dma.DigiM_Agent(agent_file)
     
     # エージェントに設定されるプロンプトテンプレートを設定
@@ -150,7 +150,7 @@ def ethical_check(query, memories_selected={}):
 
 # 川柳の作成
 def senryu_sensei(query, memories_selected={},):
-    agent_file = "agent_12SenryuSensei.json"
+    agent_file = "agent_22SenryuSensei.json"
     agent = dma.DigiM_Agent(agent_file)
 
     # RAGコンテキストを取得

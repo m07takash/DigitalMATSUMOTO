@@ -435,7 +435,6 @@ def main():
                                 feedbacks["memo"] = feedback_memo
                                 st.session_state.session.set_feedback_history(k, k2, feedbacks)
                                 st.session_state.sidebar_message = f"フィードバックをログに保存しました({k})"
-                                st.rerun()
                         
                         # Detail
                         with st.chat_message("detail"):

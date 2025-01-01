@@ -6,7 +6,7 @@ jupyterlab
 streamlit
 openai
 tiktoken
-google-generativeai
+google-genai
 notion
 notion_client
 line-bot-sdk
