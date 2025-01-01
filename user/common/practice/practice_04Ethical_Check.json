@@ -4,7 +4,7 @@
         {
             "TYPE": "LLM",
             "SETTING": {
-                "AGENT_FILE": "agent_11EthicalCheck.json",
+                "AGENT_FILE": "agent_21EthicalCheck.json",
                 "OVERWRITE_ITEMS": {},
                 "ADD_KNOWLEDGE": [],
                 "PROMPT_TEMPLATE": "Ethical Check",

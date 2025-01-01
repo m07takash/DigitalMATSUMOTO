@@ -4,7 +4,7 @@
         {
             "TYPE": "LLM",
             "SETTING": {
-                "AGENT_FILE": "agent_12SenryuSensei.json",
+                "AGENT_FILE": "agent_22SenryuSensei.json",
                 "OVERWRITE_ITEMS": {},
                 "ADD_KNOWLEDGE": [],
                 "PROMPT_TEMPLATE": "Senryu Template",
