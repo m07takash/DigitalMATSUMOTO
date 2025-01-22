@@ -1,16 +1,16 @@
 {
     "DISPLAY": true,
-    "DISPLAY_NAME": "Gemini2.0",
+    "DISPLAY_NAME": "llama3.3",
     "NAME": "通常LLM",
     "ACT": "通常のチャットアシスタント",
     "PERSONALITY": {},
     "ENGINE": {
         "LLM": {
-            "NAME":"Gemini2.0",
-            "FUNC_NAME": "generate_response_T_gemini",
-            "MODEL": "gemini-2.0-flash-exp",
+            "NAME":"LLaMa",
+            "FUNC_NAME": "generate_response_T_llama",
+            "MODEL": "llama3.3-70b",
             "PARAMETER": {"temperature": 0.7},
-            "TOKENIZER": "gemini",
+            "TOKENIZER": "",
             "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
         }
     },

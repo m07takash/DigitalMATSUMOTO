@@ -28,8 +28,11 @@ def plot_rag_scatter_thisMonth(end_month, rag_name, rag_data_list, category_map_
     end_date = datetime.strptime(end_month, "%Y-%m")
     end_of_month_str = (end_date + relativedelta(months=1) - timedelta(days=1)).date().strftime("%Y-%m-%d")
     start_of_month_str = (end_date - relativedelta(months=(months-1))).replace(day=1).date().strftime("%Y-%m-%d")
-    
+
+    # 検討対象を指定した月末までに設定
     df = pd.DataFrame(rag_data_list)
+    df = df[pd.to_datetime(df['create_date']) <= pd.to_datetime(end_of_month_str)]
+    
     df['vec_value_text_pca'] = df['vector_data_value_text'].apply(np.array)
     vectors = np.vstack(df['vec_value_text_pca'].to_numpy())
     pca = PCA(n_components=2)

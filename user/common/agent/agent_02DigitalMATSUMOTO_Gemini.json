@@ -1,5 +1,6 @@
 {
     "DISPLAY": true,
+    "DISPLAY_NAME": "デジタルMATSUMOTO(Gemini)",
     "NAME": "デジタルMATSUMOTO",
     "ACT": "AIの専門家である松本敬史のデジタルツインAI",
     "PERSONALITY": {
@@ -27,7 +28,7 @@
             "TOKENIZER": "gemini",
             "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
         },
-        "VISION": {
+        "IMAGEGEN": {
             "NAME":"DALLE-3",
             "FUNC_NAME": "generate_image_dalle",
             "MODEL": "dall-e-3",
@@ -79,7 +80,7 @@
             "HEADER_TEMPLATE": "【知識情報】質問に応じて参考にしてください\n",
             "CHUNK_TEMPLATE": "({timestamp}({days_difference}日前)の情報, 質問との近さ:{similarity_prompt}){title}\n主な論点:\n{value_text}\n\n",
             "LOG_TEMPLATE": "'rag':'{rag_name}', 'ID': '{id}', 'timestamp': '{timestamp}', 'category': '{category}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}', 'url': '{url}'",
-            "TEXT_LIMITS": 8000,
+            "TEXT_LIMITS": 10000,
             "DISTANCE_LOGIC": "Cosine"
         },
         {
