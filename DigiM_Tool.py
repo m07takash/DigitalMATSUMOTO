@@ -46,9 +46,13 @@ def remember_history(session_id):
 
 
 # 会話のダイジェスト生成
-def dialog_digest(query, memories_selected={}):
+def dialog_digest(user_query, memories_selected={}):
     agent_file = "agent_51DialogDigest.json"
     agent = dma.DigiM_Agent(agent_file)
+
+    model_type = "LLM"
+    model_name = agent.agent["ENGINE"][model_type]["MODEL"]
+    tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
 
     # 通常LLMに設定
     # dma.set_normal_agent(agent)
@@ -62,14 +66,20 @@ def dialog_digest(query, memories_selected={}):
     digest_memories_text = str(digest_memories_selected)[1:-1]
 
     # プロンプトの設定
-    prompt = f'{prompt_template}{query}\n{digest_memories_text}'
+    query = f'{prompt_template}{user_query}\n{digest_memories_text}'
 
     # LLMの実行
-    response, completion, prompt_tokens, response_tokens = agent.generate_response("LLM", prompt)
-
+    response = ""
+    for prompt, response_chunk, completion in agent.generate_response(model_type, query, stream_mode=False):
+        if response_chunk:
+            response += response_chunk
+    
+    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
+    response_tokens = dmu.count_token(tokenizer, model_name, response)
+    
     # 出力形式
     response = "【これまでの会話のダイジェスト】\n" + response
-    
+
     return response, prompt_tokens, response_tokens
 
 
@@ -77,6 +87,10 @@ def dialog_digest(query, memories_selected={}):
 def generate_pureLLM(agent_file, query, memories_selected={}):
     agent = dma.DigiM_Agent(agent_file)
 
+    model_type = "LLM"
+    model_name = agent.agent["ENGINE"][model_type]["MODEL"]
+    tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
+    
     # 通常LLMに設定
     dma.set_normal_agent(agent)
     
@@ -88,7 +102,14 @@ def generate_pureLLM(agent_file, query, memories_selected={}):
     prompt = f'{prompt_template}{query}'
 
     # LLMの実行
-    response, completion, prompt_tokens, response_tokens = agent.generate_response("LLM", prompt, memories_selected)
+    #response, completion, prompt_tokens, response_tokens = agent.generate_response("LLM", prompt, memories_selected)
+    response = ""
+    for prompt, response_chunk, completion in agent.generate_response(model_type, prompt, memories_selected):
+        if response_chunk:
+            response += response_chunk
+    
+    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
+    response_tokens = dmu.count_token(tokenizer, model_name, response)
     
     return response, prompt_tokens, response_tokens
 
@@ -97,6 +118,10 @@ def generate_pureLLM(agent_file, query, memories_selected={}):
 def compare_texts(head1, text1, head2, text2):
     agent_file = "agent_53CompareTexts.json"
     agent = dma.DigiM_Agent(agent_file)
+
+    model_type = "LLM"
+    model_name = agent.agent["ENGINE"][model_type]["MODEL"]
+    tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
     
     # エージェントに設定されるプロンプトテンプレートを設定
     prompt_temp_cd = "Compare Texts"
@@ -106,16 +131,26 @@ def compare_texts(head1, text1, head2, text2):
     prompt = f'{prompt_template}\n\n[{head1}]\n{text1}\n\n[{head2}]\n{text2}'
 
     # LLMの実行
-    response, completion, prompt_tokens, response_tokens = agent.generate_response("LLM", prompt)
+    #response, completion, prompt_tokens, response_tokens = agent.generate_response("LLM", prompt)
+    response = ""
+    for prompt, response_chunk, completion in agent.generate_response(model_type, prompt):
+        if response_chunk:
+            response += response_chunk
+    
+    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
+    response_tokens = dmu.count_token(tokenizer, model_name, response)
     
     return response, prompt_tokens, response_tokens
 
-################################################################
-
+    
 # 画像データへの批評の生成
 def art_critics(memories_selected={}, image_paths=[]):
     agent_file = "agent_52ArtCritic.json"
     agent = dma.DigiM_Agent(agent_file)
+
+    model_type = "LLM"
+    model_name = agent.agent["ENGINE"][model_type]["MODEL"]
+    tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
     
     # エージェントに設定されるプロンプトテンプレートを設定
     prompt_temp_cd = "Art Critic"
@@ -125,10 +160,19 @@ def art_critics(memories_selected={}, image_paths=[]):
     prompt = f'{prompt_template}'
 
     # LLMの実行
-    response, completion, prompt_tokens, response_tokens = agent.generate_response("LLM", prompt, memories_selected, image_paths)
+    #response, completion, prompt_tokens, response_tokens = agent.generate_response("LLM", prompt, memories_selected, image_paths)
+    response = ""
+    for prompt, response_chunk, completion in agent.generate_response(model_type, prompt, memories_selected, image_paths):
+        if response_chunk:
+            response += response_chunk
+    
+    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
+    response_tokens = dmu.count_token(tokenizer, model_name, response)
     
     return response, prompt_tokens, response_tokens
 
+
+################################################################
 
 # エシカルチェック
 def ethical_check(query, memories_selected={}):

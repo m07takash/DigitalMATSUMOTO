@@ -27,17 +27,24 @@ def get_display_agents():
     agents = []
     for agent_file in agent_files:
         agent_data = dmu.read_json_file(agent_file, agent_folder_path)
-        if agent_data["DISPLAY"]:
-            agents.append({"AGENT": agent_data["NAME"]+":"+agent_data["ENGINE"]["LLM"]["NAME"], "FILE": agent_file})
+#        if agent_data["DISPLAY"]:
+#            agents.append({"AGENT": agent_data["NAME"]+":"+agent_data["ENGINE"]["LLM"]["NAME"], "FILE": agent_file})
+        agents.append({"AGENT": agent_data["DISPLAY_NAME"], "FILE": agent_file})
     return agents
+
+# 通常LLMエージェントのプロパティを設定
+def get_agent_item(agent_file, item):
+    agent_data = dmu.read_json_file(agent_folder_path+agent_file)
+    item_value = agent_data[item]
+    return item_value
 
 # 通常LLMエージェントのプロパティを設定
 def set_normal_agent(agent):
     overwrite_items = {}
     overwrite_items["NAME"] = "ノーマルLLM"
     overwrite_items["ACT"] = "通常のチャットアシスタント"
-    overwrite_items["PERSONALITY"] = {}
-    overwrite_items["HABIT"] = {}
+    overwrite_items["PERSONALITY"] = ""
+    overwrite_items["HABIT"] = ""
     overwrite_items["KNOWLEDGE"] = []
     overwrite_items["SKILL"] = {
         "TOOL_LIST": [
@@ -110,9 +117,11 @@ class DigiM_Agent:
         return knowledge_context, knowledge_selected
 
     # LLMの実行
-    def generate_response(self, type, query, memories=[], image_paths={}):
-        response, completion, prompt_tokens, response_tokens = dmfm.call_function_by_name(self.agent["ENGINE"][type]["FUNC_NAME"], query, self.system_prompt, self.agent["ENGINE"][type], memories, image_paths, self.skill)
-        return response, completion, prompt_tokens, response_tokens 
+    def generate_response(self, model_type, query, memories=[], image_paths={}, stream_mode=True):
+#        response, completion, prompt_tokens, response_tokens = dmfm.call_function_by_name(self.agent["ENGINE"][type]["FUNC_NAME"], query, self.system_prompt, self.agent["ENGINE"][type], memories, image_paths, self.skill)
+#        return response, completion, prompt_tokens, response_tokens    
+        for prompt, response, completion in dmfm.call_function_by_name(self.agent["ENGINE"][model_type]["FUNC_NAME"], query, self.system_prompt, self.agent["ENGINE"][model_type], memories, image_paths, self.skill, stream_mode):
+            yield prompt, response, completion
 
     # クエリに含まれているコマンド(MAGIC_WORD)でエージェントモードを変更【マジックワードはタスクに移行】
     def set_practice_by_command(self, query):
@@ -122,4 +131,3 @@ class DigiM_Agent:
             if any(word in query for word in magic_words if word):
                 habit = k
         return habit
-

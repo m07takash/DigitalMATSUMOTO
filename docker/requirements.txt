@@ -7,6 +7,7 @@ streamlit
 openai
 tiktoken
 google-genai
+llamaapi
 notion
 notion_client
 line-bot-sdk

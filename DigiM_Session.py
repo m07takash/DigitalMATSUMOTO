@@ -83,6 +83,22 @@ def get_history_update_date(chat_history_active_dict):
     return last_update_date
 
 # シチュエーションを取得
+def get_agent_file(session_id):
+    session_key = session_folder_prefix + session_id
+    session_file_path = user_folder_path + session_key + "/" + session_file_name
+    session_file_dict = dmu.read_json_file(session_file_path)   
+    session_file_active_dict = {k: v for k, v in session_file_dict.items() if v["SETTING"].get("FLG") == "Y"}
+    agent_file = ""
+
+    # 最大シーケンス／サブシーケンスからシチュエーションを取得
+    if session_file_active_dict:
+        max_seq = max_seq_dict(session_file_active_dict)
+        max_sub_seq = max_seq_dict(session_file_active_dict[max_seq])
+        agent_file = session_file_active_dict[max_seq][max_sub_seq]["setting"]["agent_file"]
+
+    return agent_file
+
+# シチュエーションを取得
 def get_situation(session_id):
     session_key = session_folder_prefix + session_id
     session_file_path = user_folder_path + session_key + "/" + session_file_name
@@ -110,7 +126,7 @@ class DigiMSession:
         self.session_id = session_id if session_id else set_new_session_id()
         self.session_name = session_name
         self.session_folder_path = user_folder_path + session_folder_prefix + self.session_id +"/" 
-        self.session_file_path = self.session_folder_path +"/"+ session_file_name
+        self.session_file_path = self.session_folder_path + session_file_name
         self.set_history()
 
     # ヒストリーの再読込
@@ -173,15 +189,31 @@ class DigiMSession:
                     chat_history_active_omit_dict[key]["1"]["feedback"] = sub_dict[str(max_subseq)]["feedback"]
         return chat_history_active_omit_dict
 
+    # 最新のエージェントを取得
+    def get_history_max_agent(self):
+        chat_history_active_dict = self.get_history_active()
+        max_seq = max(chat_history_active_dict.keys(), key=int)
+        max_sub_seq = 0
+        agent_file = ""
+        agent_name = ""
+        engine_name = ""
+        sub_seq_candidates = [k for k, v in chat_history_active_dict[max_seq].items() if isinstance(v, dict) and "setting" in v]
+        if sub_seq_candidates:
+            max_sub_seq = max(sub_seq_candidates, key=int)
+            agent_file = chat_history_active_dict[max_seq][max_sub_seq]["setting"]["agent_file"]
+            agent_name = chat_history_active_dict[max_seq][max_sub_seq]["setting"]["name"]
+            engine_name = chat_history_active_dict[max_seq][max_sub_seq]["setting"]["engine"]["NAME"]
+        return agent_name+":"+engine_name 
+    
     # 最新のダイジェストを取得
-    def get_history_max_digest(self, chat_history_active_dict):
+    def get_history_max_digest(self):
+        chat_history_active_dict = self.get_history_active()
         max_seq = max(chat_history_active_dict.keys(), key=int)
         max_sub_seq = 0
         chat_history_max_digest_dict = {}
         sub_seq_candidates = [k for k, v in chat_history_active_dict[max_seq].items() if isinstance(v, dict) and "digest" in v]
         if sub_seq_candidates:
             max_sub_seq = max(sub_seq_candidates, key=int)
-            #if "digest" in chat_history_active_dict[max_seq][max_sub_seq]:
             chat_history_max_digest_dict = chat_history_active_dict[max_seq][max_sub_seq]["digest"]
         return max_seq, max_sub_seq, chat_history_max_digest_dict
     
@@ -197,7 +229,7 @@ class DigiMSession:
         if chat_history_active_dict:
             # 最新のダイジェストを取得
             if memory_digest == "Y":
-                max_seq, max_sub_seq, chat_history_max_digest_dict = self.get_history_max_digest(chat_history_active_dict)
+                max_seq, max_sub_seq, chat_history_max_digest_dict = self.get_history_max_digest()#chat_history_active_dict)
                 if chat_history_max_digest_dict:
                     # トークン制限を超えていなければ、ダイジェストを設定
                     total_tokens += chat_history_max_digest_dict["token"]
@@ -270,7 +302,7 @@ class DigiMSession:
         with open(self.session_file_path, 'w', encoding='utf-8') as f:
             json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
 
-    # 会話履歴のシーケンスを発番する
+    # 会話履歴のシーケンスを獲得する
     def get_seq_history(self):
         seq = 0
         if os.path.exists(self.session_file_path):
@@ -301,9 +333,9 @@ class DigiMSession:
             chat_history_dict = dmu.read_json_file(session_file_name, self.session_folder_path)
             chat_history_dict_seq = chat_history_dict[seq][sub_seq]
             
-            chat_detail_info += "【設定情報】\n"
-            for k, v in chat_history_dict_seq["setting"].items():
-                chat_detail_info += f"{k}：{v}\n"
+#            chat_detail_info += "【設定情報】\n"
+#            for k, v in chat_history_dict_seq["setting"].items():
+#                chat_detail_info += f"{k}：{v}\n"
 
             chat_detail_info += "\n【実行情報】\n"
             chat_detail_info += "実行関数："+chat_history_dict_seq["setting"]["engine"]["FUNC_NAME"]+"\n"
@@ -314,6 +346,7 @@ class DigiMSession:
             chat_detail_info += "\n"
 
             chat_detail_info += "\n【実行結果】\n"
+            chat_detail_info += "エージェント："+chat_history_dict_seq["setting"]["agent_file"]+"\n"
             chat_detail_info += "実行モデル："+chat_history_dict_seq["setting"]["engine"]["MODEL"]+"("+str(chat_history_dict_seq["setting"]["engine"]["PARAMETER"])+")\n"
             chat_detail_info += "回答時間："+dmu.get_time_diff(chat_history_dict_seq["prompt"]["timestamp"], chat_history_dict_seq["response"]["timestamp"], format_str="%Y-%m-%d %H:%M:%S.%f")+"\n"
             chat_detail_info += "入力トークン数："+str(chat_history_dict_seq["prompt"]["token"])+"\n"

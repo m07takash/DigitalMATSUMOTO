@@ -1,5 +1,6 @@
 {
     "DISPLAY": true,
+    "DISPLAY_NAME": "エシカルチェック",
     "NAME": "エシカルチェッカー",
     "ACT": "倫理的な価値を重んじるコンプライアンスの専門家",
     "PERSONALITY": {

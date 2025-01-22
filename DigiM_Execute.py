@@ -9,11 +9,14 @@ import DigiM_Context as dmc
 import DigiM_Tool as dmt
 import DigiM_Session as dms
 
+user_folder_path = os.getenv("USER_FOLDER")
+session_folder_prefix = os.getenv("SESSION_FOLDER_PREFIX")
+temp_folder_path = os.getenv("TEMP_FOLDER")
 practice_folder_path = os.getenv("PRACTICE_FOLDER")
 timezone_setting = os.getenv("TIMEZONE")
 
 # 単体実行用の関数
-def DigiMatsuExecute(session_id, session_name, agent_file, type="LLM", sub_seq=1, user_input="", contents=[], situation={}, overwrite_items={}, add_knowledge=[], prompt_temp_cd="", memory_use=True, seq_limit="", sub_seq_limit=""):
+def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", stream_mode=True, sub_seq=1, user_input="", contents=[], situation={}, overwrite_items={}, add_knowledge=[], prompt_temp_cd="", memory_use=True, seq_limit="", sub_seq_limit=""):
     export_files = []
     
     # 会話履歴データの定義
@@ -43,40 +46,40 @@ def DigiMatsuExecute(session_id, session_name, agent_file, type="LLM", sub_seq=1
     contents_context, contents_records, image_files = agent.set_contents_context(seq, sub_seq, contents)
 
     # 入力するクエリに纏めて、トークン数を取得
-    query = user_input + contents_context
-    query_tokens = dmu.count_token(agent.agent["ENGINE"][type]["TOKENIZER"], agent.agent["ENGINE"][type]["MODEL"], query)
-    system_tokens = dmu.count_token(agent.agent["ENGINE"][type]["TOKENIZER"], agent.agent["ENGINE"][type]["MODEL"], agent.system_prompt)
+    user_query = user_input + contents_context
+    model_name = agent.agent["ENGINE"][model_type]["MODEL"]
+    tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
+    query_tokens = dmu.count_token(tokenizer, model_name, user_query)
+    system_tokens = dmu.count_token(tokenizer, model_name, agent.system_prompt)
 
     # 会話のダイジェストを取得(ダイジェストはRAGとMemoryの類似度検索にのみ用い、プロンプトには含めない)
-    query_digest = query
     if session.chat_history_active_dict:
-        max_seq, max_sub_seq, chat_history_max_digest_dict = session.get_history_max_digest(session.chat_history_active_dict)
+        max_seq, max_sub_seq, chat_history_max_digest_dict = session.get_history_max_digest()#session.chat_history_active_dict)
         if chat_history_max_digest_dict:
             digest_text = "会話履歴のダイジェスト:\n"+chat_history_max_digest_dict["text"]+"\n---\n"
-            query_digest = digest_text + query_digest
+            user_query = digest_text + user_query
 
     # クエリのベクトル化
-    query_vec = dmu.embed_text(query_digest.replace("\n", ""))
+    query_vec = dmu.embed_text(user_query.replace("\n", ""))
 
     # RAGコンテキストを取得(追加ナレッジを反映)
     if add_knowledge:
         agent.knowledge += add_knowledge
-    knowledge_context, knowledge_selected = agent.set_knowledge_context(query_digest, query_vec)
+    knowledge_context, knowledge_selected = agent.set_knowledge_context(user_query, query_vec)
     
     # プロンプトテンプレートを取得
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
 
     # 会話メモリの取得
-    model_name = agent.agent["ENGINE"][type]["MODEL"]
-    tokenizer = agent.agent["ENGINE"][type]["TOKENIZER"]
-    if type == "LLM":
-        memory_limit_tokens = agent.agent["ENGINE"][type]["MEMORY"]["limit"]
+
+    if model_type == "LLM":
+        memory_limit_tokens = agent.agent["ENGINE"][model_type]["MEMORY"]["limit"]
     else:
-        memory_limit_tokens = agent.agent["ENGINE"][type]["MEMORY"]["limit"] - (system_tokens + query_tokens)
-    memory_role = agent.agent["ENGINE"][type]["MEMORY"]["role"]
-    memory_priority = agent.agent["ENGINE"][type]["MEMORY"]["priority"]
-    memory_similarity_logic = agent.agent["ENGINE"][type]["MEMORY"]["similarity_logic"]
-    memory_digest = agent.agent["ENGINE"][type]["MEMORY"]["digest"]
+        memory_limit_tokens = agent.agent["ENGINE"][model_type]["MEMORY"]["limit"] - (system_tokens + query_tokens)
+    memory_role = agent.agent["ENGINE"][model_type]["MEMORY"]["role"]
+    memory_priority = agent.agent["ENGINE"][model_type]["MEMORY"]["priority"]
+    memory_similarity_logic = agent.agent["ENGINE"][model_type]["MEMORY"]["similarity_logic"]
+    memory_digest = agent.agent["ENGINE"][model_type]["MEMORY"]["digest"]
     memories_selected = []
     if memory_use:
         memories_selected = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
@@ -92,15 +95,23 @@ def DigiMatsuExecute(session_id, session_name, agent_file, type="LLM", sub_seq=1
     situation_prompt = f"\n【状況】\n{situation_setting}現在は「{time_setting}」です。"
 
     # プロンプトを設定(最終的にテキスト制限値でアロケート)
-    if type == "LLM":
-        prompt = f'{knowledge_context}{prompt_template}{query}{situation_prompt}'
-    elif type == "VISION":
-        prompt = f'{prompt_template}{query}{situation_prompt}'
+    if model_type == "LLM":
+        query = f'{knowledge_context}{prompt_template}{user_query}{situation_prompt}'
+    elif model_type == "IMAGEGEN":
+        query = f'{prompt_template}{user_query}{situation_prompt}'
     
     # LLMの実行
+    response = ""
     timestamp_begin = str(datetime.now())
-    response, completion, prompt_tokens, response_tokens = agent.generate_response(type, prompt, memories_selected, image_files)
+#    response, completion, prompt_tokens, response_tokens = agent.generate_response(model_type, query, memories_selected, image_files)
+    for prompt, response_chunk, completion in agent.generate_response(model_type, query, memories_selected, image_files, stream_mode):
+        if response_chunk:
+            response += response_chunk
+            yield response_chunk, export_files
     timestamp_end = str(datetime.now())
+
+    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
+    response_tokens = dmu.count_token(tokenizer, model_name, response)
 
     # レスポンスとメモリ・コンテキストの類似度
     response_vec = dmu.embed_text(response.replace("\n", ""))
@@ -117,13 +128,13 @@ def DigiMatsuExecute(session_id, session_name, agent_file, type="LLM", sub_seq=1
     setting_chat_dict = {
         "session_name": session.session_name, 
         "situation": situation,
-        "type": type,
+        "type": model_type,
         "agent_file": agent_file,
         "name": agent.name,
         "act": agent.act,
         "personality": agent.personality,
         "system_prompt": agent.system_prompt,
-        "engine": agent.agent["ENGINE"][type],
+        "engine": agent.agent["ENGINE"][model_type],
         "knowledge": agent.agent["KNOWLEDGE"],
         "skill": agent.agent["SKILL"]
     }
@@ -138,7 +149,7 @@ def DigiMatsuExecute(session_id, session_name, agent_file, type="LLM", sub_seq=1
         "query": {
             "input": user_input,
             "token": query_tokens,
-            "text": query,
+            "text": user_query,
             "contents": contents_record_to,
             "situation": situation,
             "tools": [],
@@ -156,7 +167,7 @@ def DigiMatsuExecute(session_id, session_name, agent_file, type="LLM", sub_seq=1
     session.save_history(str(seq), "prompt", prompt_chat_dict, "SUB_SEQ", str(sub_seq))
 
     # ログデータの保存(SubSeq:image)
-    if type=="VISION":
+    if model_type=="IMAGEGEN":
         img_dict = {}
         i=0
         for img_completion_path in completion:
@@ -204,11 +215,12 @@ def DigiMatsuExecute(session_id, session_name, agent_file, type="LLM", sub_seq=1
     }
     session.save_history(str(seq), "digest", digest_chat_dict, "SUB_SEQ", str(sub_seq))
 
-    return response, export_files
+    yield "", export_files
 
 
 # プラクティスで実行
-def DigiMatsuExecute_Practice(session_id, session_name, in_agent_file, query, in_contents, in_situation={}, in_overwrite_items={}, practice={}, in_memory_use=True, magic_word_use="Y"):
+def DigiMatsuExecute_Practice(session_id, session_name, in_agent_file, user_query, in_contents, in_situation={}, in_overwrite_items={}, practice={}, in_memory_use=True, magic_word_use="Y", stream_mode=True):
+    session = dms.DigiMSession(session_id, session_name)
     sub_seq = 1
     results = []
 
@@ -216,21 +228,21 @@ def DigiMatsuExecute_Practice(session_id, session_name, in_agent_file, query, in
     habit = "DEFAULT"
     if magic_word_use == "Y":
         agent = dma.DigiM_Agent(in_agent_file)
-        habit = agent.set_practice_by_command(query)
+        habit = agent.set_practice_by_command(user_query)
     practice_file = practice[habit]["PRACTICE"]
     practice = dmu.read_json_file(practice_folder_path+practice_file)
-
+    
     # プラクティス(チェイン)の実行
     for chain in practice["CHAINS"]:
         result = {}
-        type = chain["TYPE"]
+        model_type = chain["TYPE"]
         input = ""
         output = ""
         import_contents = []
         export_contents = []
 
         # TYPE「LLM」の場合
-        if type in ["LLM","VISION"]:
+        if model_type in ["LLM", "IMAGEGEN"]:
             setting = chain["SETTING"]
             # "USER":ユーザー入力(引数)、他:プラクティスファイルの設定
             agent_file = setting["AGENT_FILE"] if setting["AGENT_FILE"] != "USER" else in_agent_file
@@ -241,7 +253,7 @@ def DigiMatsuExecute_Practice(session_id, session_name, in_agent_file, query, in
             # "USER":ユーザー入力(引数)、"INPUT{SubSeqNo}":サブSEQの入力結果、"RESULT{SubSeqNo}":サブSEQの出力結果
             user_input = ""
             if setting["USER_INPUT"] == "USER":
-                user_input = query
+                user_input = user_query
             elif setting["USER_INPUT"].startswith("INPUT"):
                 ref_subseq = int(setting["USER_INPUT"].replace("INPUT", "").strip())
                 user_input = next((item["INPUT"] for item in results if item["SubSEQ"] == ref_subseq), None)
@@ -278,13 +290,17 @@ def DigiMatsuExecute_Practice(session_id, session_name, in_agent_file, query, in
     #        sub_seq_limit = chain["PreSubSEQ"] #メモリ参照範囲のsubSeq
 
             # LLM実行
-            response, export_contents = DigiMatsuExecute(session_id, session_name, agent_file, type, sub_seq, user_input, import_contents, situation, overwrite_items, add_knowledge, prompt_temp_cd, memory_use) #, seq_limit, sub_seq_limit)    
+            response = ""
+            for response_chunk, export_contents in DigiMatsuExecute(session_id, session_name, agent_file, model_type, stream_mode, sub_seq, user_input, import_contents, situation, overwrite_items, add_knowledge, prompt_temp_cd, memory_use): #, seq_limit, sub_seq_limit)
+                response += response_chunk
+                yield response_chunk
+            
             input = user_input
             output = response
 
-        elif type =="TOOL":
+        elif model_type =="TOOL":
             # セッションの宣言
-            session = dms.DigiMSession(session_id, session_name)
+#            session = dms.DigiMSession(session_id, session_name)
             
             # シーケンスの設定(sub_seq=1ならば発番)
             if sub_seq == 1:
@@ -294,7 +310,7 @@ def DigiMatsuExecute_Practice(session_id, session_name, in_agent_file, query, in
 
             # ツールの実行
             setting = chain["SETTING"]
-            input = query
+            input = user_query
             import_contents = in_contents
 
             timestamp_begin = str(datetime.now())
@@ -305,7 +321,7 @@ def DigiMatsuExecute_Practice(session_id, session_name, in_agent_file, query, in
             setting_chat_dict = {
                 "session_name": session.session_name, 
                 "situation": in_situation,
-                "type": type,
+                "type": model_type,
                 "agent_file": in_agent_file,
                 "name": practice["NAME"],
                 "tool": setting["FUNC_NAME"]
@@ -330,12 +346,16 @@ def DigiMatsuExecute_Practice(session_id, session_name, in_agent_file, query, in
                 "export_contents": export_contents
             }
             session.save_history(str(seq), "response", response_chat_dict, "SUB_SEQ", str(sub_seq))
+
+            yield output
         
         # 結果のリストへの格納
         result["SubSEQ"]=sub_seq
-        result["TYPE"]=type
+        result["TYPE"]=model_type
         result["INPUT"]=input
-        result["IMPORT_CONTENTS"]=import_contents
+        chat_history_dict=session.get_history()
+        seq = session.get_seq_history()
+        result["IMPORT_CONTENTS"]=[session.session_folder_path+"contents/"+i["file_name"] for i in chat_history_dict[str(seq)][str(sub_seq)]["prompt"]["query"]["contents"]]
         result["OUTPUT"]=output
         result["EXPORT_CONTENTS"]=export_contents
         results.append(result)
@@ -344,8 +364,7 @@ def DigiMatsuExecute_Practice(session_id, session_name, in_agent_file, query, in
         sub_seq = sub_seq + 1
 
     # ログデータの保存(Seq)
-    session = dms.DigiMSession(session_id, session_name)
     seq = session.get_seq_history()
     session.save_history(str(seq), "practice", practice, "SEQ")
  
-    return results
+#    return results

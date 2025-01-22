@@ -1,5 +1,6 @@
 {
     "DISPLAY": true,
+    "DISPLAY_NAME": "GPT-4o",
     "NAME": "通常LLM",
     "ACT": "通常のチャットアシスタント",
     "PERSONALITY": {},

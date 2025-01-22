@@ -46,7 +46,7 @@ def get_text_content(agent_data, content, seq, sub_seq, file_seq):
     image_file = ""
 
     # コンテンツに関わる情報を設定
-    if os.path.basename(content).startswith("[OUT]"):
+    if os.path.basename(content).startswith("[IN]") or os.path.basename(content).startswith("[OUT]"):
         file_name = os.path.basename(content)
     else:
         file_name = "[IN]seq"+str(seq)+"-"+str(sub_seq)+"_"+str(file_seq)+"_"+os.path.basename(content)

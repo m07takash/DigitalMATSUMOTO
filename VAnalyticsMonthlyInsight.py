@@ -56,12 +56,11 @@ def get_analytics_data(end_month, months=12):
         "r3_point_RealM": {"リアル松本の論点数": "number"},
         "k1_util": {"知識活用性": "rich_text"},
         "k1_Q": {"知識参照度Q": "rich_text"},
-        "k1_Q_Rank": {"知識参照度Q_ランキング": "rich_text"},
         "k1_A": {"知識活用度A": "rich_text"},
-        "k1_A_Rank": {"知識活用度A_ランキング": "rich_text"},
+        "k1_Rank": {"知識活用性ランキング": "rich_text"},
         "url": {"URL": "url"}
     }
-    chk_dict_analyse = {'確定Chk': True, '分析Chk': True}
+    chk_dict_analyse = {'確定Chk': True, '分析Chk': True} #分析対象ではなく「確定」したデータのみを対象（考察として確定し、RAGにも反映しているデータ）
     date_dict = {
         "note公開日":[start_of_month_str, end_of_month_str]
     }
@@ -122,10 +121,13 @@ def plot_count_monthly(df, analyse_month):
     plt.savefig(f"{analytics_file_path}{analyse_month}Monthly01Cnt.png", dpi=300, bbox_inches='tight')
     #plt.show()
 
-
 # 月ごとの評価ランクごとの件数を集計
 def plot_rank_monthly(df, analyse_month):    
-    category_monthly_counts = df.groupby(['month', 'r1_eval']).size().unstack(fill_value=0).iloc[:, ::-1]
+    # カテゴリの順序を指定
+    eval_order = ["P", "A", "B", "C", "D", "E"][::-1]
+    df['r1_eval'] = pd.Categorical(df['r1_eval'], categories=eval_order, ordered=True)
+
+    category_monthly_counts = df.groupby(['month', 'r1_eval']).size().unstack(fill_value=0)
     
     # 積み上げ棒グラフを作成
     colors = {row['r1_eval']: row['r1_eval_color'] for _, row in df.iterrows()}
