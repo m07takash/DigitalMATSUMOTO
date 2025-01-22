@@ -22,7 +22,7 @@
                 "ADD_KNOWLEDGE": [],
                 "PROMPT_TEMPLATE": "No Template",
                 "USER_INPUT": "検討してくれた考察について、\n\n【問いに合致していない論点】が含まれていなければ、そのまま当初の考察を出力してください。\n\n【問いに合致していない論点】が含まれていたら、当初の考察を修正してください。",
-                "CONTENTS": "USER",
+                "CONTENTS": "IMPORT_1",
                 "SITUATION": "USER",
                 "MEMORY_USE": true
             }

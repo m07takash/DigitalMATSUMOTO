@@ -2,7 +2,7 @@
     "NAME": "ImageGen",
     "CHAINS": [
         {
-            "TYPE": "VISION",
+            "TYPE": "IMAGEGEN",
             "SETTING": {
                 "AGENT_FILE": "USER",
                 "OVERWRITE_ITEMS": {},

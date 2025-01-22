@@ -1,5 +1,6 @@
 {
     "DISPLAY": false,
+    "DISPLAY_NAME": "テキスト比較",
     "NAME": "テキスト比較AI",
     "ACT": "二つのテキストを比較することに特化したAI",
     "PERSONALITY": {},

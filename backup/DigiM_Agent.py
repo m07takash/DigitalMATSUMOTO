@@ -117,11 +117,9 @@ class DigiM_Agent:
         return knowledge_context, knowledge_selected
 
     # LLMの実行
-    def generate_response(self, model_type, query, memories=[], image_paths={}, stream_mode=True):
-#        response, completion, prompt_tokens, response_tokens = dmfm.call_function_by_name(self.agent["ENGINE"][type]["FUNC_NAME"], query, self.system_prompt, self.agent["ENGINE"][type], memories, image_paths, self.skill)
-#        return response, completion, prompt_tokens, response_tokens    
-        for prompt, response, completion in dmfm.call_function_by_name(self.agent["ENGINE"][model_type]["FUNC_NAME"], query, self.system_prompt, self.agent["ENGINE"][model_type], memories, image_paths, self.skill, stream_mode):
-            yield prompt, response, completion
+    def generate_response(self, type, query, memories=[], image_paths={}):
+        response, completion, prompt_tokens, response_tokens = dmfm.call_function_by_name(self.agent["ENGINE"][type]["FUNC_NAME"], query, self.system_prompt, self.agent["ENGINE"][type], memories, image_paths, self.skill)
+        return response, completion, prompt_tokens, response_tokens 
 
     # クエリに含まれているコマンド(MAGIC_WORD)でエージェントモードを変更【マジックワードはタスクに移行】
     def set_practice_by_command(self, query):
@@ -131,3 +129,4 @@ class DigiM_Agent:
             if any(word in query for word in magic_words if word):
                 habit = k
         return habit
+

@@ -42,7 +42,8 @@ def analytics_insight_tfidf(page_data, page_data_done, TopN=10):
 # 独自性：通常LLMとの差分
 def analytics_insight_originality(page_data, vec_insight_final, vec_insight_draft, tfidf_topN=[]):
     # 通常LLMを実行してNotionに保存
-    agent_file = "agent_01DigitalMATSUMOTO_GPT.json"
+#    agent_file = "agent_01DigitalMATSUMOTO_GPT.json"
+    agent_file = page_data["agent"]
     insight_pure, prompt_tokens, response_tokens = dmt.generate_pureLLM(agent_file, page_data["Input"])
     vec_insight_pure = dmu.embed_text(insight_pure)
     dmn.update_notion_rich_text_content(page_data["id"], "考察_比較LLM", insight_pure)
@@ -87,6 +88,7 @@ def analytics_insight_originality(page_data, vec_insight_final, vec_insight_draf
 # 知識参照度と知識活用度の分析
 def analytics_insight_knowledge(page_data, topN=10):
     df = pd.DataFrame(eval(page_data["reference"]))
+    page_title = page_data["title"][:30]
     
     # similarity_Qの統計量を算出
     similarity_Q_stats = df.groupby('rag')['similarity_Q'].agg([
@@ -97,10 +99,6 @@ def analytics_insight_knowledge(page_data, topN=10):
         ('variance', lambda x: np.var(x, ddof=1))
     ]).reset_index()
     
-    # similarity_Qのランキングを取得
-    #similarity_Q_rank = df.nlargest(topN, "similarity_Q")[["bucket", "ID", "similarity_Q", "similarity_A", "title", "text_short", "url"]].values.tolist()
-    similarity_Q_rank = (df.sort_values(['rag', 'similarity_Q'], ascending=[True, False]).groupby('rag').head(topN).groupby('rag')[['ID', 'title', 'similarity_Q']].apply(lambda x: x.to_dict(orient='records')).to_dict())
-
     # similarity_Aの統計量を算出 
     similarity_A_stats = df.groupby('rag')['similarity_A'].agg([
         ('min', 'min'),
@@ -110,9 +108,8 @@ def analytics_insight_knowledge(page_data, topN=10):
         ('variance', lambda x: np.var(x, ddof=1))
     ]).reset_index()
 
-    # similarity_Aのランキングを取得
-#    similarity_A_rank = df.nlargest(topN, "similarity_A")[["bucket", "ID", "similarity_Q", "similarity_A", "title", "text_short", "url"]].values.tolist()
-    similarity_A_rank = (df.sort_values(['rag', 'similarity_A'], ascending=[True, False]).groupby('rag').head(topN).groupby('rag')[['ID', 'title', 'similarity_A']].apply(lambda x: x.to_dict(orient='records')).to_dict())
+    # similarityのランキングを取得
+    similarity_rank = (df.sort_values(['rag', 'similarity_Q'], ascending=[True, False]).groupby('rag')[['ID', 'title', 'similarity_Q', 'similarity_A']].apply(lambda x: x.to_dict(orient='records')).to_dict())
     
     # RAGごとの知識活用性（Q最小値-A最小値）を算出
     min_difference = similarity_Q_stats['min'] - similarity_A_stats['min']
@@ -120,10 +117,12 @@ def analytics_insight_knowledge(page_data, topN=10):
     
     # Notionへの書き込み
     dmn.update_notion_rich_text_content(page_data["id"], "知識参照度Q", str(similarity_Q_stats.to_dict(orient='index'))) 
-    dmn.update_notion_rich_text_content(page_data["id"], "知識参照度Q_ランキング", str(similarity_Q_rank))
     dmn.update_notion_rich_text_content(page_data["id"], "知識活用度A", str(similarity_A_stats.to_dict(orient='index'))) 
-    dmn.update_notion_rich_text_content(page_data["id"], "知識活用度A_ランキング", str(similarity_A_rank))
     dmn.update_notion_rich_text_content(page_data["id"], "知識活用性", str(min_difference_dict)) 
+
+    # 知識活用性ランキングのテキスト出力
+    with open(f"{analytics_file_path}知識活用性ランキング_{page_title}.txt", "w", encoding="utf-8") as file:
+        file.write(str(similarity_rank))
 
     # Sort data by similarity_Q in descending order within each rag
     sorted_plot_data = df.sort_values(by=['rag', 'similarity_Q'], ascending=[True, False])
@@ -150,7 +149,6 @@ def analytics_insight_knowledge(page_data, topN=10):
         ax.legend()
         
         # Save plot as an image file
-        page_title = page_data["title"][:20]
         filename = f"{analytics_file_path}{page_title}_{rag}_similarity_plot.png"
         #plt.tight_layout()
         plt.savefig(filename)
@@ -168,13 +166,14 @@ def analytics_insights():
         "Input": {"インプット": "rich_text"},
         "Insight_Draft": {"考察_DTwin": "rich_text"},
         "Insight_Final": {"考察_確定版": "rich_text"},
+        "agent": {"エージェントファイル": "rich_text"},
         "model": {"実行モデル": "rich_text"},
         "Point_RealM": {"リアル松本の論点数": "number"},
         "Point_DigiM": {"実現できた論点数": "number"},
         "reference": {"リファレンス": "rich_text"}
     }
-    chk_dict_done = {'確定Chk': True}
-    chk_dict_analyse = {'確定Chk': True, '分析Chk': False}
+    chk_dict_done = {'分析対象Chk': True}
+    chk_dict_analyse = {'分析対象Chk': True, '分析Chk': False}
     date_dict = {}
 
     # 更新対象データの取得（コンテキストのPGを利用）
@@ -212,3 +211,5 @@ def analytics_insights():
         
         # 分析の確定
         dmn.update_notion_chk(page_data["id"], "分析Chk", True)
+        print(page_data["title"]+"の分析が完了しました。")
+        

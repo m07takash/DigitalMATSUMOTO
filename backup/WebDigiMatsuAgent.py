@@ -21,56 +21,32 @@ import GeneCommunication as gc
 
 # system.envファイルをロードして環境変数を設定
 load_dotenv("system.env")
-if 'web_title' not in st.session_state:
-    st.session_state.web_title = os.getenv("WEB_TITLE")
-if 'timezone_setting' not in st.session_state:
-    st.session_state.timezone_setting = os.getenv("TIMEZONE")
-if 'session_folder_prefix' not in st.session_state:
-    st.session_state.session_folder_prefix = os.getenv("SESSION_FOLDER_PREFIX")
-if 'temp_folder_path' not in st.session_state:
-    st.session_state.temp_folder_path = os.getenv("TEMP_FOLDER")
-if 'temp_move_flg' not in st.session_state:
-    st.session_state.temp_move_flg = os.getenv("TEMP_MOVE_FLG")
-if 'mst_folder_path' not in st.session_state:
-    st.session_state.mst_folder_path = os.getenv("MST_FOLDER")
-if 'agent_folder_path' not in st.session_state:
-    st.session_state.agent_folder_path = os.getenv("AGENT_FOLDER")
-if 'default_agent' not in st.session_state:
-    st.session_state.default_agent = os.getenv("DEFAULT_AGENT")
-if 'charactor_folder_path' not in st.session_state:
-    st.session_state.charactor_folder_path = os.getenv("CHARACTOR_FOLDER")
-if 'prompt_template_mst_file' not in st.session_state:
-    st.session_state.prompt_template_mst_file = os.getenv("PROMPT_TEMPLATE_MST_FILE")
+web_title = os.getenv("WEB_TITLE")
+timezone_setting = os.getenv("TIMEZONE")
+session_folder_prefix = os.getenv("SESSION_FOLDER_PREFIX")
+temp_folder_path = os.getenv("TEMP_FOLDER")
+temp_move_flg = os.getenv("TEMP_MOVE_FLG")
+mst_folder_path = os.getenv("MST_FOLDER")
+agent_folder_path = os.getenv("AGENT_FOLDER")
+default_agent = os.getenv("DEFAULT_AGENT")
+charactor_folder_path = os.getenv("CHARACTOR_FOLDER")
+prompt_template_mst_file = os.getenv("PROMPT_TEMPLATE_MST_FILE")
 
 # 時刻の設定
-tz = pytz.timezone(st.session_state.timezone_setting)
+tz = pytz.timezone(timezone_setting)
 now_time = datetime.now(tz)
 
 # Streamlitの設定
-st.set_page_config(page_title=st.session_state.web_title, layout="wide")
+st.set_page_config(page_title=web_title, layout="wide")
 
 # セッションステートの初期化
 def initialize_session_states():
     if 'sidebar_message' not in st.session_state:
         st.session_state.sidebar_message = ""
-    if 'display_name' not in st.session_state:
-        st.session_state.display_name = st.session_state.default_agent
-    if 'agents' not in st.session_state:
-        st.session_state.agents = dma.get_display_agents()
-    if 'agent_list' not in st.session_state:
-        st.session_state.agent_list = [a1["AGENT"] for a1 in st.session_state.agents]
-    if 'agent_list_index' not in st.session_state:
-        st.session_state.agent_list_index = st.session_state.agent_list.index(st.session_state.display_name)
-    if 'agent_id' not in st.session_state:
-        st.session_state.agent_id = st.session_state.agents[st.session_state.agent_list_index]["AGENT"]
-    if 'agent_file' not in st.session_state:
-        st.session_state.agent_file = st.session_state.agents[st.session_state.agent_list_index]["FILE"]
-    if 'agent_data' not in st.session_state:
-        st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, st.session_state.agent_folder_path)
-    if 'session_list' not in st.session_state:
-        st.session_state.session_list = dms.get_session_list_visible()
     if 'session' not in st.session_state:
         st.session_state.session = dms.DigiMSession(dms.set_new_session_id(), "New Chat")
+    if 'display_name' not in st.session_state:
+        st.session_state.display_name = default_agent
     if 'time_setting' not in st.session_state:
         st.session_state.time_setting = now_time.strftime("%Y/%m/%d %H:%M:%S")
     if 'situation_setting' not in st.session_state:
@@ -81,8 +57,6 @@ def initialize_session_states():
         st.session_state.memory_use = True
     if 'magic_word_use' not in st.session_state:
         st.session_state.magic_word_use = "Y"
-    if 'stream_mode' not in st.session_state:
-        st.session_state.stream_mode = True
     if 'uploaded_files' not in st.session_state:
         st.session_state.uploaded_files = []
     if 'file_uploader' not in st.session_state:
@@ -102,7 +76,7 @@ def initialize_session_states():
 def refresh_session(session_id, session_name, situation, new_session_flg=False):
     st.session_state.session = dms.DigiMSession(session_id, session_name)
     if new_session_flg:
-        st.session_state.display_name = st.session_state.default_agent
+        st.session_state.display_name = default_agent
     else:
         #st.session_state.display_name = st.session_state.session.get_history_max_agent()
         st.session_state.display_name = dma.get_agent_item(dms.get_agent_file(st.session_state.session.session_id), "DISPLAY_NAME")
@@ -161,15 +135,15 @@ def main():
     initialize_session_states()
 
     # エージェントの初期値
-#    st.session_state.agents = dma.get_display_agents()
-#    st.session_state.agent_list = [a1["AGENT"] for a1 in st.session_state.agents]
-#    st.session_state.agent_list_index = st.session_state.agent_list.index(st.session_state.display_name)
-#    st.session_state.agent_id = st.session_state.agents[st.session_state.agent_list_index]["AGENT"]
-#    st.session_state.agent_file = st.session_state.agents[st.session_state.agent_list_index]["FILE"]
-#    st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, st.session_state.agent_folder_path)
+    agents = dma.get_display_agents()
+    agent_list = [a1["AGENT"] for a1 in agents]
+    agent_list_index = agent_list.index(st.session_state.display_name)
+    agent_id = agents[agent_list_index]["AGENT"]
+    agent_file = agents[agent_list_index]["FILE"]
+    agent_data = dmu.read_json_file(agent_file, agent_folder_path)
     
     # プロンプトテンプレートの初期値
-    prompt_temp_mst_path = st.session_state.mst_folder_path + st.session_state.prompt_template_mst_file
+    prompt_temp_mst_path = mst_folder_path + prompt_template_mst_file
     prompt_temps_json = dmu.read_json_file(prompt_temp_mst_path)
     prompt_format_list = list(prompt_temps_json["PROMPT_TEMPLATE"].keys())
     speaking_style_list = list(prompt_temps_json["SPEAKING_STYLE"].keys())
@@ -179,28 +153,18 @@ def main():
         st.title("Digital MATSUMOTO")
         
         # エージェントを選択（JSON)
-        if agent_id_selected := st.selectbox("Select Agent:", st.session_state.agent_list, index=st.session_state.agent_list_index):
-            st.session_state.agent_id = agent_id_selected
-            st.session_state.agent_file = next((a2["FILE"] for a2 in st.session_state.agents if a2["AGENT"] == st.session_state.agent_id), None)
-            st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, st.session_state.agent_folder_path)
-
-        side_col1, side_col2 = st.columns(2)
+        if agent_id := st.selectbox("Select Agent:", agent_list, index=agent_list_index):
+            agent_file = next((a2["FILE"] for a2 in agents if a2["AGENT"] == agent_id), None)
+            agent_data = dmu.read_json_file(agent_file, agent_folder_path)
         
         # 新しいセッションを発番（IDを指定して、新規にセッションリフレッシュ）
-        if side_col1.button("New Chat", key="new_chat"):
+        if st.button("Create New Chat", key="new_chat"):
             session_id = dms.set_new_session_id()
             session_name = "New Chat"
             situation = {}
             situation["TIME"] = now_time.strftime("%Y/%m/%d %H:%M:%S")
             situation["SITUATION"] = ""
             refresh_session(session_id, session_name, situation, True)
-
-        # 会話履歴の更新
-        if side_col2.button("Refresh List", key="refresh_session_list"):
-            st.session_state.session_list = dms.get_session_list_visible()
-        num_session_visible = st.number_input(label="Visible Sessions", value=12, step=1, format="%d")
-
-        # 知識更新・分析の処理
         sidemenu_expander = st.expander("Data Processing")
         with sidemenu_expander:
             if st.button("Update RAG Data", key="update_rag"):
@@ -219,25 +183,21 @@ def main():
                 vamk.analytics_knowledge_monthly(analyse_month_str)
                 st.session_state.sidebar_message = f"{analyse_month_str}の分析が完了しました"
         st.write(st.session_state.sidebar_message)
-
+        
         st.markdown("----")
-        # セッションリストの表示
-        #st.session_state.session_list = dms.get_session_list_visible()
-        num_sessions = 0
-        for session_num, last_update_date in st.session_state.session_list:
-            if num_session_visible > num_sessions:
-                session_id_list = str(session_num)
-                session_key_list = st.session_state.session_folder_prefix + session_id_list
-    #            session_file_dict = dms.get_session_data(session_id_list)
-                session_name_list = dms.get_session_name(session_id_list)
-                session_name_btn = session_name_list[:16]
-                situation = dms.get_situation(session_id_list)
-                if not situation:
-                    situation["TIME"] = now_time.strftime("%Y/%m/%d %H:%M:%S")
-                    situation["SITUATION"] = ""
-                if st.button(session_name_btn, key=session_key_list):
-                    refresh_session(session_id_list, session_name_list, situation)
-                num_sessions += 1
+        session_list = dms.get_session_list_visible()
+        for session_num, last_update_date in session_list:
+            session_id = str(session_num)
+            session_key = session_folder_prefix + session_id
+            session_file_dict = dms.get_session_data(session_id)
+            session_name = dms.get_session_name(session_id)
+            session_name_btn = session_name[:16]
+            situation = dms.get_situation(session_id)
+            if not situation:
+                situation["TIME"] = now_time.strftime("%Y/%m/%d %H:%M:%S")
+                situation["SITUATION"] = ""
+            if st.button(session_name_btn, key=session_key):
+                refresh_session(session_id, session_name, situation)
 
     # チャットセッション名の設定
     if session_name := st.text_input("Chat Name:", value=st.session_state.session.session_name):
@@ -287,7 +247,7 @@ def main():
             st.session_state.persona_speaking_style = persona_col2.selectbox("Speaking Style:", speaking_style_list, index=index_speaking_style)
             persona_charactor = agent_data["PERSONALITY"]["CHARACTOR"] if agent_data["PERSONALITY"] else ""
             if persona_charactor.strip().endswith(".txt"):
-                persona_charactor_text = str(dmu.read_text_file(persona_charactor, st.session_state.charactor_folder_path))
+                persona_charactor_text = str(dmu.read_text_file(persona_charactor, charactor_folder_path))
             else:
                 persona_charactor_text = persona_charactor
             st.session_state.persona_charactor = st.text_area("Persona Charactor:", value=persona_charactor_text, height=400)
@@ -357,7 +317,7 @@ def main():
             overwrite_tool_list = []
             overwrite_tool["SKILL"] = {}
             overwrite_tool["SKILL"]["TOOL_LIST"] = overwrite_tool_list
-           # TOOL_LISTはマルチセレクト
+            # TOOL_LISTはマルチセレクト
             # CHOICEはシングルセレクト
 #        overwrite_items = {
 #            "SKILL": {
@@ -399,12 +359,6 @@ def main():
         st.session_state.magic_word_use = "Y"
     else:
         st.session_state.magic_word_use = "N"
-
-    # ストリーミングの設定
-    if header_col2.checkbox("Streaming Mode", value=st.session_state.stream_mode):
-        st.session_state.stream_mode = True
-    else:
-        st.session_state.stream_mode = False
 
     # 会話履歴の表示対象切替
     num_seq_visible = 10
@@ -510,15 +464,15 @@ def main():
         uploaded_contents = []
         if st.session_state.uploaded_files:
             for uploaded_file in st.session_state.uploaded_files:
-                uploaded_file_path = st.session_state.temp_folder_path + uploaded_file.name
+                uploaded_file_path = temp_folder_path + uploaded_file.name
                 with open(uploaded_file_path, "wb") as f:
                     f.write(uploaded_file.getbuffer())
                 uploaded_contents.append(uploaded_file_path)
         # オーバーライト項目の設定
         overwrite_items = {}
-#        overwrite_items.update(overwrite_persona)
-#        overwrite_items.update(overwrite_prompt_temp)
-#        overwrite_items.update(overwrite_rag)
+        overwrite_items.update(overwrite_persona)
+        overwrite_items.update(overwrite_prompt_temp)
+        overwrite_items.update(overwrite_rag)
 
         # シチュエーションの設定
         situation = {}
@@ -526,16 +480,11 @@ def main():
         situation["SITUATION"] = situation_setting
         
         # ユーザー入力の一時表示
-        with st.chat_message("User"):
+        with st.chat_message("user"):
             st.markdown(user_input.replace("\n", "<br>"), unsafe_allow_html=True)
-        with st.chat_message(st.session_state.web_title):
-            practice=st.session_state.agent_data["HABIT"]
-            response_placeholder = st.empty()
-            response = ""
-            for response_chunk in dme.DigiMatsuExecute_Practice(st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, practice, st.session_state.memory_use, st.session_state.magic_word_use, st.session_state.stream_mode):
-                response += response_chunk
-                response_placeholder.markdown(response)
-            st.rerun()
+            practice=agent_data["HABIT"]
+            results = dme.DigiMatsuExecute_Practice(st.session_state.session.session_id, st.session_state.session.session_name, agent_file, user_input, uploaded_contents, situation, overwrite_items, practice, st.session_state.memory_use, st.session_state.magic_word_use)
+            st.rerun()        
 
 if __name__ == "__main__":
     main()
