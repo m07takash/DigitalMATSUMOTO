@@ -165,7 +165,7 @@ def create_rag_context(query, query_vec=[], rags=[]):
                 rag_data_file = rag_data["DATA_NAME"] +'_vec.json'
                 rag_data_json = dmu.read_json_file(rag_data_file, rag_folder_json_path)
                 for k, v in rag_data_json.items():
-                    similarity_prompt = dmu.calculate_similarity_vec(query_vec, rag_data["vector_data_key_text"], rag["DISTANCE_LOGIC"])
+                    similarity_prompt = dmu.calculate_similarity_vec(query_vec, v["vector_data_key_text"], rag["DISTANCE_LOGIC"])
                     v["similarity_prompt"] = round(similarity_prompt,3)
                     rag_data_list.append(v)
             elif rag_data["DATA_TYPE"] == "DB":
@@ -351,7 +351,10 @@ def save_rag_chunk_json(rag_data, rag_data_file):
 def save_rag_chunk_db(rag_id, rag_data):
     db_client = chromadb.PersistentClient(path=rag_folder_db_path)
     collection = db_client.get_or_create_collection(name=rag_id, metadata={"hnsw:space": "cosine"})
-    existing_ids = collection.get(include=["ids"])["ids"]
+    existing_ids = []
+    response = collection.get(include=["metadatas"])
+    if response and "ids" in response:
+        existing_ids = response["ids"]
     cnt_add = 0 
     cnt_extent = 0   
     
@@ -363,7 +366,7 @@ def save_rag_chunk_db(rag_id, rag_data):
     for rag_chunk in rag_data:
         if rag_chunk["value_text"]:
             chunk_id = rag_chunk["id"]
-            if new_id not in existing_ids:
+            if chunk_id not in existing_ids:
                 vec_key_text = dmu.embed_text(rag_chunk["key_text"].replace("\n", ""))
                 vec_value_text = dmu.embed_text(rag_chunk["value_text"].replace("\n", ""))
                 for key in ["id"]:
