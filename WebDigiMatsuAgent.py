@@ -204,8 +204,8 @@ def main():
         sidemenu_expander = st.expander("Data Processing")
         with sidemenu_expander:
             if st.button("Update RAG Data", key="update_rag"):
-                dmc.generate_rag_vec_json()
-                st.session_state.sidebar_message = "RAG用の知識情報(JSON)の更新が完了しました"
+                dmc.generate_rag()
+                st.session_state.sidebar_message = "知識情報(RAG)の更新が完了しました"
             if st.button("Feedback to DB", key="save_feedback_to_db"):
                 gc.create_pages_communication(st.session_state.session.session_id)
                 st.session_state.sidebar_message = "フィードバックをDBに保存しました"
@@ -321,6 +321,7 @@ def main():
                 st.markdown(f"***RAG Dataset {i}:***")
                 rag_selects = rag_dict["DATA"]
                 rag_col1, rag_col2 = st.columns(2)
+                #【】
                 st.session_state.rag_data = rag_col1.multiselect("RAG Data: ", rag_datasets, default=rag_selects)
                 st.session_state.rag_text_limits = rag_col2.number_input("RAG Text Limits:", value=rag_dict["TEXT_LIMITS"], step=1)
                 st.session_state.rag_distance_logic = rag_col2.selectbox(

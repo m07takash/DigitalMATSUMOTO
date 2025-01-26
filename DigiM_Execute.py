@@ -18,6 +18,7 @@ timezone_setting = os.getenv("TIMEZONE")
 # 単体実行用の関数
 def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", stream_mode=True, sub_seq=1, user_input="", contents=[], situation={}, overwrite_items={}, add_knowledge=[], prompt_temp_cd="", memory_use=True, seq_limit="", sub_seq_limit=""):
     export_files = []
+    timestamp_log = "[01.実行開始(セッション設定)]"+str(datetime.now())+"<br>"
     
     # 会話履歴データの定義
     setting_chat_dict = {}
@@ -35,6 +36,7 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
         seq = session.get_seq_history()
 
     # エージェントの宣言
+    timestamp_log += "[02.エージェント設定開始]"+str(datetime.now())+"<br>"
     agent = dma.DigiM_Agent(agent_file)
     
     # オーバーライト（エージェントデータの個別項目を更新）して、エージェントを再度宣言
@@ -43,6 +45,7 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
         agent.set_property(agent.agent)
 
     # コンテンツコンテキストを取得
+    timestamp_log += "[03.コンテンツコンテキスト読込開始]"+str(datetime.now())+"<br>"
     contents_context, contents_records, image_files = agent.set_contents_context(seq, sub_seq, contents)
 
     # 入力するクエリに纏めて、トークン数を取得
@@ -53,6 +56,7 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
     system_tokens = dmu.count_token(tokenizer, model_name, agent.system_prompt)
 
     # 会話のダイジェストを取得(ダイジェストはRAGとMemoryの類似度検索にのみ用い、プロンプトには含めない)
+    timestamp_log += "[04.会話ダイジェスト読込開始]"+str(datetime.now())+"<br>"
     if session.chat_history_active_dict:
         max_seq, max_sub_seq, chat_history_max_digest_dict = session.get_history_max_digest()#session.chat_history_active_dict)
         if chat_history_max_digest_dict:
@@ -60,18 +64,21 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
             user_query = digest_text + user_query
 
     # クエリのベクトル化
+    timestamp_log += "[05.クエリのベクトル化開始]"+str(datetime.now())+"<br>"
     query_vec = dmu.embed_text(user_query.replace("\n", ""))
 
     # RAGコンテキストを取得(追加ナレッジを反映)
+    timestamp_log += "[06.RAG開始]"+str(datetime.now())+"<br>"
     if add_knowledge:
         agent.knowledge += add_knowledge
     knowledge_context, knowledge_selected = agent.set_knowledge_context(user_query, query_vec)
     
     # プロンプトテンプレートを取得
+    timestamp_log += "[07.プロンプトテンプレート設定]"+str(datetime.now())+"<br>"
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
 
     # 会話メモリの取得
-
+    timestamp_log += "[08.会話メモリの取得開始]"+str(datetime.now())+"<br>"
     if model_type == "LLM":
         memory_limit_tokens = agent.agent["ENGINE"][model_type]["MEMORY"]["limit"]
     else:
@@ -85,6 +92,7 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
         memories_selected = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
 
     # シチュエーションの設定
+    timestamp_log += "[09.シチュエーション設定]"+str(datetime.now())+"<br>"
     situation_setting = "\n"
     time_setting = str(datetime.now(pytz.timezone(timezone_setting)).strftime('%Y/%m/%d %H:%M:%S'))
     if situation:
@@ -103,28 +111,33 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
     # LLMの実行
     response = ""
     timestamp_begin = str(datetime.now())
+    timestamp_log += "[10.LLM実行開始]"+timestamp_begin+"<br>"
 #    response, completion, prompt_tokens, response_tokens = agent.generate_response(model_type, query, memories_selected, image_files)
     for prompt, response_chunk, completion in agent.generate_response(model_type, query, memories_selected, image_files, stream_mode):
         if response_chunk:
             response += response_chunk
             yield response_chunk, export_files
     timestamp_end = str(datetime.now())
+    timestamp_log += "[11.LLM実行完了]"+timestamp_end+"<br>"
 
     prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
     response_tokens = dmu.count_token(tokenizer, model_name, response)
 
     # レスポンスとメモリ・コンテキストの類似度
+    timestamp_log += "[12.結果の類似度算出開始]"+str(datetime.now())+"<br>"
     response_vec = dmu.embed_text(response.replace("\n", ""))
     memory_ref = dmc.get_memory_similarity_response(response_vec, memories_selected)
     knowledge_ref = dmc.get_rag_similarity_response(response_vec, knowledge_selected)
     
     # 入力されたコンテンツの保存
+    timestamp_log += "[13.コンテンツの保存開始]"+str(datetime.now())+"<br>"
     contents_record_to = []
     for contents_record in contents_records:
         session.save_contents_file(contents_record["from"], contents_record["to"]["file_name"])
         contents_record_to.append(contents_record["to"])
-    
+
     # ログデータの保存(SubSeq:setting) ※Overwriteやメモリ保存・使用の設定も追加する
+    timestamp_log += "[14.ログ(setting)の保存開始]"+str(datetime.now())+"<br>"
     setting_chat_dict = {
         "session_name": session.session_name, 
         "situation": situation,
@@ -141,6 +154,7 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
     session.save_history(str(seq), "setting", setting_chat_dict, "SUB_SEQ", str(sub_seq))
     
     # ログデータの保存(SubSeq:prompt) ※ツールの設定も追加する
+    timestamp_log += "[15.ログ(prompt)の保存開始]"+str(datetime.now())+"<br>"
     prompt_chat_dict = {
         "role": "user",
         "timestamp": timestamp_begin,
@@ -167,6 +181,7 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
     session.save_history(str(seq), "prompt", prompt_chat_dict, "SUB_SEQ", str(sub_seq))
 
     # ログデータの保存(SubSeq:image)
+    timestamp_log += "[16.ログ(image)の保存開始]"+str(datetime.now())+"<br>"
     if model_type=="IMAGEGEN":
         img_dict = {}
         i=0
@@ -185,6 +200,7 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
         session.save_history(str(seq), "image", img_dict, "SUB_SEQ", str(sub_seq))
     
     # ログデータの保存(SubSeq:response)
+    timestamp_log += "[17.ログ(response)の保存開始]"+str(datetime.now())+"<br>"
     response_chat_dict = {
         "role": "assistant",
         "timestamp": timestamp_end,
@@ -199,6 +215,7 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
     session.save_history(str(seq), "response", response_chat_dict, "SUB_SEQ", str(sub_seq))
 
     # メモリダイジェストの作成
+    timestamp_log += "[18.メモリダイジェストの作成開始]"+str(datetime.now())+"<br>"
     session.set_history()
     digest_memories_selected = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
     digest_response, digest_prompt_tokens, digest_response_tokens = dmt.dialog_digest("", digest_memories_selected)
@@ -215,6 +232,13 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
     }
     session.save_history(str(seq), "digest", digest_chat_dict, "SUB_SEQ", str(sub_seq))
 
+    # ログデータの保存(SubSeq:log)
+    timestamp_log += "[完了]"+str(datetime.now())+"<br>"
+    log_dict = {
+        "timestamp_log": timestamp_log
+    }
+    session.save_history(str(seq), "log", log_dict, "SUB_SEQ", str(sub_seq))
+    
     yield "", export_files
 
 
