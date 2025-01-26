@@ -39,7 +39,7 @@
         {
             "RAG_NAME": "Senryu",
             "RETRIEVER": "Vector",
-            "DATA": ["DigiMATSU_Senryu"],
+            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Senryu"}],
             "TIMESTAMP": "CREATE_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
             "HEADER_TEMPLATE": "【参考】以前に作った川柳\n",

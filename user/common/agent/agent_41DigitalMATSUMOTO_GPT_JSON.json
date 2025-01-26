@@ -1,6 +1,6 @@
 {
     "DISPLAY": true,
-    "DISPLAY_NAME": "デジタルMATSUMOTO(Gemini)",
+    "DISPLAY_NAME": "デジタルMATSUMOTO(GPT)JSON",
     "NAME": "デジタルMATSUMOTO",
     "ACT": "AIの専門家である松本敬史のデジタルツインAI",
     "PERSONALITY": {
@@ -21,11 +21,11 @@
     },
     "ENGINE": {
         "LLM": {
-            "NAME":"Gemini2.0",
-            "FUNC_NAME": "generate_response_T_gemini",
-            "MODEL": "gemini-2.0-flash-exp",
+            "NAME":"GPT-4o",
+            "FUNC_NAME": "generate_response_T_gpt",
+            "MODEL": "gpt-4o-2024-11-20",
             "PARAMETER": {"temperature": 0.7},
-            "TOKENIZER": "gemini",
+            "TOKENIZER": "tiktoken",
             "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
         },
         "IMAGEGEN": {
@@ -74,7 +74,7 @@
         {
             "RAG_NAME": "Opinion",
             "RETRIEVER": "Vector",
-            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Opinion_Point"}],
+            "DATA": [{"DATA_TYPE":"JSON", "DATA_NAME":"DigiMATSU_Opinion_Point"}],
             "TIMESTAMP": "CREATE_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
             "HEADER_TEMPLATE": "【知識情報】質問に応じて参考にしてください\n",
@@ -86,7 +86,7 @@
         {
             "RAG_NAME": "Policy",
             "RETRIEVER": "Vector",
-            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_POLICY"}, {"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Policy_Insight"}],
+            "DATA": [{"DATA_TYPE":"JSON", "DATA_NAME":"DigiMATSU_POLICY"}, {"DATA_TYPE":"JSON", "DATA_NAME":"DigiMATSU_Policy_Insight"}],
             "TIMESTAMP": "CREATE_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
             "HEADER_TEMPLATE": "【ポリシー】以下のポリシーに強く従います。\n",
@@ -98,7 +98,7 @@
         {
             "RAG_NAME": "Communication",
             "RETRIEVER": "Vector",
-            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Communication"}],
+            "DATA": [{"DATA_TYPE":"JSON", "DATA_NAME":"DigiMATSU_Communication"}],
             "TIMESTAMP": "CREATE_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
             "HEADER_TEMPLATE": "【デジタルMATSUMOTOの発言】質問に応じて参考にしてください。\n",
