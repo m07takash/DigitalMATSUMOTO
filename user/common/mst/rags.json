@@ -1,8 +1,9 @@
 {
     "DigiMATSU_Opinion_Point":{
         "active": "Y",
-        "mode" : "notion",
-        "db" : "DigiMATSU_Opinion",
+        "input" : "notion",
+        "data_type" : "chromadb",
+        "data_name" : "DigiMATSU_Opinion",
         "bucket": "Opinion-Point",
         "item_dict": {
             "title": {"名前": "title"}, 
@@ -22,8 +23,9 @@
     },
     "DigiMATSU_Opinion_Insight":{
         "active": "Y",
-        "mode" : "notion",
-        "db" : "DigiMATSU_Opinion",
+        "input" : "notion",
+        "data_type" : "chromadb",
+        "data_name" : "DigiMATSU_Opinion",
         "bucket": "Opinion-Insight",
         "item_dict": {
             "title": {"名前": "title"}, 
@@ -43,8 +45,9 @@
     },
     "DigiMATSU_Policy_Insight":{
         "active": "Y",
-        "mode" : "notion",
-        "db" : "DigiMATSU_Opinion",
+        "input" : "notion",
+        "data_type" : "chromadb",
+        "data_name" : "DigiMATSU_Opinion",
         "bucket": "Policy-Insight",
         "item_dict": {
             "title": {"名前": "title"}, 
@@ -64,8 +67,9 @@
     },
     "DigiMATSU_Senryu":{
         "active": "Y",
-        "mode" : "notion",
-        "db" : "DigiMATSU_Opinion",
+        "input" : "notion",
+        "data_type" : "chromadb",
+        "data_name" : "DigiMATSU_Opinion",
         "bucket": "Senryu",
         "item_dict": {
             "title": {"名前": "title"},
@@ -85,8 +89,9 @@
     },
     "DigiMATSU_Communication":{
         "active": "Y",
-        "mode" : "notion",
-        "db" : "DigiMATSU_Communication",
+        "input" : "notion",
+        "data_type" : "chromadb",
+        "data_name" : "DigiMATSU_Communication",
         "bucket": "Communication",
         "item_dict": {
             "title": {"名前": "title"}, 
@@ -100,16 +105,18 @@
     },
     "DigiMATSU_POLICY":{
         "active": "Y",
-        "mode" : "csv",
+        "input" : "csv",
+        "data_type" : "chromadb",
         "bucket": "Policy-CSV",
         "file_path": "user/common/csv/",
         "file_names": ["digiMATSU_PolicyRAG.csv"],
         "field_items": ["title", "category", "eval", "create_date", "key_text", "value_text", "url"] 
     },
     "DigiMATSU_Articles":{
-        "active": "N",
-        "mode" : "notion",
-        "db" : "DigiMATSU_Articles",
+        "active": "Y",
+        "input" : "notion",
+        "data_type" : "chromadb",
+        "data_name" : "DigiMATSU_Articles",
         "bucket": "Article",
         "item_dict": {
             "title": {"名前": "title"}, 
