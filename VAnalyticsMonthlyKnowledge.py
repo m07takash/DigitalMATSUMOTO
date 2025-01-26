@@ -9,6 +9,7 @@ from dotenv import load_dotenv
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
 from sklearn.decomposition import PCA
+import chromadb
 
 import DigiM_Agent as dma
 import DigiM_Context as dmc
@@ -19,7 +20,8 @@ import DigiM_Notion as dmn
 # system.envファイルをロードして環境変数を設定
 load_dotenv("system.env")
 mst_folder_path = os.getenv("MST_FOLDER")
-rag_folder_path = os.getenv("RAG_FOLDER")
+rag_folder_json_path = os.getenv("RAG_FOLDER_JSON")
+rag_folder_db_path = os.getenv("RAG_FOLDER_DB")
 rcParams['font.family'] = 'Noto Sans CJK JP'
 analytics_file_path = "user/common/analytics/monthly/"
 
@@ -101,18 +103,37 @@ def analytics_knowledge_monthly(end_month, months=1):
         rag_name = knowledge["RAG_NAME"]
         rag_data_list = []
         for rag_data in knowledge["DATA"]:
-            rag_data_file = rag_data +'_vec.json'
-            rag_data_json = dmu.read_json_file(rag_data_file, rag_folder_path)
-            for k, v in rag_data_json.items():
-                v["month"] = v["create_date"][:7]
-                if 'category' in v:
-                    v["category_sum"] = category_map_json["Category"].get(v["category"], "その他")
-                    if v["category_sum"] in category_map_json["CategoryColor"]:
-                        v["category_color"] = category_map_json["CategoryColor"][v["category_sum"]]
-                    else:
-                        v["category_color"] = "gray"
-                rag_data_list.append(v)
-
+            if rag_data["DATA_TYPE"] == "JSON":
+                rag_data_file = rag_data["DATA_NAME"] +'_vec.json'
+                rag_data_json = dmu.read_json_file(rag_data_file, rag_folder_json_path)
+                for k, v in rag_data_json.items():
+                    v["month"] = v["create_date"][:7]
+                    if 'category' in v:
+                        v["category_sum"] = category_map_json["Category"].get(v["category"], "その他")
+                        if v["category_sum"] in category_map_json["CategoryColor"]:
+                            v["category_color"] = category_map_json["CategoryColor"][v["category_sum"]]
+                        else:
+                            v["category_color"] = "gray"
+                    rag_data_list.append(v)
+            elif rag_data["DATA_TYPE"] == "DB":
+                db_client = chromadb.PersistentClient(path=rag_folder_db_path)
+                collection = db_client.get_collection(rag_data["DATA_NAME"])
+                rag_data_db = collection.get(include=["metadatas", "embeddings"])
+                for i in range(len(rag_data_db["ids"])):
+                    v = {}
+                    v["id"] = rag_data_db["ids"][i]
+                    v |= rag_data_db["metadatas"][i]
+                    v["vector_data_value_text"] = ast.literal_eval(v["vector_data_value_text"])
+                    v["vector_data_key_text"] = rag_data_db["embeddings"][i].tolist()
+                    v["month"] = v["create_date"][:7]
+                    if 'category' in v:
+                        v["category_sum"] = category_map_json["Category"].get(v["category"], "その他")
+                        if v["category_sum"] in category_map_json["CategoryColor"]:
+                            v["category_color"] = category_map_json["CategoryColor"][v["category_sum"]]
+                        else:
+                            v["category_color"] = "gray"                        
+                    rag_data_list.append(v)
+        
         # チャンクデータ(PCA)の散布図を作成
         plot_rag_scatter_thisMonth(end_month, rag_name, rag_data_list, category_map_json, months)
 

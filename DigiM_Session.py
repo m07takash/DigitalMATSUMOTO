@@ -42,7 +42,7 @@ def get_session_list_visible():
 def get_session_data(session_id):
     session_key = session_folder_prefix + session_id
     session_file_path = user_folder_path + session_key + "/" + session_file_name
-    session_file_dict = dmu.read_json_file(session_file_path)    
+    session_file_dict = dmu.read_json_file(session_file_path)
     return session_file_dict
 
 # 辞書データから最大のキーを取得する関数
@@ -185,6 +185,8 @@ class DigiMSession:
                     chat_history_active_omit_dict[key]["1"]["response"] = sub_dict[str(max_subseq)]["response"]
                 if "digest" in sub_dict[str(max_subseq)]:
                     chat_history_active_omit_dict[key]["1"]["digest"] = sub_dict[str(max_subseq)]["digest"]
+                if "log" in sub_dict[str(max_subseq)]:
+                    chat_history_active_omit_dict[key]["1"]["log"] = sub_dict[str(max_subseq)]["log"]
                 if "feedback" in sub_dict[str(max_subseq)]:
                     chat_history_active_omit_dict[key]["1"]["feedback"] = sub_dict[str(max_subseq)]["feedback"]
         return chat_history_active_omit_dict
@@ -352,6 +354,10 @@ class DigiMSession:
             chat_detail_info += "入力トークン数："+str(chat_history_dict_seq["prompt"]["token"])+"\n"
             chat_detail_info += "出力トークン数："+str(chat_history_dict_seq["response"]["token"])+"\n"
 
+            if "log" in chat_history_dict_seq:
+                chat_detail_info += "\n【実行履歴】\n"
+                chat_detail_info += chat_history_dict_seq["log"]["timestamp_log"]
+                
             if "digest" in chat_history_dict_seq:
                 chat_detail_info += "\n【会話のダイジェスト】(出力トークン数："+str(chat_history_dict_seq["digest"]["token"])+")\n"
                 chat_detail_info += str(chat_history_dict_seq["digest"]["text"])+"\n"

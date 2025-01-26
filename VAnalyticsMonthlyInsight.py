@@ -5,6 +5,7 @@ import numpy as np
 from datetime import datetime, timedelta
 from dateutil.relativedelta import relativedelta
 from dotenv import load_dotenv
+from collections import defaultdict
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
 
@@ -202,10 +203,47 @@ def plot_time_series_item(df, item, analyse_month, cols=['max_value', 'min_value
     ax.legend(title="Statistics", loc='upper left', bbox_to_anchor=(1.0, 1.0))
     plt.xticks(rotation=45)
     plt.tight_layout()
-    plt.savefig(f"{analytics_file_path}{analyse_month}Monthly04_{item}_timeseries.png", dpi=300, bbox_inches='tight')
+    plt.savefig(f"{analytics_file_path}{analyse_month}Monthly05_{item}_timeseries.png", dpi=300, bbox_inches='tight')
     #plt.show()
 
+# 当月の知識活用ランキングの出力
+def df_knowledge_use_ranking(df, analyse_month, rank_num=10):
+    # 'k1_Rank'列をリスト化し、文字列データを辞書に変換
+    data = df["k1_Rank"].tolist()
+    parsed_data = []
+    for category in data:
+        parsed_data.append(ast.literal_eval(category))
+        
+    # データの積算処理
+    aggregated_data = defaultdict(lambda: {'title': '', 'knowledge_utility': 0})
+    for category in parsed_data:
+        for key, items in category.items():
+            for item in items:
+                id_key = item['ID']
+                aggregated_data[id_key]['title'] = item['title']
+                aggregated_data[id_key]['knowledge_utility'] += item['knowledge_utility']
 
+    # knowledge_utility の降順でソート
+    sorted_data = sorted(
+        [{'ID': k, 'title': v['title'], 'knowledge_utility': v['knowledge_utility']} for k, v in aggregated_data.items()],
+        key=lambda x: x['knowledge_utility'],
+        reverse=True
+    )
+
+    # 各カテゴリーごとにTopNを取得
+    results = {}
+    first_category = parsed_data[0] if parsed_data else {}
+    for category_key in first_category.keys():
+        category_items = [item for cat in parsed_data for item in cat[category_key]]
+        category_ids = {item['ID'] for item in category_items}
+        filtered_data = [item for item in sorted_data if item['ID'] in category_ids]
+        
+        # Top N件のデータを保存
+        results[category_key] = filtered_data[:rank_num]
+        with open(f"{analytics_file_path}{analyse_month}Monthly06_RAGTopN_{category_key}.txt", "w", encoding="utf-8") as file:
+            file.write(str(results[category_key]))
+
+    
 # 月次考察の分析
 def analytics_insights_monthly(analyse_month, months = 12):
     page_data_analyse = get_analytics_data(analyse_month, months)
@@ -240,3 +278,6 @@ def analytics_insights_monthly(analyse_month, months = 12):
     columns_to_select = ["note_date", "title", "category", "o1_final", "o1_draft", "o1_improved", "o2_tfidf_rate", "r1_eval", "r2_similarity", "r3_point", "k1_util_Opinion", "k1_util_Policy", "k1_util_Communication", "BEST_Mark", "Top5_Mark"]
     df_thisMonth[columns_to_select].to_csv(f"{analytics_file_path}{analyse_month}Monthly03Insight.csv", index=True, header=["日付", "タイトル", "カテゴリー", "A-1.独自性(Cos距離)", "A-1.独自性_ドラフト時点", "A-1.独自性_改善度", "A-2.独自キーワード(割合)", "B-1.評価ランク", "B-2.実現度合(Cos類似度)", "B-3.論点再現度(割合)", "C-1.知識活用性_Opinion", "C-2.知識活用性_Policy", "C-3.知識活用性_Communication", "BEST_Mark", "Top5_Mark"], encoding='utf-8-sig')
     #display(df_thisMonth[columns_to_select])
+
+    # 当月の知識活用ランキングの出力
+    df_knowledge_use_ranking(df_thisMonth, analyse_month)
