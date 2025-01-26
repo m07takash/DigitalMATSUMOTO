@@ -88,6 +88,8 @@ def analytics_insight_originality(page_data, vec_insight_final, vec_insight_draf
 # 知識参照度と知識活用度の分析
 def analytics_insight_knowledge(page_data, topN=10):
     df = pd.DataFrame(eval(page_data["reference"]))
+    df['knowledge_utility'] = df['similarity_Q'] - df['similarity_A']
+
     page_title = page_data["title"][:30]
     
     # similarity_Qの統計量を算出
@@ -107,18 +109,29 @@ def analytics_insight_knowledge(page_data, topN=10):
         ('max', 'max'),
         ('variance', lambda x: np.var(x, ddof=1))
     ]).reset_index()
-
+    
+    # 知識活用性の統計量を算出 
+    knowledge_utility_stats = df.groupby('rag')['knowledge_utility'].agg([
+        ('min', 'min'),
+        ('mean', 'mean'),
+        ('median', 'median'),
+        ('max', 'max'),
+        ('variance', lambda x: np.var(x, ddof=1))
+    ]).reset_index()
+    
     # similarityのランキングを取得
-    similarity_rank = (df.sort_values(['rag', 'similarity_Q'], ascending=[True, False]).groupby('rag')[['ID', 'title', 'similarity_Q', 'similarity_A']].apply(lambda x: x.to_dict(orient='records')).to_dict())
+    similarity_rank = (df.sort_values(['rag', 'similarity_Q'], ascending=[True, False]).groupby('rag')[['ID', 'title', 'similarity_Q', 'similarity_A','knowledge_utility']].apply(lambda x: x.to_dict(orient='records')).to_dict())
     
     # RAGごとの知識活用性（Q最小値-A最小値）を算出
-    min_difference = similarity_Q_stats['min'] - similarity_A_stats['min']
-    min_difference_dict = dict(zip(similarity_Q_stats['rag'], min_difference))
+    #min_difference = similarity_Q_stats['min'] - similarity_A_stats['min']
+    #min_difference_dict = dict(zip(similarity_Q_stats['rag'], min_difference))
+    knowledge_utility_stats_dict = dict(zip(similarity_Q_stats['rag'], knowledge_utility_stats['max']))
     
     # Notionへの書き込み
     dmn.update_notion_rich_text_content(page_data["id"], "知識参照度Q", str(similarity_Q_stats.to_dict(orient='index'))) 
     dmn.update_notion_rich_text_content(page_data["id"], "知識活用度A", str(similarity_A_stats.to_dict(orient='index'))) 
-    dmn.update_notion_rich_text_content(page_data["id"], "知識活用性", str(min_difference_dict)) 
+    #dmn.update_notion_rich_text_content(page_data["id"], "知識活用性", str(min_difference_dict)) 
+    dmn.update_notion_rich_text_content(page_data["id"], "知識活用性", str(knowledge_utility_stats_dict)) 
 
     # 知識活用性ランキングのテキスト出力
     with open(f"{analytics_file_path}知識活用性ランキング_{page_title}.txt", "w", encoding="utf-8") as file:
