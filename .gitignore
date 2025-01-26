@@ -164,6 +164,7 @@ cython_debug/
 # Digital MATSUMOTO Folder
 session*/
 user/common/agent/charactor/*.txt
-user/common/rag/*.json
+user/common/rag/json/*.json
+user/common/rag/chromadb/*
 notion_db.json
 test/
