@@ -1,6 +1,8 @@
 import os
 import csv
 import json
+import ast
+import chromadb
 import re
 import mimetypes
 from datetime import datetime
@@ -16,7 +18,8 @@ mst_folder_path = os.getenv("MST_FOLDER")
 prompt_template_mst_file = os.getenv("PROMPT_TEMPLATE_MST_FILE")
 prompt_temp_mst_path = mst_folder_path + prompt_template_mst_file
 rag_mst_file = os.getenv("RAG_MST_FILE")
-rag_folder_path = os.getenv("RAG_FOLDER")
+rag_folder_json_path = os.getenv("RAG_FOLDER_JSON")
+rag_folder_db_path = os.getenv("RAG_FOLDER_DB")
 notion_db_mst_file = os.getenv("NOTION_MST_FILE")
 
 # 現在日付
@@ -85,11 +88,11 @@ def set_prompt_template(prompt_temp_cd):
 
 
 # RAGデータ一覧の取得
+#【要修正】データ名／データタイプの組み合わせ（JSON／ChromaDB）
 def get_rag_list():
     identifier="_vec.json"
-    rag_list = [r.replace(identifier, "") for r in dmu.get_files(rag_folder_path, identifier)]
+    rag_list = []#[r.replace(identifier, "") for r in dmu.get_files(rag_folder_json_path, identifier)]
     return rag_list
-
 
 # RAGデータの取得
 def select_rag_vector(query_vec, rag_data_list, rag={}):
@@ -119,8 +122,8 @@ def select_rag_vector(query_vec, rag_data_list, rag={}):
         rag_data["days_difference"] = days_difference
         
         # 埋め込みベクトルの類似度
-        similarity_prompt = dmu.calculate_similarity_vec(query_vec, rag_data["vector_data_key_text"], rag["DISTANCE_LOGIC"])
-        rag_data["similarity_prompt"] = round(similarity_prompt,3)
+#        similarity_prompt = dmu.calculate_similarity_vec(query_vec, rag_data["vector_data_key_text"], rag["DISTANCE_LOGIC"])
+#        rag_data["similarity_prompt"] = round(similarity_prompt,3)
 
         # チャンクテンプレートでコンテキスト化
         chunk_item_list = re.findall(r"\{(.*?)\}", rag["CHUNK_TEMPLATE"])
@@ -158,11 +161,30 @@ def create_rag_context(query, query_vec=[], rags=[]):
     for rag in rags:
         rag_data_list = []
         for rag_data in rag["DATA"]:
-            rag_data_file = rag_data +'_vec.json'
-            rag_data_json = dmu.read_json_file(rag_data_file, rag_folder_path)
-            for k, v in rag_data_json.items():
-                rag_data_list.append(v)
-        
+            if rag_data["DATA_TYPE"] == "JSON":
+                rag_data_file = rag_data["DATA_NAME"] +'_vec.json'
+                rag_data_json = dmu.read_json_file(rag_data_file, rag_folder_json_path)
+                for k, v in rag_data_json.items():
+                    similarity_prompt = dmu.calculate_similarity_vec(query_vec, rag_data["vector_data_key_text"], rag["DISTANCE_LOGIC"])
+                    v["similarity_prompt"] = round(similarity_prompt,3)
+                    rag_data_list.append(v)
+            elif rag_data["DATA_TYPE"] == "DB":
+                db_client = chromadb.PersistentClient(path=rag_folder_db_path)
+                collection = db_client.get_collection(rag_data["DATA_NAME"])
+                result_limit = 30
+                if collection.count() <= 30:
+                    result_limit = collection.count()
+                rag_data_db = collection.query(query_embeddings=[query_vec], n_results=result_limit, include=["metadatas", "embeddings", "distances"])
+                for i in range(len(rag_data_db["ids"])):
+                    for j in range(len(rag_data_db["ids"][i])):
+                        v = {}
+                        v["id"] = rag_data_db["ids"][i][j]
+                        v |= rag_data_db["metadatas"][i][j]
+                        v["vector_data_value_text"] = ast.literal_eval(v["vector_data_value_text"])
+                        v["vector_data_key_text"] = rag_data_db["embeddings"][i][j].tolist()
+                        v["similarity_prompt"] = round(rag_data_db["distances"][i][j],3)
+                        rag_data_list.append(v)
+                    
         # RAGデータの選択       
         if rag["RETRIEVER"] == "Vector":
             rag_context, rag_selected = select_rag_vector(query_vec, rag_data_list, rag)    
@@ -296,8 +318,8 @@ def get_chunk_notion(bucket, db_name, item_dict, chk_dict=None, date_dict=None):
     return rag_data
 
 
-# RAGチャンクデータの編集
-def get_rag_chunk(rag_data, rag_data_file):
+# RAGチャンクデータの編集(JSON)
+def save_rag_chunk_json(rag_data, rag_data_file):
     rag_data_file_updated = {}
     cnt_add = 0 
     cnt_extent = 0
@@ -306,8 +328,8 @@ def get_rag_chunk(rag_data, rag_data_file):
     if "create_date" in rag_data[0]:
         rag_data = sorted(rag_data, key=lambda x: x["create_date"], reverse=True)
 
+    # 対象ドキュメントのベクトルデータを作成
     for rag_chunk in rag_data:
-        # 対象ドキュメントのベクトルデータを作成
         if rag_chunk['id'] not in rag_data_file:
             if rag_chunk['value_text']:
                 vec_key_text = dmu.embed_text(rag_chunk['key_text'].replace("\n", ""))
@@ -325,12 +347,48 @@ def get_rag_chunk(rag_data, rag_data_file):
     return rag_data_file_updated, cnt_add, cnt_extent
 
 
-# RAGデータ生成（JSON：ベクトルサーチ）
-def generate_rag_vec_json():
+# RAGチャンクデータの編集(ChromaDB)
+def save_rag_chunk_db(rag_id, rag_data):
+    db_client = chromadb.PersistentClient(path=rag_folder_db_path)
+    collection = db_client.get_or_create_collection(name=rag_id, metadata={"hnsw:space": "cosine"})
+    existing_ids = collection.get(include=["ids"])["ids"]
+    cnt_add = 0 
+    cnt_extent = 0   
+    
+    # RAGデータをcreate_dateで降順に並び替え
+    if "create_date" in rag_data[0]:
+        rag_data = sorted(rag_data, key=lambda x: x["create_date"], reverse=True)
+
+    # 対象ドキュメントのベクトルデータを作成
+    for rag_chunk in rag_data:
+        if rag_chunk["value_text"]:
+            chunk_id = rag_chunk["id"]
+            if new_id not in existing_ids:
+                vec_key_text = dmu.embed_text(rag_chunk["key_text"].replace("\n", ""))
+                vec_value_text = dmu.embed_text(rag_chunk["value_text"].replace("\n", ""))
+                for key in ["id"]:
+                    if key in rag_chunk:
+                        del rag_chunk[key]
+                rag_chunk["vector_data_value_text"] = str(vec_value_text)
+                # DBコレクションに追加（重複していれば更新）
+                collection.add(
+                    ids=[chunk_id],
+                    embeddings=[vec_key_text],
+                    metadatas=rag_chunk
+                )
+                print(f"{rag_chunk['title']}を知識情報DBに追加しました。")
+            else:
+                print(f"{rag_chunk['title']}は知識情報DBに存在しています。")
+
+    return cnt_add, cnt_extent
+
+
+# RAGデータ生成
+def generate_rag():
     # RAGマスターの読込
     rag_mst_dict = dmu.read_json_file(rag_mst_file, mst_folder_path)
 
-    # 各RAGデータを生成（JSON）
+    # 各RAGデータを生成
     rag_data_file = {}
     rag_data_file_updated = {}
     cnt_add = 0 
@@ -341,26 +399,33 @@ def generate_rag_vec_json():
     rag_data = []
     for rag_id, rag_setting in rag_mst_dict.items():
         if rag_setting["active"] == "Y":
-            if rag_setting["mode"] == "notion":
-                rag_data = get_chunk_notion(rag_setting["bucket"], rag_setting["db"], rag_setting["item_dict"], rag_setting["chk_dict"], rag_setting["date_dict"])
-            elif rag_setting["mode"] == "csv":
+            if rag_setting["input"] == "notion":
+                rag_data = get_chunk_notion(rag_setting["bucket"], rag_setting["data_name"], rag_setting["item_dict"], rag_setting["chk_dict"], rag_setting["date_dict"])
+            elif rag_setting["input"] == "csv":
                 rag_data = get_chunk_csv(rag_setting["bucket"], rag_setting["file_path"], rag_setting["file_names"], rag_setting["field_items"])
             else:
                 print("正しいモードが設定されていません。")
-        
-            # RAGデータのファイル読込
-            rag_data_file_name = rag_folder_path + rag_id +'_vec.json'
-            rag_data_file = dmu.read_json_file(rag_data_file_name)
-            
-            # チャンクデータの編集
-            rag_data_file_updated, cnt_add, cnt_extent = get_rag_chunk(rag_data, rag_data_file)
-            
-            # RAG用ベクトルデータの保存
-            cnt_total = cnt_add + cnt_extent
-            if os.path.exists(rag_data_file_name):
-                os.remove(rag_data_file_name)
-            with open(rag_data_file_name, 'w') as file:
-                json.dump(rag_data_file_updated, file, indent=4)
-                log = log + f"{rag_id}の書き込みが完了しました。追加件数:{cnt_add}, トータル件数:{cnt_total}<br>"
+
+            # JSONでの保存
+            if rag_setting["data_type"] == "json":
+                rag_data_file_name = rag_folder_json_path + rag_id +'_vec.json'
+                rag_data_file = dmu.read_json_file(rag_data_file_name)
     
+                # チャンクデータの編集
+                rag_data_file_updated, cnt_add, cnt_extent = save_rag_chunk_json(rag_data, rag_data_file)
+                
+                # RAG用ベクトルデータの保存
+                cnt_total = cnt_add + cnt_extent
+                if os.path.exists(rag_data_file_name):
+                    os.remove(rag_data_file_name)
+                with open(rag_data_file_name, 'w') as file:
+                    json.dump(rag_data_file_updated, file, indent=4)
+                    log = log + f"{rag_id}のJSON書き込みが完了しました。追加件数:{cnt_add}, トータル件数:{cnt_total}<br>"
+
+            # ChromaDBでの保存
+            elif rag_setting["data_type"] == "chromadb":
+                cnt_add, cnt_extent = save_rag_chunk_db(rag_id, rag_data)
+                cnt_total = cnt_add + cnt_extent
+                log = log + f"{rag_id}のDB書き込みが完了しました。追加件数:{cnt_add}, トータル件数:{cnt_total}<br>"
+
     return log
