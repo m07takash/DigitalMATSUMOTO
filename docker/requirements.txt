@@ -15,3 +15,4 @@ mecab-python3
 scikit-learn
 wordcloud
 openpyxl
+chromadb
