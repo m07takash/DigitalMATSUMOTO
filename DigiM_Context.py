@@ -95,7 +95,8 @@ def get_rag_list():
     return rag_list
 
 # RAGデータの取得
-def select_rag_vector(query_vec, rag_data_list, rag={}):
+#def select_rag_vector(query_vec, rag_data_list, rag={}):
+def select_rag_vector(rag_data_list, rag={}):
     total_characters = 0
     buffer = 100
     rag_all = []
@@ -153,41 +154,51 @@ def select_rag_vector(query_vec, rag_data_list, rag={}):
 
 
 # RAGからのコンテキスト取得
-def create_rag_context(query, query_vec=[], rags=[]):
+def create_rag_context(query, query_vecs=[], rags=[]):
     rag_final_context = "\n------\n"
     rag_final_selected = []
 
     # RAGデータセットごとに処理    
     for rag in rags:
         rag_data_list = []
-        for rag_data in rag["DATA"]:
-            if rag_data["DATA_TYPE"] == "JSON":
-                rag_data_file = rag_data["DATA_NAME"] +'_vec.json'
-                rag_data_json = dmu.read_json_file(rag_data_file, rag_folder_json_path)
-                for k, v in rag_data_json.items():
-                    similarity_prompt = dmu.calculate_similarity_vec(query_vec, v["vector_data_key_text"], rag["DISTANCE_LOGIC"])
-                    v["similarity_prompt"] = round(similarity_prompt,3)
-                    rag_data_list.append(v)
-            elif rag_data["DATA_TYPE"] == "DB":
-                db_client = chromadb.PersistentClient(path=rag_folder_db_path)
-                collection = db_client.get_collection(rag_data["DATA_NAME"])
-                result_limit = 30
-                if collection.count() <= 30:
-                    result_limit = collection.count()
-                rag_data_db = collection.query(query_embeddings=[query_vec], n_results=result_limit, include=["metadatas", "embeddings", "distances"])
-                for i in range(len(rag_data_db["ids"])):
-                    for j in range(len(rag_data_db["ids"][i])):
-                        v = {}
-                        v["id"] = rag_data_db["ids"][i][j]
-                        v |= rag_data_db["metadatas"][i][j]
-                        v["vector_data_value_text"] = ast.literal_eval(v["vector_data_value_text"])
-                        v["vector_data_key_text"] = rag_data_db["embeddings"][i][j].tolist()
-                        v["similarity_prompt"] = round(rag_data_db["distances"][i][j],3)
+        for query_vec in query_vecs:
+            for rag_data in rag["DATA"]:
+                if rag_data["DATA_TYPE"] == "JSON":
+                    rag_data_file = rag_data["DATA_NAME"] +'_vec.json'
+                    rag_data_json = dmu.read_json_file(rag_data_file, rag_folder_json_path)
+                    for k, v in rag_data_json.items():
+                        similarity_prompt = dmu.calculate_similarity_vec(query_vec, v["vector_data_key_text"], rag["DISTANCE_LOGIC"])
+                        v["similarity_prompt"] = round(similarity_prompt,3)
                         rag_data_list.append(v)
-                    
+                elif rag_data["DATA_TYPE"] == "DB":
+                    db_client = chromadb.PersistentClient(path=rag_folder_db_path)
+                    collection = db_client.get_collection(rag_data["DATA_NAME"])
+                    result_limit = 30
+                    if collection.count() <= 30:
+                        result_limit = collection.count()
+                    rag_data_db = collection.query(query_embeddings=[query_vec], n_results=result_limit, include=["metadatas", "embeddings", "distances"])
+                    for i in range(len(rag_data_db["ids"])):
+                        for j in range(len(rag_data_db["ids"][i])):
+                            v = {}
+                            v["id"] = rag_data_db["ids"][i][j]
+                            v |= rag_data_db["metadatas"][i][j]
+                            v["vector_data_value_text"] = ast.literal_eval(v["vector_data_value_text"])
+                            v["vector_data_key_text"] = rag_data_db["embeddings"][i][j].tolist()
+                            v["similarity_prompt"] = round(rag_data_db["distances"][i][j],3)
+                            rag_data_list.append(v)
+
+        # rag_data_listでidが重複するものは質問との類似度が近いものに重複削除
+        filtered_data = {}
+        for rag_data in rag_data_list:
+            rag_data_id = rag_data["id"]
+            if rag_data_id not in filtered_data or rag_data["similarity_prompt"] < filtered_data[rag_data_id]["similarity_prompt"]:
+                filtered_data[rag_data_id] = rag_data
+        rag_data_list = list(filtered_data.values())
+        
         # RAGデータの選択       
         if rag["RETRIEVER"] == "Vector":
-            rag_context, rag_selected = select_rag_vector(query_vec, rag_data_list, rag)    
+#            rag_context, rag_selected = select_rag_vector(query_vec, rag_data_list, rag)    
+            rag_context, rag_selected = select_rag_vector(rag_data_list, rag)    
             rag_final_context += rag_context
             rag_final_selected += rag_selected
 
