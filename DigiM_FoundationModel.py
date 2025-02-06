@@ -206,7 +206,6 @@ def generate_image_dalle(prompt, system_prompt, model, memories=[], image_paths=
     # プロンプトを文字列に 
 #    prompt_str = json.dumps(system_message + memory_message + user_message, ensure_ascii=False).replace("\n", "").replace("\\", "")
     prompt_str = json.dumps(memory_message + user_message, ensure_ascii=False).replace("\n", "").replace("\\", "")
-    print(prompt_str)
 
     # 画像生成モデルの実行
     completion = openai_client.images.generate(

@@ -50,6 +50,7 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
 
     # 入力するクエリに纏めて、トークン数を取得
     user_query = user_input + contents_context
+    digest_text = ""
     model_name = agent.agent["ENGINE"][model_type]["MODEL"]
     tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
     query_tokens = dmu.count_token(tokenizer, model_name, user_query)
@@ -61,17 +62,23 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
         max_seq, max_sub_seq, chat_history_max_digest_dict = session.get_history_max_digest()#session.chat_history_active_dict)
         if chat_history_max_digest_dict:
             digest_text = "会話履歴のダイジェスト:\n"+chat_history_max_digest_dict["text"]+"\n---\n"
-            user_query = digest_text + user_query
 
     # クエリのベクトル化
     timestamp_log += "[05.クエリのベクトル化開始]"+str(datetime.now())+"<br>"
+    query_vecs = []
     query_vec = dmu.embed_text(user_query.replace("\n", ""))
+    query_vecs.append(query_vec)
+    if digest_text:
+        user_query_digest = digest_text + user_query
+        query_vec_digest = dmu.embed_text(user_query_digest.replace("\n", ""))
+        query_vecs.append(query_vec_digest)
 
     # RAGコンテキストを取得(追加ナレッジを反映)
     timestamp_log += "[06.RAG開始]"+str(datetime.now())+"<br>"
     if add_knowledge:
         agent.knowledge += add_knowledge
-    knowledge_context, knowledge_selected = agent.set_knowledge_context(user_query, query_vec)
+#    knowledge_context, knowledge_selected = agent.set_knowledge_context(user_query, query_vec)
+    knowledge_context, knowledge_selected = agent.set_knowledge_context(user_query, query_vecs)
     
     # プロンプトテンプレートを取得
     timestamp_log += "[07.プロンプトテンプレート設定]"+str(datetime.now())+"<br>"
