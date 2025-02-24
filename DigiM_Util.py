@@ -185,6 +185,7 @@ def get_wordcloud(title, dict, folder_path="user/common/analytics/insight/"):
 def count_token(tokenizer, model, text):
     tokens = 0
     if tokenizer == "tiktoken":
+        model = "gpt-4o"
         encoding = tiktoken.encoding_for_model(model)
         tokens = len(encoding.encode(text))
     elif tokenizer == "gemini":
