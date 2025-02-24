@@ -66,6 +66,7 @@ def create_page_communication(db_id, title, k1, k2, v_dict):
     dmn.update_notion_date(page_id, "タイムスタンプ", timestamp_str)
     dmn.update_notion_rich_text_content(page_id, "クエリ", query)
     dmn.update_notion_rich_text_content(page_id, "レスポンス", response)
+    dmn.update_notion_rich_text_content(page_id, "コンテキスト", response)
     dmn.update_notion_chk(page_id, "good", good)
     dmn.update_notion_chk(page_id, "likeme", likeme)
     dmn.update_notion_rich_text_content(page_id, "メモ", memo)

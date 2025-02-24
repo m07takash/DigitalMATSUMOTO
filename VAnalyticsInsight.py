@@ -120,7 +120,7 @@ def analytics_insight_knowledge(page_data, topN=10):
     ]).reset_index()
     
     # similarityのランキングを取得
-    similarity_rank = (df.sort_values(['rag', 'similarity_Q'], ascending=[True, False]).groupby('rag')[['ID', 'title', 'similarity_Q', 'similarity_A','knowledge_utility']].apply(lambda x: x.to_dict(orient='records')).to_dict())
+    similarity_rank = (df.sort_values(['rag', 'similarity_Q'], ascending=[True, True]).groupby('rag')[['ID', 'title', 'similarity_Q', 'similarity_A','knowledge_utility']].apply(lambda x: x.to_dict(orient='records')).to_dict())
     
     # RAGごとの知識活用性（Q最小値-A最小値）を算出
     #min_difference = similarity_Q_stats['min'] - similarity_A_stats['min']

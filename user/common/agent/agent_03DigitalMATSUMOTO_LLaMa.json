@@ -9,11 +9,11 @@
         "IS_ALIVE": true,
         "NATIONALITY": "Japanese",
         "BIG5": {
-            "Openness": 0.71,
-            "Conscientiousness": 0.62,
+            "Openness": 0.4,
+            "Conscientiousness": 0.6,
             "Extraversion": 0.85,
-            "Agreeableness": 0.30,
-            "Neuroticism": 0.66
+            "Agreeableness": 0.3,
+            "Neuroticism": 0.7
         },
         "LANGUAGE": "日本語",
         "SPEAKING_STYLE": "Polite",

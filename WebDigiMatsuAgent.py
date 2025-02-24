@@ -83,6 +83,8 @@ def initialize_session_states():
         st.session_state.magic_word_use = "Y"
     if 'stream_mode' not in st.session_state:
         st.session_state.stream_mode = True
+    if 'save_digest' not in st.session_state:
+        st.session_state.save_digest = True
     if 'uploaded_files' not in st.session_state:
         st.session_state.uploaded_files = []
     if 'file_uploader' not in st.session_state:
@@ -113,7 +115,7 @@ def refresh_session(session_id, session_name, situation, new_session_flg=False):
     st.session_state.overwrite_flg_persona = False
     st.session_state.overwrite_flg_prompt_temp = False
     st.session_state.overwrite_flg_rag = False
-    st.rerun()
+    #st.rerun()
 
 # アップロードしたファイルの表示
 def show_uploaded_files_memory(file_path, file_name, file_type):
@@ -198,7 +200,7 @@ def main():
         # 会話履歴の更新
         if side_col2.button("Refresh List", key="refresh_session_list"):
             st.session_state.session_list = dms.get_session_list_visible()
-        num_session_visible = st.number_input(label="Visible Sessions", value=12, step=1, format="%d")
+        num_session_visible = st.number_input(label="Visible Sessions", value=5, step=1, format="%d")
 
         # 知識更新・分析の処理
         sidemenu_expander = st.expander("Data Processing")
@@ -218,6 +220,11 @@ def main():
                 vami.analytics_insights_monthly(analyse_month_str, 12)
                 vamk.analytics_knowledge_monthly(analyse_month_str)
                 st.session_state.sidebar_message = f"{analyse_month_str}の分析が完了しました"
+        del_rag_expander = st.expander("Delete RAG DB")
+        with del_rag_expander:
+            if st.button("Delete RAG DB", key="delete_rag_db"):
+                dmc.del_rag_db()
+                st.session_state.sidebar_message = "知識情報(RAG)を削除しました"
         st.write(st.session_state.sidebar_message)
 
         st.markdown("----")
@@ -407,6 +414,12 @@ def main():
     else:
         st.session_state.stream_mode = False
 
+    # メモリダイジェスト保存の設定
+    if header_col2.checkbox("Save Digest", value=st.session_state.save_digest):
+        st.session_state.save_digest = True
+    else:
+        st.session_state.save_digest = False
+
     # 会話履歴の表示対象切替
     num_seq_visible = 10
     sub_header_col1, sub_header_col2 = header_col3.columns(2)
@@ -501,8 +514,12 @@ def main():
                 st.session_state.seq_memory.append(k)
 
     # ファイルアップローダー
-    st.session_state.uploaded_files = st.session_state.file_uploader("Attached Files:", type=["txt", "csv", "xlsx", "jpg", "jpeg", "png", "mp4", "mov", "avi", "mp3", "wav"], accept_multiple_files=True)
-    if st.session_state.uploaded_files:
+#    st.session_state.uploaded_files = st.session_state.file_uploader("Attached Files:", type=["txt", "csv", "xlsx", "jpg", "jpeg", "png", "mp4", "mov", "avi", "mp3", "wav"], accept_multiple_files=True)
+#    if st.session_state.uploaded_files:
+#        show_uploaded_files_widget(st.session_state.uploaded_files)
+    uploaded_files = st.file_uploader("Attached Files:", type=["txt", "csv", "xlsx", "jpg", "jpeg", "png", "mp4", "mov", "avi", "mp3", "wav"], accept_multiple_files=True)
+    if uploaded_files:
+        st.session_state.uploaded_files = uploaded_files
         show_uploaded_files_widget(st.session_state.uploaded_files)
     
     # ユーザーの問合せ入力
@@ -533,7 +550,7 @@ def main():
             practice=st.session_state.agent_data["HABIT"]
             response_placeholder = st.empty()
             response = ""
-            for response_chunk in dme.DigiMatsuExecute_Practice(st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, practice, st.session_state.memory_use, st.session_state.magic_word_use, st.session_state.stream_mode):
+            for response_chunk in dme.DigiMatsuExecute_Practice(st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, practice, st.session_state.memory_use, st.session_state.magic_word_use, st.session_state.stream_mode, st.session_state.save_digest):
                 response += response_chunk
                 response_placeholder.markdown(response)
             st.rerun()
