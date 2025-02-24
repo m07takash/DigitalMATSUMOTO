@@ -9,11 +9,11 @@
         "IS_ALIVE": true,
         "NATIONALITY": "Japanese",
         "BIG5": {
-            "Openness": 0.71,
-            "Conscientiousness": 0.62,
+            "Openness": 0.4,
+            "Conscientiousness": 0.6,
             "Extraversion": 0.85,
-            "Agreeableness": 0.30,
-            "Neuroticism": 0.66
+            "Agreeableness": 0.3,
+            "Neuroticism": 0.7
         },
         "LANGUAGE": "日本語",
         "SPEAKING_STYLE": "Polite",
@@ -24,7 +24,7 @@
             "NAME":"GPT-4o",
             "FUNC_NAME": "generate_response_T_gpt",
             "MODEL": "gpt-4o-2024-11-20",
-            "PARAMETER": {"temperature": 0.7},
+            "PARAMETER": {"temperature": 0.5},
             "TOKENIZER": "tiktoken",
             "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
         },

@@ -407,7 +407,6 @@ def generate_rag():
     rag_data_file_updated = {}
     cnt_add = 0 
     cnt_extent = 0
-    log = ""
     
     # チャンクデータの取得
     rag_data = []
@@ -434,12 +433,18 @@ def generate_rag():
                     os.remove(rag_data_file_name)
                 with open(rag_data_file_name, 'w') as file:
                     json.dump(rag_data_file_updated, file, indent=4)
-                    log = log + f"{rag_id}のJSON書き込みが完了しました。追加件数:{cnt_add}, トータル件数:{cnt_total}<br>"
+                    print(f"{rag_id}のJSON書き込みが完了しました。追加件数:{cnt_add}, トータル件数:{cnt_total}")
 
             # ChromaDBでの保存
             elif rag_setting["data_type"] == "chromadb":
                 cnt_add, cnt_extent = save_rag_chunk_db(rag_id, rag_data)
                 cnt_total = cnt_add + cnt_extent
-                log = log + f"{rag_id}のDB書き込みが完了しました。追加件数:{cnt_add}, トータル件数:{cnt_total}<br>"
+                print(f"{rag_id}のDB書き込みが完了しました。追加件数:{cnt_add}, トータル件数:{cnt_total}")
 
-    return log
+# RAGデータベース（Collection）の削除
+def del_rag_db():
+    db_client = chromadb.PersistentClient(path=rag_folder_db_path)
+    collections = db_client.list_collections()
+    for collection_name in collections:
+        db_client.delete_collection(name=collection_name)
+        print(collection_name + "を削除しました。")

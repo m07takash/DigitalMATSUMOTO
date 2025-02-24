@@ -115,7 +115,7 @@ def generate_pureLLM(agent_file, query, memories_selected={}):
 
 
 # テキストの比較
-def compare_texts(head1, text1, head2, text2):
+def compare_texts(head1, text1, head2, text2, query_compare=""):
     agent_file = "agent_53CompareTexts.json"
     agent = dma.DigiM_Agent(agent_file)
 
@@ -124,8 +124,11 @@ def compare_texts(head1, text1, head2, text2):
     tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
     
     # エージェントに設定されるプロンプトテンプレートを設定
-    prompt_temp_cd = "Compare Texts"
-    prompt_template = agent.set_prompt_template(prompt_temp_cd)
+    if query_compare == "":
+        prompt_temp_cd = "Compare Texts"
+        prompt_template = agent.set_prompt_template(prompt_temp_cd)
+    else:
+        prompt_template = query_compare
 
     # プロンプトの設定
     prompt = f'{prompt_template}\n\n[{head1}]\n{text1}\n\n[{head2}]\n{text2}'

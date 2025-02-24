@@ -16,7 +16,7 @@ practice_folder_path = os.getenv("PRACTICE_FOLDER")
 timezone_setting = os.getenv("TIMEZONE")
 
 # 単体実行用の関数
-def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", stream_mode=True, sub_seq=1, user_input="", contents=[], situation={}, overwrite_items={}, add_knowledge=[], prompt_temp_cd="", memory_use=True, seq_limit="", sub_seq_limit=""):
+def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", stream_mode=True, sub_seq=1, user_input="", contents=[], situation={}, overwrite_items={}, add_knowledge=[], prompt_temp_cd="", memory_use=True, save_digest=True, seq_limit="", sub_seq_limit=""):
     export_files = []
     timestamp_log = "[01.実行開始(セッション設定)]"+str(datetime.now())+"<br>"
     
@@ -56,12 +56,13 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
     query_tokens = dmu.count_token(tokenizer, model_name, user_query)
     system_tokens = dmu.count_token(tokenizer, model_name, agent.system_prompt)
 
-    # 会話のダイジェストを取得(ダイジェストはRAGとMemoryの類似度検索にのみ用い、プロンプトには含めない)
-    timestamp_log += "[04.会話ダイジェスト読込開始]"+str(datetime.now())+"<br>"
-    if session.chat_history_active_dict:
-        max_seq, max_sub_seq, chat_history_max_digest_dict = session.get_history_max_digest()#session.chat_history_active_dict)
-        if chat_history_max_digest_dict:
-            digest_text = "会話履歴のダイジェスト:\n"+chat_history_max_digest_dict["text"]+"\n---\n"
+    # 会話のダイジェストを取得
+    if memory_use:
+        timestamp_log += "[04.会話ダイジェスト読込開始]"+str(datetime.now())+"<br>"
+        if session.chat_history_active_dict:
+            max_seq, max_sub_seq, chat_history_max_digest_dict = session.get_history_max_digest()#session.chat_history_active_dict)
+            if chat_history_max_digest_dict:
+                digest_text = "会話履歴のダイジェスト:\n"+chat_history_max_digest_dict["text"]+"\n---\n"
 
     # クエリのベクトル化
     timestamp_log += "[05.クエリのベクトル化開始]"+str(datetime.now())+"<br>"
@@ -222,22 +223,23 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
     session.save_history(str(seq), "response", response_chat_dict, "SUB_SEQ", str(sub_seq))
 
     # メモリダイジェストの作成
-    timestamp_log += "[18.メモリダイジェストの作成開始]"+str(datetime.now())+"<br>"
-    session.set_history()
-    digest_memories_selected = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
-    digest_response, digest_prompt_tokens, digest_response_tokens = dmt.dialog_digest("", digest_memories_selected)
-    timestamp_digest = str(datetime.now())
-    digest_response_vec = dmu.embed_text(digest_response.replace("\n", ""))
-    
-    # ログデータの保存(SubSeq:digest)
-    digest_chat_dict = {
-        "role": "assistant",
-        "timestamp": timestamp_digest,
-        "token": digest_response_tokens,
-        "text": digest_response,
-        "vec_text": digest_response_vec
-    }
-    session.save_history(str(seq), "digest", digest_chat_dict, "SUB_SEQ", str(sub_seq))
+    if save_digest:
+        timestamp_log += "[18.メモリダイジェストの作成開始]"+str(datetime.now())+"<br>"
+        session.set_history()
+        digest_memories_selected = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
+        digest_response, digest_prompt_tokens, digest_response_tokens = dmt.dialog_digest("", digest_memories_selected)
+        timestamp_digest = str(datetime.now())
+        digest_response_vec = dmu.embed_text(digest_response.replace("\n", ""))
+        
+        # ログデータの保存(SubSeq:digest)
+        digest_chat_dict = {
+            "role": "assistant",
+            "timestamp": timestamp_digest,
+            "token": digest_response_tokens,
+            "text": digest_response,
+            "vec_text": digest_response_vec
+        }
+        session.save_history(str(seq), "digest", digest_chat_dict, "SUB_SEQ", str(sub_seq))
 
     # ログデータの保存(SubSeq:log)
     timestamp_log += "[完了]"+str(datetime.now())+"<br>"
@@ -250,7 +252,7 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
 
 
 # プラクティスで実行
-def DigiMatsuExecute_Practice(session_id, session_name, in_agent_file, user_query, in_contents, in_situation={}, in_overwrite_items={}, practice={}, in_memory_use=True, magic_word_use="Y", stream_mode=True):
+def DigiMatsuExecute_Practice(session_id, session_name, in_agent_file, user_query, in_contents, in_situation={}, in_overwrite_items={}, practice={}, in_memory_use=True, magic_word_use="Y", stream_mode=True, save_digest=True):
     session = dms.DigiMSession(session_id, session_name)
     sub_seq = 1
     results = []
@@ -322,7 +324,7 @@ def DigiMatsuExecute_Practice(session_id, session_name, in_agent_file, user_quer
 
             # LLM実行
             response = ""
-            for response_chunk, export_contents in DigiMatsuExecute(session_id, session_name, agent_file, model_type, stream_mode, sub_seq, user_input, import_contents, situation, overwrite_items, add_knowledge, prompt_temp_cd, memory_use): #, seq_limit, sub_seq_limit)
+            for response_chunk, export_contents in DigiMatsuExecute(session_id, session_name, agent_file, model_type, stream_mode, sub_seq, user_input, import_contents, situation, overwrite_items, add_knowledge, prompt_temp_cd, memory_use, save_digest): #, seq_limit, sub_seq_limit)
                 response += response_chunk
                 yield response_chunk
             
