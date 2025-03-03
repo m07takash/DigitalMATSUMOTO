@@ -60,7 +60,7 @@ def plot_rag_scatter_thisMonth(end_month, rag_name, rag_data_list, category_map_
         category_handles = [plt.Line2D([0], [0], marker='o', color='w', label=key, markersize=10, markerfacecolor=color)
                             for key, color in category_map_json["CategoryColor"].items()]
         category_handles.append(plt.Line2D([0], [0], marker='o', color='w', label='その他', markersize=10, markerfacecolor='gray'))
-        plt.legend(handles=category_handles, loc='upper left', bbox_to_anchor=(1, 1), title="カテゴリー")
+        plt.legend(handles=category_handles, loc='upper left', bbox_to_anchor=(1, 1), title="カテゴリ")
         plt.savefig(f"{analytics_file_path}{end_month}Monthly10_scatter{rag_name}_category.png", dpi=300, bbox_inches='tight')
         plt.show()
 
