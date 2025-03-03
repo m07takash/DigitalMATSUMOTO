@@ -23,7 +23,7 @@
         "LLM": {
             "NAME":"GPT-4o",
             "FUNC_NAME": "generate_response_T_gpt",
-            "MODEL": "gpt-4o-2024-11-20",
+            "MODEL": "gpt-4o-mini",
             "PARAMETER": {"temperature": 0.7},
             "TOKENIZER": "tiktoken",
             "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}

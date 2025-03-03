@@ -14,7 +14,7 @@ import DigiM_Session as dms
 import DigiM_Agent as dma
 import DigiM_Context as dmc
 import DigiM_Util as dmu
-import VAnalyticsInsight as vai
+import VAnalyticsArticle as vaa
 import VAnalyticsMonthlyInsight as vami
 import VAnalyticsMonthlyKnowledge as vamk
 import GeneCommunication as gc
@@ -203,28 +203,31 @@ def main():
         num_session_visible = st.number_input(label="Visible Sessions", value=5, step=1, format="%d")
 
         # 知識更新・分析の処理
-        sidemenu_expander = st.expander("Data Processing")
-        with sidemenu_expander:
-            if st.button("Update RAG Data", key="update_rag"):
-                dmc.generate_rag()
-                st.session_state.sidebar_message = "知識情報(RAG)の更新が完了しました"
-            if st.button("Feedback to DB", key="save_feedback_to_db"):
-                gc.create_pages_communication(st.session_state.session.session_id)
-                st.session_state.sidebar_message = "フィードバックをDBに保存しました"
+        analytics_expander = st.expander("Analytics")
+        with analytics_expander:
             if st.button("Insight Analytics", key="insight_analytics"):
-                vai.analytics_insights()
-                st.session_state.sidebar_message = "考察の分析が完了しました"
+                vaa.analytics_insights()
+                st.session_state.sidebar_message = "note考察の分析が完了しました"
+            if st.button("YouTube Analytics", key="youtube_analytics"):
+                vaa.analytics_YouTube()
+                st.session_state.sidebar_message = "YouTubeコンテンツの分析が完了しました"
             analyse_date = st.date_input("Monthly Analytics", value=now_time)
             if st.button("Monthly Analytics", key="monthly_analytics"):
                 analyse_month_str = analyse_date.strftime("%Y-%m")
                 vami.analytics_insights_monthly(analyse_month_str, 12)
                 vamk.analytics_knowledge_monthly(analyse_month_str)
                 st.session_state.sidebar_message = f"{analyse_month_str}の分析が完了しました"
-        del_rag_expander = st.expander("Delete RAG DB")
-        with del_rag_expander:
+        rag_expander = st.expander("RAG Management")
+        with rag_expander:
+            if st.button("Update RAG Data", key="update_rag"):
+                dmc.generate_rag()
+                st.session_state.sidebar_message = "RAGの更新が完了しました"
+            if st.button("Feedback to DB", key="save_feedback_to_db"):
+                gc.create_pages_communication(st.session_state.session.session_id)
+                st.session_state.sidebar_message = "フィードバックをDBに保存しました"
             if st.button("Delete RAG DB", key="delete_rag_db"):
                 dmc.del_rag_db()
-                st.session_state.sidebar_message = "知識情報(RAG)を削除しました"
+                st.session_state.sidebar_message = "RAGを削除しました"
         st.write(st.session_state.sidebar_message)
 
         st.markdown("----")
@@ -449,6 +452,7 @@ def main():
 
     # シチュエーションの設定
     situation_setting = st.text_input("Situation Setting:", value=st.session_state.situation_setting)
+
 
     # 会話履歴の表示件数の設定
     max_seq = dms.max_seq_dict(st.session_state.chat_history_visible_dict)

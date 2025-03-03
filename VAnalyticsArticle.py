@@ -9,10 +9,8 @@ import DigiM_Tool as dmt
 import DigiM_Util as dmu
 import DigiM_Notion as dmn
 
-analytics_file_path = "user/common/analytics/insight/"
-
-# 考察記事の特徴（TF-IDF）
-def analytics_insight_tfidf(page_data, page_data_done, TopN=10):
+# 記事の特徴（TF-IDF）
+def analytics_tfidf(page_data, page_data_done, analytics_file_path, TopN=10):
     # 形態素解析用の定義
     GRAMMER = ('名詞')#,'動詞','形容詞','副詞')
     STOP_WORDS = ["と", "の", "が", "で", "て", "に", "お", "は", "。", "、", "・", "<", ">", "【", "】", "(", ")", "（", "）", "Source", "Doc", "id", ":", "的", "等", "こと", "し", "する", "ます", "です", "します", "これ", "あれ", "それ", "どれ", "この", "あの", "その", "どの", "氏", "さん", "くん", "君", "化", "ため", "おり", "もの", "により", "あり", "これら", "あれら", "それら", "・・", "*", "#", ":", ";", "「", "」", "感", "性", "ば", "かも", "ごと"]
@@ -21,12 +19,12 @@ def analytics_insight_tfidf(page_data, page_data_done, TopN=10):
     page_title = page_data["title"]
 
     # TF-IDF設定対象の取得
-    page_date = datetime.strptime(page_data['note_date'], '%Y-%m-%d')
-    insights = [page["Insight_Final"] for page in page_data_done if datetime.strptime(page['note_date'], '%Y-%m-%d') <= page_date]
+    page_date = datetime.strptime(page_data['exec_date'], '%Y-%m-%d')
+    finals = [page["Final"] for page in page_data_done if datetime.strptime(page['exec_date'], '%Y-%m-%d') <= page_date]
     
     # TF-IDFベクトライザーを生成
-    vectorizer_tfidf = dmu.fit_tfidf(insights, mode="Default", stop_words=STOP_WORDS, grammer=GRAMMER)
-    dict_tfidf, tfidf_topN, tfidf_topN_str = dmu.get_tfidf_list(page_data["Insight_Final"], vectorizer_tfidf, TopN)
+    vectorizer_tfidf = dmu.fit_tfidf(finals, mode="Default", stop_words=STOP_WORDS, grammer=GRAMMER)
+    dict_tfidf, tfidf_topN, tfidf_topN_str = dmu.get_tfidf_list(page_data["Final"], vectorizer_tfidf, TopN)
     dict_tfidf_v = {key: value for key, value in dict_tfidf.items() if value != 0}
 
     # TF-IDFをNotionに保存
@@ -40,29 +38,30 @@ def analytics_insight_tfidf(page_data, page_data_done, TopN=10):
 
 
 # 独自性：通常LLMとの差分
-def analytics_insight_originality(page_data, vec_insight_final, vec_insight_draft, tfidf_topN=[]):
+def analytics_originality(page_data, vec_final, vec_draft, prompt_temp_cd="No Template", tfidf_topN=[], compare_flg=False, head_item={"Pure": "通常LLMの出力", "Draft": "デジタルMATSUMOTOの出力", "Final": "最終的な出力"}):
     # 通常LLMを実行してNotionに保存
 #    agent_file = "agent_01DigitalMATSUMOTO_GPT.json"
     agent_file = page_data["agent"]
-    insight_pure, prompt_tokens, response_tokens = dmt.generate_pureLLM(agent_file, page_data["Input"])
-    vec_insight_pure = dmu.embed_text(insight_pure)
-    dmn.update_notion_rich_text_content(page_data["id"], "考察_比較LLM", insight_pure)
+    pure, prompt_tokens, response_tokens = dmt.generate_pureLLM(agent_file, page_data["Input"], prompt_temp_cd=prompt_temp_cd)
+    vec_pure = dmu.embed_text(pure)
+    dmn.update_notion_rich_text_content(page_data["id"], "比較LLM", pure)
 
     # 独自性(距離)を算出
-    originality_final = dmu.calculate_cosine_distance(vec_insight_final, vec_insight_pure)
-    originality_draft = dmu.calculate_cosine_distance(vec_insight_draft, vec_insight_pure)
+    originality_final = dmu.calculate_cosine_distance(vec_final, vec_pure)
+    originality_draft = dmu.calculate_cosine_distance(vec_draft, vec_pure)
     originality_improved = originality_final - originality_draft
     result = dmn.update_notion_num(page_data["id"], "独自性(距離)Final", originality_final)
     result = dmn.update_notion_num(page_data["id"], "独自性(距離)Draft", originality_draft)
     result = dmn.update_notion_num(page_data["id"], "独自性(距離)Improved", originality_improved)
 
     # LLMでの比較分析
-    compare_final_pure, prompt_tokens, response_tokens = dmt.compare_texts("デジタルMATSUMOTOの考察(最終版)", page_data["Insight_Final"], "通常LLMの考察", insight_pure)
-    compare_draft_pure, prompt_tokens, response_tokens = dmt.compare_texts("デジタルMATSUMOTOの考察(ドラフト版)", page_data["Insight_Draft"], "通常LLMの考察", insight_pure)
-    compare_final_draft, prompt_tokens, response_tokens = dmt.compare_texts("デジタルMATSUMOTOの考察(最終版)", page_data["Insight_Final"], "デジタルMATSUMOTOの考察(ドラフト版)", page_data["Insight_Draft"])
-    dmn.update_notion_rich_text_content(page_data["id"], "独自性Final_LLM評価", compare_final_pure.replace("*",""))
-    dmn.update_notion_rich_text_content(page_data["id"], "独自性Draft_LLM評価", compare_draft_pure.replace("*",""))
-    dmn.update_notion_rich_text_content(page_data["id"], "独自性Improved_LLM評価", compare_final_draft.replace("*",""))
+    if compare_flg:
+        compare_final_pure, prompt_tokens, response_tokens = dmt.compare_texts(head_item["Final"], page_data["Final"], head_item["Pure"], pure)
+        compare_draft_pure, prompt_tokens, response_tokens = dmt.compare_texts(head_item["Draft"], page_data["Draft"], head_item["Pure"], pure)
+        compare_final_draft, prompt_tokens, response_tokens = dmt.compare_texts(head_item["Final"], page_data["Final"], head_item["Draft"], page_data["Draft"])
+        dmn.update_notion_rich_text_content(page_data["id"], "独自性Final_LLM評価", compare_final_pure.replace("*",""))
+        dmn.update_notion_rich_text_content(page_data["id"], "独自性Draft_LLM評価", compare_draft_pure.replace("*",""))
+        dmn.update_notion_rich_text_content(page_data["id"], "独自性Improved_LLM評価", compare_final_draft.replace("*",""))
 
     # TF-IDFから独自キーワードを算出
     if tfidf_topN:
@@ -71,7 +70,7 @@ def analytics_insight_originality(page_data, vec_insight_final, vec_insight_draf
         original_keywords = []
         for keyword, value in tfidf_topN:
             sum_tfidf_topN += value
-            if keyword not in insight_pure:
+            if keyword not in pure:
                 sum_tfidf_original += value
                 original_keywords.append((keyword, value))
                 
@@ -86,9 +85,9 @@ def analytics_insight_originality(page_data, vec_insight_final, vec_insight_draf
 
 
 # 知識参照度と知識活用度の分析
-def analytics_insight_knowledge(page_data, topN=10):
+def analytics_knowledge(page_data, analytics_file_path, topN=10):
     df = pd.DataFrame(eval(page_data["reference"]))
-    df['knowledge_utility'] = df['similarity_Q'] - df['similarity_A']
+    df['knowledge_utility'] = round(df['similarity_Q'] - df['similarity_A'], 3)
 
     page_title = page_data["title"][:30]
     
@@ -170,15 +169,17 @@ def analytics_insight_knowledge(page_data, topN=10):
 
 # 考察の分析
 def analytics_insights():
+    analytics_file_path = "user/common/analytics/insight/"
+    
     db_name = "DigiMATSU_Opinion"
     item_dict = {
         "title": {"名前": "title"}, 
-        "note_date": {"note公開日": "date"},
+        "exec_date": {"note公開日": "date"},
         "category": {"カテゴリ": "select"},
         "eval": {"評価": "select"},
         "Input": {"インプット": "rich_text"},
-        "Insight_Draft": {"考察_DTwin": "rich_text"},
-        "Insight_Final": {"考察_確定版": "rich_text"},
+        "Draft": {"考察_DTwin": "rich_text"},
+        "Final": {"考察_確定版": "rich_text"},
         "agent": {"エージェントファイル": "rich_text"},
         "model": {"実行モデル": "rich_text"},
         "Point_RealM": {"リアル松本の論点数": "number"},
@@ -189,21 +190,24 @@ def analytics_insights():
     chk_dict_analyse = {'分析対象Chk': True, '分析Chk': False}
     date_dict = {}
 
+    # 独自性分析の比較項目名（プロンプト内）
+    head_item = {"Pure": "通常LLMの考察", "Draft": "デジタルMATSUMOTOの考察(ドラフト版)", "Final": "デジタルMATSUMOTOの考察(最終版)"}
+
     # 更新対象データの取得（コンテキストのPGを利用）
     page_data_analyse = dmc.get_chunk_notion("Analyse", db_name, item_dict, chk_dict_analyse, date_dict)
-    page_data_analyse = sorted(page_data_analyse, key=lambda x: x['note_date'], reverse=True)
+    page_data_analyse = sorted(page_data_analyse, key=lambda x: x['exec_date'], reverse=True)
     page_data_done = dmc.get_chunk_notion("Done", db_name, item_dict, chk_dict_done, date_dict)
-    page_data_done = sorted(page_data_done, key=lambda x: x['note_date'], reverse=True)
+    page_data_done = sorted(page_data_done, key=lambda x: x['exec_date'], reverse=True)
 
     # ページごとに取得
     for page_data in page_data_analyse:
         # テキストのベクトル化
         vec_input = dmu.embed_text(page_data["Input"])
-        vec_insight_final = dmu.embed_text(page_data["Insight_Final"])
-        vec_insight_draft = dmu.embed_text(page_data["Insight_Draft"])
+        vec_final = dmu.embed_text(page_data["Final"])
+        vec_draft = dmu.embed_text(page_data["Draft"])
         
         # 実現性：リアル松本との差分(類似度)
-        realization = 1 - dmu.calculate_cosine_distance(vec_insight_final, vec_insight_draft)
+        realization = 1 - dmu.calculate_cosine_distance(vec_final, vec_draft)
         dmn.update_notion_num(page_data["id"], "実現性(類似度)", realization)
 
         # 論点再現度
@@ -213,14 +217,68 @@ def analytics_insights():
                 realization_point = round(page_data["Point_DigiM"]/page_data["Point_RealM"], 10)
         dmn.update_notion_num(page_data["id"], "論点再現度", realization_point)
         
-        # 考察の特徴：TF-IDFの分析
-        dict_tfidf_v, tfidf_topN, tfidf_topN_str = analytics_insight_tfidf(page_data, page_data_done)
+        # 特徴：TF-IDFの分析
+        dict_tfidf_v, tfidf_topN, tfidf_topN_str = analytics_tfidf(page_data, page_data_done, analytics_file_path)
     
         # 独自性：通常LLMとの差分(距離)
-        analytics_insight_originality(page_data, vec_insight_final, vec_insight_draft, tfidf_topN)
+        prompt_temp_cd = "Insight Template Pure"
+        analytics_originality(page_data, vec_final, vec_draft, prompt_temp_cd, tfidf_topN, True, head_item)
 
         # 知識参照度と活用度：質問及び回答とRAGデータの類似度
-        analytics_insight_knowledge(page_data)
+        analytics_knowledge(page_data, analytics_file_path)
+        
+        # 分析の確定
+        dmn.update_notion_chk(page_data["id"], "分析Chk", True)
+        print(page_data["title"]+"の分析が完了しました。")
+        
+
+# YouTubeの分析
+def analytics_YouTube():
+    analytics_file_path = "user/common/analytics/YouTube/"
+    
+    db_name = "AIBreeder_Parts"
+    item_dict = {
+        "title": {"名前": "title"}, 
+        "part": {"Part": "number"}, 
+        "Input": {"インプット": "rich_text"},
+        "Draft": {"デジタルMATSUMOTOのドラフト": "rich_text"},
+        "Final": {"公開テキスト": "rich_text"},
+        "agent": {"エージェントファイル": "rich_text"},
+        "model": {"実行モデル": "rich_text"},
+        "reference": {"リファレンス": "rich_text"}
+    }
+    chk_dict_done = {'分析対象Chk': True}
+    chk_dict_analyse = {'分析対象Chk': True, '分析Chk': False}
+    date_dict = {}
+
+    # 更新対象データの取得（コンテキストのPGを利用）
+    page_data_analyse = dmc.get_chunk_notion("Analyse", db_name, item_dict, chk_dict_analyse, date_dict)
+    page_data_analyse = sorted(page_data_analyse, key=lambda x: (x['title'], x['part']))
+    page_data_done = dmc.get_chunk_notion("Done", db_name, item_dict, chk_dict_done, date_dict)
+    page_data_done = sorted(page_data_done, key=lambda x: (x['title'], x['part']))
+
+    # ページごとに取得
+    for page_data in page_data_analyse:
+        page_data["title"] = page_data["title"][:25] +"-"+ str(page_data["part"])
+        
+        # テキストのベクトル化
+        vec_input = dmu.embed_text(page_data["Input"])
+        vec_final = dmu.embed_text(page_data["Final"])
+        vec_draft = dmu.embed_text(page_data["Draft"])
+        
+        # 実現性：リアル松本との差分(類似度)
+        realization = 1 - dmu.calculate_cosine_distance(vec_final, vec_draft)
+        dmn.update_notion_num(page_data["id"], "実現性(類似度)", realization)
+
+        # 特徴：TF-IDFの分析
+        #dict_tfidf_v, tfidf_topN, tfidf_topN_str = analytics_tfidf(page_data, page_data_done, analytics_file_path)
+    
+        # 独自性：通常LLMとの差分(距離)
+        prompt_temp_cd = "YouTube Template"
+        analytics_originality(page_data, vec_final, vec_draft, prompt_temp_cd)
+
+        # 知識参照度と活用度：質問及び回答とRAGデータの類似度
+        analytics_knowledge(page_data, analytics_file_path)
         
         # 分析の確定
         dmn.update_notion_chk(page_data["id"], "分析Chk", True)

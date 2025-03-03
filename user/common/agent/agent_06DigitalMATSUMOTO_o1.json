@@ -1,6 +1,6 @@
 {
     "DISPLAY": true,
-    "DISPLAY_NAME": "デジタルMATSUMOTO(llama)",
+    "DISPLAY_NAME": "デジタルMATSUMOTO(o1)",
     "NAME": "デジタルMATSUMOTO",
     "ACT": "AIの専門家である松本敬史のデジタルツインAI",
     "PERSONALITY": {
@@ -21,11 +21,11 @@
     },
     "ENGINE": {
         "LLM": {
-            "NAME":"LLaMa",
-            "FUNC_NAME": "generate_response_T_llama",
-            "MODEL": "llama3.3-70b",
-            "PARAMETER": {"temperature": 0.7},
-            "TOKENIZER": "",
+            "NAME":"o1",
+            "FUNC_NAME": "generate_response_T_o",
+            "MODEL": "o1",
+            "PARAMETER": {"reasoning_effort": "high"},
+            "TOKENIZER": "tiktoken",
             "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
         },
         "IMAGEGEN": {

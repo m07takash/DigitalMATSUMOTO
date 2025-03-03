@@ -84,7 +84,7 @@ def dialog_digest(user_query, memories_selected={}):
 
 
 # 通常LLMの実行
-def generate_pureLLM(agent_file, query, memories_selected={}):
+def generate_pureLLM(agent_file, query, memories_selected={}, prompt_temp_cd="No Template"):
     agent = dma.DigiM_Agent(agent_file)
 
     model_type = "LLM"
@@ -95,7 +95,6 @@ def generate_pureLLM(agent_file, query, memories_selected={}):
     dma.set_normal_agent(agent)
     
     # エージェントに設定されるプロンプトテンプレートを設定
-    prompt_temp_cd = "Insight Template Pure"
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
 
     # プロンプトの設定
