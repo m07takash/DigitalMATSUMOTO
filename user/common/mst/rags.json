@@ -125,9 +125,12 @@
             "create_date": {"タイムスタンプ": "date"}, 
             "key_text": [{"クエリ": "rich_text"},{"コンテキスト": "rich_text"}], 
             "value_text": [{"コンテキスト": "rich_text"}], 
+            "category": {"カテゴリ": "select"},
             "memo": {"メモ": "rich_text"}
         },
-        "chk_dict": {},
+        "chk_dict": {
+            "確定Chk": true
+        },
         "date_dict": {}
     },
     "DigiMATSU_Articles":{

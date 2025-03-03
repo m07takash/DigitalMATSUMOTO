@@ -367,7 +367,7 @@ def save_rag_chunk_db(rag_id, rag_data):
     if response and "ids" in response:
         existing_ids = response["ids"]
     cnt_add = 0 
-    cnt_extent = 0   
+    cnt_extent = 0
     
     # RAGデータをcreate_dateで降順に並び替え
     if "create_date" in rag_data[0]:
@@ -391,8 +391,10 @@ def save_rag_chunk_db(rag_id, rag_data):
                     metadatas=rag_chunk
                 )
                 print(f"{rag_chunk['title']}を知識情報DBに追加しました。")
+                cnt_add+=1
             else:
                 print(f"{rag_chunk['title']}は知識情報DBに存在しています。")
+                cnt_extent+=1
 
     return cnt_add, cnt_extent
 

@@ -1,6 +1,6 @@
 {
     "DISPLAY": true,
-    "DISPLAY_NAME": "デジタルMATSUMOTO(llama)",
+    "DISPLAY_NAME": "デジタルMATSUMOTO(GPT)[YouTube]",
     "NAME": "デジタルMATSUMOTO",
     "ACT": "AIの専門家である松本敬史のデジタルツインAI",
     "PERSONALITY": {
@@ -21,11 +21,11 @@
     },
     "ENGINE": {
         "LLM": {
-            "NAME":"LLaMa",
-            "FUNC_NAME": "generate_response_T_llama",
-            "MODEL": "llama3.3-70b",
-            "PARAMETER": {"temperature": 0.7},
-            "TOKENIZER": "",
+            "NAME":"GPT-4o",
+            "FUNC_NAME": "generate_response_T_gpt",
+            "MODEL": "gpt-4o-2024-11-20",
+            "PARAMETER": {"temperature": 0.5},
+            "TOKENIZER": "tiktoken",
             "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
         },
         "IMAGEGEN": {
@@ -39,6 +39,10 @@
     "HABIT": {
         "DEFAULT": {
             "MAGIC_WORDS": [""],
+            "PRACTICE": "practice_11YouTube.json"
+        },
+        "NORMAL": {
+            "MAGIC_WORDS": ["普通に回答して", "普通に答えて"],
             "PRACTICE": "practice_00Default.json"
         },
         "Chat": {

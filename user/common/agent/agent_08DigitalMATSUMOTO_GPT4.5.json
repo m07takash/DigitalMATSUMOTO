@@ -1,6 +1,6 @@
 {
     "DISPLAY": true,
-    "DISPLAY_NAME": "デジタルMATSUMOTO(o1)",
+    "DISPLAY_NAME": "デジタルMATSUMOTO(GPT4.5)",
     "NAME": "デジタルMATSUMOTO",
     "ACT": "AIの専門家である松本敬史のデジタルツインAI",
     "PERSONALITY": {
@@ -21,10 +21,10 @@
     },
     "ENGINE": {
         "LLM": {
-            "NAME":"o1",
-            "FUNC_NAME": "generate_response_T_o",
-            "MODEL": "o1",
-            "PARAMETER": {"reasoning_effort": "high"},
+            "NAME":"GPT-4.5",
+            "FUNC_NAME": "generate_response_T_gpt",
+            "MODEL": "gpt-4.5-preview",
+            "PARAMETER": {"temperature": 0.5},
             "TOKENIZER": "tiktoken",
             "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
         },
@@ -77,7 +77,7 @@
             "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Opinion_Point"}],
             "TIMESTAMP": "CREATE_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
-            "HEADER_TEMPLATE": "【知識情報】質問に応じて参考にしてください\n",
+            "HEADER_TEMPLATE": "【Opinion】過去にこのような意見をしていました。\n",
             "CHUNK_TEMPLATE": "({timestamp}({days_difference}日前)の情報, 質問との近さ:{similarity_prompt}){title}\n主な論点:\n{value_text}\n\n",
             "LOG_TEMPLATE": "'rag':'{rag_name}', 'ID': '{id}', 'timestamp': '{timestamp}', 'category': '{category}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}', 'url': '{url}'",
             "TEXT_LIMITS": 10000,
@@ -86,10 +86,10 @@
         {
             "RAG_NAME": "Policy",
             "RETRIEVER": "Vector",
-            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_POLICY"}, {"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Policy_Insight"}],
+            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Policy"}, {"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Policy_Insight"}],
             "TIMESTAMP": "CREATE_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
-            "HEADER_TEMPLATE": "【ポリシー】以下のポリシーに強く従います。\n",
+            "HEADER_TEMPLATE": "【Policy】以下はリアル松本が強く大事にしているポリシーです。\n",
             "CHUNK_TEMPLATE": "{title}\n質問との近さ:{similarity_prompt}\n主な論点:\n{value_text}\n\n",
             "LOG_TEMPLATE": "'rag':'{rag_name}', 'ID': '{id}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}'",
             "TEXT_LIMITS": 2000,
@@ -101,7 +101,7 @@
             "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Communication"}],
             "TIMESTAMP": "CREATE_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
-            "HEADER_TEMPLATE": "【デジタルMATSUMOTOの発言】質問に応じて参考にしてください。\n",
+            "HEADER_TEMPLATE": "【Communication】過去にデジタルMATSUMOTOが行った「松本っぽい」発言です。\n",
             "CHUNK_TEMPLATE": "「{value_text}」({timestamp}({days_difference}日前)の情報, 質問との近さ:{similarity_prompt}, 発言の良いところ:{memo})\n",
             "LOG_TEMPLATE": "'rag':'{rag_name}', 'ID': '{id}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}', 'memo': '{memo}'",
             "TEXT_LIMITS": 4000,

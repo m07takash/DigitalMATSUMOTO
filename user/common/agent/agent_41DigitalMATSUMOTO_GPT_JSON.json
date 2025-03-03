@@ -86,7 +86,7 @@
         {
             "RAG_NAME": "Policy",
             "RETRIEVER": "Vector",
-            "DATA": [{"DATA_TYPE":"JSON", "DATA_NAME":"DigiMATSU_POLICY"}, {"DATA_TYPE":"JSON", "DATA_NAME":"DigiMATSU_Policy_Insight"}],
+            "DATA": [{"DATA_TYPE":"JSON", "DATA_NAME":"DigiMATSU_Policy"}, {"DATA_TYPE":"JSON", "DATA_NAME":"DigiMATSU_Policy_Insight"}],
             "TIMESTAMP": "CREATE_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
             "HEADER_TEMPLATE": "【ポリシー】以下のポリシーに強く従います。\n",
