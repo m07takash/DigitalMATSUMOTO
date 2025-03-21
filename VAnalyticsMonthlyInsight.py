@@ -214,34 +214,52 @@ def df_knowledge_use_ranking(df, analyse_month, rank_num=10):
     for category in data:
         parsed_data.append(ast.literal_eval(category))
         
-    # データの積算処理
     aggregated_data = defaultdict(lambda: {'title': '', 'knowledge_utility': 0})
-    for category in parsed_data:
-        for key, items in category.items():
+    for category_dict in parsed_data:
+        for category_key, items in category_dict.items():
             for item in items:
-                id_key = item['ID']
-                aggregated_data[id_key]['title'] = item['title']
-                aggregated_data[id_key]['knowledge_utility'] += item['knowledge_utility']
+                #key = item['ID']
+                key = (category_key, item['ID'])                
+                aggregated_data[key]['title'] = item['title']
+                aggregated_data[key]['knowledge_utility'] += item['knowledge_utility']
 
     # knowledge_utility の降順でソート
-    sorted_data = sorted(
-        [{'ID': k, 'title': v['title'], 'knowledge_utility': v['knowledge_utility']} for k, v in aggregated_data.items()],
-        key=lambda x: x['knowledge_utility'],
-        reverse=True
-    )
-
+#    sorted_data = sorted(
+#        [{'ID': k, 'title': v['title'], 'knowledge_utility': v['knowledge_utility']} for k, v in aggregated_data.items()],
+#        key=lambda x: x['knowledge_utility'],
+#        reverse=True
+#    )
+    
     # 各カテゴリーごとにTopNを取得
-    results = {}
-    first_category = parsed_data[0] if parsed_data else {}
-    for category_key in first_category.keys():
-        category_items = [item for cat in parsed_data for item in cat[category_key]]
-        category_ids = {item['ID'] for item in category_items}
-        filtered_data = [item for item in sorted_data if item['ID'] in category_ids]
+#    results = {}
+#    first_category = parsed_data[0] if parsed_data else {}
+#    for category_key in first_category.keys():
+#        category_items = [item for cat in parsed_data for item in cat[category_key]]
+#        category_ids = {item['ID'] for item in category_items}
+#        filtered_data = [item for item in sorted_data if item['ID'] in category_ids]
         
         # Top N件のデータを保存
-        results[category_key] = filtered_data[:rank_num]
-        with open(f"{analytics_file_path}{analyse_month}Monthly06_RAGTopN_{category_key}.txt", "w", encoding="utf-8") as file:
-            file.write(str(results[category_key]))
+#        results[category_key] = filtered_data[:rank_num]
+#        with open(f"{analytics_file_path}{analyse_month}Monthly06_RAGTopN_{category_key}.txt", "w", encoding="utf-8") as file:
+#            file.write(str(results[category_key]))
+    
+    results = defaultdict(list)
+    for (cat_key, id_key), vals in aggregated_data.items():
+        results[cat_key].append({
+            'ID': id_key,
+            'title': vals['title'],
+            'knowledge_utility': vals['knowledge_utility']
+        })
+    
+    # カテゴリごとに knowledge_utility で降順ソートして上位N件をテキスト出力
+    for cat_key, items_list in results.items():
+        sorted_list = sorted(items_list, key=lambda x: x['knowledge_utility'], reverse=True)
+        topN_list = sorted_list[:rank_num]
+        
+        output_path = f"{analytics_file_path}{analyse_month}Monthly06_RAGTopN_{cat_key}.txt"
+        with open(output_path, "w", encoding="utf-8") as file:
+            file.write(str(topN_list))
+
 
     
 # 月次考察の分析

@@ -1,5 +1,7 @@
 {
     "Category": {
+        "W松本": "W松本",
+        "AI": "AI",
         "AIの技術革新": "AI",
         "AIの社会実装": "AI",
         "AIの信頼性": "AI",
@@ -29,6 +31,7 @@
         "アニメ": "カルチャー"
     },
     "CategoryColor": {
+        "W松本": "green",
         "AI": "purple",
         "イノベーション": "blue",
         "DX/IT": "cyan",

@@ -43,7 +43,8 @@ def create_page_communication(db_id, title, k1, k2, v_dict):
     seq = int(k1)    
     sub_seq = int(k2)    
     timestamp = safe_parse_timestamp(v_dict["setting"]["situation"]["TIME"])
-    timestamp_str = timestamp.isoformat()
+#    timestamp_str = timestamp.isoformat()
+    timestamp_str = datetime.fromisoformat(timestamp.isoformat()).strftime("%Y/%m/%d %H:%M:%S")
     query = v_dict["prompt"]["query"]["input"]
     situation = v_dict["setting"]["situation"]["SITUATION"]
     if situation:
