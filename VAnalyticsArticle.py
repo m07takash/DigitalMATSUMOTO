@@ -86,7 +86,7 @@ def analytics_originality(page_data, vec_final, vec_draft, prompt_temp_cd="No Te
 
 # 知識参照度と知識活用度の分析
 def analytics_knowledge(page_data, analytics_file_path, topN=10):
-    df = pd.DataFrame(eval(page_data["reference"]))
+    df = pd.DataFrame(eval(page_data["reference"].replace("\n", " ")))
     df['knowledge_utility'] = round(df['similarity_Q'] - df['similarity_A'], 3)
 
     page_title = page_data["title"][:30]
