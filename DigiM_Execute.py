@@ -252,7 +252,7 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
 
 
 # プラクティスで実行
-def DigiMatsuExecute_Practice(session_id, session_name, in_agent_file, user_query, in_contents, in_situation={}, in_overwrite_items={}, practice={}, in_memory_use=True, magic_word_use="Y", stream_mode=True, save_digest=True):
+def DigiMatsuExecute_Practice(session_id, session_name, in_agent_file, user_query, in_contents=[], in_situation={}, in_overwrite_items={}, practice={}, in_memory_use=True, magic_word_use="Y", stream_mode=True, save_digest=True):
     session = dms.DigiMSession(session_id, session_name)
     sub_seq = 1
     results = []
