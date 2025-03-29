@@ -138,6 +138,57 @@ def generate_response_T_o(query, system_prompt, model, memories=[], image_paths=
 #    return response, completion, prompt_tokens, response_tokens
         
 
+# OpenAIツールの実行(https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses)
+def generate_response_openai_tool(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
+    os.environ["OPENAI_API_KEY"] = openai_api_key
+    openai.api_key = openai_api_key
+    openai_client = OpenAI()
+
+    # システムプロンプトの設定
+    system_message = [
+        {"role": "developer", 
+         "content": [{"type": "input_text", "text": system_prompt}]}
+    ]
+
+    # メモリをプロンプトに設定
+    memory_message = []
+    for memory in memories:
+        memory_message.append({"role": memory["role"], "content": memory["text"]})
+    
+    # イメージ画像をプロンプトに設定
+    image_message = []
+    for image_path in image_paths:
+        image_base64 = dmu.encode_image_file(image_path)
+        #image_message.append({"type": "image_url", "image_url": {"url": image_url["image_url"]}})
+        image_message.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}})
+    
+    # ユーザーのプロンプトを設定
+    user_prompt = [{"type": "input_text", "text": query}] + image_message
+    user_message = [{"role": "user", "content": user_prompt}]
+    prompt = system_message + memory_message + user_message
+
+    # ツールを設定【要検討：いったんデフォルト設定】
+    tools = agent_tools["TOOL_LIST"]
+    tool_choice = agent_tools["CHOICE"]
+    
+    # モデルの実行
+    completion = openai_client.responses.create(
+        model = model["MODEL"],
+        tools = tools,
+        input = prompt
+    )
+
+    response = completion.output_text
+    yield str(prompt), response, completion
+
+#    #レスポンスから出力を抽出
+#    response = completion.choices[0].message.content
+#    prompt_tokens = dmu.count_token(model["TOKENIZER"], model["MODEL"], str(prompt)) #completion.usage.prompt_tokens
+#    response_tokens = dmu.count_token(model["TOKENIZER"], model["MODEL"], response) #completion.usage.completion_tokens
+
+#    return response, completion, prompt_tokens, response_tokens
+
+
 # Geminiの実行(https://github.com/google-gemini/cookbook/blob/main/gemini-2/get_started.ipynb)
 def generate_response_T_gemini(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
     gemini_client = genai.Client(api_key=gemini_api_key)

@@ -1,0 +1,30 @@
+{
+    "DISPLAY": true,
+    "DISPLAY_NAME": "Webサーチ",
+    "NAME": "Webサーチ",
+    "ACT": "Webから情報を検索するAI",
+    "PERSONALITY": {},
+    "ENGINE": {
+        "LLM": {
+            "NAME":"GPT-4o",
+            "FUNC_NAME": "generate_response_openai_tool",
+            "MODEL": "gpt-4o",
+            "PARAMETER": {"temperature": 0.5},
+            "TOKENIZER": "tiktoken",
+            "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+        }
+    },
+    "HABIT": {
+        "DEFAULT": {
+            "MAGIC_WORDS": [""],
+            "PRACTICE": "practice_09WebSearch.json"
+        }
+    },
+    "KNOWLEDGE": [],
+    "SKILL": {
+        "TOOL_LIST": [
+            {"type": "web_search_preview"}
+        ],
+        "CHOICE": "none"
+    }
+}

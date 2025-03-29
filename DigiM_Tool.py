@@ -174,8 +174,6 @@ def art_critics(memories_selected={}, image_paths=[]):
     return response, prompt_tokens, response_tokens
 
 
-################################################################
-
 # エシカルチェック
 def ethical_check(query, memories_selected={}):
     agent_file = "agent_21EthicalCheck.json"
@@ -189,7 +187,14 @@ def ethical_check(query, memories_selected={}):
     prompt = f'{prompt_template}{query}'
 
     # LLMの実行
-    response, completion, prompt_tokens, response_tokens = agent.generate_response("LLM", prompt, memories_selected)
+    #response, completion, prompt_tokens, response_tokens = agent.generate_response("LLM", prompt, memories_selected, image_paths)
+    response = ""
+    for prompt, response_chunk, completion in agent.generate_response(model_type, prompt, memories_selected, image_paths):
+        if response_chunk:
+            response += response_chunk
+    
+    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
+    response_tokens = dmu.count_token(tokenizer, model_name, response)
     
     return response, prompt_tokens, response_tokens
 
@@ -210,6 +215,13 @@ def senryu_sensei(query, memories_selected={},):
     prompt = f'{knowledge_context}{prompt_template}{query}'
     
     # LLMの実行
-    response, completion, prompt_tokens, response_tokens = agent.generate_response("LLM", prompt, memories_selected)
+    #response, completion, prompt_tokens, response_tokens = agent.generate_response("LLM", prompt, memories_selected, image_paths)
+    response = ""
+    for prompt, response_chunk, completion in agent.generate_response(model_type, prompt, memories_selected, image_paths):
+        if response_chunk:
+            response += response_chunk
+    
+    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
+    response_tokens = dmu.count_token(tokenizer, model_name, response)
     
     return response, prompt_tokens, response_tokens
