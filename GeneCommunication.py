@@ -44,7 +44,7 @@ def create_page_communication(db_id, title, k1, k2, v_dict):
     sub_seq = int(k2)    
     timestamp = safe_parse_timestamp(v_dict["setting"]["situation"]["TIME"])
 #    timestamp_str = timestamp.isoformat()
-    timestamp_str = datetime.fromisoformat(timestamp.isoformat()).strftime("%Y/%m/%d %H:%M:%S")
+    timestamp_str = datetime.fromisoformat(timestamp.isoformat()).strftime("%Y/%m/%d")
     query = v_dict["prompt"]["query"]["input"]
     situation = v_dict["setting"]["situation"]["SITUATION"]
     if situation:
@@ -91,7 +91,7 @@ def create_pages_communication(session_id):
         for k2, v2 in v1.items():
             if k2 != "SETTING":
                 if "feedback" in v2.keys():
-                    title = k1+"-"+k2+"-"+v2["setting"]["session_name"]+str(safe_parse_timestamp(str(v2["setting"]["situation"]["TIME"])))+v2["prompt"]["query"]["input"][:10]
+                    title = k1+"-"+k2+"-"+v2["setting"]["session_name"]+str(safe_parse_timestamp(str(v2["setting"]["situation"]["TIME"])))+v2["prompt"]["query"]["input"][:20]
                     if any(title == item['properties']['名前']['title'][0]['plain_text'] for item in page_data):
                         print(f"{title}は既に作成されています")
                     else:
