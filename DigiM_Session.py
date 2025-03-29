@@ -304,7 +304,7 @@ class DigiMSession:
         with open(self.session_file_path, 'w', encoding='utf-8') as f:
             json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
 
-    # 会話履歴のシーケンスを獲得する
+    # 会話履歴のシーケンスを取得する
     def get_seq_history(self):
         seq = 0
         if os.path.exists(self.session_file_path):
@@ -320,7 +320,7 @@ class DigiMSession:
         with open(self.session_file_path, 'w', encoding='utf-8') as f:
             json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
 
-    # 会話履歴のシーケンスのステータスを変更する
+    # 会話履歴にフィードバックを保存する
     def set_feedback_history(self, seq, sub_seq, feedbacks={}):
         if os.path.exists(self.session_file_path):
             chat_history_dict = dmu.read_json_file(session_file_name, self.session_folder_path)
