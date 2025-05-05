@@ -1,6 +1,6 @@
 {
     "DISPLAY": true,
-    "DISPLAY_NAME": "デジタルMATSUMOTO(o1)",
+    "DISPLAY_NAME": "デジタルMATSUMOTO(GPT4.1)",
     "NAME": "デジタルMATSUMOTO",
     "ACT": "AIの専門家である松本敬史のデジタルツインAI",
     "PERSONALITY": {
@@ -21,10 +21,10 @@
     },
     "ENGINE": {
         "LLM": {
-            "NAME":"o1",
-            "FUNC_NAME": "generate_response_T_o",
-            "MODEL": "o1",
-            "PARAMETER": {"reasoning_effort": "high"},
+            "NAME":"GPT-4.1",
+            "FUNC_NAME": "generate_response_T_gpt",
+            "MODEL": "gpt-4.1",
+            "PARAMETER": {"temperature": 0.5},
             "TOKENIZER": "tiktoken",
             "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
         },

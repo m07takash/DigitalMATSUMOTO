@@ -39,7 +39,7 @@
     "HABIT": {
         "DEFAULT": {
             "MAGIC_WORDS": [""],
-            "PRACTICE": "practice_11YouTube.json"
+            "PRACTICE": "practice_21YouTube.json"
         },
         "NORMAL": {
             "MAGIC_WORDS": ["普通に回答して", "普通に答えて"],
