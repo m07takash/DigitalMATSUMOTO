@@ -66,8 +66,12 @@
             "PRACTICE": "practice_06Image_Gen.json"
         },
         "INSIGHT": {
-            "MAGIC_WORDS": ["考察してください。", "考察を作成してください。"],
+            "MAGIC_WORDS": ["考察を作成してください。"],
             "PRACTICE": "practice_10Insight.json"
+        },
+        "INSIGHT_NEW": {
+            "MAGIC_WORDS": ["考察してください。"],
+            "PRACTICE": "practice_11Insight_new.json"
         }
     },
     "KNOWLEDGE": [

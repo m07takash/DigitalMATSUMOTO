@@ -59,6 +59,8 @@ def get_analytics_data(end_month, months=12):
         "k1_Q": {"知識参照度Q": "rich_text"},
         "k1_A": {"知識活用度A": "rich_text"},
         "k1_Rank": {"知識活用性ランキング": "rich_text"},
+        "i1_improve": {"自己修正(距離)": "number"},
+        "i2_improve": {"自己改善効果(類似度の変化)": "number"},
         "url": {"URL": "url"}
     }
     chk_dict_analyse = {'確定Chk': True, '分析Chk': True} #分析対象ではなく「確定」したデータのみを対象（考察として確定し、RAGにも反映しているデータ）
@@ -162,8 +164,11 @@ def statics_this_month(df_thisMonth, analyse_month):
         'B-3.論点再現度(割合)': [df_thisMonth['r3_point'].max(), df_thisMonth['r3_point'].min(), df_thisMonth['r3_point'].mean(), df_thisMonth['r3_point'].median(), df_thisMonth['r3_point'].var(), df_thisMonth['r3_point'].sum()],
         'C-1.知識活用性_Opinion': [df_thisMonth['k1_util_Opinion'].max(), df_thisMonth['k1_util_Opinion'].min(), df_thisMonth['k1_util_Opinion'].mean(), df_thisMonth['k1_util_Opinion'].median(), df_thisMonth['k1_util_Opinion'].var(), df_thisMonth['k1_util_Opinion'].sum()], 
         'C-2.知識活用性_Policy': [df_thisMonth['k1_util_Policy'].max(), df_thisMonth['k1_util_Policy'].min(), df_thisMonth['k1_util_Policy'].mean(), df_thisMonth['k1_util_Policy'].median(), df_thisMonth['k1_util_Policy'].var(), df_thisMonth['k1_util_Policy'].sum()], 
-        'C-3.知識活用性_Communication': [df_thisMonth['k1_util_Communication'].max(), df_thisMonth['k1_util_Communication'].min(), df_thisMonth['k1_util_Communication'].mean(), df_thisMonth['k1_util_Communication'].median(), df_thisMonth['k1_util_Communication'].var(), df_thisMonth['k1_util_Communication'].sum()]
+        'C-3.知識活用性_Communication': [df_thisMonth['k1_util_Communication'].max(), df_thisMonth['k1_util_Communication'].min(), df_thisMonth['k1_util_Communication'].mean(), df_thisMonth['k1_util_Communication'].median(), df_thisMonth['k1_util_Communication'].var(), df_thisMonth['k1_util_Communication'].sum()],
+        'D-1.自己修正(距離)': [df_thisMonth['i1_improve'].max(), df_thisMonth['i1_improve'].min(), df_thisMonth['i1_improve'].mean(), df_thisMonth['i1_improve'].median(), df_thisMonth['i1_improve'].var(), df_thisMonth['i1_improve'].sum()],
+        'D-2.自己改善効果(類似度の変化)': [df_thisMonth['i2_improve'].max(), df_thisMonth['i2_improve'].min(), df_thisMonth['i2_improve'].mean(), df_thisMonth['i2_improve'].median(), df_thisMonth['i2_improve'].var(), df_thisMonth['i2_improve'].sum()]
     }
+
     df_thisMonth_overview = pd.DataFrame(stats_thisMonth_overview).round(3).transpose()
     df_thisMonth_overview.to_csv(f"{analytics_file_path}{analyse_month}Monthly02Summary.csv", index=True, encoding='utf-8-sig')
 
@@ -185,7 +190,9 @@ def plot_time_series_item(df, item, analyse_month, cols=['max_value', 'min_value
         "r3_point": "B-3.論点再現度(割合)", 
         "k1_util_Opinion": "C-1.知識活用性_Opinion", 
         "k1_util_Policy": "C-2.知識活用性_Policy", 
-        "k1_util_Communication": "C-3.知識活用性_Communication"
+        "k1_util_Communication": "C-3.知識活用性_Communication",
+        "i1_improve": "D-1.自己修正(距離)",
+        "i2_improve": "D-2.自己改善効果(類似度の変化)"
     }
     display_item = display_item_map.get(item, item)
         
@@ -271,7 +278,7 @@ def analytics_insights_monthly(analyse_month, months = 12):
     # マーク用の列を初期化
     df_thisMonth['BEST_Mark'] = ''
     df_thisMonth['Top5_Mark'] = ''
-    target_columns = ["o1_final", "o1_improved", "o2_tfidf_rate", "r1_score", "r2_similarity", "r3_point", "k1_util_Opinion", "k1_util_Policy", "k1_util_Communication"]
+    target_columns = ["o1_final", "o1_improved", "o2_tfidf_rate", "r1_score", "r2_similarity", "r3_point", "k1_util_Opinion", "k1_util_Policy", "k1_util_Communication", "i1_improve", "i2_improve"]
     for col in target_columns:
         best_indices = df_thisMonth[col].nlargest(1).index
         df_thisMonth.loc[best_indices, 'BEST_Mark'] += f'{col}_BEST; '
@@ -293,8 +300,8 @@ def analytics_insights_monthly(analyse_month, months = 12):
     #display(df_thisMonth_overview)
     
     # 当月のデータ出力
-    columns_to_select = ["note_date", "title", "category", "o1_final", "o1_draft", "o1_improved", "o2_tfidf_rate", "r1_eval", "r2_similarity", "r3_point", "k1_util_Opinion", "k1_util_Policy", "k1_util_Communication", "BEST_Mark", "Top5_Mark"]
-    df_thisMonth[columns_to_select].to_csv(f"{analytics_file_path}{analyse_month}Monthly03Insight.csv", index=True, header=["日付", "タイトル", "カテゴリー", "A-1.独自性(Cos距離)", "A-1.独自性_ドラフト時点", "A-1.独自性_改善度", "A-2.独自キーワード(割合)", "B-1.評価ランク", "B-2.実現度合(Cos類似度)", "B-3.論点再現度(割合)", "C-1.知識活用性_Opinion", "C-2.知識活用性_Policy", "C-3.知識活用性_Communication", "BEST_Mark", "Top5_Mark"], encoding='utf-8-sig')
+    columns_to_select = ["note_date", "title", "category", "o1_final", "o1_draft", "o1_improved", "o2_tfidf_rate", "r1_eval", "r2_similarity", "r3_point", "k1_util_Opinion", "k1_util_Policy", "k1_util_Communication", "i1_improve", "i2_improve", "BEST_Mark", "Top5_Mark"]
+    df_thisMonth[columns_to_select].to_csv(f"{analytics_file_path}{analyse_month}Monthly03Insight.csv", index=True, header=["日付", "タイトル", "カテゴリー", "A-1.独自性(Cos距離)", "A-1.独自性_ドラフト時点", "A-1.独自性_改善度", "A-2.独自キーワード(割合)", "B-1.評価ランク", "B-2.実現度合(Cos類似度)", "B-3.論点再現度(割合)", "C-1.知識活用性_Opinion", "C-2.知識活用性_Policy", "C-3.知識活用性_Communication", "D-1.自己修正(距離)", "D-2.自己改善効果(類似度の変化)", "BEST_Mark", "Top5_Mark"], encoding='utf-8-sig')
     #display(df_thisMonth[columns_to_select])
 
     # 当月の知識活用ランキングの出力

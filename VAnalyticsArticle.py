@@ -178,7 +178,8 @@ def analytics_insights():
         "category": {"カテゴリ": "select"},
         "eval": {"評価": "select"},
         "Input": {"インプット": "rich_text"},
-        "Draft": {"考察_DTwin": "rich_text"},
+        "Making": {"考察_Making": "rich_text"},
+        "Draft": {"考察_Draft": "rich_text"},
         "Final": {"考察_確定版": "rich_text"},
         "agent": {"エージェントファイル": "rich_text"},
         "model": {"実行モデル": "rich_text"},
@@ -203,13 +204,23 @@ def analytics_insights():
     for page_data in page_data_analyse:
         # テキストのベクトル化
         vec_input = dmu.embed_text(page_data["Input"])
-        vec_final = dmu.embed_text(page_data["Final"])
+        vec_making = dmu.embed_text(page_data["Making"])
         vec_draft = dmu.embed_text(page_data["Draft"])
+        vec_final = dmu.embed_text(page_data["Final"])
         
+        # 自己改善性：Self-Refineによる変化(距離)
+        self_improvement = dmu.calculate_cosine_distance(vec_making, vec_draft)
+        dmn.update_notion_num(page_data["id"], "自己修正(距離)", self_improvement)
+
         # 実現性：リアル松本との差分(類似度)
         realization = 1 - dmu.calculate_cosine_distance(vec_final, vec_draft)
         dmn.update_notion_num(page_data["id"], "実現性(類似度)", realization)
 
+        # 自己改善効果：Self-Refineによる効果(類似度の変化)
+        first_realization = 1 - dmu.calculate_cosine_distance(vec_making, vec_final) #初回作成時点での近さ
+        self_improve_effect = realization - first_realization
+        dmn.update_notion_num(page_data["id"], "自己改善効果(類似度の変化)", self_improve_effect)
+        
         # 論点再現度
         realization_point = 0
         if page_data["Point_RealM"]:

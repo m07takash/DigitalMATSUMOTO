@@ -1,14 +1,14 @@
 {
     "DISPLAY": true,
-    "DISPLAY_NAME": "o3-mini",
+    "DISPLAY_NAME": "o4-mini",
     "NAME": "通常LLM",
     "ACT": "通常のチャットアシスタント",
     "PERSONALITY": {},
     "ENGINE": {
         "LLM": {
-            "NAME":"o3-mini",
+            "NAME":"o4-mini",
             "FUNC_NAME": "generate_response_T_o",
-            "MODEL": "o3-mini",
+            "MODEL": "o4-mini",
             "PARAMETER": {"reasoning_effort": "medium"},
             "TOKENIZER": "tiktoken",
             "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
