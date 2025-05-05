@@ -17,20 +17,25 @@ notion_db_mst_file = os.getenv("NOTION_MST_FILE")
 #タイムスタンプ文字列を安全に解析し、時刻までのdatetimeオブジェクト
 def safe_parse_timestamp(timestamp_str):
     try:
-        # タイムゾーン付きISO形式を解析
-        return parser.isoparse(timestamp_str)
+        return datetime.strptime(timestamp_str, "%Y-%m-%d")
     except ValueError:
-        try:
-            # 一部フォーマットに対応 (例: "YYYY/MM/DD HH:MM:SS")
-            return datetime.strptime(timestamp_str, "%Y/%m/%d %H:%M:%S")
-        except ValueError:
-            try:
-                # フォーマットが日付だけの場合 (例: "YYYY-MM-DD")
-                return datetime.strptime(timestamp_str, "%Y-%m-%d")
-            except ValueError:
-                # 最後に現在時刻を返す
-                print(f"Invalid timestamp format: {timestamp_str}. Using current time.")
-                return datetime.now()
+        return datetime.now()
+    
+#    try:
+#        # タイムゾーン付きISO形式を解析
+#        return parser.isoparse(timestamp_str)
+#    except ValueError:
+#        try:
+#            # 一部フォーマットに対応 (例: "YYYY/MM/DD HH:MM:SS")
+#            return datetime.strptime(timestamp_str, "%Y/%m/%d %H:%M:%S")
+#        except ValueError:
+#            try:
+#                # フォーマットが日付だけの場合 (例: "YYYY-MM-DD")
+#                return datetime.strptime(timestamp_str, "%Y-%m-%d")
+#            except ValueError:
+#                # 最後に現在時刻を返す
+#                print(f"Invalid timestamp format: {timestamp_str}. Using current time.")
+#                return datetime.now()
 
 # 個別ページの作成
 def create_page_communication(db_id, title, k1, k2, v_dict):
