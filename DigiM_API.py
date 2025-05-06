@@ -12,9 +12,11 @@ app = FastAPI()
 class InputData(BaseModel):
     session_id: str
     user_input: str
+    user_name: str
+    user_info: str
 
 # 実行する関数
-def exec_function(session_id: str, user_input: str) -> tuple[str, str]:
+def exec_function(session_id: str, user_input: str, user_name: str, user_info: str) -> tuple[str, str, str, str]:
     # セッションの設定（新規でセッションIDを発番）
     print(session_id)
     if not session_id:
@@ -22,20 +24,24 @@ def exec_function(session_id: str, user_input: str) -> tuple[str, str]:
     session_name = "API実行"
     
     # エージェント設定
-    agent_file = "agent_01DigitalMATSUMOTO_GPT.json"
+    agent_file = "agent_32DigitalMTalk_GPT.json"
     agent = dma.DigiM_Agent(agent_file)
     practice = agent.habit
 
+    # シチュエーション
+    in_situation = {}
+    in_situation["SITUATION"] = f"話し相手：{user_name}({user_info})"
+
     # 実行
     response = ""
-    for response_chunk in dme.DigiMatsuExecute_Practice(session_id, session_name, agent_file, user_input, practice=practice, stream_mode=True):
+    for response_chunk in dme.DigiMatsuExecute_Practice(session_id, session_name, agent_file, user_input, in_situation=in_situation, practice=practice, stream_mode=True):
         response += response_chunk 
     
     return session_id, response
 
 @app.post("/run_function")
 async def run_function(data: InputData):
-    session_id, response = exec_function(data.session_id, data.user_input)
+    session_id, response = exec_function(data.session_id, data.user_input, data.user_name, data.user_info)
     return {
         "session_id": session_id,
         "response": response
