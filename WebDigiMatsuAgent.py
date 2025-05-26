@@ -522,9 +522,9 @@ def main():
 #    if st.session_state.uploaded_files:
 #        show_uploaded_files_widget(st.session_state.uploaded_files)
     uploaded_files = st.file_uploader("Attached Files:", type=["txt", "csv", "xlsx", "jpg", "jpeg", "png", "mp4", "mov", "avi", "mp3", "wav"], accept_multiple_files=True)
-    if uploaded_files:
-        st.session_state.uploaded_files = uploaded_files
-        show_uploaded_files_widget(st.session_state.uploaded_files)
+#    if uploaded_files:
+    st.session_state.uploaded_files = uploaded_files
+    show_uploaded_files_widget(st.session_state.uploaded_files)
     
     # ユーザーの問合せ入力
     if user_input := st.chat_input("Your Message"):
