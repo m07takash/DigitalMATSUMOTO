@@ -34,7 +34,8 @@
             "MODEL": "dall-e-3",
             "PARAMETER": {"n": 1, "size": "1024x1024", "response_format": "b64_json", "quality": "hd", "style": "vivid"},
             "TOKENIZER": "",
-            "MEMORY": {"limit": 3000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}    }
+            "MEMORY": {"limit": 3000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+        }
     },
     "HABIT": {
         "DEFAULT": {
