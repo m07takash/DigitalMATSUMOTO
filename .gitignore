@@ -164,7 +164,15 @@ cython_debug/
 # Digital MATSUMOTO Folder
 session*/
 user/common/agent/*.json
-!user/common/agent/agent_XXsample.json
+!user/common/agent/agent_00sample.json
+!user/common/agent/agent_01DigitalMATSUMOTO_GPT.json
+!user/common/agent/agent_11DefaultGPT.json
+!user/common/agent/agent_21EthicalCheck.json
+!user/common/agent/agent_22SenryuSensei.json
+!user/common/agent/agent_51DialogDigest.json
+!user/common/agent/agent_52ArtCritic.json
+!user/common/agent/agent_53CompareTexts.json
+!user/common/agent/agent_54SearchText.json
 user/common/agent/charactor/*.txt
 !user/common/agent/charactor/Sample.txt
 !user/common/agent/charactor/DialogDigest.txt
