@@ -168,3 +168,4 @@ user/common/rag/json/*.json
 user/common/rag/chromadb/*
 notion_db.json
 test/
+backup/
