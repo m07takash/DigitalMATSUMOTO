@@ -176,8 +176,11 @@ user/common/agent/*.json
 user/common/agent/charactor/*.txt
 !user/common/agent/charactor/Sample.txt
 !user/common/agent/charactor/DialogDigest.txt
-user/common/rag/json/*.json
+user/common/rag/json/*
+!user/common/rag/json/RAGsample_vec.json
 user/common/rag/chromadb/*
+user/common/rag/docs/*
+!user/common/rag/docs/RAGsample.txt
 notion_db.json
 test/
 backup/
