@@ -1,4 +1,5 @@
 import os
+import re
 import numpy as np
 import json
 import shutil
@@ -39,6 +40,17 @@ class ConvertedLocalFile:
         with open(self.file_path, 'rb') as f:
             return f.read()
 
+# パターンからリストを出力するPG
+def extract_list_pattern(text, pattern=r"(\[\s*{.*?}\s*\])"):
+    match = re.search(pattern, text, re.DOTALL)
+    if match:
+        json_str = match.group(1)
+        try:
+            return json.loads(json_str)
+        except json.JSONDecodeError:
+            return []
+    return []
+
 # 辞書を再帰的に上書きする関数
 def update_dict(target, source):
     for key, value in source.items():
@@ -50,10 +62,12 @@ def update_dict(target, source):
 
 # フォルダから複数ファイルを取得
 def get_files(folder_path="", identifier="", file_sort="Y"):
-    all_files = os.listdir(folder_path)
-    files = [f for f in all_files if f.endswith(identifier)]
-    if file_sort == "Y":
-        files.sort()
+    files = []
+    if os.path.exists(folder_path):
+        all_files = os.listdir(folder_path)
+        files = [f for f in all_files if f.endswith(identifier)]
+        if file_sort == "Y":
+            files.sort()
     return files
 
 # ファイルの移動

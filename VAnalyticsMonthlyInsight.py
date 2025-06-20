@@ -38,7 +38,7 @@ def get_analytics_data(end_month, months=12):
     end_of_month_str = (end_date + relativedelta(months=1) - timedelta(days=1)).date().strftime("%Y-%m-%d")
     start_of_month_str = (end_date - relativedelta(months=(months-1))).replace(day=1).date().strftime("%Y-%m-%d")
 
-    db_name = "DigiMATSU_Opinion"
+    db_name = "DigiMATSU_Note"
     item_dict = {
         "title": {"名前": "title"}, 
         "note_date": {"note公開日": "date"},

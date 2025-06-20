@@ -27,9 +27,9 @@ def get_display_agents():
     agents = []
     for agent_file in agent_files:
         agent_data = dmu.read_json_file(agent_file, agent_folder_path)
-#        if agent_data["DISPLAY"]:
+        if agent_data["DISPLAY"]:
 #            agents.append({"AGENT": agent_data["NAME"]+":"+agent_data["ENGINE"]["LLM"]["NAME"], "FILE": agent_file})
-        agents.append({"AGENT": agent_data["DISPLAY_NAME"], "FILE": agent_file})
+            agents.append({"AGENT": agent_data["DISPLAY_NAME"], "FILE": agent_file})
     return agents
 
 # 通常LLMエージェントのプロパティを設定
@@ -112,8 +112,8 @@ class DigiM_Agent:
         return prompt_template
     
     # ナレッジコンテキスト(RAG)の生成
-    def set_knowledge_context(self, query, query_vecs=[]):
-        knowledge_context, knowledge_selected = dmc.create_rag_context(query, query_vecs=query_vecs, rags=self.knowledge)
+    def set_knowledge_context(self, query, query_vecs=[], meta_searches=[]):
+        knowledge_context, knowledge_selected = dmc.create_rag_context(query, query_vecs=query_vecs, rags=self.knowledge, meta_searches=meta_searches)
         return knowledge_context, knowledge_selected
 
     # LLMの実行

@@ -17,13 +17,13 @@ load_dotenv("system.env")
 # Notion接続情報の設定
 notion_version = os.getenv("NOTION_VERSION")
 notion_token = os.getenv("NOTION_TOKEN")
-notion_client = Client(auth=notion_token)
 notion_headers = {
     "Accept": "application/json",
     "Authorization": f"Bearer {notion_token}",
     "Content-Type": "application/json",
     "Notion-Version": notion_version
 }
+#notion_client = Client(auth=notion_token)
 
 # 〇で囲まれた数値を・に変換する関数
 def circlenum_to_dots(text):
@@ -34,6 +34,7 @@ def circlenum_to_dots(text):
 
 # NotionページIDを指定してページを取得
 def get_page(page_id):
+    notion_client = Client(auth=notion_token)
     page = notion_client.pages.retrieve(page_id=page_id)
     return page
 
@@ -163,14 +164,14 @@ def get_all_pages(database_id):
     return all_results
 
 # Notionデータベースから確定済ページを取得
-def get_pages_done(database_id, chk_dict=None, date_dict=None):
+def get_pages_done(database_id, chk_dict=None, date_dict=None, category_dict=None):
     has_more = True
     next_cursor = None
     all_results = []
     
     while has_more:
         payload = {}
-        if chk_dict is not None or date_dict is not None:
+        if chk_dict is not None or date_dict is not None or category_dict is not None:
             payload = {"filter": {"and": []}}
             if chk_dict is not None:
                 for chk_item, chk in chk_dict.items():
@@ -200,6 +201,15 @@ def get_pages_done(database_id, chk_dict=None, date_dict=None):
                             }
                         ]
                     })
+            ###【追加開発中】###
+            if category_dict is not None:
+                for category_item, set_category in category_dict.items():
+                    payload["filter"]["and"].append({
+                        "property": category_item,
+                        "select": {
+                            "equals": set_category
+                        }
+                    })      
         if next_cursor:
             payload["start_cursor"] = next_cursor
         response = requests.post(f"https://api.notion.com/v1/databases/{database_id}/query", headers=notion_headers, json=payload)
@@ -441,51 +451,3 @@ def create_page(db_id, page_title, title_item="名前"):
     if response.status_code != 200:
         print(f"エラーが発生しました。 {title}: {response_json}")
     return response_json
-
-
-
-
-
-############
-
-# Notionデータベースからデジタルツイン生成の対象データを取得
-def get_docs_dtwin(client, headers, database_id, item_dict=None, chk_dict=None, date_dict=None):  
-    page_docs = []
-    pages = get_pages_done(headers, database_id, chk_dict, date_dict)
-    page_ids = [page['id'] for page in pages]
-    for page_id in page_ids:
-        if item_dict is not None:
-            page_items = {}
-            page_items.update({'id': page_id})
-            for key, subdict in item_dict.items():
-                if len(subdict) == 1:
-                    for sub_key, sub_value in subdict.items():
-                        if sub_value is not None:
-                            page_items[key] = get_notion_item_by_id(pages, page_id, sub_key, sub_value)
-                        else:
-                            page_items[key] = sub_value
-                elif len(subdict) > 1:
-                    subitem_dict = {}
-                    for sub_key, sub_value in subdict.items():
-                        if sub_value is not None:
-                            subitem_dict[sub_key] = get_notion_item_by_id(pages, page_id, sub_key, sub_value)
-                        page_items[key] = subitem_dict
-                else:
-                    page_items[key] = subdict
-            page_docs.append(page_items)
-    return page_docs
-
-
-# Notionデータベースからページの集合を与えてデジタルツインの対象データを取得
-def get_docs_dtwin_pages(pages):
-    page_docs = []
-    for page in pages:
-        page_doc = []
-        try:
-            page_doc.append(page['properties']["考察生成日"]['date']['start'][:10]+"時の知識\n")
-            page_doc.append(page["properties"]["名前"]["title"][0]["text"]["content"]+"\n")
-            page_doc.append(page["properties"]["考察_確定稿"]["rich_text"][0]["text"]["content"])
-            page_docs.append(' '.join(page_doc))
-        except IndexError:
-            pass
-    return page_docs

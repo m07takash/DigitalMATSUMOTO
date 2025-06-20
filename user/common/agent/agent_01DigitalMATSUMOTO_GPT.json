@@ -43,7 +43,7 @@
             "PRACTICE": "practice_00Default.json"
         },
         "Chat": {
-            "MAGIC_WORDS": ["簡潔に回答して", "簡潔に答えて"],
+            "MAGIC_WORDS": ["簡潔に回答して", "簡潔に答えて", "手短に回答して", "手短に答えて"],
             "PRACTICE": "practice_01Chat.json"
         },
         "FORGET_HISTORY": {
@@ -67,49 +67,57 @@
             "PRACTICE": "practice_06Image_Gen.json"
         },
         "INSIGHT": {
-            "MAGIC_WORDS": ["考察を作成してください。"],
-            "PRACTICE": "practice_10Insight.json"
-        },
-        "INSIGHT_NEW": {
-            "MAGIC_WORDS": ["考察してください。"],
-            "PRACTICE": "practice_11Insight_new.json"
+            "MAGIC_WORDS": ["考察してください。","考察を作成してください。"],
+            "PRACTICE": "practice_20Insight.json"
         }
     },
     "KNOWLEDGE": [
         {
-            "RAG_NAME": "Opinion",
-            "RETRIEVER": "Vector",
-            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Opinion_Point"}],
-            "TIMESTAMP": "CREATE_DATE",
-            "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
-            "HEADER_TEMPLATE": "【Opinion】過去にこのような意見をしていました。\n",
-            "CHUNK_TEMPLATE": "({timestamp}({days_difference}日前)の情報, 質問との近さ:{similarity_prompt}){title}\n主な論点:\n{value_text}\n\n",
-            "LOG_TEMPLATE": "'rag':'{rag_name}', 'ID': '{id}', 'timestamp': '{timestamp}', 'category': '{category}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}', 'url': '{url}'",
-            "TEXT_LIMITS": 10000,
-            "DISTANCE_LOGIC": "Cosine"
-        },
-        {
             "RAG_NAME": "Policy",
             "RETRIEVER": "Vector",
-            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Policy"}, {"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Policy_Insight"}],
+            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Policy_Memo"}],
             "TIMESTAMP": "CREATE_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
-            "HEADER_TEMPLATE": "【Policy】以下はリアル松本が強く大事にしているポリシーです。\n",
-            "CHUNK_TEMPLATE": "{title}\n質問との近さ:{similarity_prompt}\n主な論点:\n{value_text}\n\n",
-            "LOG_TEMPLATE": "'rag':'{rag_name}', 'ID': '{id}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}'",
+            "HEADER_TEMPLATE": "【Policy】以下は松本が「強く」大事にしている価値観及びルールです。\n",
+            "CHUNK_TEMPLATE": "({timestamp}){value_text}\n\n",
+            "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{db}', 'QUERY_SEQ': '{query_seq}', 'QUERY_MODE': '{query_mode}', 'ID': '{id}', 'similarity_Q': {similarity_prompt_original}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}'",
             "TEXT_LIMITS": 2000,
             "DISTANCE_LOGIC": "Cosine"
         },
         {
-            "RAG_NAME": "Communication",
+            "RAG_NAME": "Opinion",
             "RETRIEVER": "Vector",
-            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Communication"}],
+            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Opinion_Note", "META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}},{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Opinion_Memo", "META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}},{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Opinion_Communication", "META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}}],
             "TIMESTAMP": "CREATE_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
-            "HEADER_TEMPLATE": "【Communication】過去にデジタルMATSUMOTOが行った「松本っぽい」発言です。\n",
-            "CHUNK_TEMPLATE": "「{value_text}」({timestamp}({days_difference}日前)の情報, 質問との近さ:{similarity_prompt}, 発言の良いところ:{memo})\n",
-            "LOG_TEMPLATE": "'rag':'{rag_name}', 'ID': '{id}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}', 'memo': '{memo}'",
-            "TEXT_LIMITS": 4000,
+            "HEADER_TEMPLATE": "【Opinion】過去にこのような意見をしていました。\n",
+            "CHUNK_TEMPLATE": "({timestamp}({days_difference}日前)の情報, 質問との近さ:{similarity_prompt}){title}\n主な論点:\n{value_text}\n\n",
+            "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{db}', 'QUERY_SEQ': '{query_seq}', 'QUERY_MODE': '{query_mode}', 'ID': '{id}', 'timestamp': '{timestamp}', 'category': '{category}', 'similarity_Q': {similarity_prompt_original}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}', 'url': '{url}'",
+            "TEXT_LIMITS": 10000,
+            "DISTANCE_LOGIC": "Cosine"
+        },
+        {
+            "RAG_NAME": "Experience",
+            "RETRIEVER": "Vector",
+            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Experience_Memo", "META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}},{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Experience_Communication", "META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}}],
+            "TIMESTAMP": "CREATE_DATE",
+            "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
+            "HEADER_TEMPLATE": "【Experience】以下はリアル松本が過去に経験したことや学んだことです。\n",
+            "CHUNK_TEMPLATE": "({timestamp}({days_difference}日前)の情報, 質問との近さ:{similarity_prompt})\n{value_text}\n\n",
+            "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{db}', 'QUERY_SEQ': '{query_seq}', 'QUERY_MODE': '{query_mode}', 'ID': '{id}', 'timestamp': '{timestamp}', 'category': '{category}', 'similarity_Q': {similarity_prompt_original}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}'",
+            "TEXT_LIMITS": 2000,
+            "DISTANCE_LOGIC": "Cosine"
+        },
+        {
+            "RAG_NAME": "Identity",
+            "RETRIEVER": "Vector",
+            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Identity_Memo", "META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}},{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Identity_Communication", "META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}}],
+            "TIMESTAMP": "CREATE_DATE",
+            "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
+            "HEADER_TEMPLATE": "【Identity】以下はリアル松本もしくはデジタルMATSUMOTO自身に関わる情報です。\n",
+            "CHUNK_TEMPLATE": "({timestamp}({days_difference}日前)の情報)\n{value_text}\n\n",
+            "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{db}', 'QUERY_SEQ': '{query_seq}', 'QUERY_MODE': '{query_mode}', 'ID': '{id}', 'timestamp': '{timestamp}', 'category': '{category}', 'similarity_Q': {similarity_prompt_original}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}'",
+            "TEXT_LIMITS": 2000,
             "DISTANCE_LOGIC": "Cosine"
         }
     ],

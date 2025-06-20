@@ -1,15 +1,112 @@
 {
-    "DigiMATSU_Opinion_Point":{
+    "DigiMATSU_Policy_Memo":{
         "active": "Y",
         "input" : "notion",
         "data_type" : "chromadb",
-        "data_name" : "DigiMATSU_Opinion",
-        "bucket": "Opinion-Point",
+        "data_name" : "DigiMATSU_Memo",
+        "bucket": "DigiMATSU_Policy_Memo",
         "item_dict": {
+            "db": "DigiMATSU_Policy_Memo",
+            "title": {"名前": "title"}, 
+            "create_date": {"タイムスタンプ": "date"}, 
+            "key_text": [{"メモ": "rich_text"}], 
+            "value_text": {"メモ": "rich_text"}, 
+            "category": {"カテゴリ": "select"},
+            "eval": "N",
+            "url": ""
+        },
+        "chk_dict": {
+            "確定Chk": true
+        },
+        "date_dict": {},
+        "category_dict": {
+            "RAGカテゴリ": "policy"
+        }
+    },
+    "DigiMATSU_Opinion_Memo":{
+        "active": "Y",
+        "input" : "notion",
+        "data_type" : "chromadb",
+        "data_name" : "DigiMATSU_Memo",
+        "bucket": "DigiMATSU_Opinion_Memo",
+        "item_dict": {
+            "db": "DigiMATSU_Opinion_Memo",
+            "title": {"名前": "title"}, 
+            "create_date": {"タイムスタンプ": "date"}, 
+            "key_text": [{"メモ": "rich_text"}], 
+            "value_text": {"メモ": "rich_text"}, 
+            "category": {"カテゴリ": "select"},
+            "eval": "N",
+            "url": ""
+        },
+        "chk_dict": {
+            "確定Chk": true
+        },
+        "date_dict": {},
+        "category_dict": {
+            "RAGカテゴリ": "opinion"
+        }
+    },
+    "DigiMATSU_Experience_Memo":{
+        "active": "Y",
+        "input" : "notion",
+        "data_type" : "chromadb",
+        "data_name" : "DigiMATSU_Memo",
+        "bucket": "DigiMATSU_Experience_Memo",
+        "item_dict": {
+            "db": "DigiMATSU_Experience_Memo",
+            "title": {"名前": "title"}, 
+            "create_date": {"タイムスタンプ": "date"}, 
+            "key_text": [{"メモ": "rich_text"}], 
+            "value_text": {"メモ": "rich_text"}, 
+            "category": {"カテゴリ": "select"},
+            "eval": "N",
+            "url": ""
+        },
+        "chk_dict": {
+            "確定Chk": true
+        },
+        "date_dict": {},
+        "category_dict": {
+            "RAGカテゴリ": "experience"
+        }
+    },
+    "DigiMATSU_Identity_Memo":{
+        "active": "Y",
+        "input" : "notion",
+        "data_type" : "chromadb",
+        "data_name" : "DigiMATSU_Memo",
+        "bucket": "DigiMATSU_Identity_Memo",
+        "item_dict": {
+            "db": "DigiMATSU_Identity_Memo",
+            "title": {"名前": "title"}, 
+            "create_date": {"タイムスタンプ": "date"}, 
+            "key_text": [{"メモ": "rich_text"}], 
+            "value_text": {"メモ": "rich_text"}, 
+            "category": {"カテゴリ": "select"},
+            "eval": "N",
+            "url": ""
+        },
+        "chk_dict": {
+            "確定Chk": true
+        },
+        "date_dict": {},
+        "category_dict": {
+            "RAGカテゴリ": "identity"
+        }
+    },
+    "DigiMATSU_Opinion_Note":{
+        "active": "Y",
+        "input" : "notion",
+        "data_type" : "chromadb",
+        "data_name" : "DigiMATSU_Note",
+        "bucket": "DigiMATSU_Opinion_Note",
+        "item_dict": {
+            "db": "DigiMATSU_Opinion_Note",
             "title": {"名前": "title"}, 
             "create_date": {"note公開日": "date"}, 
-            "key_text": [{"インプット": "rich_text"},{"論点": "rich_text"},{"デジM追加論点": "rich_text"}], 
-            "value_text": [{"論点": "rich_text"},{"デジM追加論点": "rich_text"}], 
+            "key_text": [{"インプット": "rich_text"},{"論点": "rich_text"},{"デジM追加論点": "rich_text"},{"リアル松本の指摘事項": "rich_text"}], 
+            "value_text": [{"インプット": "rich_text"},{"論点": "rich_text"},{"デジM追加論点": "rich_text"},{"リアル松本の指摘事項": "rich_text"}], 
             "category": {"カテゴリ": "select"},
             "eval": {"評価": "select"},
             "url": {"URL": "url"}
@@ -19,86 +116,89 @@
         },
         "date_dict": {
             "考察生成日":["",""]
-        }
+        },
+        "category_dict": {}
     },
-    "DigiMATSU_Opinion_Insight":{
+    "DigiMATSU_Opinion_Communication":{
         "active": "Y",
         "input" : "notion",
         "data_type" : "chromadb",
-        "data_name" : "DigiMATSU_Opinion",
-        "bucket": "Opinion-Insight",
+        "data_name" : "DigiMATSU_Communication",
+        "bucket": "DigiMATSU_Opinion_Communication",
         "item_dict": {
+            "db": "DigiMATSU_Opinion_Communication",
             "title": {"名前": "title"}, 
-            "create_date": {"note公開日": "date"}, 
-            "key_text": [{"インプット": "rich_text"},{"考察_確定版": "rich_text"}], 
-            "value_text": {"考察_確定版": "rich_text"},
+            "create_date": {"タイムスタンプ": "date"}, 
+            "key_text": [{"クエリ": "rich_text"},{"レスポンス": "rich_text"},{"コンテキスト": "rich_text"}], 
+            "value_text": [{"コンテキスト": "rich_text"}], 
             "category": {"カテゴリ": "select"},
-            "eval": {"評価": "select"},
-            "url": {"URL": "url"}
+            "eval": "N",
+            "url": ""
         },
         "chk_dict": {
             "確定Chk": true
         },
-        "date_dict": {
-            "考察生成日":["",""]
+        "date_dict": {},
+        "category_dict": {
+            "RAGカテゴリ": "opinion"
         }
     },
-    "DigiMATSU_Policy_Insight":{
+    "DigiMATSU_Experience_Communication":{
         "active": "Y",
         "input" : "notion",
         "data_type" : "chromadb",
-        "data_name" : "DigiMATSU_Opinion",
-        "bucket": "Policy-Insight",
+        "data_name" : "DigiMATSU_Communication",
+        "bucket": "DigiMATSU_Experience_Communication",
         "item_dict": {
+            "db": "DigiMATSU_Experience_Communication",
             "title": {"名前": "title"}, 
-            "create_date": {"note公開日": "date"}, 
-            "key_text": [{"インプット": "rich_text"},{"リアル松本の指摘事項": "rich_text"}], 
-            "value_text": {"リアル松本の指摘事項": "rich_text"}, 
+            "create_date": {"タイムスタンプ": "date"}, 
+            "key_text": [{"クエリ": "rich_text"},{"レスポンス": "rich_text"},{"コンテキスト": "rich_text"}], 
+            "value_text": [{"コンテキスト": "rich_text"}], 
             "category": {"カテゴリ": "select"},
-            "eval": {"評価": "select"},
-            "url": {"URL": "url"}
+            "eval": "N",
+            "url": ""
         },
         "chk_dict": {
             "確定Chk": true
         },
-        "date_dict": {
-            "考察生成日":["",""]
+        "date_dict": {},
+        "category_dict": {
+            "RAGカテゴリ": "experience"
         }
     },
-    "DigiMATSU_Policy":{
+    "DigiMATSU_Identity_Communication":{
         "active": "Y",
         "input" : "notion",
         "data_type" : "chromadb",
-        "data_name" : "DigiMATSU_Policy",
-        "bucket": "DigiMATSU_Policy",
+        "data_name" : "DigiMATSU_Communication",
+        "bucket": "DigiMATSU_Identity_Communication",
         "item_dict": {
+            "db": "DigiMATSU_Identity_Communication",
             "title": {"名前": "title"}, 
-            "create_date": {"作成日": "date"}, 
-            "key_text": [{"検索テキスト": "rich_text"}], 
-            "value_text": {"コンテキスト": "rich_text"}, 
+            "create_date": {"タイムスタンプ": "date"}, 
+            "key_text": [{"クエリ": "rich_text"},{"レスポンス": "rich_text"},{"コンテキスト": "rich_text"}], 
+            "value_text": [{"コンテキスト": "rich_text"}], 
             "category": {"カテゴリ": "select"},
-            "eval": {"評価": "select"},
-            "url": {"URL": "url"}
+            "eval": "N",
+            "url": ""
         },
-        "chk_dict": {},
-        "date_dict": {}
-    },
-    "DigiMATSU_POLICY_CSV":{
-        "active": "N",
-        "input" : "csv",
-        "data_type" : "chromadb",
-        "bucket": "Policy-CSV",
-        "file_path": "user/common/csv/",
-        "file_names": ["digiMATSU_PolicyRAG.csv"],
-        "field_items": ["title", "category", "eval", "create_date", "key_text", "value_text", "url"] 
+        "chk_dict": {
+            "確定Chk": true
+        },
+        "date_dict": {},
+        "category_dict": {
+            "RAGカテゴリ": "identity"
+        }
     },
     "DigiMATSU_Senryu":{
         "active": "Y",
         "input" : "notion",
         "data_type" : "chromadb",
-        "data_name" : "DigiMATSU_Opinion",
-        "bucket": "Senryu",
+        "data_name" : "DigiMATSU_Note",
+        "bucket": "DigiMATSU_Senryu",
         "item_dict": {
+            "db": "DigiMATSU_Senryu",
             "title": {"名前": "title"},
             "create_date": {"note公開日": "date"}, 
             "key_text": [{"インプット": "rich_text"},{"川柳_選考結果": "rich_text"}], 
@@ -112,34 +212,17 @@
         },
         "date_dict": {
             "考察生成日":["",""]
-        }
-    },
-    "DigiMATSU_Communication":{
-        "active": "Y",
-        "input" : "notion",
-        "data_type" : "chromadb",
-        "data_name" : "DigiMATSU_Communication",
-        "bucket": "Communication",
-        "item_dict": {
-            "title": {"名前": "title"}, 
-            "create_date": {"タイムスタンプ": "date"}, 
-            "key_text": [{"クエリ": "rich_text"},{"コンテキスト": "rich_text"}], 
-            "value_text": [{"コンテキスト": "rich_text"}], 
-            "category": {"カテゴリ": "select"},
-            "memo": {"メモ": "rich_text"}
         },
-        "chk_dict": {
-            "確定Chk": true
-        },
-        "date_dict": {}
+        "category_dict": {}
     },
     "DigiMATSU_Articles":{
-        "active": "Y",
+        "active": "N",
         "input" : "notion",
         "data_type" : "chromadb",
         "data_name" : "DigiMATSU_Articles",
-        "bucket": "Article",
+        "bucket": "DigiMATSU_Articles",
         "item_dict": {
+            "db": "DigiMATSU_Articles",
             "title": {"名前": "title"}, 
             "create_date": {"作成日": "date"}, 
             "key_text": {"要約": "rich_text"}, 
@@ -153,6 +236,16 @@
         },
         "date_dict": {
             "作成日":["",""]
-        }
+        },
+        "category_dict": {}
+    },
+    "DigiMATSU_POLICY_CSV":{
+        "active": "N",
+        "input" : "csv",
+        "data_type" : "chromadb",
+        "bucket": "Policy-CSV",
+        "file_path": "user/common/csv/",
+        "file_names": ["digiMATSU_PolicyRAG.csv"],
+        "field_items": ["title", "category", "eval", "create_date", "key_text", "value_text", "url"] 
     }
 }

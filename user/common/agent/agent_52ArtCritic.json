@@ -21,7 +21,7 @@
     },
     "ENGINE": {
         "LLM": {
-            "NAME":"GPT-4o",
+            "NAME":"GPT-4o-mini",
             "FUNC_NAME": "generate_response_T_gpt",
             "MODEL": "gpt-4o-mini",
             "PARAMETER": {"temperature": 0.7},
