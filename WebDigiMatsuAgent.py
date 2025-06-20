@@ -17,7 +17,7 @@ import DigiM_Util as dmu
 import VAnalyticsArticle as vaa
 import VAnalyticsMonthlyInsight as vami
 import VAnalyticsMonthlyKnowledge as vamk
-import GeneCommunication as gc
+import DigiM_GeneCommunication as dmgc
 
 # system.envファイルをロードして環境変数を設定
 load_dotenv("system.env")
@@ -85,6 +85,10 @@ def initialize_session_states():
         st.session_state.stream_mode = True
     if 'save_digest' not in st.session_state:
         st.session_state.save_digest = True
+    if 'meta_search' not in st.session_state:
+        st.session_state.meta_search = True
+    if 'RAG_query_gene' not in st.session_state:
+        st.session_state.RAG_query_gene = True
     if 'uploaded_files' not in st.session_state:
         st.session_state.uploaded_files = []
     if 'file_uploader' not in st.session_state:
@@ -223,7 +227,7 @@ def main():
                 dmc.generate_rag()
                 st.session_state.sidebar_message = "RAGの更新が完了しました"
             if st.button("Feedback to DB", key="save_feedback_to_db"):
-                gc.create_pages_communication(st.session_state.session.session_id)
+                dmgc.create_communication_data(st.session_state.session.session_id)
                 st.session_state.sidebar_message = "フィードバックをDBに保存しました"
             if st.button("Delete RAG DB", key="delete_rag_db"):
                 dmc.del_rag_db()
@@ -383,13 +387,13 @@ def main():
         st.markdown(overwrite_tool)
 
     # Webパーツのレイアウト
-    header_col1, header_col2, header_col3 = st.columns(3)
+    header_col1, header_col2, header_col3, header_col4 = st.columns(4)
 
     # 時刻の設定
     header_col1.markdown("Time Setting:")
-    selected_time_setting = now_time
+    selected_time_setting = now_time.strftime("%Y/%m/%d %H:%M:%S")
     if header_col1.checkbox("Real Date:", value=True):
-        selected_time_setting = now_time
+        selected_time_setting = now_time.strftime("%Y/%m/%d %H:%M:%S")
     else:
         selected_date = header_col1.date_input("Situation Date", value=datetime.strptime(st.session_state.time_setting, "%Y/%m/%d %H:%M:%S").date())
         selected_time = header_col1.time_input("Situation Time", value=datetime.strptime(st.session_state.time_setting, "%Y/%m/%d %H:%M:%S").time())
@@ -398,6 +402,12 @@ def main():
 
     # 実行の設定
     header_col2.markdown("Exec Setting:")
+
+    # ストリーミングの設定
+    if header_col2.checkbox("Streaming Mode", value=st.session_state.stream_mode):
+        st.session_state.stream_mode = True
+    else:
+        st.session_state.stream_mode = False
     
     # 会話メモリ利用の設定
     if header_col2.checkbox("Memory Use", value=st.session_state.memory_use):
@@ -405,27 +415,36 @@ def main():
     else:
         st.session_state.memory_use = False
 
-    # マジックワード利用の設定
-    if header_col2.checkbox("Magic Word", value=st.session_state.magic_word_use):
-        st.session_state.magic_word_use = "Y"
-    else:
-        st.session_state.magic_word_use = "N"
-
-    # ストリーミングの設定
-    if header_col2.checkbox("Streaming Mode", value=st.session_state.stream_mode):
-        st.session_state.stream_mode = True
-    else:
-        st.session_state.stream_mode = False
-
     # メモリダイジェスト保存の設定
     if header_col2.checkbox("Save Digest", value=st.session_state.save_digest):
         st.session_state.save_digest = True
     else:
         st.session_state.save_digest = False
 
+    # マジックワード利用の設定
+    if header_col2.checkbox("Magic Word", value=st.session_state.magic_word_use):
+        st.session_state.magic_word_use = "Y"
+    else:
+        st.session_state.magic_word_use = "N"
+    
+    # 実行の設定
+    header_col3.markdown("RAG Setting:")
+
+    # RAG検索用クエリ生成の設定
+    if header_col3.checkbox("RAG Query Gen", value=st.session_state.RAG_query_gene):
+        st.session_state.RAG_query_gene = True
+    else:
+        st.session_state.RAG_query_gene = False
+
+    # メタ検索の設定
+    if header_col3.checkbox("Meta Search", value=st.session_state.meta_search):
+        st.session_state.meta_search = True
+    else:
+        st.session_state.meta_search = False
+
     # 会話履歴の表示対象切替
     num_seq_visible = 10
-    sub_header_col1, sub_header_col2 = header_col3.columns(2)
+    sub_header_col1, sub_header_col2 = header_col4.columns(2)
     option = sub_header_col1.radio("History Seq Visible:", ("LATEST", "FULL"))
     if option == "LATEST":
         st.session_state.seq_visible_set = True
@@ -435,14 +454,14 @@ def main():
         st.session_state.seq_visible_set = False
 
     # 会話履歴の表示件数
-    option = header_col3.radio("History Detail Visible:", ("ALL", "SUMMARY"))
+    option = header_col4.radio("History Detail Visible:", ("ALL", "SUMMARY"))
     if option == "ALL":
         st.session_state.chat_history_visible_dict = st.session_state.session.chat_history_active_dict
     elif option == "SUMMARY":
         st.session_state.chat_history_visible_dict = st.session_state.session.chat_history_active_omit_dict
     
     # 会話履歴の削除（ボタン）
-    if header_col3.button("Delete Chat History(Chk)", key="delete_chat_history"):
+    if header_col4.button("Delete Chat History(Chk)", key="delete_chat_history"):
         if st.session_state.seq_memory:
             for del_seq in st.session_state.seq_memory:
                 st.session_state.session.chg_seq_history(del_seq, "N")
@@ -480,33 +499,84 @@ def main():
 
                     if v2["setting"]["type"] in ["LLM","IMAGEGEN"]:
                         with st.chat_message("Feedback"):
-                            feedback_good = False
-                            feedback_likeme = False
-                            feedback_memo = ""
+                            feedback_name = "Chunk Title"
+                            
+                            feedback_opinion = {}
+                            feedback_opinion["visible"] = False
+                            feedback_opinion["flg"] = False
+                            feedback_opinion["memo"] = ""
+                            
+                            feedback_experience = {}
+                            feedback_experience["visible"] = False
+                            feedback_experience["flg"] = False
+                            feedback_experience["memo"] = "" 
+                            
+                            feedback_identity = {}
+                            feedback_identity["visible"] = False
+                            feedback_identity["flg"] = False
+                            feedback_identity["memo"] = "" 
                             
                             if "feedback" in v2:
-                                feedback_good = v2["feedback"]["good"]
-                                feedback_likeme = v2["feedback"]["likeme"]
-                                feedback_memo = v2["feedback"]["memo"]
-    
-                            # Feedback  
-                            feedback_memo = st.text_input("Feedback Memo:", key=f"feedback_memo{k}_{k2}", value=feedback_memo)
-                            col1, col2, col3 = st.columns(3)
-                            if col1.checkbox(f"good", key=f"feedback_good{k}_{k2}", value=feedback_good):
-                                feedback_good = True
+                                feedback_name = v2.get("feedback", {}).get("name", feedback_name)
+                                feedback_opinion = v2.get("feedback", {}).get("opinion", feedback_opinion)
+                                feedback_experience = v2.get("feedback", {}).get("experience", feedback_experience)
+                                feedback_identity = v2.get("feedback", {}).get("identity", feedback_identity)
+
+                            feedback_opinion_saved_memo = feedback_opinion["memo"]
+                            feedback_experience_saved_memo = feedback_experience["memo"]
+                            feedback_identity_saved_memo = feedback_identity["memo"]
+
+                            feedback_name = st.text_input("Feedback_Name:", key=f"feedback_name{k}_{k2}", value=feedback_name, label_visibility="collapsed")
+                            
+                            if st.checkbox(f"opinion", key=f"feedback_opinion{k}_{k2}", value=feedback_opinion["visible"]):
+                                feedback_opinion["memo"] = st.text_input("Memo:", key=f"feedback_opinion_memo{k}_{k2}", value=feedback_opinion["memo"], label_visibility="collapsed")
+                                feedback_opinion["visible"] = True
                             else:
-                                feedback_good = False
-                            if col2.checkbox(f"like me", key=f"feedback_likeme{k}_{k2}", value=feedback_likeme):
-                                feedback_likeme = True
+                                feedback_opinion["memo"] = ""
+                                feedback_opinion["visible"] = False
+                                
+                            if st.checkbox(f"experience", key=f"feedback_experience{k}_{k2}", value=feedback_experience["visible"]):
+                                feedback_experience["memo"] = st.text_input("Memo:", key=f"feedback_experience_memo{k}_{k2}", value=feedback_experience["memo"], label_visibility="collapsed")
+                                feedback_experience["visible"] = True
                             else:
-                                feedback_likeme = False
-                            if col3.button("Feedback", key=f"feedback_btn{k}_{k2}"):
-                                feedbacks = {}
-                                feedbacks["good"] = feedback_good
-                                feedbacks["likeme"] = feedback_likeme
-                                feedbacks["memo"] = feedback_memo
-                                st.session_state.session.set_feedback_history(k, k2, feedbacks)
-                                st.session_state.sidebar_message = f"フィードバックをログに保存しました({k})"
+                                feedback_experience["memo"] = "" 
+                                feedback_experience["visible"] = False
+                            
+                            if st.checkbox(f"identity", key=f"feedback_identity{k}_{k2}", value=feedback_identity["visible"]):
+                                feedback_identity["memo"] = st.text_input("Memo:", key=f"feedback_identity_memo{k}_{k2}", value=feedback_identity["memo"], label_visibility="collapsed")
+                                feedback_identity["visible"] = True
+                            else:
+                                feedback_identity["memo"] = "" 
+                                feedback_identity["visible"] = False
+
+                            if st.button("Feedback", key=f"feedback_btn{k}_{k2}"):
+                                if feedback_opinion["memo"]!=feedback_opinion_saved_memo or feedback_experience["memo"]!=feedback_experience_saved_memo or feedback_identity["memo"]!=feedback_identity_saved_memo:
+                                    feedbacks = {}
+                                    feedbacks["name"] = feedback_name
+
+                                    if feedback_opinion["memo"]!=feedback_opinion_saved_memo and feedback_opinion["memo"]!="":
+                                        feedback_opinion["flg"] = True
+                                    if feedback_opinion["memo"]=="":
+                                        feedback_opinion["flg"] = False
+                                    feedbacks["opinion"] = feedback_opinion
+
+                                    if feedback_experience["memo"]!=feedback_experience_saved_memo and feedback_experience["memo"]!="":
+                                        feedback_experience["flg"] = True
+                                    if feedback_experience["memo"]=="":
+                                        feedback_experience["flg"] = False
+                                    feedbacks["experience"] = feedback_experience
+                                    
+                                    if feedback_identity["memo"]!=feedback_identity_saved_memo and feedback_identity["memo"]!="":
+                                        feedback_identity["flg"] = True
+                                    if feedback_identity["memo"]=="":
+                                        feedback_identity["flg"] = False
+                                    feedbacks["identity"] = feedback_identity
+                                    
+                                    st.session_state.session.set_feedback_history(k, k2, feedbacks)
+                                    st.session_state.sidebar_message = f"フィードバックをログに保存しました({k})"
+                                else:
+                                    st.session_state.sidebar_message = f"フィードバックに変更はありません({k})"
+                                st.rerun()
                         
                         # Detail
                         with st.chat_message("detail"):
@@ -554,7 +624,7 @@ def main():
             practice=st.session_state.agent_data["HABIT"]
             response_placeholder = st.empty()
             response = ""
-            for response_chunk in dme.DigiMatsuExecute_Practice(st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, practice, st.session_state.memory_use, st.session_state.magic_word_use, st.session_state.stream_mode, st.session_state.save_digest):
+            for response_chunk in dme.DigiMatsuExecute_Practice(st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, practice, st.session_state.memory_use, st.session_state.magic_word_use, st.session_state.stream_mode, st.session_state.save_digest, st.session_state.meta_search, st.session_state.RAG_query_gene):
                 response += response_chunk
                 response_placeholder.markdown(response)
             st.rerun()

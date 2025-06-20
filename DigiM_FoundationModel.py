@@ -59,11 +59,11 @@ def generate_response_T_gpt(query, system_prompt, model, memories=[], image_path
     # ツールを設定【要検討：いったんデフォルト設定】
     tools = agent_tools["TOOL_LIST"]
     tool_choice = agent_tools["CHOICE"]
-    
+
     # モデルの実行
     completion = openai_client.chat.completions.create(
         model = model["MODEL"],
-        temperature = model["PARAMETER"]["temperature"],
+#        temperature = model["PARAMETER"]["temperature"],
         messages = prompt,
         tools = tools,
         tool_choice = tool_choice,

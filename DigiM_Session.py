@@ -365,16 +365,29 @@ class DigiMSession:
             chat_detail_info += "\n【メモリ】\n"
             for memory_set_dict in chat_history_dict_seq["response"]["reference"]["memory"]:
                 chat_detail_info += memory_set_dict["log"]
-        
+
+            chat_detail_info += "\n【RAG検索用クエリ】\n"
+            if chat_history_dict_seq["prompt"]["RAG_query_genetor"]:
+                chat_detail_info += chat_history_dict_seq["prompt"]["RAG_query_genetor"]["llm_response"]+"\n"
+                chat_detail_info += "入力トークン数："+str(chat_history_dict_seq["prompt"]["RAG_query_genetor"]["prompt_token"])+"\n"
+                chat_detail_info += "出力トークン数："+str(chat_history_dict_seq["prompt"]["RAG_query_genetor"]["response_token"])+"\n"          
+
+            chat_detail_info += "\n【メタ検索】\n"
+            if chat_history_dict_seq["prompt"]["meta_search"]:
+                chat_detail_info += str(chat_history_dict_seq["prompt"]["meta_search"]["date"]["condition_list"])+"\n"
+                chat_detail_info += chat_history_dict_seq["prompt"]["meta_search"]["date"]["llm_response"]+"\n"
+                chat_detail_info += "入力トークン数："+str(chat_history_dict_seq["prompt"]["meta_search"]["date"]["prompt_token"])+"\n"
+                chat_detail_info += "出力トークン数："+str(chat_history_dict_seq["prompt"]["meta_search"]["date"]["response_token"])+"\n"          
+            
             chat_detail_info += "\n【RAGコンテキスト】\n["
             for rag_set_dict in chat_history_dict_seq["response"]["reference"]["knowledge_rag"]:
                 chat_detail_info += "{"+ rag_set_dict["log"] + "},\n"
             if chat_detail_info.endswith(",\n"):
-                chat_detail_info = chat_detail_info[:-2] + "]"
+                chat_detail_info = chat_detail_info[:-2] + "]"+"\n"
 
-            chat_detail_info += "\n【コンテンツコンテキスト】"
+            chat_detail_info += "\n【コンテンツコンテキスト】\n"
             for content_dict in chat_history_dict_seq["prompt"]["query"]["contents"]:
-                chat_detail_info += content_dict["context"]
+                chat_detail_info += content_dict["context"]+"\n"
                 
         return chat_detail_info
 
