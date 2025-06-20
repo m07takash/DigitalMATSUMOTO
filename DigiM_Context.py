@@ -12,6 +12,7 @@ import DigiM_Util as dmu
 import DigiM_Tool as dmt
 import DigiM_Notion as dmn
 
+
 # system.envファイルをロードして環境変数を設定
 load_dotenv("system.env")
 mst_folder_path = os.getenv("MST_FOLDER")
@@ -88,14 +89,21 @@ def set_prompt_template(prompt_temp_cd):
 
 
 # RAGデータ一覧の取得
-#【要修正】データ名／データタイプの組み合わせ（JSON／ChromaDB）
 def get_rag_list():
+    rag_list = []
+    
+    #ChromaDBから取得
+    db_client = chromadb.PersistentClient(path=rag_folder_db_path)
+    collections = db_client.list_collections()
+    rag_list += [col.name for col in collections]
+
+    #JSONから取得
     identifier="_vec.json"
-    rag_list = []#[r.replace(identifier, "") for r in dmu.get_files(rag_folder_json_path, identifier)]
+    rag_list += [r.replace(identifier, "") for r in dmu.get_files(rag_folder_json_path, identifier)]
+
     return rag_list
 
 # RAGデータの取得
-#def select_rag_vector(query_vec, rag_data_list, rag={}):
 def select_rag_vector(rag_data_list, rag={}):
     total_characters = 0
     buffer = 100
@@ -121,10 +129,6 @@ def select_rag_vector(rag_data_list, rag={}):
         days_difference = (current_date - timestamp).days
         rag_data["timestamp"] = timestamp_str
         rag_data["days_difference"] = days_difference
-        
-        # 埋め込みベクトルの類似度
-#        similarity_prompt = dmu.calculate_similarity_vec(query_vec, rag_data["vector_data_key_text"], rag["DISTANCE_LOGIC"])
-#        rag_data["similarity_prompt"] = round(similarity_prompt,3)
 
         # チャンクテンプレートでコンテキスト化
         chunk_item_list = re.findall(r"\{(.*?)\}", rag["CHUNK_TEMPLATE"])
@@ -154,28 +158,69 @@ def select_rag_vector(rag_data_list, rag={}):
 
 
 # RAGからのコンテキスト取得
-def create_rag_context(query, query_vecs=[], rags=[]):
+def create_rag_context(query, query_vecs=[], rags=[], meta_searches=[]):
     rag_final_context = "\n------\n"
     rag_final_selected = []
 
     # RAGデータセットごとに処理    
     for rag in rags:
         rag_data_list = []
-        for query_vec in query_vecs:
-            for rag_data in rag["DATA"]:
-                if rag_data["DATA_TYPE"] == "JSON":
+        for rag_data in rag["DATA"]:
+            query_seq = 0
+            if rag_data["DATA_TYPE"] == "JSON":
+                for query_vec in query_vecs:
                     rag_data_file = rag_data["DATA_NAME"] +'_vec.json'
                     rag_data_json = dmu.read_json_file(rag_data_file, rag_folder_json_path)
                     for k, v in rag_data_json.items():
                         similarity_prompt = dmu.calculate_similarity_vec(query_vec, v["vector_data_key_text"], rag["DISTANCE_LOGIC"])
                         v["similarity_prompt"] = round(similarity_prompt,3)
+                        v["query_seq"] = query_seq
                         rag_data_list.append(v)
-                elif rag_data["DATA_TYPE"] == "DB":
+                    query_seq+=1
+
+            elif rag_data["DATA_TYPE"] == "DB":
+                for query_vec in query_vecs:
                     db_client = chromadb.PersistentClient(path=rag_folder_db_path)
                     collection = db_client.get_collection(rag_data["DATA_NAME"])
-                    result_limit = 30
-                    if collection.count() <= 30:
+
+                    result_limit = 50
+                    if collection.count() <= 50:
                         result_limit = collection.count()
+
+                    #メタデータ検索の追加
+                    if "META_SEARCH" in rag_data: #エージェントのRAG設定にメタ検索が含まれ
+                        query_conditions = []
+                        for meta_search in meta_searches:
+                            if "DATE" in meta_search and "DATE" in rag_data["META_SEARCH"]["CONDITION"]:
+                                for date_range in meta_search["DATE"]:
+                                    start_date = datetime.strptime(date_range["start"], '%Y/%m/%d').timestamp()
+                                    end_date = datetime.strptime(date_range["end"], '%Y/%m/%d').timestamp()
+                                    query_conditions.append({
+                                        "$and": [
+                                            {"create_date_ts": {"$gte": start_date}},
+                                            {"create_date_ts": {"$lte": end_date}}
+                                        ]
+                                    })
+                                               
+                        if query_conditions:
+                            if len(query_conditions) == 1:
+                                where_clause = query_conditions[0]
+                            else:
+                                where_clause = {"$or": query_conditions}
+                            rag_data_db = collection.query(query_embeddings=[query_vec], n_results=result_limit, include=["metadatas", "embeddings", "distances"], where=where_clause)
+                            for i in range(len(rag_data_db["ids"])):
+                                for j in range(len(rag_data_db["ids"][i])):
+                                    v = {}
+                                    v["id"] = rag_data_db["ids"][i][j]
+                                    v |= rag_data_db["metadatas"][i][j]
+                                    v["vector_data_value_text"] = ast.literal_eval(v["vector_data_value_text"])
+                                    v["vector_data_key_text"] = rag_data_db["embeddings"][i][j].tolist()
+                                    v["similarity_prompt"] = round(rag_data_db["distances"][i][j],3)*rag_data["META_SEARCH"]["BONUS"]
+                                    v["similarity_prompt_original"] = round(rag_data_db["distances"][i][j],3)
+                                    v["query_seq"] = query_seq
+                                    v["query_mode"] = "{'META_SEARCH':"+str(rag_data["META_SEARCH"]["BONUS"])+"}"
+                                    rag_data_list.append(v)
+                    
                     rag_data_db = collection.query(query_embeddings=[query_vec], n_results=result_limit, include=["metadatas", "embeddings", "distances"])
                     for i in range(len(rag_data_db["ids"])):
                         for j in range(len(rag_data_db["ids"][i])):
@@ -185,14 +230,22 @@ def create_rag_context(query, query_vecs=[], rags=[]):
                             v["vector_data_value_text"] = ast.literal_eval(v["vector_data_value_text"])
                             v["vector_data_key_text"] = rag_data_db["embeddings"][i][j].tolist()
                             v["similarity_prompt"] = round(rag_data_db["distances"][i][j],3)
+                            v["similarity_prompt_original"] = round(rag_data_db["distances"][i][j],3)
+                            v["query_seq"] = query_seq
+                            v["query_mode"] = "NORMAL"
                             rag_data_list.append(v)
+                    query_seq+=1
 
-        # rag_data_listでidが重複するものは質問との類似度が近いものに重複削除
+        # rag_data_listでidが重複するものは「質問との類似度」が近いものに重複削除
         filtered_data = {}
         for rag_data in rag_data_list:
             rag_data_id = rag_data["id"]
-            if rag_data_id not in filtered_data or rag_data["similarity_prompt"] < filtered_data[rag_data_id]["similarity_prompt"]:
+            if rag_data_id not in filtered_data:
                 filtered_data[rag_data_id] = rag_data
+            elif rag_data["similarity_prompt"] < filtered_data[rag_data_id]["similarity_prompt"]:
+                filtered_data[rag_data_id] = rag_data
+#            else:
+#                print("RAGデータ被り["+rag_data_id+"]:"+rag_data["db"]+" "+rag_data["title"]+" "+str(rag_data["similarity_prompt"]))
         rag_data_list = list(filtered_data.values())
         
         # RAGデータの選択       
@@ -265,7 +318,7 @@ def get_memory_similarity_response(response_vec, memory_selected, logic="Cosine"
 
 
 # RAGのチャンクデータをCSV(utf-8)から生成
-def get_chunk_csv(bucket, file_path, file_names, field_items=["title", "create_date", "key_text", "value_text"]):   
+def get_chunk_csv(bucket, file_path, file_names, field_items=["title", "create_date", "key_text", "value_text"]):  
     rag_data = []
     for file_name in file_names:
         with open(file_path + file_name, 'r', encoding='utf-8') as csvfile:
@@ -291,7 +344,7 @@ def get_chunk_csv(bucket, file_path, file_names, field_items=["title", "create_d
     return rag_data
 
 # RAGのチャンクデータをNotionデータベースから生成
-def get_chunk_notion(bucket, db_name, item_dict, chk_dict=None, date_dict=None):
+def get_chunk_notion(bucket, db_name, item_dict, chk_dict=None, date_dict=None, category_dict=None):
     rag_data = []
     
     # Notion_DBのIDを取得
@@ -300,7 +353,7 @@ def get_chunk_notion(bucket, db_name, item_dict, chk_dict=None, date_dict=None):
     db_id = notion_db_mst[db_name]
 
     # RAG対象のページを取得
-    pages = dmn.get_pages_done(db_id, chk_dict, date_dict)
+    pages = dmn.get_pages_done(db_id, chk_dict, date_dict, category_dict)
 
     # RAGデータの形式に変換
     page_ids = [page['id'] for page in pages]
@@ -375,6 +428,7 @@ def save_rag_chunk_db(rag_id, rag_data):
 
     # 対象ドキュメントのベクトルデータを作成
     for rag_chunk in rag_data:
+        rag_chunk["create_date_ts"] = datetime.strptime(rag_chunk["create_date"], "%Y-%m-%d").timestamp()
         if rag_chunk["value_text"]:
             chunk_id = rag_chunk["id"]
             if chunk_id not in existing_ids:
@@ -415,38 +469,40 @@ def generate_rag():
     for rag_id, rag_setting in rag_mst_dict.items():
         if rag_setting["active"] == "Y":
             if rag_setting["input"] == "notion":
-                rag_data = get_chunk_notion(rag_setting["bucket"], rag_setting["data_name"], rag_setting["item_dict"], rag_setting["chk_dict"], rag_setting["date_dict"])
+                rag_data = get_chunk_notion(rag_setting["bucket"], rag_setting["data_name"], rag_setting["item_dict"], rag_setting["chk_dict"], rag_setting["date_dict"], rag_setting["category_dict"])
             elif rag_setting["input"] == "csv":
                 rag_data = get_chunk_csv(rag_setting["bucket"], rag_setting["file_path"], rag_setting["file_names"], rag_setting["field_items"])
             else:
                 print("正しいモードが設定されていません。")
 
-            # JSONでの保存
-            if rag_setting["data_type"] == "json":
-                rag_data_file_name = rag_folder_json_path + rag_id +'_vec.json'
-                rag_data_file = dmu.read_json_file(rag_data_file_name)
+            if rag_data:
+                # JSONでの保存
+                if rag_setting["data_type"] == "json":
+                    rag_data_file_name = rag_folder_json_path + rag_id +'_vec.json'
+                    rag_data_file = dmu.read_json_file(rag_data_file_name)
+        
+                    # チャンクデータの編集
+                    rag_data_file_updated, cnt_add, cnt_extent = save_rag_chunk_json(rag_data, rag_data_file)
+                    
+                    # RAG用ベクトルデータの保存
+                    cnt_total = cnt_add + cnt_extent
+                    if os.path.exists(rag_data_file_name):
+                        os.remove(rag_data_file_name)
+                    with open(rag_data_file_name, 'w') as file:
+                        json.dump(rag_data_file_updated, file, indent=4)
+                        print(f"{rag_id}のJSON書き込みが完了しました。追加件数:{cnt_add}, トータル件数:{cnt_total}")
     
-                # チャンクデータの編集
-                rag_data_file_updated, cnt_add, cnt_extent = save_rag_chunk_json(rag_data, rag_data_file)
-                
-                # RAG用ベクトルデータの保存
-                cnt_total = cnt_add + cnt_extent
-                if os.path.exists(rag_data_file_name):
-                    os.remove(rag_data_file_name)
-                with open(rag_data_file_name, 'w') as file:
-                    json.dump(rag_data_file_updated, file, indent=4)
-                    print(f"{rag_id}のJSON書き込みが完了しました。追加件数:{cnt_add}, トータル件数:{cnt_total}")
-
-            # ChromaDBでの保存
-            elif rag_setting["data_type"] == "chromadb":
-                cnt_add, cnt_extent = save_rag_chunk_db(rag_id, rag_data)
-                cnt_total = cnt_add + cnt_extent
-                print(f"{rag_id}のDB書き込みが完了しました。追加件数:{cnt_add}, トータル件数:{cnt_total}")
+                # ChromaDBでの保存
+                elif rag_setting["data_type"] == "chromadb":
+                    cnt_add, cnt_extent = save_rag_chunk_db(rag_id, rag_data)
+                    cnt_total = cnt_add + cnt_extent
+                    print(f"{rag_id}のDB書き込みが完了しました。追加件数:{cnt_add}, トータル件数:{cnt_total}")
 
 # RAGデータベース（Collection）の削除
 def del_rag_db():
     db_client = chromadb.PersistentClient(path=rag_folder_db_path)
     collections = db_client.list_collections()
-    for collection_name in collections:
+    for collection in collections:
+        collection_name = collection.name
         db_client.delete_collection(name=collection_name)
         print(collection_name + "を削除しました。")

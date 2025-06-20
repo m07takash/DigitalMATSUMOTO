@@ -171,7 +171,7 @@ def analytics_knowledge(page_data, analytics_file_path, topN=10):
 def analytics_insights():
     analytics_file_path = "user/common/analytics/insight/"
     
-    db_name = "DigiMATSU_Opinion"
+    db_name = "DigiMATSU_Note"
     item_dict = {
         "title": {"名前": "title"}, 
         "exec_date": {"note公開日": "date"},
