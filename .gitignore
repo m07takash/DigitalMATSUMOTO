@@ -174,7 +174,8 @@ user/common/agent/charactor/*.txt
 !user/common/agent/charactor/ArtCritic.txt
 
 # DigiM Folder(mst)
-
+user/common/mst/
+!user/common/mst/sample*.json
 
 # DigiM Folder(rag)
 user/common/rag/chromadb/*
@@ -186,8 +187,6 @@ user/common/rag/docs/*
 # DigiM Folder(csv)
 user/common/csv/
 !user/common/csv/RAG_sample*.csv
-
-notion_db.json
 
 # DigiM Folder
 user/session*/
