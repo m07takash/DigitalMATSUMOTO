@@ -173,18 +173,24 @@ user/common/agent/charactor/*.txt
 !user/common/agent/charactor/DialogDigest.txt
 !user/common/agent/charactor/ArtCritic.txt
 
+# DigiM Folder(mst)
+
+
 # DigiM Folder(rag)
+user/common/rag/chromadb/*
 user/common/rag/json/*
 !user/common/rag/json/RAGsample_vec.json
-user/common/rag/chromadb/*
 user/common/rag/docs/*
 !user/common/rag/docs/RAGsample.txt
 
-# DigiM Folder(mst)
+# DigiM Folder(csv)
+user/common/csv/
+!user/common/csv/RAG_sample*.csv
+
 notion_db.json
 
 # DigiM Folder
-session*/
-analytics/
+user/session*/
+user/common/analytics/
 test/
 backup/
