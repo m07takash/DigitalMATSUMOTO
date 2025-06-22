@@ -177,6 +177,11 @@ user/common/agent/charactor/*.txt
 user/common/mst/
 !user/common/mst/sample*.json
 
+# DigiM Folder(practice)
+user/common/practice/
+!user/common/practice/practice_0*.json
+!user/common/practice/practice_1*.json
+
 # DigiM Folder(rag)
 user/common/rag/chromadb/*
 user/common/rag/json/*
