@@ -1,11 +1,11 @@
 {
     "DISPLAY": true,
     "DISPLAY_NAME": "デジタルツイン(サンプル)",
-    "NAME": "デジタルツイン(Sample)",
-    "ACT": "SampleのデジタルツインAI",
+    "NAME": "デジタルコンサル",
+    "ACT": "コンサルティングファームのパートナー",
     "PERSONALITY": {
-        "SEX": "男性",
-        "BIRTHDAY": "01-Jan-2000",
+        "SEX": "女性",
+        "BIRTHDAY": "01-Jan-1980",
         "IS_ALIVE": true,
         "NATIONALITY": "Japanese",
         "BIG5": {
@@ -27,6 +27,14 @@
             "PARAMETER": {"temperature": 0.5},
             "TOKENIZER": "tiktoken",
             "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+        },
+        "IMAGEGEN": {
+            "NAME":"DALLE-3",
+            "FUNC_NAME": "generate_image_dalle",
+            "MODEL": "dall-e-3",
+            "PARAMETER": {"n": 1, "size": "1024x1024", "response_format": "b64_json", "quality": "hd", "style": "vivid"},
+            "TOKENIZER": "",
+            "MEMORY": {"limit": 3000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
         }
     },
     "HABIT": {
@@ -45,9 +53,46 @@
         "REMEMBER_HISTORY": {
             "MAGIC_WORDS": ["までの会話を思い出して", "会話履歴を回復して"],
             "PRACTICE": "practice_03RememberHistory.json"
+        },
+        "ETHICAL_CHECK": {
+            "MAGIC_WORDS": ["エシカルチェックしてください。"],
+            "PRACTICE": "practice_04Ethical_Check.json"
+        },
+        "SENRYU_SENSEI": {
+            "MAGIC_WORDS": ["川柳を詠んでください。","川柳を作成してください。"],
+            "PRACTICE": "practice_05Senryu.json"
+        },
+        "IMAGE_GEN": {
+            "MAGIC_WORDS": ["画像を生成してください。", "画像を作成してください。"],
+            "PRACTICE": "practice_06Image_Gen.json"
         }
     },
-    "KNOWLEDGE": [],
+    "KNOWLEDGE": [
+        {
+            "RAG_NAME": "Quote",
+            "RETRIEVER": "Vector",
+            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"Sample01_Quote"}],
+            "TIMESTAMP": "CREATE_DATE",
+            "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
+            "HEADER_TEMPLATE": "以下はあなたが気に入っている著名人による名言です。\n",
+            "CHUNK_TEMPLATE": "・{speaker}「{value_text}」\n\n",
+            "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{bucket}', 'ID': '{id}', 'similarity_Q': {similarity_prompt_original}, 'similarity_A': {similarity_response}, 'speaker': '{speaker}', 'text_short': '{value_text_short}'",
+            "TEXT_LIMITS": 1000,
+            "DISTANCE_LOGIC": "Cosine"
+        },
+        {
+            "RAG_NAME": "Experience",
+            "RETRIEVER": "Vector",
+            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"Sample02_Memo"},{"DATA_TYPE":"DB", "DATA_NAME":"Sample03_Feedback"}],
+            "TIMESTAMP": "CREATE_DATE",
+            "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
+            "HEADER_TEMPLATE": "以下はこれまであなたが学んできたことです。\n",
+            "CHUNK_TEMPLATE": "・{value_text}\n\n",
+            "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{bucket}', 'ID': '{id}', 'similarity_Q': {similarity_prompt_original}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}'",
+            "TEXT_LIMITS": 1000,
+            "DISTANCE_LOGIC": "Cosine"
+        }        
+    ],
     "SKILL": {
         "TOOL_LIST": [
             {"type": "function", "function": {"name": "default_tool"}}
