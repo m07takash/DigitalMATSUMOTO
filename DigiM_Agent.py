@@ -28,7 +28,6 @@ def get_display_agents():
     for agent_file in agent_files:
         agent_data = dmu.read_json_file(agent_file, agent_folder_path)
         if agent_data["DISPLAY"]:
-#            agents.append({"AGENT": agent_data["NAME"]+":"+agent_data["ENGINE"]["LLM"]["NAME"], "FILE": agent_file})
             agents.append({"AGENT": agent_data["DISPLAY_NAME"], "FILE": agent_file})
     return agents
 

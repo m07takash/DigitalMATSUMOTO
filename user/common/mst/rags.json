@@ -95,6 +95,30 @@
             "RAGカテゴリ": "identity"
         }
     },
+    "DigiMATSU_Technical_Memo":{
+        "active": "Y",
+        "input" : "notion",
+        "data_type" : "chromadb",
+        "data_name" : "DigiMATSU_Memo",
+        "bucket": "DigiMATSU_Technical_Memo",
+        "item_dict": {
+            "db": "DigiMATSU_Technical_Memo",
+            "title": {"名前": "title"}, 
+            "create_date": {"タイムスタンプ": "date"}, 
+            "key_text": [{"メモ": "rich_text"}], 
+            "value_text": {"メモ": "rich_text"}, 
+            "category": {"カテゴリ": "select"},
+            "eval": "N",
+            "url": ""
+        },
+        "chk_dict": {
+            "確定Chk": true
+        },
+        "date_dict": {},
+        "category_dict": {
+            "RAGカテゴリ": "technical"
+        }
+    },
     "DigiMATSU_Opinion_Note":{
         "active": "Y",
         "input" : "notion",

@@ -277,11 +277,11 @@ def get_rag_similarity_response(response_vec, rag_selected, logic="Cosine"):
             chunk_items[item] = rag_data[item]
         rag_data["log"] = rag_data["log_format"].format(**chunk_items)
         
-        # 記録用のデータセット(一部のキーを除く)
-        keys_to_remove = ["vector_data_key_text", "vector_data_value_text", "log_format"]
-        for key in keys_to_remove:
-            rag_data.pop(key, None)
-        rag_ref.append(rag_data)
+        # 記録用のデータセット
+#        keys_to_remove = ["vector_data_key_text", "vector_data_value_text", "log_format"] #一部のキーを除く
+#        for key in keys_to_remove:
+#            rag_data.pop(key, None)
+        rag_ref.append(rag_data["log"])
     return rag_ref
 
 
@@ -304,13 +304,13 @@ def get_memory_similarity_response(response_vec, memory_selected, logic="Cosine"
         # 記録用のデータセット
         memory_ref.append(
             {
-                "seq": seq,
-                "sub_seq": sub_seq,
-                "type": type,
-                "timestamp": timestamp,
-                "text": text,
-                "similarity_prompt": similarity_prompt, 
-                "similarity_response": similarity_response, 
+#                "seq": seq,
+#                "sub_seq": sub_seq,
+#                "type": type,
+#                "timestamp": timestamp,
+#                "text": text,
+#                "similarity_prompt": similarity_prompt, 
+#                "similarity_response": similarity_response, 
                 "log": memory_ref_log
             }
         )

@@ -41,6 +41,10 @@ if 'charactor_folder_path' not in st.session_state:
     st.session_state.charactor_folder_path = os.getenv("CHARACTOR_FOLDER")
 if 'prompt_template_mst_file' not in st.session_state:
     st.session_state.prompt_template_mst_file = os.getenv("PROMPT_TEMPLATE_MST_FILE")
+if 'feedback_item_list' not in st.session_state:
+    feedback_item_list = os.getenv("FEEDBACK_ITEM_LIST")
+    st.session_state.feedback_item_list = feedback_item_list.split(",") if feedback_item_list else []
+
 
 # 時刻の設定
 tz = pytz.timezone(st.session_state.timezone_setting)
@@ -165,14 +169,6 @@ def show_uploaded_files_widget(uploaded_files):
 def main():
     # セッションステートを初期化
     initialize_session_states()
-
-    # エージェントの初期値
-#    st.session_state.agents = dma.get_display_agents()
-#    st.session_state.agent_list = [a1["AGENT"] for a1 in st.session_state.agents]
-#    st.session_state.agent_list_index = st.session_state.agent_list.index(st.session_state.display_name)
-#    st.session_state.agent_id = st.session_state.agents[st.session_state.agent_list_index]["AGENT"]
-#    st.session_state.agent_file = st.session_state.agents[st.session_state.agent_list_index]["FILE"]
-#    st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, st.session_state.agent_folder_path)
     
     # プロンプトテンプレートの初期値
     prompt_temp_mst_path = st.session_state.mst_folder_path + st.session_state.prompt_template_mst_file
@@ -221,6 +217,7 @@ def main():
                 vami.analytics_insights_monthly(analyse_month_str, 12)
                 vamk.analytics_knowledge_monthly(analyse_month_str)
                 st.session_state.sidebar_message = f"{analyse_month_str}の分析が完了しました"
+        
         rag_expander = st.expander("RAG Management")
         with rag_expander:
             if st.button("Update RAG Data", key="update_rag"):
@@ -232,6 +229,7 @@ def main():
             if st.button("Delete RAG DB", key="delete_rag_db"):
                 dmc.del_rag_db()
                 st.session_state.sidebar_message = "RAGを削除しました"
+        
         st.write(st.session_state.sidebar_message)
 
         st.markdown("----")
@@ -242,7 +240,6 @@ def main():
             if num_session_visible > num_sessions:
                 session_id_list = str(session_num)
                 session_key_list = st.session_state.session_folder_prefix + session_id_list
-    #            session_file_dict = dms.get_session_data(session_id_list)
                 session_name_list = dms.get_session_name(session_id_list)
                 session_name_btn = session_name_list[:16]
                 situation = dms.get_situation(session_id_list)
@@ -499,84 +496,41 @@ def main():
 
                     if v2["setting"]["type"] in ["LLM","IMAGEGEN"]:
                         with st.chat_message("Feedback"):
-                            feedback_name = "Chunk Title"
-                            
-                            feedback_opinion = {}
-                            feedback_opinion["visible"] = False
-                            feedback_opinion["flg"] = False
-                            feedback_opinion["memo"] = ""
-                            
-                            feedback_experience = {}
-                            feedback_experience["visible"] = False
-                            feedback_experience["flg"] = False
-                            feedback_experience["memo"] = "" 
-                            
-                            feedback_identity = {}
-                            feedback_identity["visible"] = False
-                            feedback_identity["flg"] = False
-                            feedback_identity["memo"] = "" 
-                            
+                            feedback = {}
+                            feedback["name"] = "Chunk Title"
                             if "feedback" in v2:
-                                feedback_name = v2.get("feedback", {}).get("name", feedback_name)
-                                feedback_opinion = v2.get("feedback", {}).get("opinion", feedback_opinion)
-                                feedback_experience = v2.get("feedback", {}).get("experience", feedback_experience)
-                                feedback_identity = v2.get("feedback", {}).get("identity", feedback_identity)
-
-                            feedback_opinion_saved_memo = feedback_opinion["memo"]
-                            feedback_experience_saved_memo = feedback_experience["memo"]
-                            feedback_identity_saved_memo = feedback_identity["memo"]
-
-                            feedback_name = st.text_input("Feedback_Name:", key=f"feedback_name{k}_{k2}", value=feedback_name, label_visibility="collapsed")
-                            
-                            if st.checkbox(f"opinion", key=f"feedback_opinion{k}_{k2}", value=feedback_opinion["visible"]):
-                                feedback_opinion["memo"] = st.text_input("Memo:", key=f"feedback_opinion_memo{k}_{k2}", value=feedback_opinion["memo"], label_visibility="collapsed")
-                                feedback_opinion["visible"] = True
-                            else:
-                                feedback_opinion["memo"] = ""
-                                feedback_opinion["visible"] = False
-                                
-                            if st.checkbox(f"experience", key=f"feedback_experience{k}_{k2}", value=feedback_experience["visible"]):
-                                feedback_experience["memo"] = st.text_input("Memo:", key=f"feedback_experience_memo{k}_{k2}", value=feedback_experience["memo"], label_visibility="collapsed")
-                                feedback_experience["visible"] = True
-                            else:
-                                feedback_experience["memo"] = "" 
-                                feedback_experience["visible"] = False
-                            
-                            if st.checkbox(f"identity", key=f"feedback_identity{k}_{k2}", value=feedback_identity["visible"]):
-                                feedback_identity["memo"] = st.text_input("Memo:", key=f"feedback_identity_memo{k}_{k2}", value=feedback_identity["memo"], label_visibility="collapsed")
-                                feedback_identity["visible"] = True
-                            else:
-                                feedback_identity["memo"] = "" 
-                                feedback_identity["visible"] = False
+                                feedback["name"] = v2.get("feedback", {}).get("name", feedback["name"])
+                            feedback["name"] = st.text_input("Feedback_Name:", key=f"feedback_name{k}_{k2}", value=feedback["name"], label_visibility="collapsed")
+                                                                              
+                            for fb_item in st.session_state.feedback_item_list:
+                                feedback[fb_item] = {}
+                                feedback[fb_item]["visible"] = False
+                                feedback[fb_item]["flg"] = False
+                                feedback[fb_item]["memo"] = ""                           
+                                if "feedback" in v2:
+                                    feedback[fb_item] = v2.get("feedback", {}).get(fb_item, feedback[fb_item])
+                                feedback[fb_item]["saved_memo"] = feedback[fb_item]["memo"]
+                           
+                                if st.checkbox(f"{fb_item}", key=f"feedback_{fb_item}_{k}_{k2}", value=feedback[fb_item]["visible"]):
+                                    feedback[fb_item]["memo"] = st.text_input("Memo:", key=f"feedback_{fb_item}_memo{k}_{k2}", value=feedback[fb_item]["memo"], label_visibility="collapsed")
+                                    feedback[fb_item]["visible"] = True
+                                else:
+                                    feedback[fb_item]["memo"] = ""
+                                    feedback[fb_item]["visible"] = False
 
                             if st.button("Feedback", key=f"feedback_btn{k}_{k2}"):
-                                if feedback_opinion["memo"]!=feedback_opinion_saved_memo or feedback_experience["memo"]!=feedback_experience_saved_memo or feedback_identity["memo"]!=feedback_identity_saved_memo:
-                                    feedbacks = {}
-                                    feedbacks["name"] = feedback_name
+                                for fb_item in st.session_state.feedback_item_list:
+                                    if feedback[fb_item]["memo"]!=feedback[fb_item]["saved_memo"] and feedback[fb_item]["memo"]!="":
+                                        feedback[fb_item]["flg"] = True
+                                    if feedback[fb_item]["memo"]=="":
+                                        feedback[fb_item]["flg"] = False
 
-                                    if feedback_opinion["memo"]!=feedback_opinion_saved_memo and feedback_opinion["memo"]!="":
-                                        feedback_opinion["flg"] = True
-                                    if feedback_opinion["memo"]=="":
-                                        feedback_opinion["flg"] = False
-                                    feedbacks["opinion"] = feedback_opinion
-
-                                    if feedback_experience["memo"]!=feedback_experience_saved_memo and feedback_experience["memo"]!="":
-                                        feedback_experience["flg"] = True
-                                    if feedback_experience["memo"]=="":
-                                        feedback_experience["flg"] = False
-                                    feedbacks["experience"] = feedback_experience
-                                    
-                                    if feedback_identity["memo"]!=feedback_identity_saved_memo and feedback_identity["memo"]!="":
-                                        feedback_identity["flg"] = True
-                                    if feedback_identity["memo"]=="":
-                                        feedback_identity["flg"] = False
-                                    feedbacks["identity"] = feedback_identity
-                                    
-                                    st.session_state.session.set_feedback_history(k, k2, feedbacks)
+                                if any(k != "name" for k in fb_item):
+                                    st.session_state.session.set_feedback_history(k, k2, feedback)
                                     st.session_state.sidebar_message = f"フィードバックをログに保存しました({k})"
+                                    st.rerun()
                                 else:
                                     st.session_state.sidebar_message = f"フィードバックに変更はありません({k})"
-                                st.rerun()
                         
                         # Detail
                         with st.chat_message("detail"):
