@@ -284,7 +284,7 @@ def analytics_YouTube():
         #dict_tfidf_v, tfidf_topN, tfidf_topN_str = analytics_tfidf(page_data, page_data_done, analytics_file_path)
     
         # 独自性：通常LLMとの差分(距離)
-        prompt_temp_cd = "YouTube Template"
+        prompt_temp_cd = "Normal Template"
         analytics_originality(page_data, vec_final, vec_draft, prompt_temp_cd)
 
         # 知識参照度と活用度：質問及び回答とRAGデータの類似度
