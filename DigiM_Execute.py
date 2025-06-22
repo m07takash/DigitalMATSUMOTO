@@ -107,12 +107,14 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
     timestamp_log += "[11.RAG検索用クエリの生成]"+str(datetime.now())+"<br>"
     RAG_query_gene_log = {}
     if RAG_query_gene:
-        RAG_query_gene_response, RAG_query_gene_prompt_tokens, RAG_query_gene_response_tokens = dmt.RAG_query_generator(user_query, situation_prompt, query_vecs, memories_selected, agent_file=RAG_query_gene_agent_file)
+        RAG_query_gene_response, RAG_query_gene_model_name, RAG_query_gene_prompt_tokens, RAG_query_gene_response_tokens = dmt.RAG_query_generator(user_query, situation_prompt, query_vecs, memories_selected, agent_file=RAG_query_gene_agent_file)
         queries.append(RAG_query_gene_response)
         query_vec_RAGquery = dmu.embed_text(RAG_query_gene_response.replace("\n", ""))
         query_vecs.append(query_vec_RAGquery)
         # ログに格納
         RAG_query_gene_log = {}
+        RAG_query_gene_log["agent_file"] = RAG_query_gene_agent_file
+        RAG_query_gene_log["model"] = RAG_query_gene_model_name
         RAG_query_gene_log["llm_response"] = RAG_query_gene_response
         RAG_query_gene_log["prompt_token"] = RAG_query_gene_prompt_tokens
         RAG_query_gene_log["response_token"] = RAG_query_gene_response_tokens
@@ -124,11 +126,13 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
     timestamp_log += "[12.クエリからメタデータ検索情報の取得]"+str(datetime.now())+"<br>"
     if meta_search:
         # ユーザー入力から時間を取得
-        extract_date_response, extract_date_prompt_tokens, extract_date_response_tokens = dmt.extract_date(user_query, situation_prompt, [query_vec], memories_selected, agent_file=extract_date_agent_file)
+        extract_date_response, extract_date_model_name, extract_date_prompt_tokens, extract_date_response_tokens = dmt.extract_date(user_query, situation_prompt, [query_vec], memories_selected, agent_file=extract_date_agent_file)
         get_date_list += dmu.extract_list_pattern(extract_date_response)
         meta_searches.append({"DATE": get_date_list})
         # ログに格納
         meta_search_log["date"] = {}
+        meta_search_log["date"]["agent_file"] = extract_date_agent_file
+        meta_search_log["date"]["model"] = extract_date_model_name
         meta_search_log["date"]["condition_list"] = get_date_list
         meta_search_log["date"]["llm_response"] = extract_date_response
         meta_search_log["date"]["prompt_token"] = extract_date_prompt_tokens
@@ -181,17 +185,18 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
     # ログデータの保存(SubSeq:setting) ※Overwriteやメモリ保存・使用の設定も追加する
     timestamp_log += "[31.ログ(setting)の保存開始]"+str(datetime.now())+"<br>"
     setting_chat_dict = {
+        "session_id": session.session_id,
         "session_name": session.session_name, 
-        "situation": situation,
+#        "situation": situation,
         "type": model_type,
         "agent_file": agent_file,
         "name": agent.name,
-        "act": agent.act,
-        "personality": agent.personality,
-        "system_prompt": agent.system_prompt,
-        "engine": agent.agent["ENGINE"][model_type],
-        "knowledge": agent.agent["KNOWLEDGE"],
-        "skill": agent.agent["SKILL"]
+#        "act": agent.act,
+#        "personality": agent.personality,
+#        "system_prompt": agent.system_prompt,
+        "engine": agent.agent["ENGINE"][model_type] #,
+#        "knowledge": agent.agent["KNOWLEDGE"],
+#        "skill": agent.agent["SKILL"]
     }
     session.save_history(str(seq), "setting", setting_chat_dict, "SUB_SEQ", str(sub_seq))
     
@@ -213,12 +218,12 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
         "RAG_query_genetor": RAG_query_gene_log,
         "meta_search": meta_search_log,
         "knowledge_rag":{
-            "setting": agent.agent["KNOWLEDGE"],
-            "context": knowledge_context
+            "setting": agent.agent["KNOWLEDGE"] #,
+#            "context": knowledge_context
         },
         "prompt_template":{
-            "setting": prompt_temp_cd,
-            "text": prompt_template
+            "setting": prompt_temp_cd #,
+#            "text": prompt_template
         },
         "text": prompt
     }

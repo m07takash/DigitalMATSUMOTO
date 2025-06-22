@@ -99,7 +99,7 @@
         {
             "RAG_NAME": "Experience",
             "RETRIEVER": "Vector",
-            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Experience_Memo", "META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}},{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Experience_Communication", "META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}}],
+            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Experience_Memo", "META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}},{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Experience_Communication", "META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}},{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Technical_Memo"}],
             "TIMESTAMP": "CREATE_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
             "HEADER_TEMPLATE": "【Experience】以下はリアル松本が過去に経験したことや学んだことです。\n",

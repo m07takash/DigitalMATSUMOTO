@@ -48,7 +48,6 @@ def generate_response_T_gpt(query, system_prompt, model, memories=[], image_path
     image_message = []
     for image_path in image_paths:
         image_base64 = dmu.encode_image_file(image_path)
-        #image_message.append({"type": "image_url", "image_url": {"url": image_url["image_url"]}})
         image_message.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}})
     
     # ユーザーのプロンプトを設定
@@ -108,7 +107,6 @@ def generate_response_T_o(query, system_prompt, model, memories=[], image_paths=
     image_message = []
     for image_path in image_paths:
         image_base64 = dmu.encode_image_file(image_path)
-        #image_message.append({"type": "image_url", "image_url": {"url": image_url["image_url"]}})
         image_message.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}})
     
     # ユーザーのプロンプトを設定
@@ -306,7 +304,6 @@ def generate_image_dalle(prompt, system_prompt, model, memories=[], image_paths=
         memory_message.append({"role": memory["role"], "content": memory["text"]})
         
     # プロンプトを文字列に 
-#    prompt_str = json.dumps(system_message + memory_message + user_message, ensure_ascii=False).replace("\n", "").replace("\\", "")
     prompt_str = json.dumps(memory_message + user_message, ensure_ascii=False).replace("\n", "").replace("\\", "")
 
     # 画像生成モデルの実行

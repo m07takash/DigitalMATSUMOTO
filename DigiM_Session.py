@@ -110,7 +110,7 @@ def get_situation(session_id):
     if session_file_active_dict:
         max_seq = max_seq_dict(session_file_active_dict)
         max_sub_seq = max_seq_dict(session_file_active_dict[max_seq])
-        situation = session_file_active_dict[max_seq][max_sub_seq]["setting"]["situation"]
+        situation = session_file_active_dict[max_seq][max_sub_seq]["prompt"]["query"]["situation"]
 
     return situation
 
@@ -368,20 +368,25 @@ class DigiMSession:
 
             chat_detail_info += "\n【RAG検索用クエリ】\n"
             if chat_history_dict_seq["prompt"]["RAG_query_genetor"]:
-                chat_detail_info += chat_history_dict_seq["prompt"]["RAG_query_genetor"]["llm_response"]+"\n"
+                chat_detail_info += "エージェント："+chat_history_dict_seq["prompt"]["RAG_query_genetor"]["agent_file"]+"\n"
+                chat_detail_info += "実行モデル："+chat_history_dict_seq["prompt"]["RAG_query_genetor"]["model"]+"\n"
                 chat_detail_info += "入力トークン数："+str(chat_history_dict_seq["prompt"]["RAG_query_genetor"]["prompt_token"])+"\n"
                 chat_detail_info += "出力トークン数："+str(chat_history_dict_seq["prompt"]["RAG_query_genetor"]["response_token"])+"\n"          
+                chat_detail_info += chat_history_dict_seq["prompt"]["RAG_query_genetor"]["llm_response"]+"\n"
 
             chat_detail_info += "\n【メタ検索】\n"
             if chat_history_dict_seq["prompt"]["meta_search"]:
-                chat_detail_info += str(chat_history_dict_seq["prompt"]["meta_search"]["date"]["condition_list"])+"\n"
-                chat_detail_info += chat_history_dict_seq["prompt"]["meta_search"]["date"]["llm_response"]+"\n"
+                chat_detail_info += "[日付検索]\n"
+                chat_detail_info += "エージェント："+chat_history_dict_seq["prompt"]["meta_search"]["date"]["agent_file"]+"\n"
+                chat_detail_info += "実行モデル："+chat_history_dict_seq["prompt"]["meta_search"]["date"]["model"]+"\n"
                 chat_detail_info += "入力トークン数："+str(chat_history_dict_seq["prompt"]["meta_search"]["date"]["prompt_token"])+"\n"
                 chat_detail_info += "出力トークン数："+str(chat_history_dict_seq["prompt"]["meta_search"]["date"]["response_token"])+"\n"          
+                chat_detail_info += "検索条件："+str(chat_history_dict_seq["prompt"]["meta_search"]["date"]["condition_list"])+"\n"
+                chat_detail_info += chat_history_dict_seq["prompt"]["meta_search"]["date"]["llm_response"]+"\n"
             
             chat_detail_info += "\n【RAGコンテキスト】\n["
             for rag_set_dict in chat_history_dict_seq["response"]["reference"]["knowledge_rag"]:
-                chat_detail_info += "{"+ rag_set_dict["log"] + "},\n"
+                chat_detail_info += "{"+ rag_set_dict + "},\n" #"{"+ rag_set_dict["log"] + "},\n"
             if chat_detail_info.endswith(",\n"):
                 chat_detail_info = chat_detail_info[:-2] + "]"+"\n"
 

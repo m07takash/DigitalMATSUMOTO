@@ -31,7 +31,7 @@
     },
     "HABIT": {
         "DEFAULT": {
-            "MAGIC_WORDS": ["エシカルチェックしてください。"],
+            "MAGIC_WORDS": [""],
             "PRACTICE": "practice_04Ethical_Check.json"
         }
     },
