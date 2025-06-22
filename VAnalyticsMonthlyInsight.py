@@ -163,9 +163,10 @@ def statics_this_month(df_thisMonth, analyse_month):
         'B-1.評価ランク(対応値)': [df_thisMonth['r1_score'].max(), df_thisMonth['r1_score'].min(), df_thisMonth['r1_score'].mean(), df_thisMonth['r1_score'].median(), df_thisMonth['r1_score'].var(), df_thisMonth['r1_score'].sum()],
         'B-2.実現度合(Cos類似度)': [df_thisMonth['r2_similarity'].max(), df_thisMonth['r2_similarity'].min(), df_thisMonth['r2_similarity'].mean(), df_thisMonth['r2_similarity'].median(), df_thisMonth['r2_similarity'].var(), df_thisMonth['r2_similarity'].sum()],
         'B-3.論点再現度(割合)': [df_thisMonth['r3_point'].max(), df_thisMonth['r3_point'].min(), df_thisMonth['r3_point'].mean(), df_thisMonth['r3_point'].median(), df_thisMonth['r3_point'].var(), df_thisMonth['r3_point'].sum()],
-        'C-1.知識活用性_Opinion': [df_thisMonth['k1_util_Opinion'].max(), df_thisMonth['k1_util_Opinion'].min(), df_thisMonth['k1_util_Opinion'].mean(), df_thisMonth['k1_util_Opinion'].median(), df_thisMonth['k1_util_Opinion'].var(), df_thisMonth['k1_util_Opinion'].sum()], 
-        'C-2.知識活用性_Policy': [df_thisMonth['k1_util_Policy'].max(), df_thisMonth['k1_util_Policy'].min(), df_thisMonth['k1_util_Policy'].mean(), df_thisMonth['k1_util_Policy'].median(), df_thisMonth['k1_util_Policy'].var(), df_thisMonth['k1_util_Policy'].sum()], 
-        'C-3.知識活用性_Communication': [df_thisMonth['k1_util_Communication'].max(), df_thisMonth['k1_util_Communication'].min(), df_thisMonth['k1_util_Communication'].mean(), df_thisMonth['k1_util_Communication'].median(), df_thisMonth['k1_util_Communication'].var(), df_thisMonth['k1_util_Communication'].sum()],
+        'C-1.知識活用性_Policy': [df_thisMonth['k1_util_Policy'].max(), df_thisMonth['k1_util_Policy'].min(), df_thisMonth['k1_util_Policy'].mean(), df_thisMonth['k1_util_Policy'].median(), df_thisMonth['k1_util_Policy'].var(), df_thisMonth['k1_util_Policy'].sum()], 
+        'C-2.知識活用性_Opinion': [df_thisMonth['k1_util_Opinion'].max(), df_thisMonth['k1_util_Opinion'].min(), df_thisMonth['k1_util_Opinion'].mean(), df_thisMonth['k1_util_Opinion'].median(), df_thisMonth['k1_util_Opinion'].var(), df_thisMonth['k1_util_Opinion'].sum()], 
+        'C-3.知識活用性_Experience': [df_thisMonth['k1_util_Experience'].max(), df_thisMonth['k1_util_Experience'].min(), df_thisMonth['k1_util_Experience'].mean(), df_thisMonth['k1_util_Experience'].median(), df_thisMonth['k1_util_Experience'].var(), df_thisMonth['k1_util_Experience'].sum()],
+        'C-4.知識活用性_Identity': [df_thisMonth['k1_util_Identity'].max(), df_thisMonth['k1_util_Identity'].min(), df_thisMonth['k1_util_Identity'].mean(), df_thisMonth['k1_util_Identity'].median(), df_thisMonth['k1_util_Identity'].var(), df_thisMonth['k1_util_Identity'].sum()],
         'D-1.自己修正(距離)': [df_thisMonth['i1_improve'].max(), df_thisMonth['i1_improve'].min(), df_thisMonth['i1_improve'].mean(), df_thisMonth['i1_improve'].median(), df_thisMonth['i1_improve'].var(), df_thisMonth['i1_improve'].sum()],
         'D-2.自己改善効果(類似度の変化)': [df_thisMonth['i2_improve'].max(), df_thisMonth['i2_improve'].min(), df_thisMonth['i2_improve'].mean(), df_thisMonth['i2_improve'].median(), df_thisMonth['i2_improve'].var(), df_thisMonth['i2_improve'].sum()]
     }
@@ -189,9 +190,10 @@ def plot_time_series_item(df, item, analyse_month, cols=['max_value', 'min_value
         "r1_score": "B-1.評価ランク(対応値)",
         "r2_similarity": "B-2.実現度合(Cos類似度)", 
         "r3_point": "B-3.論点再現度(割合)", 
-        "k1_util_Opinion": "C-1.知識活用性_Opinion", 
-        "k1_util_Policy": "C-2.知識活用性_Policy", 
-        "k1_util_Communication": "C-3.知識活用性_Communication",
+        "k1_util_Policy": "C-1.知識活用性_Policy", 
+        "k1_util_Opinion": "C-2.知識活用性_Opinion", 
+        "k1_util_Experience": "C-3.知識活用性_Experience",
+        "k1_util_Identity": "C-4.知識活用性_Identity",
         "i1_improve": "D-1.自己修正(距離)",
         "i2_improve": "D-2.自己改善効果(類似度の変化)"
     }
