@@ -220,7 +220,7 @@ def create_rag_context(query, query_vecs=[], rags=[], meta_searches=[]):
                                         v["similarity_prompt"] = round(rag_data_db["distances"][i][j],3)*rag_data["META_SEARCH"]["BONUS"]
                                         v["similarity_prompt_original"] = round(rag_data_db["distances"][i][j],3)
                                         v["query_seq"] = query_seq
-                                        v["query_mode"] = "{'META_SEARCH':"+str(rag_data["META_SEARCH"]["BONUS"])+"}"
+                                        v["query_mode"] = "('META_SEARCH':"+str(rag_data["META_SEARCH"]["BONUS"])+")"
                                         rag_data_list.append(v)
                         
                         rag_data_db = collection.query(query_embeddings=[query_vec], n_results=result_limit, include=["metadatas", "embeddings", "distances"])
