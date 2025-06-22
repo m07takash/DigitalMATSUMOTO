@@ -140,7 +140,7 @@ def extract_date(user_query, situation_prompt, query_vecs, memories_selected={},
     prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
     response_tokens = dmu.count_token(tokenizer, model_name, response)
 
-    return response, prompt_tokens, response_tokens
+    return response, model_name, prompt_tokens, response_tokens
 
 
 # テキストからRAGクエリの生成
@@ -170,7 +170,7 @@ def RAG_query_generator(user_query, situation_prompt, query_vecs, memories_selec
     prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
     response_tokens = dmu.count_token(tokenizer, model_name, response)
 
-    return response, prompt_tokens, response_tokens
+    return response, model_name, prompt_tokens, response_tokens
 
 
 # テキストの比較

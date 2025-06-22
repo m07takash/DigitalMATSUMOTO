@@ -32,7 +32,7 @@ def analytics_tfidf(page_data, page_data_done, analytics_file_path, TopN=10):
     
     # ワードクラウドを生成して保存
     dmu.get_wordcloud(page_title, dict_tfidf_v, analytics_file_path)
-    print(f"ワードクラウドを作成：ファイルを個別にNotionへ保存してください。{page_title}")
+    print(f"ワードクラウドを作成しました。{page_title}")
     
     return dict_tfidf_v, tfidf_topN, tfidf_topN_str
 
@@ -40,7 +40,6 @@ def analytics_tfidf(page_data, page_data_done, analytics_file_path, TopN=10):
 # 独自性：通常LLMとの差分
 def analytics_originality(page_data, vec_final, vec_draft, prompt_temp_cd="No Template", tfidf_topN=[], compare_flg=False, head_item={"Pure": "通常LLMの出力", "Draft": "デジタルMATSUMOTOの出力", "Final": "最終的な出力"}):
     # 通常LLMを実行してNotionに保存
-#    agent_file = "agent_01DigitalMATSUMOTO_GPT.json"
     agent_file = page_data["agent"]
     pure, prompt_tokens, response_tokens = dmt.generate_pureLLM(agent_file, page_data["Input"], prompt_temp_cd=prompt_temp_cd)
     vec_pure = dmu.embed_text(pure)

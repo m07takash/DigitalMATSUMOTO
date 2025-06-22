@@ -1,3 +1,5 @@
+import os
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from pydantic import BaseModel
 import uvicorn
@@ -5,6 +7,12 @@ import uvicorn
 import DigiM_Session as dms
 import DigiM_Agent as dma
 import DigiM_Execute as dme
+
+# system.envファイルをロードして環境変数を設定
+load_dotenv("system.env")
+api_agent_file = os.getenv("API_AGENT_FILE")
+api_port = os.getenv("API_PORT")
+api_session_name = os.getenv("API_SESSION_NAME")
 
 app = FastAPI()
 
@@ -15,16 +23,15 @@ class InputData(BaseModel):
     user_name: str
     user_info: str
 
-# 実行する関数
+# 実行する関数(session_idにはLINE ID等のユーザーを一意に指定できるキー)
 def exec_function(session_id: str, user_input: str, user_name: str, user_info: str) -> tuple[str, str, str, str]:
     # セッションの設定（新規でセッションIDを発番）
-    print(session_id)
-    if not session_id:
+    if not session_id: 
         session_id = dms.set_new_session_id()
-    session_name = "API実行"
+    session_name = api_session_name +":"+ user_name
     
     # エージェント設定
-    agent_file = "agent_32DigitalMTalk_GPT.json"
+    agent_file = api_agent_file
     agent = dma.DigiM_Agent(agent_file)
     practice = agent.habit
 
@@ -48,4 +55,4 @@ async def run_function(data: InputData):
     }
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8900)
+    uvicorn.run(app, host="0.0.0.0", port=api_port)
