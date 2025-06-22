@@ -17,6 +17,7 @@ import DigiM_Notion as dmn
 # system.envファイルをロードして環境変数を設定
 load_dotenv("system.env")
 mst_folder_path = os.getenv("MST_FOLDER")
+
 rcParams['font.family'] = 'Noto Sans CJK JP'
 analytics_file_path = "user/common/analytics/monthly/"
 
@@ -95,7 +96,7 @@ def get_analytics_data(end_month, months=12):
             else:
                 page_data[f"k1_eval_{key}"] = 0
         page_data["r1_eval_color"] = eval_color_map.get(page_data['r1_eval'], "grey")
-        for key in ["Opinion","Policy","Communication"]:
+        for key in ["Policy","Opinion","Experience","Identity"]:
             page_data[f"k1_util_{key}"] = 0
             if page_data["k1_util"]:
                 if key in eval(page_data["k1_util"]).keys():
@@ -278,7 +279,7 @@ def analytics_insights_monthly(analyse_month, months = 12):
     # マーク用の列を初期化
     df_thisMonth['BEST_Mark'] = ''
     df_thisMonth['Top5_Mark'] = ''
-    target_columns = ["o1_final", "o1_improved", "o2_tfidf_rate", "r1_score", "r2_similarity", "r3_point", "k1_util_Opinion", "k1_util_Policy", "k1_util_Communication", "i1_improve", "i2_improve"]
+    target_columns = ["o1_final", "o1_improved", "o2_tfidf_rate", "r1_score", "r2_similarity", "r3_point", "k1_util_Policy", "k1_util_Opinion", "k1_util_Experience", "k1_util_Identity", "i1_improve", "i2_improve"]
     for col in target_columns:
         best_indices = df_thisMonth[col].nlargest(1).index
         df_thisMonth.loc[best_indices, 'BEST_Mark'] += f'{col}_BEST; '
@@ -300,8 +301,8 @@ def analytics_insights_monthly(analyse_month, months = 12):
     #display(df_thisMonth_overview)
     
     # 当月のデータ出力
-    columns_to_select = ["note_date", "title", "category", "o1_final", "o1_draft", "o1_improved", "o2_tfidf_rate", "r1_eval", "r2_similarity", "r3_point", "k1_util_Opinion", "k1_util_Policy", "k1_util_Communication", "i1_improve", "i2_improve", "BEST_Mark", "Top5_Mark"]
-    df_thisMonth[columns_to_select].to_csv(f"{analytics_file_path}{analyse_month}Monthly03Insight.csv", index=True, header=["日付", "タイトル", "カテゴリー", "A-1.独自性(Cos距離)", "A-1.独自性_ドラフト時点", "A-1.独自性_改善度", "A-2.独自キーワード(割合)", "B-1.評価ランク", "B-2.実現度合(Cos類似度)", "B-3.論点再現度(割合)", "C-1.知識活用性_Opinion", "C-2.知識活用性_Policy", "C-3.知識活用性_Communication", "D-1.自己修正(距離)", "D-2.自己改善効果(類似度の変化)", "BEST_Mark", "Top5_Mark"], encoding='utf-8-sig')
+    columns_to_select = ["note_date", "title", "category", "o1_final", "o1_draft", "o1_improved", "o2_tfidf_rate", "r1_eval", "r2_similarity", "r3_point", "k1_util_Policy", "k1_util_Opinion", "k1_util_Experience", "k1_util_Identity", "i1_improve", "i2_improve", "BEST_Mark", "Top5_Mark"]
+    df_thisMonth[columns_to_select].to_csv(f"{analytics_file_path}{analyse_month}Monthly03Insight.csv", index=True, header=["日付", "タイトル", "カテゴリー", "A-1.独自性(Cos距離)", "A-1.独自性_ドラフト時点", "A-1.独自性_改善度", "A-2.独自キーワード(割合)", "B-1.評価ランク", "B-2.実現度合(Cos類似度)", "B-3.論点再現度(割合)", "C-1.知識活用性_Policy", "C-2.知識活用性_Opinion", "C-3.知識活用性_Experience", "C-4.知識活用性_Identity", "D-1.自己修正(距離)", "D-2.自己改善効果(類似度の変化)", "BEST_Mark", "Top5_Mark"], encoding='utf-8-sig')
     #display(df_thisMonth[columns_to_select])
 
     # 当月の知識活用ランキングの出力

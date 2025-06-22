@@ -3,6 +3,7 @@ import csv
 import json
 import ast
 import chromadb
+from chromadb.errors import NotFoundError
 import re
 import mimetypes
 from datetime import datetime
@@ -181,60 +182,64 @@ def create_rag_context(query, query_vecs=[], rags=[], meta_searches=[]):
             elif rag_data["DATA_TYPE"] == "DB":
                 for query_vec in query_vecs:
                     db_client = chromadb.PersistentClient(path=rag_folder_db_path)
-                    collection = db_client.get_collection(rag_data["DATA_NAME"])
+                    try:
+                        collection = db_client.get_collection(rag_data["DATA_NAME"])
+    
+                        result_limit = 50
+                        if collection.count() <= 50:
+                            result_limit = collection.count()
+    
+                        #メタデータ検索の追加
+                        if "META_SEARCH" in rag_data: #エージェントのRAG設定にメタ検索が含まれ
+                            query_conditions = []
+                            for meta_search in meta_searches:
+                                if "DATE" in meta_search and "DATE" in rag_data["META_SEARCH"]["CONDITION"]:
+                                    for date_range in meta_search["DATE"]:
+                                        start_date = datetime.strptime(date_range["start"], '%Y/%m/%d').timestamp()
+                                        end_date = datetime.strptime(date_range["end"], '%Y/%m/%d').timestamp()
+                                        query_conditions.append({
+                                            "$and": [
+                                                {"create_date_ts": {"$gte": start_date}},
+                                                {"create_date_ts": {"$lte": end_date}}
+                                            ]
+                                        })
+                                                   
+                            if query_conditions:
+                                if len(query_conditions) == 1:
+                                    where_clause = query_conditions[0]
+                                else:
+                                    where_clause = {"$or": query_conditions}
+                                rag_data_db = collection.query(query_embeddings=[query_vec], n_results=result_limit, include=["metadatas", "embeddings", "distances"], where=where_clause)
+                                for i in range(len(rag_data_db["ids"])):
+                                    for j in range(len(rag_data_db["ids"][i])):
+                                        v = {}
+                                        v["id"] = rag_data_db["ids"][i][j]
+                                        v |= rag_data_db["metadatas"][i][j]
+                                        v["vector_data_value_text"] = ast.literal_eval(v["vector_data_value_text"])
+                                        v["vector_data_key_text"] = rag_data_db["embeddings"][i][j].tolist()
+                                        v["similarity_prompt"] = round(rag_data_db["distances"][i][j],3)*rag_data["META_SEARCH"]["BONUS"]
+                                        v["similarity_prompt_original"] = round(rag_data_db["distances"][i][j],3)
+                                        v["query_seq"] = query_seq
+                                        v["query_mode"] = "{'META_SEARCH':"+str(rag_data["META_SEARCH"]["BONUS"])+"}"
+                                        rag_data_list.append(v)
+                        
+                        rag_data_db = collection.query(query_embeddings=[query_vec], n_results=result_limit, include=["metadatas", "embeddings", "distances"])
+                        for i in range(len(rag_data_db["ids"])):
+                            for j in range(len(rag_data_db["ids"][i])):
+                                v = {}
+                                v["id"] = rag_data_db["ids"][i][j]
+                                v |= rag_data_db["metadatas"][i][j]
+                                v["vector_data_value_text"] = ast.literal_eval(v["vector_data_value_text"])
+                                v["vector_data_key_text"] = rag_data_db["embeddings"][i][j].tolist()
+                                v["similarity_prompt"] = round(rag_data_db["distances"][i][j],3)
+                                v["similarity_prompt_original"] = round(rag_data_db["distances"][i][j],3)
+                                v["query_seq"] = query_seq
+                                v["query_mode"] = "NORMAL"
+                                rag_data_list.append(v)
+                        query_seq+=1
 
-                    result_limit = 50
-                    if collection.count() <= 50:
-                        result_limit = collection.count()
-
-                    #メタデータ検索の追加
-                    if "META_SEARCH" in rag_data: #エージェントのRAG設定にメタ検索が含まれ
-                        query_conditions = []
-                        for meta_search in meta_searches:
-                            if "DATE" in meta_search and "DATE" in rag_data["META_SEARCH"]["CONDITION"]:
-                                for date_range in meta_search["DATE"]:
-                                    start_date = datetime.strptime(date_range["start"], '%Y/%m/%d').timestamp()
-                                    end_date = datetime.strptime(date_range["end"], '%Y/%m/%d').timestamp()
-                                    query_conditions.append({
-                                        "$and": [
-                                            {"create_date_ts": {"$gte": start_date}},
-                                            {"create_date_ts": {"$lte": end_date}}
-                                        ]
-                                    })
-                                               
-                        if query_conditions:
-                            if len(query_conditions) == 1:
-                                where_clause = query_conditions[0]
-                            else:
-                                where_clause = {"$or": query_conditions}
-                            rag_data_db = collection.query(query_embeddings=[query_vec], n_results=result_limit, include=["metadatas", "embeddings", "distances"], where=where_clause)
-                            for i in range(len(rag_data_db["ids"])):
-                                for j in range(len(rag_data_db["ids"][i])):
-                                    v = {}
-                                    v["id"] = rag_data_db["ids"][i][j]
-                                    v |= rag_data_db["metadatas"][i][j]
-                                    v["vector_data_value_text"] = ast.literal_eval(v["vector_data_value_text"])
-                                    v["vector_data_key_text"] = rag_data_db["embeddings"][i][j].tolist()
-                                    v["similarity_prompt"] = round(rag_data_db["distances"][i][j],3)*rag_data["META_SEARCH"]["BONUS"]
-                                    v["similarity_prompt_original"] = round(rag_data_db["distances"][i][j],3)
-                                    v["query_seq"] = query_seq
-                                    v["query_mode"] = "{'META_SEARCH':"+str(rag_data["META_SEARCH"]["BONUS"])+"}"
-                                    rag_data_list.append(v)
-                    
-                    rag_data_db = collection.query(query_embeddings=[query_vec], n_results=result_limit, include=["metadatas", "embeddings", "distances"])
-                    for i in range(len(rag_data_db["ids"])):
-                        for j in range(len(rag_data_db["ids"][i])):
-                            v = {}
-                            v["id"] = rag_data_db["ids"][i][j]
-                            v |= rag_data_db["metadatas"][i][j]
-                            v["vector_data_value_text"] = ast.literal_eval(v["vector_data_value_text"])
-                            v["vector_data_key_text"] = rag_data_db["embeddings"][i][j].tolist()
-                            v["similarity_prompt"] = round(rag_data_db["distances"][i][j],3)
-                            v["similarity_prompt_original"] = round(rag_data_db["distances"][i][j],3)
-                            v["query_seq"] = query_seq
-                            v["query_mode"] = "NORMAL"
-                            rag_data_list.append(v)
-                    query_seq+=1
+                    except NotFoundError:
+                        print(f"{rag_data['DATA_NAME']} は存在しないためスキップしました。")
 
         # rag_data_listでidが重複するものは「質問との類似度」が近いものに重複削除
         filtered_data = {}

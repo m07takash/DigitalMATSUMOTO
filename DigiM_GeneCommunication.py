@@ -32,28 +32,28 @@ def safe_parse_timestamp(timestamp_str):
 # フィードバックデータの取得
 def get_feedback_data(fb_k, memo, k1, k2, v2):
     fb_data = {}
-    fb_data["title"] = v2["feedback"]["name"]+"-"+fb_k+"("+v2["setting"]["situation"]["TIME"]+")"
+    fb_data["title"] = v2["feedback"]["name"]+"-"+fb_k+"("+v2["prompt"]["query"]["situation"]["TIME"]+")"
     fb_data["RAG_Category"] = fb_k
     fb_data["category"] = default_communication_category
-    fb_data["timestamp"] = safe_parse_timestamp(v2["setting"]["situation"]["TIME"])
+    fb_data["create_date"] = safe_parse_timestamp(v2["prompt"]["query"]["situation"]["TIME"])
     fb_data["session_name"] = v2["setting"]["session_name"]    
     fb_data["seq"] = int(k1)
     fb_data["sub_seq"] = int(k2)
     fb_data["query"] = v2["prompt"]["query"]["input"]
-    situation = v2["setting"]["situation"]["SITUATION"]
+    situation = v2["prompt"]["query"]["situation"]["SITUATION"]
     if situation:
         query += "\n"+situation
     fb_data["response"] = v2["response"]["text"]
     fb_data["memo"] = memo
     return fb_data
 
-# JSONファイルへの保存
-def save_communication_json(fb_data):
+# CSVファイルへの保存
+def save_communication_csv(fb_data):
     fieldnames = [
         "title",
         "RAG_Category",
         "category",
-        "timestamp",
+        "create_date",
         "memo",
         "session_name",
         "seq",
@@ -61,6 +61,9 @@ def save_communication_json(fb_data):
         "query",
         "response"
     ]
+
+    # 日付型を変換
+    fb_data["create_date"] = datetime.fromisoformat(fb_data["create_date"]).strftime("%Y/%m/%d")
 
     # ファイル名を設定
     file_path = rag_data_csv_path + save_communication_db + ".csv"
@@ -100,7 +103,7 @@ def save_communication_notion(fb_data):
     page_id = response["id"]
     dmn.update_notion_select(page_id, "RAGカテゴリ", fb_data["RAG_Category"])
     dmn.update_notion_select(page_id, "カテゴリ", fb_data["category"])
-    dmn.update_notion_date(page_id, "タイムスタンプ", fb_data["timestamp"])
+    dmn.update_notion_date(page_id, "タイムスタンプ", fb_data["create_date"])
     dmn.update_notion_rich_text_content(page_id, "コンテキスト", fb_data["memo"])
     dmn.update_notion_rich_text_content(page_id, "セッション", fb_data["session_name"])
     dmn.update_notion_num(page_id, "seq", fb_data["seq"])
@@ -124,7 +127,7 @@ def create_communication_data(session_id):
                             if save_communication_mode == "Notion":
                                 save_communication_notion(fb_data)
                             else:
-                                save_communication_json(fb_data)
+                                save_communication_csv(fb_data)
                             v2["feedback"][fb_k]["flg"]=False
                     session.set_feedback_history(k1, k2, v2["feedback"])
 
