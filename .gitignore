@@ -161,26 +161,30 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# Digital MATSUMOTO Folder
-session*/
+# DigiM Folder(Agent)
 user/common/agent/*.json
-!user/common/agent/agent_00Sample.json
-!user/common/agent/agent_01DigitalMATSUMOTO_GPT.json
+!user/common/agent/agent_X0Sample.json
 !user/common/agent/agent_11DefaultGPT.json
 !user/common/agent/agent_21EthicalCheck.json
 !user/common/agent/agent_22SenryuSensei.json
-!user/common/agent/agent_51DialogDigest.json
-!user/common/agent/agent_52ArtCritic.json
-!user/common/agent/agent_53CompareTexts.json
-!user/common/agent/agent_54SearchText.json
+!user/common/agent/agent_5*.json
 user/common/agent/charactor/*.txt
 !user/common/agent/charactor/Sample.txt
 !user/common/agent/charactor/DialogDigest.txt
+!user/common/agent/charactor/ArtCritic.txt
+
+# DigiM Folder(rag)
 user/common/rag/json/*
 !user/common/rag/json/RAGsample_vec.json
 user/common/rag/chromadb/*
 user/common/rag/docs/*
 !user/common/rag/docs/RAGsample.txt
+
+# DigiM Folder(mst)
 notion_db.json
+
+# DigiM Folder
+session*/
+analytics/
 test/
 backup/
