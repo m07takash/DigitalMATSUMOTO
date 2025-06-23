@@ -174,11 +174,11 @@ user/common/agent/charactor/*.txt
 !user/common/agent/charactor/ArtCritic.txt
 
 # DigiM Folder(mst)
-user/common/mst/
+user/common/mst/*
 !user/common/mst/sample*.json
 
 # DigiM Folder(practice)
-user/common/practice/
+user/common/practice/*
 !user/common/practice/practice_0*.json
 !user/common/practice/practice_1*.json
 
@@ -190,11 +190,11 @@ user/common/rag/docs/*
 !user/common/rag/docs/RAGsample.txt
 
 # DigiM Folder(csv)
-user/common/csv/
+user/common/csv/*
 !user/common/csv/RAG_sample*.csv
 
 # DigiM Folder
 user/session*/
-user/common/analytics/
-test/
+user/common/analytics/*
+test/*
 backup/
