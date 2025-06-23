@@ -1,0 +1,50 @@
+{
+    "Sample01_Quote":{
+        "active": "Y",
+        "input" : "csv",
+        "data_type" : "chromadb",
+        "bucket": "Sample01_Quote",
+        "file_path": "user/common/csv/",
+        "file_name": "Sample01_Quote.csv",
+        "field_items": ["speaker", "situation", "quote"],
+        "title": ["speaker", "quote"],
+        "key_text": ["speaker", "situation", "quote"],
+        "value_text": ["quote"]
+    },
+    "Sample02_Memo":{
+        "active": "Y",
+        "input" : "csv",
+        "data_type" : "chromadb",
+        "bucket": "Sample02_Memo",
+        "file_path": "user/common/csv/",
+        "file_name": "Sample02_Memo.csv",
+        "field_items": ["create_date", "memo"],
+        "title": ["create_date"],
+        "key_text": ["memo"],
+        "value_text": ["memo"]
+    },
+    "Sample03_Feedback":{
+        "active": "Y",
+        "input" : "csv",
+        "data_type" : "chromadb",
+        "bucket": "Sample03_Feedback",
+        "file_path": "user/common/csv/",
+        "file_name": "Sample03_Feedback.csv",
+        "field_items": ["speaker", "create_date", "feedback"],
+        "title": ["speaker", "create_date"],
+        "key_text": ["speaker", "feedback"],
+        "value_text": ["feedback"]
+    },
+    "Communication":{
+        "active": "Y",
+        "input" : "csv",
+        "data_type" : "chromadb",
+        "bucket": "Communication",
+        "file_path": "user/common/csv/",
+        "file_name": "Communication.csv",
+        "field_items": ["title", "RAG_Category", "category", "create_date", "memo", "session_name", "seq", "sub_seq", "query", "response"],
+        "title": ["title"],
+        "key_text": ["query", "response", "memo"],
+        "value_text": ["memo"]
+    }
+}
