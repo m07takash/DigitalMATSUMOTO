@@ -14,9 +14,6 @@ import DigiM_Session as dms
 import DigiM_Agent as dma
 import DigiM_Context as dmc
 import DigiM_Util as dmu
-import VAnalyticsArticle as vaa
-import VAnalyticsMonthlyInsight as vami
-import VAnalyticsMonthlyKnowledge as vamk
 import DigiM_GeneCommunication as dmgc
 
 # system.envファイルをロードして環境変数を設定
@@ -202,22 +199,7 @@ def main():
             st.session_state.session_list = dms.get_session_list_visible()
         num_session_visible = st.number_input(label="Visible Sessions", value=5, step=1, format="%d")
 
-        # 知識更新・分析の処理
-        analytics_expander = st.expander("Analytics")
-        with analytics_expander:
-            if st.button("Insight Analytics", key="insight_analytics"):
-                vaa.analytics_insights()
-                st.session_state.sidebar_message = "note考察の分析が完了しました"
-            if st.button("YouTube Analytics", key="youtube_analytics"):
-                vaa.analytics_YouTube()
-                st.session_state.sidebar_message = "YouTubeコンテンツの分析が完了しました"
-            analyse_date = st.date_input("Monthly Analytics", value=now_time)
-            if st.button("Monthly Analytics", key="monthly_analytics"):
-                analyse_month_str = analyse_date.strftime("%Y-%m")
-                vami.analytics_insights_monthly(analyse_month_str, 12)
-                vamk.analytics_knowledge_monthly(analyse_month_str)
-                st.session_state.sidebar_message = f"{analyse_month_str}の分析が完了しました"
-        
+        # 知識更新の処理
         rag_expander = st.expander("RAG Management")
         with rag_expander:
             if st.button("Update RAG Data", key="update_rag"):
