@@ -1,0 +1,31 @@
+{
+    "NAME": "ImageGen",
+    "CHAINS": [
+        {
+            "TYPE": "IMAGEGEN",
+            "SETTING": {
+                "AGENT_FILE": "USER",
+                "OVERWRITE_ITEMS": {},
+                "ADD_KNOWLEDGE": [],
+                "PROMPT_TEMPLATE": "Image Gen",
+                "USER_INPUT": "USER",
+                "CONTENTS": "USER",
+                "SITUATION": "USER",
+                "MEMORY_USE": true
+            }
+        },
+        {
+            "TYPE": "LLM",
+            "SETTING": {
+                "AGENT_FILE": "USER",
+                "OVERWRITE_ITEMS": {},
+                "ADD_KNOWLEDGE": [],
+                "PROMPT_TEMPLATE": "No Template",
+                "USER_INPUT": "コンテンツについて、これまでの話と関連付けながら300文字程度で解説してください。",
+                "CONTENTS": "EXPORT_1",
+                "SITUATION": "USER",
+                "MEMORY_USE": true
+            }
+        }
+    ]
+}
