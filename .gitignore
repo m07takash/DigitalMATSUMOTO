@@ -163,6 +163,7 @@ cython_debug/
 
 # DigiM Folder(Agent)
 *_modified*
+VAnalytics*
 user/common/agent/*.json
 !user/common/agent/agent_X0Sample.json
 !user/common/agent/agent_11DefaultGPT.json
