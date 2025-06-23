@@ -191,7 +191,8 @@ user/common/rag/docs/*
 
 # DigiM Folder(csv)
 user/common/csv/*
-!user/common/csv/RAG_sample*.csv
+!user/common/csv/Sample*.csv
+!user/common/csv/Communication.csv
 
 # DigiM Folder
 user/session*/
