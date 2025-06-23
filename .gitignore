@@ -162,7 +162,7 @@ cython_debug/
 #.idea/
 
 # DigiM Folder(Agent)
-WebDigiMatsuAgent_modified.py
+*_modified*
 user/common/agent/*.json
 !user/common/agent/agent_X0Sample.json
 !user/common/agent/agent_11DefaultGPT.json
