@@ -1,6 +1,6 @@
 ### セットアップ
-前提：ubuntu
-1. dockerフォルダにあるDockerfile/requirements.txtを格納
+前提：ubuntu22.04以上の安定板
+1. GithubのdockerフォルダにあるDockerfile/requirements.txtをダウンロードして格納
 2. Dockerイメージをビルド
 　docker build -t <Dockerイメージ名> .
 3. Dockerコンテナを作成
