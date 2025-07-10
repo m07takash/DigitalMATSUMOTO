@@ -190,20 +190,22 @@ def create_rag_context(query, query_vecs=[], rags=[], meta_searches=[]):
                             result_limit = collection.count()
     
                         #メタデータ検索の追加
-                        if "META_SEARCH" in rag_data: #エージェントのRAG設定にメタ検索が含まれ
+                        if "META_SEARCH" in rag_data: #エージェントのRAG設定にメタ検索が含まれる場合
                             query_conditions = []
                             for meta_search in meta_searches:
                                 if "DATE" in meta_search and "DATE" in rag_data["META_SEARCH"]["CONDITION"]:
                                     for date_range in meta_search["DATE"]:
-                                        start_date = datetime.strptime(date_range["start"], '%Y/%m/%d').timestamp()
-                                        end_date = datetime.strptime(date_range["end"], '%Y/%m/%d').timestamp()
-                                        query_conditions.append({
-                                            "$and": [
-                                                {"create_date_ts": {"$gte": start_date}},
-                                                {"create_date_ts": {"$lte": end_date}}
-                                            ]
-                                        })
-                                                   
+                                        try:
+                                            start_date = datetime.strptime(date_range["start"], '%Y/%m/%d').timestamp()
+                                            end_date = datetime.strptime(date_range["end"], '%Y/%m/%d').timestamp()
+                                            query_conditions.append({
+                                                "$and": [
+                                                    {"create_date_ts": {"$gte": start_date}},
+                                                    {"create_date_ts": {"$lte": end_date}}
+                                                ]
+                                            })
+                                        except ValueError:
+                                            continue                                                   
                             if query_conditions:
                                 if len(query_conditions) == 1:
                                     where_clause = query_conditions[0]
@@ -220,7 +222,7 @@ def create_rag_context(query, query_vecs=[], rags=[], meta_searches=[]):
                                         v["similarity_prompt"] = round(rag_data_db["distances"][i][j],3)*rag_data["META_SEARCH"]["BONUS"]
                                         v["similarity_prompt_original"] = round(rag_data_db["distances"][i][j],3)
                                         v["query_seq"] = query_seq
-                                        v["query_mode"] = "('META_SEARCH':"+str(rag_data["META_SEARCH"]["BONUS"])+")"
+                                        v["query_mode"] = "(META_SEARCH:"+str(rag_data["META_SEARCH"]["BONUS"])+")"
                                         rag_data_list.append(v)
                         
                         rag_data_db = collection.query(query_embeddings=[query_vec], n_results=result_limit, include=["metadatas", "embeddings", "distances"])
@@ -396,11 +398,17 @@ def get_chunk_notion(bucket, db_name, item_dict, chk_dict=None, date_dict=None, 
                     page_item_text = ""
                     for item in value:
                         i = 0
-                        for k, v in item.items():
-                            if i == 0:
+                        if i != 0:
+                            page_item_text += "\n"
+                        if isinstance(item, dict):
+                            for k, v in item.items():
                                 page_item_text += dmn.get_notion_item_by_id(pages, page_id, k, v)
-                            else:
-                                page_item_text += "\n"+ dmn.get_notion_item_by_id(pages, page_id, k, v)
+#                                if i == 0:
+#                                    page_item_text += dmn.get_notion_item_by_id(pages, page_id, k, v)
+#                                else:
+#                                    page_item_text += "\n"+ dmn.get_notion_item_by_id(pages, page_id, k, v)
+                        else:
+                            page_item_text += item
                     page_items[key] = page_item_text
                 else:
                     page_items[key] = value
