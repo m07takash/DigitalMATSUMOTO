@@ -123,12 +123,12 @@ def refresh_session(session_id, session_name, situation, new_session_flg=False):
     #st.rerun()
 
 # アップロードしたファイルの表示
-def show_uploaded_files_memory(file_path, file_name, file_type):
+def show_uploaded_files_memory(seq_key, file_path, file_name, file_type):
     uploaded_file = file_path+file_name
     if "text" in file_type:
         with open(uploaded_file, "r", encoding="utf-8") as f:
             text_content = f.read()
-        st.text_area("TextFile:", text_content, height=20, key=file_name)
+        st.text_area("TextFile:", text_content, height=100, key=seq_key+file_name)
     elif "csv" in file_type:
         df = pd.read_csv(uploaded_file)
         st.dataframe(df)
@@ -148,7 +148,7 @@ def show_uploaded_files_widget(uploaded_files):
         file_type = uploaded_file.type
         if "text" in file_type:
             text_content = uploaded_file.read().decode("utf-8")
-            st.text_area("TextFile:", text_content, height=20)
+            st.text_area("TextFile:", text_content, height=100)
         elif "csv" in file_type:
             df = pd.read_csv(uploaded_file)
             st.dataframe(df)
@@ -466,15 +466,16 @@ def main():
             st.markdown("----")
             for k2, v2 in v.items():
                 if k2 != "SETTING":
+                    seq_key = f"key_{k}_{k2}"
                     with st.chat_message(v2["prompt"]["role"]):
                         st.markdown(v2["prompt"]["query"]["input"].replace("\n", "<br>"), unsafe_allow_html=True)
                         for uploaded_content in v2["prompt"]["query"]["contents"]:
-                            show_uploaded_files_memory(st.session_state.session.session_folder_path +"contents/", uploaded_content["file_name"], uploaded_content["file_type"])
+                            show_uploaded_files_memory(seq_key, st.session_state.session.session_folder_path +"contents/", uploaded_content["file_name"], uploaded_content["file_type"])
                     with st.chat_message(v2["response"]["role"]):
                         st.markdown("**"+v2["setting"]["name"]+" ("+v2["response"]["timestamp"]+"):**\n\n"+v2["response"]["text"].replace("\n", "<br>").replace("#", ""), unsafe_allow_html=True)
                         if "image" in v2:
                             for gen_content in v2["image"].values():
-                               show_uploaded_files_memory(st.session_state.session.session_folder_path +"contents/", gen_content["file_name"], gen_content["file_type"])
+                               show_uploaded_files_memory(seq_key, st.session_state.session.session_folder_path +"contents/", gen_content["file_name"], gen_content["file_type"])
 
                     if v2["setting"]["type"] in ["LLM","IMAGEGEN"]:
                         with st.chat_message("Feedback"):
