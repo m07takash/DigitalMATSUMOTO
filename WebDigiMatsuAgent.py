@@ -175,7 +175,7 @@ def main():
 
     # サイドバーの設定
     with st.sidebar:
-        st.title("Digital MATSUMOTO")
+        st.title(st.session_state.web_title)
         
         # エージェントを選択（JSON)
         if agent_id_selected := st.selectbox("Select Agent:", st.session_state.agent_list, index=st.session_state.agent_list_index):
@@ -528,7 +528,8 @@ def main():
 #    st.session_state.uploaded_files = st.session_state.file_uploader("Attached Files:", type=["txt", "csv", "xlsx", "jpg", "jpeg", "png", "mp4", "mov", "avi", "mp3", "wav"], accept_multiple_files=True)
 #    if st.session_state.uploaded_files:
 #        show_uploaded_files_widget(st.session_state.uploaded_files)
-    uploaded_files = st.file_uploader("Attached Files:", type=["txt", "csv", "xlsx", "jpg", "jpeg", "png", "mp4", "mov", "avi", "mp3", "wav"], accept_multiple_files=True)
+#    uploaded_files = st.file_uploader("Attached Files:", type=["txt", "csv", "xlsx", "jpg", "jpeg", "png", "mp4", "mov", "avi", "mp3", "wav"], accept_multiple_files=True)
+    uploaded_files = st.file_uploader("Attached Files:", type=["txt", "csv", "jpg", "jpeg", "png"], accept_multiple_files=True)
 #    if uploaded_files:
     st.session_state.uploaded_files = uploaded_files
     show_uploaded_files_widget(st.session_state.uploaded_files)
