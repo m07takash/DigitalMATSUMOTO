@@ -386,7 +386,7 @@ class DigiMSession:
             
             chat_detail_info += "\n【RAGコンテキスト】\n["
             for rag_set_dict in chat_history_dict_seq["response"]["reference"]["knowledge_rag"]:
-                chat_detail_info += "{"+ rag_set_dict + "},\n" #"{"+ rag_set_dict["log"] + "},\n"
+                chat_detail_info += "{"+ rag_set_dict.replace("\n", "") + "},\n" #"{"+ rag_set_dict["log"] + "},\n"
             if chat_detail_info.endswith(",\n"):
                 chat_detail_info = chat_detail_info[:-2] + "]"+"\n"
 

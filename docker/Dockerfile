@@ -63,5 +63,3 @@ EXPOSE 8900
 # ボリュームを設定
 VOLUME /work
 
-# JupyterLabを起動するコマンドを指定
-CMD ["jupyter", "lab", "--ip=0.0.0.0", "--port=8891", "--no-browser", "--allow-root", "--NotebookApp.token=''"]
