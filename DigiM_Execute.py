@@ -60,7 +60,7 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
 
     # シチュエーションの設定
     timestamp_log += "[04.シチュエーション設定]"+str(datetime.now())+"<br>"
-    situation_setting = "\n"
+    situation_setting = ""
     time_setting = str(datetime.now(pytz.timezone(timezone_setting)).strftime('%Y/%m/%d %H:%M:%S'))
     if situation:
         if "SITUATION" in situation:
@@ -84,11 +84,13 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
     queries.append(user_query)
     query_vec = dmu.embed_text(user_query.replace("\n", ""))
     query_vecs.append(query_vec)
-    if digest_text:
-        user_query_digest = digest_text + user_query
-        queries.append(user_query_digest)
-        query_vec_digest = dmu.embed_text(user_query_digest.replace("\n", ""))
-        query_vecs.append(query_vec_digest)
+    
+    # ダイジェストもしくはシチュエーション設定(時刻以外)があれば追加
+    if digest_text or situation_setting:
+        user_query_digest_situation = digest_text + user_query + situation_prompt
+        queries.append(user_query_digest_situation)
+        query_vec_digest_situation = dmu.embed_text(user_query_digest_situation.replace("\n", ""))
+        query_vecs.append(query_vec_digest_situation)
 
     # 会話メモリの取得
     timestamp_log += "[07.会話メモリの取得開始]"+str(datetime.now())+"<br>"
