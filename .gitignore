@@ -170,10 +170,10 @@ user/common/agent/*.json
 !user/common/agent/agent_21EthicalCheck.json
 !user/common/agent/agent_22SenryuSensei.json
 !user/common/agent/agent_5*.json
-user/common/agent/charactor/*.txt
-!user/common/agent/charactor/Sample.txt
-!user/common/agent/charactor/DialogDigest.txt
-!user/common/agent/charactor/ArtCritic.txt
+user/common/agent/character/*.txt
+!user/common/agent/character/Sample.txt
+!user/common/agent/character/DialogDigest.txt
+!user/common/agent/character/ArtCritic.txt
 
 # DigiM Folder(mst)
 user/common/mst/*

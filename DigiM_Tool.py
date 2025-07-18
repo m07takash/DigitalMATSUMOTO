@@ -7,7 +7,7 @@ import DigiM_Session as dms
 
 # system.envファイルをロードして環境変数を設定
 load_dotenv("system.env")
-charactor_folder_path = os.getenv("CHARACTOR_FOLDER")
+character_folder_path = os.getenv("CHARACTER_FOLDER")
 mst_folder_path = os.getenv("MST_FOLDER")
 
 # 文字列から関数名を取得
