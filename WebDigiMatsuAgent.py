@@ -36,8 +36,8 @@ if 'agent_folder_path' not in st.session_state:
 if 'default_agent' not in st.session_state:
     default_agent_data = dmu.read_json_file(os.getenv("DEFAULT_AGENT_FILE"), agent_folder_path)
     st.session_state.default_agent = default_agent_data["DISPLAY_NAME"]
-if 'charactor_folder_path' not in st.session_state:
-    st.session_state.charactor_folder_path = os.getenv("CHARACTOR_FOLDER")
+if 'character_folder_path' not in st.session_state:
+    st.session_state.character_folder_path = os.getenv("CHARACTER_FOLDER")
 if 'prompt_template_mst_file' not in st.session_state:
     st.session_state.prompt_template_mst_file = os.getenv("PROMPT_TEMPLATE_MST_FILE")
 if 'feedback_item_list' not in st.session_state:
@@ -279,12 +279,12 @@ def main():
             persona_speaking_style = agent_data["PERSONALITY"]["SPEAKING_STYLE"] if agent_data["PERSONALITY"] else ""
             index_speaking_style = speaking_style_list.index(persona_speaking_style) if persona_speaking_style in speaking_style_list else 0
             st.session_state.persona_speaking_style = persona_col2.selectbox("Speaking Style:", speaking_style_list, index=index_speaking_style)
-            persona_charactor = agent_data["PERSONALITY"]["CHARACTOR"] if agent_data["PERSONALITY"] else ""
-            if persona_charactor.strip().endswith(".txt"):
-                persona_charactor_text = str(dmu.read_text_file(persona_charactor, st.session_state.charactor_folder_path))
+            persona_character = agent_data["PERSONALITY"]["CHARACTER"] if agent_data["PERSONALITY"] else ""
+            if persona_character.strip().endswith(".txt"):
+                persona_character_text = str(dmu.read_text_file(persona_character, st.session_state.character_folder_path))
             else:
-                persona_charactor_text = persona_charactor
-            st.session_state.persona_charactor = st.text_area("Persona Charactor:", value=persona_charactor_text, height=400)
+                persona_character_text = persona_character
+            st.session_state.persona_character = st.text_area("Persona Character:", value=persona_character_text, height=400)
             overwrite_persona["NAME"] = st.session_state.persona_name
             overwrite_persona["ACT"] = st.session_state.persona_act
             overwrite_persona["PERSONALITY"] = {}
@@ -295,7 +295,7 @@ def main():
             overwrite_persona["PERSONALITY"]["BIG5"] = st.session_state.persona_big5
             overwrite_persona["PERSONALITY"]["LANGUAGE"] = st.session_state.persona_language
             overwrite_persona["PERSONALITY"]["SPEAKING_STYLE"] = st.session_state.persona_speaking_style
-            overwrite_persona["PERSONALITY"]["CHARACTOR"] = st.session_state.persona_charactor
+            overwrite_persona["PERSONALITY"]["CHARACTER"] = st.session_state.persona_character
         else:
             overwrite_persona = {}
         st.markdown("")

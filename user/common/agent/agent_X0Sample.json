@@ -17,7 +17,7 @@
         },
         "LANGUAGE": "日本語",
         "SPEAKING_STYLE": "Polite",
-        "CHARACTOR": "Sample.txt"
+        "CHARACTER": "Sample.txt"
     },
     "ENGINE": {
         "LLM": {
