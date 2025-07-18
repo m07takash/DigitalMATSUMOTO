@@ -6,7 +6,7 @@ import DigiM_Context as dmc
 
 # system.envファイルをロードして環境変数を設定
 load_dotenv("system.env")
-charactor_folder_path = os.getenv("CHARACTOR_FOLDER")
+character_folder_path = os.getenv("CHARACTER_FOLDER")
 mst_folder_path = os.getenv("MST_FOLDER")
 agent_folder_path = os.getenv("AGENT_FOLDER")
 prompt_template_mst_file = os.getenv("PROMPT_TEMPLATE_MST_FILE")
@@ -92,11 +92,11 @@ class DigiM_Agent:
                 system_prompt += f"\n口調:{speaking_style}"
     
             # キャラクター設定
-            charactor = self.personality["CHARACTOR"]
-            if charactor:
-                if charactor.strip().endswith(".txt"):
-                    charactor = dmu.read_text_file(charactor, charactor_folder_path)
-                system_prompt = system_prompt + f"\n\nあなたのキャラクター設定:\n{charactor}"
+            character = self.personality["CHARACTER"]
+            if character:
+                if character.strip().endswith(".txt"):
+                    character = dmu.read_text_file(character, character_folder_path)
+                system_prompt = system_prompt + f"\n\nあなたのキャラクター設定:\n{character}"
 
         return system_prompt
     
