@@ -18,6 +18,7 @@ import DigiM_GeneCommunication as dmgc
 
 # system.envファイルをロードして環境変数を設定
 load_dotenv("system.env")
+agent_folder_path = os.getenv("AGENT_FOLDER")
 if 'web_title' not in st.session_state:
     st.session_state.web_title = os.getenv("WEB_TITLE")
 if 'timezone_setting' not in st.session_state:
@@ -33,7 +34,8 @@ if 'mst_folder_path' not in st.session_state:
 if 'agent_folder_path' not in st.session_state:
     st.session_state.agent_folder_path = os.getenv("AGENT_FOLDER")
 if 'default_agent' not in st.session_state:
-    st.session_state.default_agent = os.getenv("DEFAULT_AGENT")
+    default_agent_data = dmu.read_json_file(os.getenv("DEFAULT_AGENT_FILE"), agent_folder_path)
+    st.session_state.default_agent = default_agent_data["DISPLAY_NAME"]
 if 'charactor_folder_path' not in st.session_state:
     st.session_state.charactor_folder_path = os.getenv("CHARACTOR_FOLDER")
 if 'prompt_template_mst_file' not in st.session_state:
@@ -41,7 +43,6 @@ if 'prompt_template_mst_file' not in st.session_state:
 if 'feedback_item_list' not in st.session_state:
     feedback_item_list = os.getenv("FEEDBACK_ITEM_LIST")
     st.session_state.feedback_item_list = feedback_item_list.split(",") if feedback_item_list else []
-
 
 # 時刻の設定
 tz = pytz.timezone(st.session_state.timezone_setting)
