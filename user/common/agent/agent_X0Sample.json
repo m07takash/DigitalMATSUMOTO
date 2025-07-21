@@ -72,11 +72,11 @@
             "RAG_NAME": "Quote",
             "RETRIEVER": "Vector",
             "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"Sample01_Quote"}],
-            "TIMESTAMP": "CREATE_DATE",
+            "TIMESTAMP": "CURRENT_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
             "HEADER_TEMPLATE": "以下はあなたが気に入っている著名人による名言です。\n",
             "CHUNK_TEMPLATE": "・{speaker}「{value_text}」\n\n",
-            "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{bucket}', 'ID': '{id}', 'similarity_Q': {similarity_prompt_original}, 'similarity_A': {similarity_response}, 'speaker': '{speaker}', 'text_short': '{value_text_short}'",
+            "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{bucket}', 'QUERY_SEQ': '{query_seq}', 'QUERY_MODE': '{query_mode}', 'ID': '{id}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'speaker': '{speaker}', 'text_short': '{value_text_short}'",
             "TEXT_LIMITS": 1000,
             "DISTANCE_LOGIC": "Cosine"
         },
@@ -87,8 +87,8 @@
             "TIMESTAMP": "CREATE_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
             "HEADER_TEMPLATE": "以下はこれまであなたが学んできたことです。\n",
-            "CHUNK_TEMPLATE": "・{value_text}\n\n",
-            "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{bucket}', 'ID': '{id}', 'similarity_Q': {similarity_prompt_original}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}'",
+            "CHUNK_TEMPLATE": "・({timestamp}({days_difference}日前)の情報）、質問との近さ:{similarity_prompt}){value_text}\n\n",
+            "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{bucket}', 'QUERY_SEQ': '{query_seq}', 'QUERY_MODE': '{query_mode}', 'ID': '{id}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}'",
             "TEXT_LIMITS": 2000,
             "DISTANCE_LOGIC": "Cosine"
         },
@@ -99,7 +99,7 @@
             "TIMESTAMP": "CREATE_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
             "HEADER_TEMPLATE": "以下はAIとの会話から記録された情報です。\n",
-            "CHUNK_TEMPLATE": "({timestamp}({days_difference}日前)の情報)\n{value_text}\n\n",
+            "CHUNK_TEMPLATE": "・({timestamp}({days_difference}日前)の情報)\n{value_text}\n\n",
             "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{bucket}', 'QUERY_SEQ': '{query_seq}', 'QUERY_MODE': '{query_mode}', 'ID': '{id}', 'timestamp': '{timestamp}', 'category': '{category}', 'similarity_Q': {similarity_prompt_original}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}'",
             "TEXT_LIMITS": 1000,
             "DISTANCE_LOGIC": "Cosine"
