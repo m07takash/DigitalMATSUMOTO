@@ -64,7 +64,20 @@
         "SENRYU_SENSEI": {
             "MAGIC_WORDS": ["川柳を詠んでください。","川柳を作成してください。"],
             "PRACTICE": "practice_05Senryu.json",
-            "ADD_KNOWLEDGE": []
+            "ADD_KNOWLEDGE": [
+                {
+                    "RAG_NAME": "Quote",
+                    "RETRIEVER": "Vector",
+                    "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"Sample01_Quote"}],
+                    "TIMESTAMP": "CURRENT_DATE",
+                    "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
+                    "HEADER_TEMPLATE": "【参考】好きな著名人による名言\n",
+                    "CHUNK_TEMPLATE": "・{speaker}「{value_text}」\n\n",
+                    "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{bucket}', 'QUERY_SEQ': '{query_seq}', 'QUERY_MODE': '{query_mode}', 'ID': '{id}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'speaker': '{speaker}', 'text_short': '{value_text_short}'",
+                    "TEXT_LIMITS": 1000,
+                    "DISTANCE_LOGIC": "Cosine"
+                }
+            ]
         },
         "IMAGE_GEN": {
             "MAGIC_WORDS": ["画像を生成してください。", "画像を作成してください。"],

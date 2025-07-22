@@ -332,15 +332,15 @@ def DigiMatsuExecute_Practice(session_id, session_name, in_agent_file, user_quer
                     add_knowledge.append(add_knowledge_data)
             prompt_temp_cd = setting["PROMPT_TEMPLATE"]
             
-            # "USER":ユーザー入力(引数)、"INPUT{SubSeqNo}":サブSEQの入力結果、"RESULT{SubSeqNo}":サブSEQの出力結果
+            # "USER":ユーザー入力(引数)、"INPUT{SubSeqNo}":サブSEQの入力結果、OUTPUTT{SubSeqNo}":サブSEQの出力結果
             user_input = ""
             if setting["USER_INPUT"] == "USER":
                 user_input = user_query
             elif setting["USER_INPUT"].startswith("INPUT"):
-                ref_subseq = int(setting["USER_INPUT"].replace("INPUT", "").strip())
+                ref_subseq = int(setting["USER_INPUT"].replace("INPUT_", "").strip())
                 user_input = next((item["INPUT"] for item in results if item["SubSEQ"] == ref_subseq), None)
             elif setting["USER_INPUT"].startswith("OUTPUT"):
-                ref_subseq = int(setting["USER_INPUT"].replace("OUTPUT", "").strip())
+                ref_subseq = int(setting["USER_INPUT"].replace("OUTPUT_", "").strip())
                 user_input = next((item["OUTPUT"] for item in results if item["SubSEQ"] == ref_subseq), None)
             else:
                 user_input = setting["USER_INPUT"]
@@ -396,7 +396,7 @@ def DigiMatsuExecute_Practice(session_id, session_name, in_agent_file, user_quer
             import_contents = in_contents
 
             timestamp_begin = str(datetime.now())
-            output, export_contents = dmt.call_function_by_name(setting["FUNC_NAME"], session_id)
+            output, export_contents = dmt.call_function_by_name(setting["FUNC_NAME"], session_id, input)
             timestamp_end = str(datetime.now())
             
             # ログデータの保存
