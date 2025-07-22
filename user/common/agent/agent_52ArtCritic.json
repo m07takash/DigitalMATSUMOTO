@@ -32,7 +32,8 @@
     "HABIT": {
         "DEFAULT": {
             "MAGIC_WORDS": [""],
-            "PRACTICE": "practice_01Chat.json"
+            "PRACTICE": "practice_01Chat.json",
+            "ADD_KNOWLEDGE": []
         }
     },
     "KNOWLEDGE": [],

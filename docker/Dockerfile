@@ -45,6 +45,9 @@ RUN apt-get update && apt-get -y install fonts-ipaexfont
 RUN apt-get update && apt-get -y install fonts-noto-cjk
 RUN rm /root/.cache/matplotlib -rf
 
+# デジタルMATSUMOTOのPGをクローン
+RUN git clone https://github.com/m07takash/DigitalMATSUMOTO.git /app/DigitalMATSUMOTO
+
 # アプリケーションのソースコードをコピー
 COPY . /app/
 

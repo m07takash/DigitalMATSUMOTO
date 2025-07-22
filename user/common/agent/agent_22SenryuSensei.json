@@ -32,23 +32,11 @@
     "HABIT": {
         "DEFAULT": {
             "MAGIC_WORDS": ["川柳を詠んでください。","川柳を作成してください。"],
-            "PRACTICE": "practice_05Senryu.json"
+            "PRACTICE": "practice_05Senryu.json",
+            "ADD_KNOWLEDGE": []
         }
     },
-    "KNOWLEDGE": [
-        {
-            "RAG_NAME": "Senryu",
-            "RETRIEVER": "Vector",
-            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"DigiMATSU_Senryu"}],
-            "TIMESTAMP": "CREATE_DATE",
-            "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
-            "HEADER_TEMPLATE": "【参考】以前に作った川柳\n",
-            "CHUNK_TEMPLATE": "[テーマ:{title}] {value_text}\n",
-            "LOG_TEMPLATE": "'rag':'{rag_name}', 'ID': '{id}', 'timestamp': '{timestamp}', 'category': '{category}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}', 'url': '{url}'",
-            "TEXT_LIMITS": 2000,
-            "DISTANCE_LOGIC": "Cosine"
-        }
-    ],
+    "KNOWLEDGE": [],
     "SKILL": {
         "TOOL_LIST": [
             {"type": "function", "function": {"name": "default_tool"}}

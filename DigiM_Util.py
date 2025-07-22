@@ -265,7 +265,7 @@ def calculate_similarity_vec(vec1, vec2, logic="Cosine"):
         distance = calculate_minkowski_distance(vec1, vec2, 2)
     elif logic == "Manhattan":
         distance = calculate_minkowski_distance(vec1, vec2, 1)
-    elif logic == "Chebychev":
+    elif logic == "Chebyshev":
         distance = calculate_minkowski_distance(vec1, vec2, float('inf'))
     else: #通常はコサイン距離
         distance = calculate_cosine_distance(vec1, vec2)
