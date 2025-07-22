@@ -40,11 +40,13 @@
     "HABIT": {
         "DEFAULT": {
             "MAGIC_WORDS": [""],
-            "PRACTICE": "practice_00Default.json"
+            "PRACTICE": "practice_00Default.json",
+            "ADD_KNOWLEDGE": []
         },
         "Chat": {
             "MAGIC_WORDS": ["簡潔に回答して", "簡潔に答えて"],
-            "PRACTICE": "practice_01Chat.json"
+            "PRACTICE": "practice_01Chat.json",
+            "ADD_KNOWLEDGE": []
         },
         "FORGET_HISTORY": {
             "MAGIC_WORDS": ["までの会話を忘れて", "会話履歴を削除して"],
@@ -56,15 +58,18 @@
         },
         "ETHICAL_CHECK": {
             "MAGIC_WORDS": ["エシカルチェックしてください。"],
-            "PRACTICE": "practice_04Ethical_Check.json"
+            "PRACTICE": "practice_04Ethical_Check.json",
+            "ADD_KNOWLEDGE": []
         },
         "SENRYU_SENSEI": {
             "MAGIC_WORDS": ["川柳を詠んでください。","川柳を作成してください。"],
-            "PRACTICE": "practice_05Senryu.json"
+            "PRACTICE": "practice_05Senryu.json",
+            "ADD_KNOWLEDGE": []
         },
         "IMAGE_GEN": {
             "MAGIC_WORDS": ["画像を生成してください。", "画像を作成してください。"],
-            "PRACTICE": "practice_06Image_Gen.json"
+            "PRACTICE": "practice_06Image_Gen.json",
+            "ADD_KNOWLEDGE": []
         }
     },
     "KNOWLEDGE": [

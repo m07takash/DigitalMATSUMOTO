@@ -32,7 +32,8 @@
     "HABIT": {
         "DEFAULT": {
             "MAGIC_WORDS": [""],
-            "PRACTICE": "practice_04Ethical_Check.json"
+            "PRACTICE": "practice_04Ethical_Check.json",
+            "ADD_KNOWLEDGE": []
         }
     },
     "KNOWLEDGE": [],

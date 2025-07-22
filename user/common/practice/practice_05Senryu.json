@@ -6,7 +6,7 @@
             "SETTING": {
                 "AGENT_FILE": "agent_22SenryuSensei.json",
                 "OVERWRITE_ITEMS": {},
-                "ADD_KNOWLEDGE": [],
+                "ADD_KNOWLEDGE": ["USER"],
                 "PROMPT_TEMPLATE": "Senryu Template",
                 "USER_INPUT": "USER",
                 "CONTENTS": "USER",

@@ -1,5 +1,5 @@
 {
-    "NAME": "Chat",
+    "NAME": "Default",
     "CHAINS": [
         {
             "TYPE": "LLM",
