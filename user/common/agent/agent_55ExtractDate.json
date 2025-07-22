@@ -17,7 +17,8 @@
     "HABIT": {
         "DEFAULT": {
             "MAGIC_WORDS": [""],
-            "PRACTICE": "practice_10ExtractDate.json"
+            "PRACTICE": "practice_10ExtractDate.json",
+            "ADD_KNOWLEDGE": []
         }
     },
     "KNOWLEDGE": [],

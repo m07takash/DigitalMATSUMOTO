@@ -17,7 +17,8 @@
     "HABIT": {
         "DEFAULT": {
             "MAGIC_WORDS": [""],
-            "PRACTICE": "practice_11RAGQueryGenerator.json"
+            "PRACTICE": "practice_11RAGQueryGenerator.json",
+            "ADD_KNOWLEDGE": []
         }
     },
     "KNOWLEDGE": [],
