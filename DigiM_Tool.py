@@ -20,7 +20,7 @@ def call_function_by_name(func_name, *args, **kwargs):
 
 
 # セッションの会話履歴の削除
-def forget_history(session_id):
+def forget_history(session_id, input):
     session = dms.DigiMSession(session_id)
     chat_history_dict = session.get_history()
 
@@ -33,7 +33,7 @@ def forget_history(session_id):
 
 
 # セッションの会話履歴の回復
-def remember_history(session_id):
+def remember_history(session_id, input):
     session = dms.DigiMSession(session_id)
     chat_history_dict = session.get_history()
 
