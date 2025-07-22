@@ -4,8 +4,7 @@
         {
             "TYPE": "TOOL",
             "SETTING": {
-                "FUNC_NAME": "forget_history",
-                "PARAMETER": ["session_id"]
+                "FUNC_NAME": "forget_history"
             }
         }
     ]
