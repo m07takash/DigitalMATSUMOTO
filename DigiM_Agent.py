@@ -69,6 +69,8 @@ class DigiM_Agent:
         self.habit = self.agent['HABIT']
         self.knowledge = self.agent["KNOWLEDGE"]
         self.skill = self.agent["SKILL"]
+        self.communication = self.agent["COMMUNICATION"]
+        self.support_agent = self.agent["SUPPORT_AGENT"]
         self.system_prompt = self.set_system_prompt()
 
     # システムプロンプトの設定
@@ -112,6 +114,7 @@ class DigiM_Agent:
     
     # ナレッジコンテキスト(RAG)の生成
     def set_knowledge_context(self, query, query_vecs=[], meta_searches=[]):
+        print(self.name)
         knowledge_context, knowledge_selected = dmc.create_rag_context(query, query_vecs=query_vecs, rags=self.knowledge, meta_searches=meta_searches)
         return knowledge_context, knowledge_selected
 
