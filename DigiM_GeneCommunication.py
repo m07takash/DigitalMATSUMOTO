@@ -5,6 +5,7 @@ from datetime import datetime
 from dateutil import parser
 from dotenv import load_dotenv
 
+import DigiM_Agent as dma
 import DigiM_Session as dms
 import DigiM_Context as dmc
 import DigiM_Tool as dmt
@@ -17,11 +18,13 @@ timezone = os.getenv("TIMEZONE")
 mst_folder_path = os.getenv("MST_FOLDER")
 rag_data_csv_path = os.getenv("RAG_DATA_CSV_FOLDER")
 notion_db_mst_file = os.getenv("NOTION_MST_FILE")
-save_communication_mode = os.getenv("SAVE_COMMUNICATION_MODE")
-save_communication_db = os.getenv("SAVE_COMMUNICATION_DB")
-default_communication_category = os.getenv("DEFAULT_COMMUNICATION_CATEGORY")
+default_agent_file = os.getenv("DEFAULT_AGENT_FILE")
 
-#タイムスタンプ文字列を安全に解析し、時刻までのdatetimeオブジェクト
+#save_communication_mode = os.getenv("SAVE_COMMUNICATION_MODE")
+#save_communication_db = os.getenv("SAVE_COMMUNICATION_DB")
+#default_communication_category = os.getenv("DEFAULT_COMMUNICATION_CATEGORY")
+
+#タイムスタンプ文字列を時刻に変換
 def safe_parse_timestamp(timestamp_str):
     jst = pytz.timezone(timezone)
     try:
@@ -30,11 +33,11 @@ def safe_parse_timestamp(timestamp_str):
         return datetime.now(jst).isoformat()
 
 # フィードバックデータの取得
-def get_feedback_data(fb_k, memo, k1, k2, v2):
+def get_feedback_data(fb_k, memo, k1, k2, v2, default_category):
     fb_data = {}
     fb_data["title"] = v2["feedback"]["name"]+"-"+fb_k+"("+v2["prompt"]["query"]["situation"]["TIME"]+")"
     fb_data["RAG_Category"] = fb_k
-    fb_data["category"] = default_communication_category
+    fb_data["category"] = default_category
     fb_data["create_date"] = safe_parse_timestamp(v2["prompt"]["query"]["situation"]["TIME"])
     fb_data["session_name"] = v2["setting"]["session_name"]    
     fb_data["seq"] = int(k1)
@@ -48,7 +51,7 @@ def get_feedback_data(fb_k, memo, k1, k2, v2):
     return fb_data
 
 # CSVファイルへの保存
-def save_communication_csv(fb_data):
+def save_communication_csv(fb_data, save_db):
     fieldnames = [
         "title",
         "RAG_Category",
@@ -66,7 +69,7 @@ def save_communication_csv(fb_data):
     fb_data["create_date"] = datetime.fromisoformat(fb_data["create_date"]).strftime("%Y/%m/%d")
 
     # ファイル名を設定
-    file_path = rag_data_csv_path + save_communication_db + ".csv"
+    file_path = rag_data_csv_path + save_db + ".csv"
 
     # 現在のデータを読み込み
     records = []
@@ -93,10 +96,10 @@ def save_communication_csv(fb_data):
         writer.writerows(records)
 
 # Notionデータベースへの保存
-def save_communication_notion(fb_data):
+def save_communication_notion(fb_data, save_db):
     notion_db_mst_file_path = mst_folder_path + notion_db_mst_file
     notion_db_mst = dmu.read_json_file(notion_db_mst_file_path)
-    db_id = notion_db_mst[save_communication_db]
+    db_id = notion_db_mst[save_db]
     
     # Notionページの保存
     response = dmn.create_page(db_id, fb_data["title"])
@@ -114,8 +117,13 @@ def save_communication_notion(fb_data):
     dmn.update_notion_chk(page_id, "確定Chk", True)
 
 # フィードバックデータの保存
-def create_communication_data(session_id):
+def create_communication_data(session_id, agent_file=default_agent_file):
     session = dms.DigiMSession(session_id)
+    agent = dma.DigiM_Agent(agent_file)
+    save_mode = agent.communication["SAVE_MODE"]
+    save_db = agent.communication["SAVE_DB"]
+    default_category = agent.communication["DEFAULT_CATEGORY"]
+
     history_dict = session.chat_history_dict
     for k1, v1 in history_dict.items():
         for k2, v2 in v1.items():
@@ -123,11 +131,10 @@ def create_communication_data(session_id):
                 if "feedback" in v2.keys():
                     for fb_k, fb_v in v2["feedback"].items():
                         if fb_k != "name" and fb_v["flg"]:
-                            fb_data = get_feedback_data(fb_k, fb_v["memo"], k1, k2, v2)
-                            if save_communication_mode == "Notion":
-                                save_communication_notion(fb_data)
+                            fb_data = get_feedback_data(fb_k, fb_v["memo"], k1, k2, v2, default_category)
+                            if save_mode == "Notion":
+                                save_communication_notion(fb_data, save_db)
                             else:
-                                save_communication_csv(fb_data)
+                                save_communication_csv(fb_data, save_db)
                             v2["feedback"][fb_k]["flg"]=False
                     session.set_feedback_history(k1, k2, v2["feedback"])
-

@@ -196,9 +196,10 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
 #        "act": agent.act,
 #        "personality": agent.personality,
 #        "system_prompt": agent.system_prompt,
-        "engine": agent.agent["ENGINE"][model_type] #,
+        "engine": agent.agent["ENGINE"][model_type],
 #        "knowledge": agent.agent["KNOWLEDGE"],
 #        "skill": agent.agent["SKILL"]
+        "communication": agent.agent["COMMUNICATION"]
     }
     session.save_history(str(seq), "setting", setting_chat_dict, "SUB_SEQ", str(sub_seq))
     
@@ -416,7 +417,8 @@ def DigiMatsuExecute_Practice(session_id, session_name, in_agent_file, user_quer
                 "text": input,
                 "query": {
                     "input": input,
-                    "contents": import_contents
+                    "contents": import_contents,
+                    "situation": {}
                 }
             }
             session.save_history(str(seq), "prompt", prompt_chat_dict, "SUB_SEQ", str(sub_seq))

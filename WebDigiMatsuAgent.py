@@ -40,9 +40,9 @@ if 'character_folder_path' not in st.session_state:
     st.session_state.character_folder_path = os.getenv("CHARACTER_FOLDER")
 if 'prompt_template_mst_file' not in st.session_state:
     st.session_state.prompt_template_mst_file = os.getenv("PROMPT_TEMPLATE_MST_FILE")
-if 'feedback_item_list' not in st.session_state:
-    feedback_item_list = os.getenv("FEEDBACK_ITEM_LIST")
-    st.session_state.feedback_item_list = feedback_item_list.split(",") if feedback_item_list else []
+#if 'feedback_item_list' not in st.session_state:
+#    feedback_item_list = os.getenv("FEEDBACK_ITEM_LIST")
+#    st.session_state.feedback_item_list = feedback_item_list.split(",") if feedback_item_list else []
 
 # 時刻の設定
 tz = pytz.timezone(st.session_state.timezone_setting)
@@ -206,9 +206,6 @@ def main():
             if st.button("Update RAG Data", key="update_rag"):
                 dmc.generate_rag()
                 st.session_state.sidebar_message = "RAGの更新が完了しました"
-            if st.button("Feedback to DB", key="save_feedback_to_db"):
-                dmgc.create_communication_data(st.session_state.session.session_id)
-                st.session_state.sidebar_message = "フィードバックをDBに保存しました"
             if st.button("Delete RAG DB", key="delete_rag_db"):
                 dmc.del_rag_db()
                 st.session_state.sidebar_message = "RAGを削除しました"
@@ -479,42 +476,47 @@ def main():
                                show_uploaded_files_memory(seq_key, st.session_state.session.session_folder_path +"contents/", gen_content["file_name"], gen_content["file_type"])
 
                     if v2["setting"]["type"] in ["LLM","IMAGEGEN"]:
-                        with st.chat_message("Feedback"):
-                            feedback = {}
-                            feedback["name"] = "Chunk Title"
-                            if "feedback" in v2:
-                                feedback["name"] = v2.get("feedback", {}).get("name", feedback["name"])
-                            feedback["name"] = st.text_input("Feedback_Name:", key=f"feedback_name{k}_{k2}", value=feedback["name"], label_visibility="collapsed")
-                                                                              
-                            for fb_item in st.session_state.feedback_item_list:
-                                feedback[fb_item] = {}
-                                feedback[fb_item]["visible"] = False
-                                feedback[fb_item]["flg"] = False
-                                feedback[fb_item]["memo"] = ""                           
-                                if "feedback" in v2:
-                                    feedback[fb_item] = v2.get("feedback", {}).get(fb_item, feedback[fb_item])
-                                feedback[fb_item]["saved_memo"] = feedback[fb_item]["memo"]
-                           
-                                if st.checkbox(f"{fb_item}", key=f"feedback_{fb_item}_{k}_{k2}", value=feedback[fb_item]["visible"]):
-                                    feedback[fb_item]["memo"] = st.text_input("Memo:", key=f"feedback_{fb_item}_memo{k}_{k2}", value=feedback[fb_item]["memo"], label_visibility="collapsed")
-                                    feedback[fb_item]["visible"] = True
-                                else:
-                                    feedback[fb_item]["memo"] = ""
-                                    feedback[fb_item]["visible"] = False
+                        if "communication" in v2["setting"]:
+                            agent_communication = v2["setting"]["communication"]
 
-                            if st.button("Feedback", key=f"feedback_btn{k}_{k2}"):
-                                for fb_item in st.session_state.feedback_item_list:
-                                    if feedback[fb_item]["memo"]!=feedback[fb_item]["saved_memo"] and feedback[fb_item]["memo"]!="":
-                                        feedback[fb_item]["flg"] = True
-                                    if feedback[fb_item]["memo"]=="":
+                            if agent_communication["ACTIVE"] == "Y":
+                                with st.chat_message("Feedback"):
+                                    feedback = {}
+                                    feedback["name"] = "Chunk Title"
+                                    if "feedback" in v2:
+                                        feedback["name"] = v2.get("feedback", {}).get("name", feedback["name"])
+                                    feedback["name"] = st.text_input("Feedback_Name:", key=f"feedback_name{k}_{k2}", value=feedback["name"], label_visibility="collapsed")
+                                                                                    
+                                    for fb_item in agent_communication["FEEDBACK_ITEM_LIST"]: #st.session_state.feedback_item_list:
+                                        feedback[fb_item] = {}
+                                        feedback[fb_item]["visible"] = False
                                         feedback[fb_item]["flg"] = False
+                                        feedback[fb_item]["memo"] = ""                           
+                                        if "feedback" in v2:
+                                            feedback[fb_item] = v2.get("feedback", {}).get(fb_item, feedback[fb_item])
+                                        feedback[fb_item]["saved_memo"] = feedback[fb_item]["memo"]
+                                
+                                        if st.checkbox(f"{fb_item}", key=f"feedback_{fb_item}_{k}_{k2}", value=feedback[fb_item]["visible"]):
+                                            feedback[fb_item]["memo"] = st.text_input("Memo:", key=f"feedback_{fb_item}_memo{k}_{k2}", value=feedback[fb_item]["memo"], label_visibility="collapsed")
+                                            feedback[fb_item]["visible"] = True
+                                        else:
+                                            feedback[fb_item]["memo"] = ""
+                                            feedback[fb_item]["visible"] = False
 
-                                if any(k != "name" for k in fb_item):
-                                    st.session_state.session.set_feedback_history(k, k2, feedback)
-                                    st.session_state.sidebar_message = f"フィードバックをログに保存しました({k})"
-                                    st.rerun()
-                                else:
-                                    st.session_state.sidebar_message = f"フィードバックに変更はありません({k})"
+                                    if st.button("Feedback", key=f"feedback_btn{k}_{k2}"):
+                                        for fb_item in agent_communication["FEEDBACK_ITEM_LIST"]: #st.session_state.feedback_item_list:
+                                            if feedback[fb_item]["memo"]!=feedback[fb_item]["saved_memo"] and feedback[fb_item]["memo"]!="":
+                                                feedback[fb_item]["flg"] = True
+                                            if feedback[fb_item]["memo"]=="":
+                                                feedback[fb_item]["flg"] = False
+
+                                        if any(k != "name" for k in fb_item):
+                                            st.session_state.session.set_feedback_history(k, k2, feedback)
+                                            dmgc.create_communication_data(st.session_state.session.session_id, st.session_state.agent_file)
+                                            st.session_state.sidebar_message = f"フィードバックをログに保存しました({k})"
+                                            st.rerun()
+                                        else:
+                                            st.session_state.sidebar_message = f"フィードバックに変更はありません({k})"
                         
                         # Detail
                         with st.chat_message("detail"):
