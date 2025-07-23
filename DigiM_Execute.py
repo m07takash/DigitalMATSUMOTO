@@ -14,8 +14,8 @@ session_folder_prefix = os.getenv("SESSION_FOLDER_PREFIX")
 temp_folder_path = os.getenv("TEMP_FOLDER")
 practice_folder_path = os.getenv("PRACTICE_FOLDER")
 timezone_setting = os.getenv("TIMEZONE")
-extract_date_agent_file = os.getenv("EXTRACT_DATE_AGEMT_FILE")
-RAG_query_gene_agent_file = os.getenv("RAG_QUERY_GENERATOR_AGEMT_FILE")
+#extract_date_agent_file = os.getenv("EXTRACT_DATE_AGEMT_FILE")
+#RAG_query_gene_agent_file = os.getenv("RAG_QUERY_GENERATOR_AGEMT_FILE")
 
 # 単体実行用の関数
 def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", stream_mode=True, sub_seq=1, user_input="", contents=[], situation={}, overwrite_items={}, add_knowledge=[], prompt_temp_cd="", memory_use=True, save_digest=True, meta_search=True, RAG_query_gene=True, seq_limit="", sub_seq_limit=""):
@@ -106,9 +106,14 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
     if memory_use:
         memories_selected = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
     
-    timestamp_log += "[11.RAG検索用クエリの生成]"+str(datetime.now())+"<br>"
+    # サポートエージェントの設定
+    support_agent = agent.agent["SUPPORT_AGENT"]
+
+    # RAG検索用クエリ(意図)の生成
+    timestamp_log += "[11.RAG検索用クエリ(意図)の生成]"+str(datetime.now())+"<br>"
     RAG_query_gene_log = {}
-    if RAG_query_gene:
+    if RAG_query_gene and "RAG_QUERY_GENERATOR" in support_agent:
+        RAG_query_gene_agent_file = support_agent["RAG_QUERY_GENERATOR"]
         RAG_query_gene_response, RAG_query_gene_model_name, RAG_query_gene_prompt_tokens, RAG_query_gene_response_tokens = dmt.RAG_query_generator(user_query, situation_prompt, query_vecs, memories_selected, agent_file=RAG_query_gene_agent_file)
         queries.append(RAG_query_gene_response)
         query_vec_RAGquery = dmu.embed_text(RAG_query_gene_response.replace("\n", ""))
@@ -126,8 +131,9 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
     meta_searches = []
     get_date_list = []
     timestamp_log += "[12.クエリからメタデータ検索情報の取得]"+str(datetime.now())+"<br>"
-    if meta_search:
+    if meta_search and "EXTRACT_DATE" in support_agent:
         # ユーザー入力から時間を取得
+        extract_date_agent_file = support_agent["EXTRACT_DATE"]
         extract_date_response, extract_date_model_name, extract_date_prompt_tokens, extract_date_response_tokens = dmt.extract_date(user_query, situation_prompt, [query_vec], memories_selected, agent_file=extract_date_agent_file)
         get_date_list += dmu.extract_list_pattern(extract_date_response)
         meta_searches.append({"DATE": get_date_list})
