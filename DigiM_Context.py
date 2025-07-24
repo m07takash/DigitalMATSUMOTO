@@ -57,7 +57,11 @@ def get_text_content(agent_data, content, seq, sub_seq, file_seq):
         file_name = "[IN]seq"+str(seq)+"-"+str(sub_seq)+"_"+str(file_seq)+"_"+os.path.basename(content)
     file_size = os.path.getsize(content)
     file_type, encoding = mimetypes.guess_type(content)
+
+    # サポートエージェントの設定
+    support_agent = agent_data["SUPPORT_AGENT"]
     
+    # ファイル形式毎にコンテキストを取得
     if "text" in file_type:
         content_context = "<br>---------<br>ファイル名: "+file_name+"<br><br>"+dmu.read_text_file(content)
     elif "pdf" in file_type:
@@ -65,7 +69,8 @@ def get_text_content(agent_data, content, seq, sub_seq, file_seq):
     elif "json" in file_type:
         content_context = "<br>---------<br>ファイル名: "+file_name+"<br><br>"+json.dumps(dmu.read_json_file(content), ensure_ascii=False)
     elif "image" in file_type:
-        response, prompt_tokens, response_tokens = dmt.art_critics(image_paths=[content])
+        art_critics_agent_file = support_agent["ART_CRITICS"]
+        response, prompt_tokens, response_tokens = dmt.art_critics(image_paths=[content], agent_file=art_critics_agent_file)
         content_context = "<br>---------<br>ファイル名: "+file_name+"<br><br>"+response
         image_file = content
     #elif "video" in file_type:

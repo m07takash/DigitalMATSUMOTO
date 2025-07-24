@@ -487,7 +487,7 @@ def main():
                                         feedback["name"] = v2.get("feedback", {}).get("name", feedback["name"])
                                     feedback["name"] = st.text_input("Feedback_Name:", key=f"feedback_name{k}_{k2}", value=feedback["name"], label_visibility="collapsed")
                                                                                     
-                                    for fb_item in agent_communication["FEEDBACK_ITEM_LIST"]: #st.session_state.feedback_item_list:
+                                    for fb_item in agent_communication["FEEDBACK_ITEM_LIST"]:
                                         feedback[fb_item] = {}
                                         feedback[fb_item]["visible"] = False
                                         feedback[fb_item]["flg"] = False
@@ -512,7 +512,7 @@ def main():
 
                                         if any(k != "name" for k in fb_item):
                                             st.session_state.session.set_feedback_history(k, k2, feedback)
-                                            dmgc.create_communication_data(st.session_state.session.session_id, st.session_state.agent_file)
+                                            dmgc.create_communication_data(st.session_state.session.session_id, v2["setting"]["agent_file"])
                                             st.session_state.sidebar_message = f"フィードバックをログに保存しました({k})"
                                             st.rerun()
                                         else:

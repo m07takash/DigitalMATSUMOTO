@@ -14,8 +14,6 @@ session_folder_prefix = os.getenv("SESSION_FOLDER_PREFIX")
 temp_folder_path = os.getenv("TEMP_FOLDER")
 practice_folder_path = os.getenv("PRACTICE_FOLDER")
 timezone_setting = os.getenv("TIMEZONE")
-#extract_date_agent_file = os.getenv("EXTRACT_DATE_AGEMT_FILE")
-#RAG_query_gene_agent_file = os.getenv("RAG_QUERY_GENERATOR_AGEMT_FILE")
 
 # 単体実行用の関数
 def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", stream_mode=True, sub_seq=1, user_input="", contents=[], situation={}, overwrite_items={}, add_knowledge=[], prompt_temp_cd="", memory_use=True, save_digest=True, meta_search=True, RAG_query_gene=True, seq_limit="", sub_seq_limit=""):
@@ -277,12 +275,20 @@ def DigiMatsuExecute(session_id, session_name, agent_file, model_type="LLM", str
         timestamp_log += "[41.メモリダイジェストの作成開始]"+str(datetime.now())+"<br>"
         session.set_history()
         digest_memories_selected = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
-        digest_response, digest_prompt_tokens, digest_response_tokens = dmt.dialog_digest("", digest_memories_selected)
+
+        if "DIALOG_DIGEST" in support_agent:
+            dialog_digest_agent_file = support_agent["DIALOG_DIGEST"]
+            digest_response, digest_prompt_tokens, digest_response_tokens = dmt.dialog_digest("", digest_memories_selected, dialog_digest_agent_file)
+        else:
+            dialog_digest_agent_file = "Default"
+            digest_response, digest_prompt_tokens, digest_response_tokens = dmt.dialog_digest("", digest_memories_selected)
+
         timestamp_digest = str(datetime.now())
         digest_response_vec = dmu.embed_text(digest_response.replace("\n", ""))
         
         # ログデータの保存(SubSeq:digest)
         digest_chat_dict = {
+            "agent_file": dialog_digest_agent_file,
             "role": "assistant",
             "timestamp": timestamp_digest,
             "token": digest_response_tokens,

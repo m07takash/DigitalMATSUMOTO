@@ -76,8 +76,7 @@ def generate_pureLLM(agent_file, query, memories_selected={}, prompt_temp_cd="No
 
 
 # 会話のダイジェスト生成
-def dialog_digest(user_query, memories_selected={}):
-    agent_file = "agent_51DialogDigest.json"
+def dialog_digest(user_query, memories_selected={}, agent_file="agent_51DialogDigest.json"):
     agent = dma.DigiM_Agent(agent_file)
 
     model_type = "LLM"
@@ -206,8 +205,7 @@ def compare_texts(head1, text1, head2, text2, query_compare=""):
 
     
 # 画像データへの批評の生成
-def art_critics(memories_selected={}, image_paths=[]):
-    agent_file = "agent_52ArtCritic.json"
+def art_critics(memories_selected={}, image_paths=[], agent_file="agent_52ArtCritic.json"):
     agent = dma.DigiM_Agent(agent_file)
 
     model_type = "LLM"

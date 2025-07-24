@@ -137,6 +137,8 @@
         "FEEDBACK_ITEM_LIST":["memo", "comment"]
     },
     "SUPPORT_AGENT": {
+        "DIALOG_DIGEST": "agent_51DialogDigest.json",
+        "ART_CRITICS": "agent_52ArtCritic.json",
         "EXTRACT_DATE": "agent_55ExtractDate.json",
         "RAG_QUERY_GENERATOR": "agent_56RAGQueryGenerator.json"
     }
