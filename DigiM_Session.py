@@ -359,8 +359,11 @@ class DigiMSession:
                 chat_detail_info += chat_history_dict_seq["log"]["timestamp_log"]
                 
             if "digest" in chat_history_dict_seq:
-                chat_detail_info += "\n【会話のダイジェスト】(出力トークン数："+str(chat_history_dict_seq["digest"]["token"])+")\n"
-                chat_detail_info += str(chat_history_dict_seq["digest"]["text"])+"\n"
+                chat_detail_info += "\n【会話のダイジェスト】\n"
+                if "agent_file" in chat_history_dict_seq["digest"]: #【暫定的な設定】
+                    chat_detail_info += "エージェント："+chat_history_dict_seq["digest"]["agent_file"]+"\n"
+                chat_detail_info += "出力トークン数："+str(chat_history_dict_seq["digest"]["token"])+"\n"
+                chat_detail_info += chat_history_dict_seq["digest"]["text"]+"\n"
 
             chat_detail_info += "\n【メモリ】\n"
             for memory_set_dict in chat_history_dict_seq["response"]["reference"]["memory"]:

@@ -74,7 +74,7 @@ def save_communication_csv(fb_data, save_db):
     # 現在のデータを読み込み
     records = []
     if os.path.exists(file_path):
-        with open(file_path, mode="r", encoding="utf-8") as csvfile:
+        with open(file_path, mode="r", encoding="utf-8-sig") as csvfile:
             reader = csv.DictReader(csvfile)
             records = list(reader)
 
@@ -82,15 +82,15 @@ def save_communication_csv(fb_data, save_db):
     updated = False
     for i, row in enumerate(records):
         if row.get("title") == fb_data.get("title"):
-            records[i] = {k: str(fb_data.get(k, "")) for k in fieldnames}
+            records[i] = {k: str(fb_data.get(k, "")).replace('\r\n', '').replace('\r', '').replace('\n', '') for k in fieldnames}
             updated = True
             break
 
     if not updated:
-        records.append({k: str(fb_data.get(k, "")) for k in fieldnames})
+        records.append({k: str(fb_data.get(k, "")).replace('\r\n', '').replace('\r', '').replace('\n', '') for k in fieldnames})
 
     # 全体を書き戻し（上書き保存）
-    with open(file_path, mode="w", newline="", encoding="utf-8") as csvfile:
+    with open(file_path, mode="w", newline="", encoding="utf-8-sig") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(records)
