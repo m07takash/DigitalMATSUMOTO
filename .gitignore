@@ -200,4 +200,5 @@ user/common/csv/*
 user/session*/
 user/common/analytics/*
 test/*
+!test/Sample*.xlsx
 backup/
