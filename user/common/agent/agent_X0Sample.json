@@ -101,7 +101,7 @@
         {
             "RAG_NAME": "Experience",
             "RETRIEVER": "Vector",
-            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"Sample02_Memo"},{"DATA_TYPE":"DB", "DATA_NAME":"Sample03_Feedback"}],
+            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"Sample02_Memo","META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}},{"DATA_TYPE":"DB", "DATA_NAME":"Sample03_Feedback","META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}}],
             "TIMESTAMP": "CREATE_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
             "HEADER_TEMPLATE": "以下はこれまであなたが学んできたことです。\n",
