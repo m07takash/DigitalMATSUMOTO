@@ -2,6 +2,7 @@ import os
 import csv
 import json
 import ast
+import sqlite3
 import chromadb
 from chromadb.errors import NotFoundError
 import re
@@ -13,14 +14,12 @@ import DigiM_Util as dmu
 import DigiM_Tool as dmt
 import DigiM_Notion as dmn
 
-
 # system.envファイルをロードして環境変数を設定
 load_dotenv("system.env")
 mst_folder_path = os.getenv("MST_FOLDER")
 prompt_template_mst_file = os.getenv("PROMPT_TEMPLATE_MST_FILE")
 prompt_temp_mst_path = mst_folder_path + prompt_template_mst_file
 rag_mst_file = os.getenv("RAG_MST_FILE")
-rag_folder_json_path = os.getenv("RAG_FOLDER_JSON")
 rag_folder_db_path = os.getenv("RAG_FOLDER_DB")
 notion_db_mst_file = os.getenv("NOTION_MST_FILE")
 
@@ -43,7 +42,6 @@ def create_contents_context(agent_data, contents, seq=0, sub_seq=0):
         file_seq += 1
 
     return contents_context, contents_records, image_files
-
 
 # アップロードしたファイルからコンテンツテキストを取得
 def get_text_content(agent_data, content, seq, sub_seq, file_seq):
@@ -93,7 +91,6 @@ def set_prompt_template(prompt_temp_cd):
         prompt_template = prompt_template + prompt_temp +"\n"
     return prompt_template
 
-
 # RAGデータ一覧の取得
 def get_rag_list():
     rag_list = []
@@ -103,15 +100,13 @@ def get_rag_list():
     collections = db_client.list_collections()
     rag_list += [col.name for col in collections]
 
-    #JSONから取得
-    identifier="_vec.json"
-    rag_list += [r.replace(identifier, "") for r in dmu.get_files(rag_folder_json_path, identifier)]
+    #昇順に並び替え
+    rag_list.sort()
 
     return rag_list
 
 # RAGデータの取得
 def select_rag_vector(rag_data_list, rag={}):
-    total_characters = 0
     buffer = 100
     rag_all = []
     rag_selected = []
@@ -173,23 +168,13 @@ def create_rag_context(query, query_vecs=[], rags=[], meta_searches=[]):
         rag_data_list = []
         for rag_data in rag["DATA"]:
             query_seq = 0
-            if rag_data["DATA_TYPE"] == "JSON":
-                for query_vec in query_vecs:
-                    rag_data_file = rag_data["DATA_NAME"] +'_vec.json'
-                    rag_data_json = dmu.read_json_file(rag_data_file, rag_folder_json_path)
-                    for k, v in rag_data_json.items():
-                        similarity_prompt = dmu.calculate_similarity_vec(query_vec, v["vector_data_key_text"], rag["DISTANCE_LOGIC"])
-                        v["similarity_prompt"] = round(similarity_prompt,3)
-                        v["query_seq"] = query_seq
-                        rag_data_list.append(v)
-                    query_seq+=1
-
-            elif rag_data["DATA_TYPE"] == "DB":
+            if rag_data["DATA_TYPE"] == "DB":
                 for query_vec in query_vecs:
                     db_client = chromadb.PersistentClient(path=rag_folder_db_path)
                     try:
                         collection = db_client.get_collection(rag_data["DATA_NAME"])
     
+                        #DBから取得するチャンクの上限を設定
                         result_limit = 50
                         if collection.count() <= 50:
                             result_limit = collection.count()
@@ -256,13 +241,10 @@ def create_rag_context(query, query_vecs=[], rags=[], meta_searches=[]):
                 filtered_data[rag_data_id] = rag_data
             elif rag_data["similarity_prompt"] < filtered_data[rag_data_id]["similarity_prompt"]:
                 filtered_data[rag_data_id] = rag_data
-#            else:
-#                print("RAGデータ被り["+rag_data_id+"]:"+rag_data["db"]+" "+rag_data["title"]+" "+str(rag_data["similarity_prompt"]))
         rag_data_list = list(filtered_data.values())
         
         # RAGデータの選択       
         if rag["RETRIEVER"] == "Vector":
-#            rag_context, rag_selected = select_rag_vector(query_vec, rag_data_list, rag)    
             rag_context, rag_selected = select_rag_vector(rag_data_list, rag)    
             rag_final_context += rag_context
             rag_final_selected += rag_selected
@@ -290,9 +272,6 @@ def get_rag_similarity_response(response_vec, rag_selected, logic="Cosine"):
         rag_data["log"] = rag_data["log_format"].format(**chunk_items)
         
         # 記録用のデータセット
-#        keys_to_remove = ["vector_data_key_text", "vector_data_value_text", "log_format"] #一部のキーを除く
-#        for key in keys_to_remove:
-#            rag_data.pop(key, None)
         rag_ref.append(rag_data["log"])
     return rag_ref
 
@@ -316,13 +295,6 @@ def get_memory_similarity_response(response_vec, memory_selected, logic="Cosine"
         # 記録用のデータセット
         memory_ref.append(
             {
-#                "seq": seq,
-#                "sub_seq": sub_seq,
-#                "type": type,
-#                "timestamp": timestamp,
-#                "text": text,
-#                "similarity_prompt": similarity_prompt, 
-#                "similarity_response": similarity_response, 
                 "log": memory_ref_log
             }
         )
@@ -424,36 +396,6 @@ def get_chunk_notion(bucket, db_name, item_dict, chk_dict=None, date_dict=None, 
             rag_data.append(page_items)
     return rag_data
 
-
-# RAGチャンクデータの編集(JSON)
-def save_rag_chunk_json(rag_data, rag_data_file):
-    rag_data_file_updated = {}
-    cnt_add = 0 
-    cnt_extent = 0
-
-    # RAGデータをcreate_dateで降順に並び替え
-    if "create_date" in rag_data[0]:
-        rag_data = sorted(rag_data, key=lambda x: x["create_date"], reverse=True)
-
-    # 対象ドキュメントのベクトルデータを作成
-    for rag_chunk in rag_data:
-        if rag_chunk['id'] not in rag_data_file:
-            if rag_chunk['value_text']:
-                vec_key_text = dmu.embed_text(rag_chunk['key_text'].replace("\n", ""))
-                vec_value_text = dmu.embed_text(rag_chunk['value_text'].replace("\n", ""))
-                rag_data_file_updated[rag_chunk['id']] = rag_chunk
-                rag_data_file_updated[rag_chunk['id']]['vector_data_key_text'] = vec_key_text
-                rag_data_file_updated[rag_chunk['id']]['vector_data_value_text'] = vec_value_text
-                print(f"{rag_chunk['title']}を知識情報ファイル(JSON)に追加しました。")
-                cnt_add+=1
-        else:
-            rag_data_file_updated[rag_chunk['id']] = rag_data_file[rag_chunk['id']]
-            print(f"{rag_chunk['title']}は知識情報ファイル(JSON)に存在しています。")
-            cnt_extent+=1
-
-    return rag_data_file_updated, cnt_add, cnt_extent
-
-
 # RAGチャンクデータの編集(ChromaDB)
 def save_rag_chunk_db(rag_id, rag_data):
     db_client = chromadb.PersistentClient(path=rag_folder_db_path)
@@ -541,33 +483,28 @@ def generate_rag():
                 print("正しいモードが設定されていません。")
 
             if rag_data:
-                # JSONでの保存
-                if rag_setting["data_type"] == "json":
-                    rag_data_file_name = rag_folder_json_path + rag_id +'_vec.json'
-                    rag_data_file = dmu.read_json_file(rag_data_file_name)
-        
-                    # チャンクデータの編集
-                    rag_data_file_updated, cnt_add, cnt_extent = save_rag_chunk_json(rag_data, rag_data_file)
-                    
-                    # RAG用ベクトルデータの保存
-                    cnt_total = cnt_add + cnt_extent
-                    if os.path.exists(rag_data_file_name):
-                        os.remove(rag_data_file_name)
-                    with open(rag_data_file_name, 'w') as file:
-                        json.dump(rag_data_file_updated, file, indent=4)
-                        print(f"{rag_id}のJSON書き込みが完了しました。追加件数:{cnt_add}, トータル件数:{cnt_total}")
-    
                 # ChromaDBでの保存
-                elif rag_setting["data_type"] == "chromadb":
+                if rag_setting["data_type"] == "chromadb":
                     cnt_add, cnt_extent = save_rag_chunk_db(rag_id, rag_data)
                     cnt_total = cnt_add + cnt_extent
                     print(f"{rag_id}のDB書き込みが完了しました。追加件数:{cnt_add}, トータル件数:{cnt_total}")
 
 # RAGデータベース（Collection）の削除
-def del_rag_db():
+def del_rag_db(ragdb_selected=[]):
     db_client = chromadb.PersistentClient(path=rag_folder_db_path)
     collections = db_client.list_collections()
-    for collection in collections:
-        collection_name = collection.name
-        db_client.delete_collection(name=collection_name)
-        print(collection_name + "を削除しました。")
+    if ragdb_selected:
+        for collection_name in ragdb_selected:
+            db_client.delete_collection(name=collection_name)
+            print(collection_name + "を削除しました。")
+    else:
+        for collection in collections:
+            collection_name = collection.name
+            db_client.delete_collection(name=collection_name)
+            print(collection_name + "を削除しました。")
+    
+    #SQLite3の物理容量を解放
+    conn = sqlite3.connect(rag_folder_db_path+'chroma.sqlite3')
+    conn.execute("VACUUM;")  # 空き領域を削除してファイルサイズを縮小
+    conn.close()
+

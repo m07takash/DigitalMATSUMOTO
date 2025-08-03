@@ -8,6 +8,7 @@ import pytz
 from dotenv import load_dotenv
 import streamlit as st
 import threading
+import pandas as pd
 
 import DigiM_Execute as dme
 import DigiM_Session as dms
@@ -40,9 +41,6 @@ if 'character_folder_path' not in st.session_state:
     st.session_state.character_folder_path = os.getenv("CHARACTER_FOLDER")
 if 'prompt_template_mst_file' not in st.session_state:
     st.session_state.prompt_template_mst_file = os.getenv("PROMPT_TEMPLATE_MST_FILE")
-#if 'feedback_item_list' not in st.session_state:
-#    feedback_item_list = os.getenv("FEEDBACK_ITEM_LIST")
-#    st.session_state.feedback_item_list = feedback_item_list.split(",") if feedback_item_list else []
 
 # 時刻の設定
 tz = pytz.timezone(st.session_state.timezone_setting)
@@ -112,7 +110,6 @@ def refresh_session(session_id, session_name, situation, new_session_flg=False):
     if new_session_flg:
         st.session_state.display_name = st.session_state.default_agent
     else:
-        #st.session_state.display_name = st.session_state.session.get_history_max_agent()
         st.session_state.display_name = dma.get_agent_item(dms.get_agent_file(st.session_state.session.session_id), "DISPLAY_NAME")
     st.session_state.time_setting = situation["TIME"]
     st.session_state.situation_setting = situation["SITUATION"]
@@ -199,7 +196,7 @@ def main():
         if side_col2.button("Refresh List", key="refresh_session_list"):
             st.session_state.session_list = dms.get_session_list_visible()
         num_session_visible = st.number_input(label="Visible Sessions", value=5, step=1, format="%d")
-
+    
         # 知識更新の処理
         rag_expander = st.expander("RAG Management")
         with rag_expander:
@@ -233,135 +230,6 @@ def main():
     # チャットセッション名の設定
     if session_name := st.text_input("Chat Name:", value=st.session_state.session.session_name):
         st.session_state.session = dms.DigiMSession(st.session_state.session.session_id, session_name)
-
-    # オーバーライトの設定
-    overwrite_expander = st.expander("Overwrite Setting")
-    overwrite_persona = {}
-    overwrite_prompt_temp = {}
-    overwrite_rag = {}
-    overwrite_rag_list = []    
-    overwrite_tool = {}
-    with overwrite_expander:
-        # ペルソナ
-        st.subheader("Persona")
-        if st.checkbox("Overwrite", key="overwrite_flg_persona"):
-            st.session_state.persona_name = st.text_input("Persona Name:", value=agent_data["NAME"])
-            st.session_state.persona_act = st.text_input("Persona Act:", value=agent_data["ACT"])
-            persona_col1, persona_col2, persona_col3 = st.columns(3)
-            persona_sex = agent_data["PERSONALITY"]["SEX"] if agent_data["PERSONALITY"] else ""
-            st.session_state.persona_sex = persona_col1.text_input("Sex:", value=persona_sex)
-            persona_birthday = agent_data["PERSONALITY"]["BIRTHDAY"] if agent_data["PERSONALITY"] else ""
-            st.session_state.persona_birthday = persona_col1.text_input("Birthday:", value=persona_birthday)
-            persona_is_alive = agent_data["PERSONALITY"]["IS_ALIVE"] if agent_data["PERSONALITY"] else True
-            if persona_col1.checkbox("IS_ALIVE", value=persona_is_alive):
-                st.session_state.persona_is_alive = True
-            else:
-                st.session_state.persona_is_alive = False
-            persona_nationality = agent_data["PERSONALITY"]["NATIONALITY"] if agent_data["PERSONALITY"] else ""
-            st.session_state.persona_nationality = persona_col2.text_input("Nationality:", value=persona_nationality)
-            st.session_state.persona_big5 = {}
-            if agent_data["PERSONALITY"]:
-                persona_big5_openness = agent_data["PERSONALITY"]["BIG5"]["Openness"] if agent_data["PERSONALITY"]["BIG5"] else ""
-                st.session_state.persona_big5["Openness"] = persona_col3.number_input("Big5 Openness:", value=persona_big5_openness, step=0.01, format="%.2f")
-                persona_big5_conscientiousness = agent_data["PERSONALITY"]["BIG5"]["Conscientiousness"] if agent_data["PERSONALITY"]["BIG5"] else ""
-                st.session_state.persona_big5["Conscientiousness"] = persona_col3.number_input("Big5 Conscientiousness:", value=persona_big5_conscientiousness, step=0.01, format="%.2f")
-                persona_big5_extraversion = agent_data["PERSONALITY"]["BIG5"]["Extraversion"] if agent_data["PERSONALITY"]["BIG5"] else ""
-                st.session_state.persona_big5["Extraversion"] = persona_col3.number_input("Big5 Extraversion:", value=persona_big5_extraversion, step=0.01, format="%.2f")
-                persona_big5_agreeableness = agent_data["PERSONALITY"]["BIG5"]["Agreeableness"] if agent_data["PERSONALITY"]["BIG5"] else ""
-                st.session_state.persona_big5["Agreeableness"] = persona_col3.number_input("Big5 Agreeableness:", value=persona_big5_agreeableness, step=0.01, format="%.2f")
-                persona_big5_neuroticism = agent_data["PERSONALITY"]["BIG5"]["Neuroticism"] if agent_data["PERSONALITY"]["BIG5"] else ""               
-                st.session_state.persona_big5["Neuroticism"] = persona_col3.number_input("Big5 Neuroticism:", value=persona_big5_neuroticism, step=0.01, format="%.2f")
-            persona_language = agent_data["PERSONALITY"]["LANGUAGE"] if agent_data["PERSONALITY"] else ""
-            st.session_state.persona_language = persona_col2.text_input("Language:", value=persona_language)
-            persona_speaking_style = agent_data["PERSONALITY"]["SPEAKING_STYLE"] if agent_data["PERSONALITY"] else ""
-            index_speaking_style = speaking_style_list.index(persona_speaking_style) if persona_speaking_style in speaking_style_list else 0
-            st.session_state.persona_speaking_style = persona_col2.selectbox("Speaking Style:", speaking_style_list, index=index_speaking_style)
-            persona_character = agent_data["PERSONALITY"]["CHARACTER"] if agent_data["PERSONALITY"] else ""
-            if persona_character.strip().endswith(".txt"):
-                persona_character_text = str(dmu.read_text_file(persona_character, st.session_state.character_folder_path))
-            else:
-                persona_character_text = persona_character
-            st.session_state.persona_character = st.text_area("Persona Character:", value=persona_character_text, height=400)
-            overwrite_persona["NAME"] = st.session_state.persona_name
-            overwrite_persona["ACT"] = st.session_state.persona_act
-            overwrite_persona["PERSONALITY"] = {}
-            overwrite_persona["PERSONALITY"]["SEX"] = st.session_state.persona_sex
-            overwrite_persona["PERSONALITY"]["BIRTHDAY"] = st.session_state.persona_birthday
-            overwrite_persona["PERSONALITY"]["IS_ALIVE"] = st.session_state.persona_is_alive
-            overwrite_persona["PERSONALITY"]["NATIONALITY"] = st.session_state.persona_nationality
-            overwrite_persona["PERSONALITY"]["BIG5"] = st.session_state.persona_big5
-            overwrite_persona["PERSONALITY"]["LANGUAGE"] = st.session_state.persona_language
-            overwrite_persona["PERSONALITY"]["SPEAKING_STYLE"] = st.session_state.persona_speaking_style
-            overwrite_persona["PERSONALITY"]["CHARACTER"] = st.session_state.persona_character
-        else:
-            overwrite_persona = {}
-        st.markdown("")
-        st.markdown("***Agent Setting:***")
-        st.markdown(overwrite_persona)
-
-        # RAG
-        st.markdown("----")
-        st.subheader("KNOWLEDGE(RAG)")
-        rag_datasets = dmc.get_rag_list()
-        rag_distance_logics = ["Cosine", "Euclidean", "Manhattan", "Chebychev"]
-        if st.checkbox("Overwrite", key="overwrite_flg_rag"):
-            overwrite_rag_list = []
-            overwrite_rag["KNOWLEDGE"] = overwrite_rag_list
-            i = 0
-            for rag_dict in agent_data["KNOWLEDGE"]:
-                st.markdown(f"***RAG Dataset {i}:***")
-                rag_selects = rag_dict["DATA"]
-                rag_col1, rag_col2 = st.columns(2)
-                #【】
-                st.session_state.rag_data = rag_col1.multiselect("RAG Data: ", rag_datasets, default=rag_selects)
-                st.session_state.rag_text_limits = rag_col2.number_input("RAG Text Limits:", value=rag_dict["TEXT_LIMITS"], step=1)
-                st.session_state.rag_distance_logic = rag_col2.selectbox(
-                    "RAG Distance Logic:", rag_distance_logics, 
-                    index=rag_distance_logics.index(rag_dict["DISTANCE_LOGIC"]), 
-                    key=f"rag_distance_logic{i}"
-                )
-                st.session_state.rag_header_temp = st.text_area("RAG Prompt(Header):", value=rag_dict["HEADER_TEMPLATE"], height=100)
-                st.session_state.rag_chunk_temp = st.text_area(
-                    "RAG Prompt(Chunk):  [設定] {title}:タイトル, {days_difference}:タイムスタンプとの日数, {similarity}:質問との距離, {text}:チャンク本文",
-                    value=rag_dict["CHUNK_TEMPLATE"], height=100
-                )
-                st.markdown("")        
-                overwrite_rag_dict = {
-                    "DATA": st.session_state.rag_data,
-                    "HEADER_TEMPLATE": st.session_state.rag_header_temp,
-                    "CHUNK_TEMPLATE": st.session_state.rag_chunk_temp,
-                    "TEXT_LIMITS": st.session_state.rag_text_limits,
-                    "DISTANCE_LOGIC": st.session_state.rag_distance_logic
-                }
-                overwrite_rag_list.append(overwrite_rag_dict)
-                i += 1
-            overwrite_rag["KNOWLEDGE"] = overwrite_rag_list
-        else:
-            overwrite_rag = {}
-        st.markdown("")
-        st.markdown("***Agent Setting:***")
-        st.markdown(overwrite_rag)
-        
-        # Tool
-        st.markdown("----")
-        st.subheader("SKILL(TOOL)")
-        if st.checkbox("Overwrite", key="overwrite_flg_tool"):
-            overwrite_tool_list = []
-            overwrite_tool["SKILL"] = {}
-            overwrite_tool["SKILL"]["TOOL_LIST"] = overwrite_tool_list
-           # TOOL_LISTはマルチセレクト
-            # CHOICEはシングルセレクト
-#        overwrite_items = {
-#            "SKILL": {
-#                "TOOL_LIST": [
-#                    {"type": "function", "function": {"name": "default_tool"}}
-#                ],
-#                "CHOICE": "none"
-#            }
-#        }
-        st.markdown("")
-        st.markdown("***Agent Setting:***")
-        st.markdown(overwrite_tool)
 
     # Webパーツのレイアウト
     header_col1, header_col2, header_col3, header_col4 = st.columns(4)
@@ -528,12 +396,7 @@ def main():
                 st.session_state.seq_memory.append(k)
 
     # ファイルアップローダー
-#    st.session_state.uploaded_files = st.session_state.file_uploader("Attached Files:", type=["txt", "csv", "xlsx", "jpg", "jpeg", "png", "mp4", "mov", "avi", "mp3", "wav"], accept_multiple_files=True)
-#    if st.session_state.uploaded_files:
-#        show_uploaded_files_widget(st.session_state.uploaded_files)
-#    uploaded_files = st.file_uploader("Attached Files:", type=["txt", "csv", "xlsx", "jpg", "jpeg", "png", "mp4", "mov", "avi", "mp3", "wav"], accept_multiple_files=True)
     uploaded_files = st.file_uploader("Attached Files:", type=["txt", "csv", "jpg", "jpeg", "png"], accept_multiple_files=True)
-#    if uploaded_files:
     st.session_state.uploaded_files = uploaded_files
     show_uploaded_files_widget(st.session_state.uploaded_files)
     
@@ -549,9 +412,6 @@ def main():
                 uploaded_contents.append(uploaded_file_path)
         # オーバーライト項目の設定
         overwrite_items = {}
-#        overwrite_items.update(overwrite_persona)
-#        overwrite_items.update(overwrite_prompt_temp)
-#        overwrite_items.update(overwrite_rag)
 
         # シチュエーションの設定
         situation = {}
