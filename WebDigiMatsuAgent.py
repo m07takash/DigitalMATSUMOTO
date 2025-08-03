@@ -221,7 +221,7 @@ def main():
                 session_id_list = str(session_num)
                 session_key_list = st.session_state.session_folder_prefix + session_id_list
                 session_name_list = dms.get_session_name(session_id_list)
-                session_name_btn = session_name_list[:16]
+                session_name_btn = session_name_list[:12]
                 situation = dms.get_situation(session_id_list)
                 if not situation:
                     situation["TIME"] = now_time.strftime("%Y/%m/%d %H:%M:%S")
@@ -504,7 +504,7 @@ def main():
                                             feedback[fb_item]["visible"] = False
 
                                     if st.button("Feedback", key=f"feedback_btn{k}_{k2}"):
-                                        for fb_item in agent_communication["FEEDBACK_ITEM_LIST"]: #st.session_state.feedback_item_list:
+                                        for fb_item in agent_communication["FEEDBACK_ITEM_LIST"]:
                                             if feedback[fb_item]["memo"]!=feedback[fb_item]["saved_memo"] and feedback[fb_item]["memo"]!="":
                                                 feedback[fb_item]["flg"] = True
                                             if feedback[fb_item]["memo"]=="":
@@ -513,7 +513,7 @@ def main():
                                         if any(k != "name" for k in fb_item):
                                             st.session_state.session.set_feedback_history(k, k2, feedback)
                                             dmgc.create_communication_data(st.session_state.session.session_id, v2["setting"]["agent_file"])
-                                            st.session_state.sidebar_message = f"フィードバックをログに保存しました({k})"
+                                            st.session_state.sidebar_message = f"フィードバックを保存しました({k})"
                                             st.rerun()
                                         else:
                                             st.session_state.sidebar_message = f"フィードバックに変更はありません({k})"
