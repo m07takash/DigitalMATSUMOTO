@@ -7,6 +7,7 @@
         "file_path": "user/common/csv/",
         "file_name": "Sample01_Quote.csv",
         "field_items": ["speaker", "situation", "quote"],
+        "category_items": [],
         "title": ["speaker", "quote"],
         "key_text": ["speaker", "situation", "quote"],
         "value_text": ["quote"]
@@ -19,6 +20,7 @@
         "file_path": "user/common/csv/",
         "file_name": "Sample02_Memo.csv",
         "field_items": ["create_date", "memo"],
+        "category_items": [],
         "title": ["create_date"],
         "key_text": ["memo"],
         "value_text": ["memo"]
@@ -31,20 +33,41 @@
         "file_path": "user/common/csv/",
         "file_name": "Sample03_Feedback.csv",
         "field_items": ["speaker", "create_date", "feedback"],
+        "category_items": [],
         "title": ["speaker", "create_date"],
         "key_text": ["speaker", "feedback"],
         "value_text": ["feedback"]
     },
-    "Communication":{
+    "Communication_Memo":{
         "active": "Y",
         "input" : "csv",
         "data_type" : "chromadb",
-        "bucket": "Communication",
+        "bucket": "Communication_Memo",
         "file_path": "user/common/csv/",
-        "file_name": "Communication.csv",
+        "file_name": "Sample00_Communication.csv",
         "field_items": ["title", "RAG_Category", "category", "create_date", "memo", "session_name", "seq", "sub_seq", "query", "response"],
+        "category_items": [
+            {"RAG_Category":["memo"]},
+            {"category":["Feedback"]}
+        ],
         "title": ["title"],
-        "key_text": ["query", "response", "memo"],
+        "key_text": ["memo"],
+        "value_text": ["memo"]
+    },
+    "Communication_Comment":{
+        "active": "Y",
+        "input" : "csv",
+        "data_type" : "chromadb",
+        "bucket": "Communication_Comment",
+        "file_path": "user/common/csv/",
+        "file_name": "Sample00_Communication.csv",
+        "field_items": ["title", "RAG_Category", "category", "create_date", "memo", "session_name", "seq", "sub_seq", "query", "response"],
+        "category_items": [
+            {"RAG_Category":["comment"]},
+            {"category":["Feedback"]}
+        ],
+        "title": ["title"],
+        "key_text": ["memo"],
         "value_text": ["memo"]
     }
 }

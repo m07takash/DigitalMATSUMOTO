@@ -304,54 +304,67 @@ def get_memory_similarity_response(response_vec, memory_selected, logic="Cosine"
 
 
 # RAGのチャンクデータをCSV(utf-8)から生成
-def get_chunk_csv(bucket, file_path, file_name, field_items, title_items, key_text_items, value_text_items):  
+def get_chunk_csv(bucket, file_path, file_name, field_items, title_items, key_text_items, value_text_items, category_items=[]):  
     rag_data = []
     with open(file_path + file_name, 'r', encoding='utf-8') as csvfile:
         reader = csv.DictReader(csvfile, fieldnames=field_items)
         next(reader, None)
 
         for i, row in enumerate(reader):
-            rag_chunk = {}
-            rag_chunk["id"] = bucket+"-"+str(i+1)
-            rag_chunk["bucket"] = bucket
+            data_matched = True
 
-            title = ""
-            for title_item in title_items:
-                if title_item in row:
-                    title += row[title_item]
-                else:
-                    title += title_item
-            rag_chunk["title"] = title
+            # フィルタ処理
+            if category_items:
+                for cond in category_items:
+                    for key, values in cond.items():
+                        cell_value = row.get(key, "").strip().lower()
+                        target_values = [v.lower() for v in values]
+                        if cell_value not in target_values:
+                            data_matched = False
             
-            key_text = ""
-            for key_text_item in key_text_items:
-                if key_text_item in row:
-                    key_text += row[key_text_item]
-                else:
-                    key_text += key_text_item
-            rag_chunk["key_text"] = key_text
+            # 条件に合致したらチャンクを作成
+            if data_matched:
+                rag_chunk = {}
+                rag_chunk["id"] = bucket+"-"+str(i+1)
+                rag_chunk["bucket"] = bucket
 
-            value_text = ""
-            for value_text_item in value_text_items:
-                if value_text_item in row:
-                    value_text += row[value_text_item]
-                else:
-                    value_text += value_text_item
-            rag_chunk["value_text"] = value_text
-            
-            for field_item in field_items:
-                rag_chunk[field_item] = row[field_item]
+                title = ""
+                for title_item in title_items:
+                    if title_item in row:
+                        title += row[title_item]
+                    else:
+                        title += title_item
+                rag_chunk["title"] = title
+                
+                key_text = ""
+                for key_text_item in key_text_items:
+                    if key_text_item in row:
+                        key_text += row[key_text_item]
+                    else:
+                        key_text += key_text_item
+                rag_chunk["key_text"] = key_text
 
-            create_date = datetime.now().strftime("%Y-%m-%d")
-            if "create_date" in row:
-                try:
-                    parsed_date = datetime.strptime(row["create_date"], '%Y/%m/%d')
-                    create_date = parsed_date.strftime('%Y-%m-%d')
-                except ValueError:
-                    create_date = datetime.now().strftime("%Y-%m-%d")
-            rag_chunk["create_date"] = create_date
-            
-            rag_data.append(rag_chunk)
+                value_text = ""
+                for value_text_item in value_text_items:
+                    if value_text_item in row:
+                        value_text += row[value_text_item]
+                    else:
+                        value_text += value_text_item
+                rag_chunk["value_text"] = value_text
+                
+                for field_item in field_items:
+                    rag_chunk[field_item] = row[field_item]
+
+                create_date = datetime.now().strftime("%Y-%m-%d")
+                if "create_date" in row:
+                    try:
+                        parsed_date = datetime.strptime(row["create_date"], '%Y/%m/%d')
+                        create_date = parsed_date.strftime('%Y-%m-%d')
+                    except ValueError:
+                        create_date = datetime.now().strftime("%Y-%m-%d")
+                rag_chunk["create_date"] = create_date
+                
+                rag_data.append(rag_chunk)
     return rag_data
 
 # RAGのチャンクデータをNotionデータベースから生成
@@ -464,8 +477,6 @@ def generate_rag():
     rag_mst_dict = dmu.read_json_file(rag_mst_file, mst_folder_path)
 
     # 各RAGデータを生成
-    rag_data_file = {}
-    rag_data_file_updated = {}
     cnt_add = 0 
     cnt_extent = 0
     
@@ -478,9 +489,9 @@ def generate_rag():
             elif rag_setting["input"] == "csv":
                 if isinstance(rag_setting["file_name"], list):
                     for rag_data_file_name in rag_setting["file_name"]:
-                        rag_data = get_chunk_csv(rag_setting["bucket"], rag_setting["file_path"], rag_data_file_name, rag_setting["field_items"], rag_setting["title"], rag_setting["key_text"], rag_setting["value_text"])
+                        rag_data = get_chunk_csv(rag_setting["bucket"], rag_setting["file_path"], rag_data_file_name, rag_setting["field_items"], rag_setting["title"], rag_setting["key_text"], rag_setting["value_text"], rag_setting["category_items"])
                 else:
-                    rag_data = get_chunk_csv(rag_setting["bucket"], rag_setting["file_path"], rag_setting["file_name"], rag_setting["field_items"], rag_setting["title"], rag_setting["key_text"], rag_setting["value_text"])
+                    rag_data = get_chunk_csv(rag_setting["bucket"], rag_setting["file_path"], rag_setting["file_name"], rag_setting["field_items"], rag_setting["title"], rag_setting["key_text"], rag_setting["value_text"], rag_setting["category_items"])
             else:
                 print("正しいモードが設定されていません。")
 
