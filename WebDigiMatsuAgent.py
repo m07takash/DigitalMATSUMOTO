@@ -1,13 +1,9 @@
 import os
-import json
-import math
-import time
 import datetime
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 from dotenv import load_dotenv
 import streamlit as st
-import threading
 import pandas as pd
 
 import DigiM_Execute as dme
@@ -67,6 +63,10 @@ def initialize_session_states():
         st.session_state.agent_file = st.session_state.agents[st.session_state.agent_list_index]["FILE"]
     if 'agent_data' not in st.session_state:
         st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, st.session_state.agent_folder_path)
+    if 'rag_data_list' not in st.session_state:
+        st.session_state.rag_data_list = dmc.get_rag_list()
+    if 'rag_data_list_selected' not in st.session_state:
+        st.session_state.rag_data_list_selected = []
     if 'session_list' not in st.session_state:
         st.session_state.session_list = dms.get_session_list_visible()
     if 'session' not in st.session_state:
@@ -164,12 +164,6 @@ def show_uploaded_files_widget(uploaded_files):
 def main():
     # セッションステートを初期化
     initialize_session_states()
-    
-    # プロンプトテンプレートの初期値
-    prompt_temp_mst_path = st.session_state.mst_folder_path + st.session_state.prompt_template_mst_file
-    prompt_temps_json = dmu.read_json_file(prompt_temp_mst_path)
-    prompt_format_list = list(prompt_temps_json["PROMPT_TEMPLATE"].keys())
-    speaking_style_list = list(prompt_temps_json["SPEAKING_STYLE"].keys())
 
     # サイドバーの設定
     with st.sidebar:
@@ -200,12 +194,17 @@ def main():
         # 知識更新の処理
         rag_expander = st.expander("RAG Management")
         with rag_expander:
+            # RAGの更新処理
             if st.button("Update RAG Data", key="update_rag"):
                 dmc.generate_rag()
                 st.session_state.sidebar_message = "RAGの更新が完了しました"
+            
+            # RAGの削除処理(未選択は全削除)
+            st.session_state.rag_data_list_selected = st.multiselect("RAG DB", st.session_state.rag_data_list)
             if st.button("Delete RAG DB", key="delete_rag_db"):
-                dmc.del_rag_db()
+                dmc.del_rag_db(st.session_state.rag_data_list_selected)
                 st.session_state.sidebar_message = "RAGを削除しました"
+                st.session_state.rag_data_list = dmc.get_rag_list()
         
         st.write(st.session_state.sidebar_message)
 

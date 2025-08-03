@@ -1,7 +1,9 @@
 import os
+import shutil
 import csv
 import json
 import ast
+import pandas as pd
 import sqlite3
 import chromadb
 from chromadb.errors import NotFoundError
@@ -492,19 +494,52 @@ def generate_rag():
 # RAGデータベース（Collection）の削除
 def del_rag_db(ragdb_selected=[]):
     db_client = chromadb.PersistentClient(path=rag_folder_db_path)
-    collections = db_client.list_collections()
+
+    #SQLite3に接続
+    conn = sqlite3.connect(rag_folder_db_path+'chroma.sqlite3')
+
     if ragdb_selected:
+        # 削除対象のデータフレームを取得
+        placeholders = ','.join(['?'] * len(ragdb_selected))  # '?,?,?'
+        query = f"SELECT id AS collection_id, name FROM collections WHERE name IN ({placeholders})"
+        collections_df = pd.read_sql_query(query, conn, params=ragdb_selected)
+        segments_df = pd.read_sql_query("SELECT id AS segment_id, collection AS collection_id , type, scope FROM segments WHERE scope = 'VECTOR'", conn)
+        merged_df = pd.merge(segments_df, collections_df, on="collection_id", how="inner")
+        
         for collection_name in ragdb_selected:
             db_client.delete_collection(name=collection_name)
+            target_segments = merged_df[merged_df["name"] == collection_name]["segment_id"].tolist()
+            for segment_id in target_segments:
+                seg_path = rag_folder_db_path+segment_id
+                if os.path.exists(seg_path):
+                    shutil.rmtree(seg_path)
+                    print(f"Deleted: {seg_path}")
+                else:
+                    print(f"Not found: {seg_path}")
             print(collection_name + "を削除しました。")
     else:
+        # 削除対象のデータフレームを取得
+        query = "SELECT id AS collection_id, name FROM collections"
+        collections_df = pd.read_sql_query(query, conn, params=ragdb_selected)
+        segments_df = pd.read_sql_query("SELECT id AS segment_id, collection AS collection_id , type, scope FROM segments WHERE scope = 'VECTOR'", conn)
+        merged_df = pd.merge(segments_df, collections_df, on="collection_id", how="inner")
+
+        collections = db_client.list_collections()
         for collection in collections:
             collection_name = collection.name
             db_client.delete_collection(name=collection_name)
+            target_segments = merged_df[merged_df["name"] == collection_name]["segment_id"].tolist()
+            for segment_id in target_segments:
+                seg_path = rag_folder_db_path+segment_id
+                if os.path.exists(seg_path):
+                    shutil.rmtree(seg_path)
+                    print(f"Deleted: {seg_path}")
+                else:
+                    print(f"Not found: {seg_path}")
             print(collection_name + "を削除しました。")
     
     #SQLite3の物理容量を解放
-    conn = sqlite3.connect(rag_folder_db_path+'chroma.sqlite3')
-    conn.execute("VACUUM;")  # 空き領域を削除してファイルサイズを縮小
+    conn.execute("VACUUM;")  
+
     conn.close()
 
