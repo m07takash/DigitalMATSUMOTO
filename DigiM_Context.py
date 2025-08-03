@@ -343,22 +343,26 @@ def get_chunk_csv(bucket, file_path, file_name, field_items, title_items, key_te
 
             title = ""
             for title_item in title_items:
-                title += row[title_item]
+                if title_item in row:
+                    title += row[title_item]
+                else:
+                    title += title_item
             rag_chunk["title"] = title
-
-            value_text = ""
-            for value_text_item in value_text_items:
-                value_text += row[value_text_item]
-            rag_chunk["value_text"] = value_text
             
             key_text = ""
             for key_text_item in key_text_items:
-                key_text += row[key_text_item]
+                if key_text_item in row:
+                    key_text += row[key_text_item]
+                else:
+                    key_text += key_text_item
             rag_chunk["key_text"] = key_text
 
             value_text = ""
             for value_text_item in value_text_items:
-                value_text += row[value_text_item]
+                if value_text_item in row:
+                    value_text += row[value_text_item]
+                else:
+                    value_text += value_text_item
             rag_chunk["value_text"] = value_text
             
             for field_item in field_items:
@@ -408,10 +412,6 @@ def get_chunk_notion(bucket, db_name, item_dict, chk_dict=None, date_dict=None, 
                         if isinstance(item, dict):
                             for k, v in item.items():
                                 page_item_text += dmn.get_notion_item_by_id(pages, page_id, k, v)
-#                                if i == 0:
-#                                    page_item_text += dmn.get_notion_item_by_id(pages, page_id, k, v)
-#                                else:
-#                                    page_item_text += "\n"+ dmn.get_notion_item_by_id(pages, page_id, k, v)
                         else:
                             page_item_text += item
                     page_items[key] = page_item_text
@@ -481,7 +481,7 @@ def save_rag_chunk_db(rag_id, rag_data):
                     if key in rag_chunk:
                         del rag_chunk[key]
                 rag_chunk["vector_data_value_text"] = str(vec_value_text)
-                # DBコレクションに追加（重複していれば更新）
+                # DBコレクションに追加
                 collection.add(
                     ids=[chunk_id],
                     embeddings=[vec_key_text],
@@ -490,8 +490,26 @@ def save_rag_chunk_db(rag_id, rag_data):
                 print(f"{rag_chunk['title']}を知識情報DBに追加しました。")
                 cnt_add+=1
             else:
-                print(f"{rag_chunk['title']}は知識情報DBに存在しています。")
-                cnt_extent+=1
+                existing_data = response["metadatas"][response["ids"].index(chunk_id)] 
+                if rag_chunk["title"] == existing_data["title"] and rag_chunk["key_text"] == existing_data["key_text"] and rag_chunk["value_text"] == existing_data["value_text"]:
+                    print(f"{rag_chunk['title']}は知識情報DBに存在しています。")
+                    cnt_extent+=1
+                else:
+                    vec_key_text = dmu.embed_text(rag_chunk["key_text"].replace("\n", ""))
+                    vec_value_text = dmu.embed_text(rag_chunk["value_text"].replace("\n", ""))
+                    for key in ["id"]:
+                        if key in rag_chunk:
+                            del rag_chunk[key]
+                    rag_chunk["vector_data_value_text"] = str(vec_value_text)
+                    # DBコレクションに追加（重複しているので一度削除して更新）
+                    collection.delete(ids=[chunk_id])
+                    collection.add(
+                        ids=[chunk_id],
+                        embeddings=[vec_key_text],
+                        metadatas=rag_chunk
+                    )
+                    print(f"{rag_chunk['title']}を知識情報DBで更新しました。")
+                    cnt_add+=1
 
     return cnt_add, cnt_extent
 
@@ -514,7 +532,11 @@ def generate_rag():
             if rag_setting["input"] == "notion":
                 rag_data = get_chunk_notion(rag_setting["bucket"], rag_setting["data_name"], rag_setting["item_dict"], rag_setting["chk_dict"], rag_setting["date_dict"], rag_setting["category_dict"])
             elif rag_setting["input"] == "csv":
-                rag_data = get_chunk_csv(rag_setting["bucket"], rag_setting["file_path"], rag_setting["file_name"], rag_setting["field_items"], rag_setting["title"], rag_setting["key_text"], rag_setting["value_text"])
+                if isinstance(rag_setting["file_name"], list):
+                    for rag_data_file_name in rag_setting["file_name"]:
+                        rag_data = get_chunk_csv(rag_setting["bucket"], rag_setting["file_path"], rag_data_file_name, rag_setting["field_items"], rag_setting["title"], rag_setting["key_text"], rag_setting["value_text"])
+                else:
+                    rag_data = get_chunk_csv(rag_setting["bucket"], rag_setting["file_path"], rag_setting["file_name"], rag_setting["field_items"], rag_setting["title"], rag_setting["key_text"], rag_setting["value_text"])
             else:
                 print("正しいモードが設定されていません。")
 
