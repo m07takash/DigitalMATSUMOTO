@@ -110,7 +110,7 @@ def refresh_session(session_id, session_name, situation, new_session_flg=False):
     if new_session_flg:
         st.session_state.display_name = st.session_state.default_agent
     else:
-        st.session_state.display_name = dma.get_agent_item(dms.get_agent_file(st.session_state.session.session_id), "NAME")
+        st.session_state.display_name = dma.get_agent_item(dms.get_agent_file(st.session_state.session.session_id), "DISPLAY_NAME")
     st.session_state.time_setting = situation["TIME"]
     st.session_state.situation_setting = situation["SITUATION"]
     st.session_state.seq_memory = []
