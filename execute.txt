@@ -2,7 +2,7 @@
 jupyter lab --ip=0.0.0.0 --port=8891 --allow-root --no-browser --NotebookApp.token=''
 
 # ターミナルで実行して8893ポートで利用
-streamlit run WebDigiMatsuAgent.py --server.address 0.0.0.01 --server.port 8889
+streamlit run WebDigiMatsuAgent.py --server.address 0.0.0.0 --server.port 8889
 
 # FastAPIを8900ポートで起動
 uvicorn DigiM_API:app --host 0.0.0.0 --port 8900
