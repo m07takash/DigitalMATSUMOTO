@@ -421,10 +421,11 @@ def main():
         with st.chat_message("User"):
             st.markdown(user_input.replace("\n", "<br>"), unsafe_allow_html=True)
         with st.chat_message(st.session_state.web_title):
-            practice=st.session_state.agent_data["HABIT"]
+#            practice=st.session_state.agent_data["HABIT"]
             response_placeholder = st.empty()
             response = ""
-            for response_chunk in dme.DigiMatsuExecute_Practice(st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, practice, st.session_state.memory_use, st.session_state.magic_word_use, st.session_state.stream_mode, st.session_state.save_digest, st.session_state.meta_search, st.session_state.RAG_query_gene):
+#            for response_chunk in dme.DigiMatsuExecute_Practice(st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, practice, st.session_state.memory_use, st.session_state.magic_word_use, st.session_state.stream_mode, st.session_state.save_digest, st.session_state.meta_search, st.session_state.RAG_query_gene):
+            for response_chunk in dme.DigiMatsuExecute_Practice(st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, st.session_state.memory_use, st.session_state.magic_word_use, st.session_state.stream_mode, st.session_state.save_digest, st.session_state.meta_search, st.session_state.RAG_query_gene):
                 response += response_chunk
                 response_placeholder.markdown(response)
             st.rerun()
