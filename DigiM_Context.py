@@ -306,6 +306,11 @@ def get_memory_similarity_response(response_vec, memory_selected, logic="Cosine"
 # RAGのチャンクデータをCSV(utf-8)から生成
 def get_chunk_csv(bucket, file_path, file_name, field_items, title_items, key_text_items, value_text_items, category_items=[]):  
     rag_data = []
+
+    if not os.path.exists(file_path + file_name):
+        print(f"CSVファイルがありません: {file_name}")
+        return rag_data     
+
     with open(file_path + file_name, 'r', encoding='utf-8') as csvfile:
         reader = csv.DictReader(csvfile, fieldnames=field_items)
         next(reader, None)
