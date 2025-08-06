@@ -494,7 +494,7 @@ def generate_rag():
             elif rag_setting["input"] == "csv":
                 if isinstance(rag_setting["file_name"], list):
                     for rag_data_file_name in rag_setting["file_name"]:
-                        rag_data = get_chunk_csv(rag_setting["bucket"], rag_setting["file_path"], rag_data_file_name, rag_setting["field_items"], rag_setting["title"], rag_setting["key_text"], rag_setting["value_text"], rag_setting["category_items"])
+                        rag_data += get_chunk_csv(rag_setting["bucket"], rag_setting["file_path"], rag_data_file_name, rag_setting["field_items"], rag_setting["title"], rag_setting["key_text"], rag_setting["value_text"], rag_setting["category_items"])
                 else:
                     rag_data = get_chunk_csv(rag_setting["bucket"], rag_setting["file_path"], rag_setting["file_name"], rag_setting["field_items"], rag_setting["title"], rag_setting["key_text"], rag_setting["value_text"], rag_setting["category_items"])
             else:
