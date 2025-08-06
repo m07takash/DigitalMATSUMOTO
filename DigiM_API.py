@@ -1,5 +1,5 @@
 import os
-from typing import Optional
+from typing import Dict, Any, Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from pydantic import BaseModel
@@ -13,42 +13,75 @@ import DigiM_Execute as dme
 load_dotenv("system.env")
 api_agent_file = os.getenv("API_AGENT_FILE")
 api_port = os.getenv("API_PORT")
-api_session_name = os.getenv("API_SESSION_NAME")
+api_default_session_name = os.getenv("API_DEFAULT_SESSION_NAME")
 
 app = FastAPI()
 
-# 入力の型定義
+class ServiceInfo(BaseModel):
+    SERVICE_ID: str
+    SERVICE_DATA: Dict[str, Any]
+
+class UserInfo(BaseModel):
+    USER_ID: str
+    USER_DATA: Dict[str, Any]
+
 class InputData(BaseModel):
-    session_id: str
+    service_info: ServiceInfo
+    user_info: UserInfo
+    session_id: Optional[str] = None
+    session_name: Optional[str] = None
     user_input: str
-    user_name: str
-    user_info: str
+    situation: Dict[str, Any]
     agent_file: Optional[str] = None
 
 # 実行する関数(session_idにはLINE ID等のユーザーを一意に指定できるキー)
-def exec_function(session_id: str, user_input: str, user_name: str, user_info: str, agent_file: str) -> tuple[str, str]:
+def exec_function(service_info: dict, user_info: dict, session_id: str, session_name: str, user_input: str, situation: dict, agent_file: str) -> tuple[dict, dict, str, str, str]:
     # セッションの設定（新規でセッションIDを発番）
     if not session_id: 
         session_id = dms.set_new_session_id()
-    session_name = api_session_name +":"+ user_name
-    
-    # シチュエーション
-    in_situation = {}
-    in_situation["SITUATION"] = f"話し相手：{user_name}({user_info})"
+    if not session_name:
+        session_name = f"(User:{user_info['USER_ID']}){api_default_session_name}"
 
     # 実行
     response = ""
-    for response_chunk in dme.DigiMatsuExecute_Practice(session_id, session_name, agent_file, user_input, in_situation=in_situation, stream_mode=True):
-        response += response_chunk 
+    for response_service_info, response_user_info, response_chunk in dme.DigiMatsuExecute_Practice(
+        service_info,
+        user_info,
+        session_id,
+        session_name,
+        agent_file,
+        user_input,
+        in_situation=situation,
+        stream_mode=True
+    ):
+        response += response_chunk
     
-    return session_id, response
+    return response_service_info, response_user_info, session_id, session_name, response
 
 @app.post("/run_function")
 async def run_function(data: InputData):
     agent_file = data.agent_file or api_agent_file
-    session_id, response = exec_function(data.session_id, data.user_input, data.user_name, data.user_info, agent_file)
+
+    # Pydantic → dict に変換
+    service_info = data.service_info.dict()
+    user_info = data.user_info.dict()
+
+    # exec_function 呼び出し
+    service_info, user_info, session_id, session_name, response = exec_function(
+        service_info,
+        user_info,
+        data.session_id,
+        data.session_name,
+        data.user_input,
+        data.situation,
+        agent_file
+    )
+
     return {
+        "service_info": service_info,
+        "user_info": user_info,
         "session_id": session_id,
+        "session_name": session_name,
         "response": response
     }
 

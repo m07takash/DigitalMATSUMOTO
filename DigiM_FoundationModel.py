@@ -78,13 +78,6 @@ def generate_response_T_gpt(query, system_prompt, model, memories=[], image_path
         response = completion.choices[0].message.content
         yield str(prompt), response, completion
 
-#    #レスポンスから出力を抽出
-#    response = completion.choices[0].message.content
-#    prompt_tokens = dmu.count_token(model["TOKENIZER"], model["MODEL"], str(prompt)) #completion.usage.prompt_tokens
-#    response_tokens = dmu.count_token(model["TOKENIZER"], model["MODEL"], response) #completion.usage.completion_tokens
-
-#    return response, completion, prompt_tokens, response_tokens
-
 
 # oシリーズの実行
 def generate_response_T_o(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
@@ -127,13 +120,6 @@ def generate_response_T_o(query, system_prompt, model, memories=[], image_paths=
 
     response = completion.choices[0].message.content
     yield str(prompt), response, completion
-
-#    #レスポンスから出力を抽出
-#    response = completion.choices[0].message.content
-#    prompt_tokens = dmu.count_token(model["TOKENIZER"], model["MODEL"], str(prompt)) #completion.usage.prompt_tokens
-#    response_tokens = dmu.count_token(model["TOKENIZER"], model["MODEL"], response) #completion.usage.completion_tokens
-
-#    return response, completion, prompt_tokens, response_tokens
         
 
 # OpenAIツールの実行(https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses)
@@ -179,13 +165,6 @@ def generate_response_openai_tool(query, system_prompt, model, memories=[], imag
     response = completion.output_text
     yield str(prompt), response, completion
 
-#    #レスポンスから出力を抽出
-#    response = completion.choices[0].message.content
-#    prompt_tokens = dmu.count_token(model["TOKENIZER"], model["MODEL"], str(prompt)) #completion.usage.prompt_tokens
-#    response_tokens = dmu.count_token(model["TOKENIZER"], model["MODEL"], response) #completion.usage.completion_tokens
-
-#    return response, completion, prompt_tokens, response_tokens
-
 
 # Geminiの実行(https://github.com/google-gemini/cookbook/blob/main/gemini-2/get_started.ipynb)
 def generate_response_T_gemini(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
@@ -230,13 +209,6 @@ def generate_response_T_gemini(query, system_prompt, model, memories=[], image_p
         completion = chat.send_message_stream(user_prompt)
         response = completion.text
         yield prompt, response, completion
-    
-    #レスポンスから出力を抽出
-#    response = completion.text
-#    prompt_tokens = completion.usage_metadata.prompt_token_count
-#    response_tokens = completion.usage_metadata.candidates_token_count
-
-#    return response, completion, prompt_tokens, response_tokens
 
 
 # llamaの実行
@@ -279,11 +251,6 @@ def generate_response_T_llama(query, system_prompt, model, memories=[], image_pa
 
     response = completion["choices"][0]["message"]["content"]
     yield query, response, completion
-
-#    prompt_tokens = completion["usage"]["prompt_tokens"]
-#    response_tokens = completion["usage"]["completion_tokens"]
-
-#    return response, completion, prompt_tokens, response
 
 
 # 考察に対する画像生成

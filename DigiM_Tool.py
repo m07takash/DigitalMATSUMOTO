@@ -11,16 +11,16 @@ character_folder_path = os.getenv("CHARACTER_FOLDER")
 mst_folder_path = os.getenv("MST_FOLDER")
 
 # 文字列から関数名を取得
-def call_function_by_name(func_name, *args, **kwargs):
+def call_function_by_name(service_info, user_info, func_name, *args, **kwargs):
     if func_name in globals():
         func = globals()[func_name]
-        return func(*args, **kwargs)  # 引数を関数に渡す
+        return func(service_info, user_info, *args, **kwargs)  # 引数を関数に渡す
     else:
         return "Function not found"
 
 
 # セッションの会話履歴の削除
-def forget_history(session_id, input):
+def forget_history(service_info, user_info, session_id, input):
     session = dms.DigiMSession(session_id)
     chat_history_dict = session.get_history()
 
@@ -29,11 +29,15 @@ def forget_history(session_id, input):
         
     response = "会話履歴を全て忘れました"
     export_contents = []
-    return response, export_contents
+
+    response_service_info = service_info
+    response_user_info = user_info
+    
+    return response_service_info, response_user_info, response, export_contents
 
 
 # セッションの会話履歴の回復
-def remember_history(session_id, input):
+def remember_history(service_info, user_info, session_id, input):
     session = dms.DigiMSession(session_id)
     chat_history_dict = session.get_history()
 
@@ -42,11 +46,15 @@ def remember_history(session_id, input):
         
     response = "会話履歴を全て思い出しました"
     export_contents = []
-    return response, export_contents
+    
+    response_service_info = service_info
+    response_user_info = user_info
+    
+    return response_service_info, response_user_info, response, export_contents
 
 
 # 通常LLMの実行
-def generate_pureLLM(agent_file, query, memories_selected={}, prompt_temp_cd="No Template"):
+def generate_pureLLM(service_info, user_info, agent_file, query, memories_selected={}, prompt_temp_cd="No Template"):
     agent = dma.DigiM_Agent(agent_file)
 
     model_type = "LLM"
@@ -72,11 +80,14 @@ def generate_pureLLM(agent_file, query, memories_selected={}, prompt_temp_cd="No
     prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
     response_tokens = dmu.count_token(tokenizer, model_name, response)
     
-    return response, prompt_tokens, response_tokens
+    response_service_info = service_info
+    response_user_info = user_info
+    
+    return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
 
 # 会話のダイジェスト生成
-def dialog_digest(user_query, memories_selected={}, agent_file="agent_51DialogDigest.json"):
+def dialog_digest(service_info, user_info, user_query, memories_selected={}, agent_file="agent_51DialogDigest.json"):
     agent = dma.DigiM_Agent(agent_file)
 
     model_type = "LLM"
@@ -108,12 +119,15 @@ def dialog_digest(user_query, memories_selected={}, agent_file="agent_51DialogDi
     
     # 出力形式
     response = "【これまでの会話のダイジェスト】\n" + response
-
-    return response, prompt_tokens, response_tokens
+    
+    response_service_info = service_info
+    response_user_info = user_info
+    
+    return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
 
 # テキストから日付の抽出
-def extract_date(user_query, situation_prompt, query_vecs, memories_selected={}, agent_file="agent_55ExtractDate.json"):
+def extract_date(service_info, user_info, user_query, situation_prompt, query_vecs, memories_selected={}, agent_file="agent_55ExtractDate.json"):
     agent = dma.DigiM_Agent(agent_file)
 
     model_type = "LLM"
@@ -138,12 +152,15 @@ def extract_date(user_query, situation_prompt, query_vecs, memories_selected={},
     
     prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
     response_tokens = dmu.count_token(tokenizer, model_name, response)
-
-    return response, model_name, prompt_tokens, response_tokens
+    
+    response_service_info = service_info
+    response_user_info = user_info
+    
+    return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
 
 # テキストからRAGクエリの生成
-def RAG_query_generator(user_query, situation_prompt, query_vecs, memories_selected={}, agent_file="agent_56RAGQueryGenerator.json"):
+def RAG_query_generator(service_info, user_info, user_query, situation_prompt, query_vecs, memories_selected={}, agent_file="agent_56RAGQueryGenerator.json"):
     agent = dma.DigiM_Agent(agent_file)
 
     model_type = "LLM"
@@ -168,12 +185,15 @@ def RAG_query_generator(user_query, situation_prompt, query_vecs, memories_selec
     
     prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
     response_tokens = dmu.count_token(tokenizer, model_name, response)
-
-    return response, model_name, prompt_tokens, response_tokens
+    
+    response_service_info = service_info
+    response_user_info = user_info
+    
+    return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
 
 # テキストの比較
-def compare_texts(head1, text1, head2, text2, query_compare=""):
+def compare_texts(service_info, user_info, head1, text1, head2, text2, query_compare=""):
     agent_file = "agent_53CompareTexts.json"
     agent = dma.DigiM_Agent(agent_file)
 
@@ -201,11 +221,14 @@ def compare_texts(head1, text1, head2, text2, query_compare=""):
     prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
     response_tokens = dmu.count_token(tokenizer, model_name, response)
     
-    return response, prompt_tokens, response_tokens
+    response_service_info = service_info
+    response_user_info = user_info
+    
+    return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
     
 # 画像データへの批評の生成
-def art_critics(memories_selected={}, image_paths=[], agent_file="agent_52ArtCritic.json"):
+def art_critics(service_info, user_info, memories_selected={}, image_paths=[], agent_file="agent_52ArtCritic.json"):
     agent = dma.DigiM_Agent(agent_file)
 
     model_type = "LLM"
@@ -229,11 +252,14 @@ def art_critics(memories_selected={}, image_paths=[], agent_file="agent_52ArtCri
     prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
     response_tokens = dmu.count_token(tokenizer, model_name, response)
     
-    return response, prompt_tokens, response_tokens
+    response_service_info = service_info
+    response_user_info = user_info
+    
+    return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
 
 # エシカルチェック
-def ethical_check(query, memories_selected={}):
+def ethical_check(service_info, user_info, query, memories_selected={}):
     agent_file = "agent_21EthicalCheck.json"
     agent = dma.DigiM_Agent(agent_file)
     
@@ -254,11 +280,14 @@ def ethical_check(query, memories_selected={}):
     prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
     response_tokens = dmu.count_token(tokenizer, model_name, response)
     
-    return response, prompt_tokens, response_tokens
+    response_service_info = service_info
+    response_user_info = user_info
+    
+    return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
 
 # 川柳の作成
-def senryu_sensei(query, memories_selected={}):
+def senryu_sensei(service_info, user_info, query, memories_selected={}):
     agent_file = "agent_22SenryuSensei.json"
     agent = dma.DigiM_Agent(agent_file)
 
@@ -282,4 +311,7 @@ def senryu_sensei(query, memories_selected={}):
     prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
     response_tokens = dmu.count_token(tokenizer, model_name, response)
     
-    return response, prompt_tokens, response_tokens
+    response_service_info = service_info
+    response_user_info = user_info
+    
+    return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens

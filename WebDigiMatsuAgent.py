@@ -1,4 +1,5 @@
 import os
+import json
 import datetime
 from datetime import datetime
 import pytz
@@ -31,8 +32,12 @@ if 'mst_folder_path' not in st.session_state:
 if 'agent_folder_path' not in st.session_state:
     st.session_state.agent_folder_path = os.getenv("AGENT_FOLDER")
 if 'default_agent' not in st.session_state:
-    default_agent_data = dmu.read_json_file(os.getenv("DEFAULT_AGENT_FILE"), agent_folder_path)
+    default_agent_data = dmu.read_json_file(os.getenv("WEB_DEFAULT_AGENT_FILE"), agent_folder_path)
     st.session_state.default_agent = default_agent_data["DISPLAY_NAME"]
+if 'web_default_service' not in st.session_state:
+    st.session_state.web_default_service = json.loads(os.getenv("WEB_DEFAULT_SERVICE"))
+if 'web_default_user' not in st.session_state:
+    st.session_state.web_default_user = json.loads(os.getenv("WEB_DEFAULT_USER"))
 if 'character_folder_path' not in st.session_state:
     st.session_state.character_folder_path = os.getenv("CHARACTER_FOLDER")
 if 'prompt_template_mst_file' not in st.session_state:
@@ -80,7 +85,7 @@ def initialize_session_states():
     if 'memory_use' not in st.session_state:
         st.session_state.memory_use = True
     if 'magic_word_use' not in st.session_state:
-        st.session_state.magic_word_use = "Y"
+        st.session_state.magic_word_use = True
     if 'stream_mode' not in st.session_state:
         st.session_state.stream_mode = True
     if 'save_digest' not in st.session_state:
@@ -267,9 +272,9 @@ def main():
 
     # マジックワード利用の設定
     if header_col2.checkbox("Magic Word", value=st.session_state.magic_word_use):
-        st.session_state.magic_word_use = "Y"
+        st.session_state.magic_word_use = True
     else:
-        st.session_state.magic_word_use = "N"
+        st.session_state.magic_word_use = False
     
     # 実行の設定
     header_col3.markdown("RAG Setting:")
@@ -421,11 +426,9 @@ def main():
         with st.chat_message("User"):
             st.markdown(user_input.replace("\n", "<br>"), unsafe_allow_html=True)
         with st.chat_message(st.session_state.web_title):
-#            practice=st.session_state.agent_data["HABIT"]
             response_placeholder = st.empty()
             response = ""
-#            for response_chunk in dme.DigiMatsuExecute_Practice(st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, practice, st.session_state.memory_use, st.session_state.magic_word_use, st.session_state.stream_mode, st.session_state.save_digest, st.session_state.meta_search, st.session_state.RAG_query_gene):
-            for response_chunk in dme.DigiMatsuExecute_Practice(st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, st.session_state.memory_use, st.session_state.magic_word_use, st.session_state.stream_mode, st.session_state.save_digest, st.session_state.meta_search, st.session_state.RAG_query_gene):
+            for response_service_info, response_user_info, response_chunk in dme.DigiMatsuExecute_Practice(st.session_state.web_default_service, st.session_state.web_default_user, st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, st.session_state.memory_use, st.session_state.magic_word_use, st.session_state.stream_mode, st.session_state.save_digest, st.session_state.meta_search, st.session_state.RAG_query_gene):
                 response += response_chunk
                 response_placeholder.markdown(response)
             st.rerun()

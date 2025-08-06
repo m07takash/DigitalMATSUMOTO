@@ -20,10 +20,6 @@ rag_data_csv_path = os.getenv("RAG_DATA_CSV_FOLDER")
 notion_db_mst_file = os.getenv("NOTION_MST_FILE")
 default_agent_file = os.getenv("DEFAULT_AGENT_FILE")
 
-#save_communication_mode = os.getenv("SAVE_COMMUNICATION_MODE")
-#save_communication_db = os.getenv("SAVE_COMMUNICATION_DB")
-#default_communication_category = os.getenv("DEFAULT_COMMUNICATION_CATEGORY")
-
 #タイムスタンプ文字列を時刻に変換
 def safe_parse_timestamp(timestamp_str):
     jst = pytz.timezone(timezone)
