@@ -6,7 +6,7 @@
     "PERSONALITY": {},
     "ENGINE": {
         "LLM": {
-            "NAME":"gpt-4o-mini",
+            "NAME":"gpt-4.1-mini",
             "FUNC_NAME": "generate_response_T_gpt",
             "MODEL": "gpt-4.1-mini-2025-04-14",
             "PARAMETER": {},
