@@ -334,10 +334,6 @@ class DigiMSession:
         if os.path.exists(self.session_file_path):
             chat_history_dict = dmu.read_json_file(session_file_name, self.session_folder_path)
             chat_history_dict_seq = chat_history_dict[seq][sub_seq]
-            
-#            chat_detail_info += "【設定情報】\n"
-#            for k, v in chat_history_dict_seq["setting"].items():
-#                chat_detail_info += f"{k}：{v}\n"
 
             chat_detail_info += "\n【実行情報】\n"
             chat_detail_info += "実行関数："+chat_history_dict_seq["setting"]["engine"]["FUNC_NAME"]+"\n"
@@ -360,8 +356,9 @@ class DigiMSession:
                 
             if "digest" in chat_history_dict_seq:
                 chat_detail_info += "\n【会話のダイジェスト】\n"
-                if "agent_file" in chat_history_dict_seq["digest"]: #【暫定的な設定】
-                    chat_detail_info += "エージェント："+chat_history_dict_seq["digest"]["agent_file"]+"\n"
+                chat_detail_info += "エージェント："+chat_history_dict_seq["digest"]["agent_file"]+"\n"
+                if "model" in chat_history_dict_seq["digest"]:
+                    chat_detail_info += "実行モデル："+chat_history_dict_seq["digest"]["model"]+"\n"
                 chat_detail_info += "出力トークン数："+str(chat_history_dict_seq["digest"]["token"])+"\n"
                 chat_detail_info += chat_history_dict_seq["digest"]["text"]+"\n"
 
