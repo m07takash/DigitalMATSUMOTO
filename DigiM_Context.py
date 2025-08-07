@@ -70,7 +70,7 @@ def get_text_content(agent_data, content, seq, sub_seq, file_seq):
         content_context = "<br>---------<br>ファイル名: "+file_name+"<br><br>"+json.dumps(dmu.read_json_file(content), ensure_ascii=False)
     elif "image" in file_type:
         art_critics_agent_file = support_agent["ART_CRITICS"]
-        response, prompt_tokens, response_tokens = dmt.art_critics(image_paths=[content], agent_file=art_critics_agent_file)
+        _, _, response, model_name, prompt_tokens, response_tokens = dmt.art_critics({}, {}, image_paths=[content], agent_file=art_critics_agent_file)
         content_context = "<br>---------<br>ファイル名: "+file_name+"<br><br>"+response
         image_file = content
     #elif "video" in file_type:
