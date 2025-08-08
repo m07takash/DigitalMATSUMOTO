@@ -62,7 +62,7 @@ def generate_response_T_gpt(query, system_prompt, model, memories=[], image_path
     # モデルの実行
     completion = openai_client.chat.completions.create(
         model = model["MODEL"],
-#        temperature = model["PARAMETER"]["temperature"],
+        **model["PARAMETER"],
         messages = prompt,
         tools = tools,
         tool_choice = tool_choice,
@@ -114,6 +114,7 @@ def generate_response_T_o(query, system_prompt, model, memories=[], image_paths=
     # モデルの実行
     completion = openai_client.chat.completions.create(
         model = model["MODEL"],
+        **model["PARAMETER"],
         messages = prompt,
         reasoning_effort = model["PARAMETER"]["reasoning_effort"]
     )
@@ -158,6 +159,7 @@ def generate_response_openai_tool(query, system_prompt, model, memories=[], imag
     # モデルの実行
     completion = openai_client.responses.create(
         model = model["MODEL"],
+        **model["PARAMETER"],
         tools = tools,
         input = prompt
     )
@@ -194,7 +196,7 @@ def generate_response_T_gemini(query, system_prompt, model, memories=[], image_p
         model=model["MODEL"],
         config=types.GenerateContentConfig(
             system_instruction=system_prompt,
-            temperature=model["PARAMETER"]["temperature"],
+            **model["PARAMETER"]
         ),
         history=memory_message
     )
@@ -242,7 +244,7 @@ def generate_response_T_llama(query, system_prompt, model, memories=[], image_pa
     # モデルの実行
     api_request_json = {
         "model": model["MODEL"],
-        "temperature": model["PARAMETER"]["temperature"],
+        **model["PARAMETER"],
         "messages": system_message + memory_message + user_message,
         "max_tokens": 20000,
         "stream": False
