@@ -82,7 +82,7 @@ def get_history_update_date(chat_history_active_dict):
         
     return last_update_date
 
-# シチュエーションを取得
+# エージェントファイルを取得
 def get_agent_file(session_id):
     session_key = session_folder_prefix + session_id
     session_file_path = user_folder_path + session_key + "/" + session_file_name
@@ -90,7 +90,7 @@ def get_agent_file(session_id):
     session_file_active_dict = {k: v for k, v in session_file_dict.items() if v["SETTING"].get("FLG") == "Y"}
     agent_file = ""
 
-    # 最大シーケンス／サブシーケンスからシチュエーションを取得
+    # 最大シーケンス／サブシーケンスからエージェントファイルを取得
     if session_file_active_dict:
         max_seq = max_seq_dict(session_file_active_dict)
         max_sub_seq = max_seq_dict(session_file_active_dict[max_seq])
@@ -126,6 +126,7 @@ class DigiMSession:
         self.session_id = session_id if session_id else set_new_session_id()
         self.session_name = session_name
         self.session_folder_path = user_folder_path + session_folder_prefix + self.session_id +"/" 
+        self.session_vec_folder_path = user_folder_path + session_folder_prefix + self.session_id +"/vecs/" 
         self.session_file_path = self.session_folder_path + session_file_name
         self.set_history()
 
@@ -217,10 +218,13 @@ class DigiMSession:
         if sub_seq_candidates:
             max_sub_seq = max(sub_seq_candidates, key=int)
             chat_history_max_digest_dict = chat_history_active_dict[max_seq][max_sub_seq]["digest"]
+ #           if "vec_text" not in chat_history_max_digest_dict:
+ #               chat_history_max_digest_dict["vec_text"] = self.get_vec_file(max_seq, max_sub_seq, "digest")
         return max_seq, max_sub_seq, chat_history_max_digest_dict
     
     # 会話メモリを獲得する（トークン制限で切り取り）
-    def get_memory(self, query_vec, model_name, tokenizer, memory_limit_tokens, memory_role="both", memory_priority="latest", memory_similarity_logic="cosine", memory_digest="Y", seq_limit="", sub_seq_limit=""):
+#    def get_memory(self, query_vec, model_name, tokenizer, memory_limit_tokens, memory_role="both", memory_priority="latest", memory_similarity_logic="cosine", memory_digest="Y", seq_limit="", sub_seq_limit=""):
+    def get_memory(self, query_vec, model_name, tokenizer, memory_limit_tokens, memory_role="both", memory_priority="latest", memory_digest="Y", seq_limit="", sub_seq_limit=""):
         memories_list = []
         memories_list_prompt = []
         total_tokens = 0
@@ -231,34 +235,39 @@ class DigiMSession:
         if chat_history_active_dict:
             # 最新のダイジェストを取得
             if memory_digest == "Y":
-                max_seq, max_sub_seq, chat_history_max_digest_dict = self.get_history_max_digest()#chat_history_active_dict)
+                max_seq, max_sub_seq, chat_history_max_digest_dict = self.get_history_max_digest()
                 if chat_history_max_digest_dict:
                     # トークン制限を超えていなければ、ダイジェストを設定
                     total_tokens += chat_history_max_digest_dict["token"]
                     if total_tokens <= memory_limit_tokens:
-                        similarity_prompt = dmu.calculate_similarity_vec(query_vec, chat_history_max_digest_dict["vec_text"], memory_similarity_logic)
-                        memories_list.append({"seq": max_seq, "sub_seq": max_sub_seq, "type": "digest", "role": chat_history_max_digest_dict["role"], "timestamp": chat_history_max_digest_dict["timestamp"], "token": chat_history_max_digest_dict["token"], "similarity_prompt": similarity_prompt, "text": chat_history_max_digest_dict["text"], "vec_text": chat_history_max_digest_dict["vec_text"]})
+#                        similarity_prompt = dmu.calculate_similarity_vec(query_vec, chat_history_max_digest_dict["vec_text"], memory_similarity_logic)
+#                        memories_list.append({"seq": max_seq, "sub_seq": max_sub_seq, "type": "digest", "role": chat_history_max_digest_dict["role"], "timestamp": chat_history_max_digest_dict["timestamp"], "token": chat_history_max_digest_dict["token"], "similarity_prompt": similarity_prompt, "text": chat_history_max_digest_dict["text"], "vec_text": chat_history_max_digest_dict["vec_text"]})
+                        memories_list.append({"seq": max_seq, "sub_seq": max_sub_seq, "type": "digest", "role": chat_history_max_digest_dict["role"], "timestamp": chat_history_max_digest_dict["timestamp"], "token": chat_history_max_digest_dict["token"], "text": chat_history_max_digest_dict["text"]})
         
             # 各履歴を取得
             for k, v in chat_history_active_dict.items():
                 for k2, v2 in v.items():
                     if k2 != "SETTING":
                         if memory_role in ["both", "user"]:
-                            if "vec_text" in v2["prompt"]["query"]:
-                                similarity_prompt = dmu.calculate_similarity_vec(query_vec, v2["prompt"]["query"]["vec_text"], memory_similarity_logic)
-                                memories_list.append({"seq": k, "sub_seq": k2, "type": v2["prompt"]["role"], "role": v2["prompt"]["role"], "timestamp": v2["prompt"]["timestamp"], "token": v2["prompt"]["query"]["token"], "similarity_prompt": similarity_prompt, "text": v2["prompt"]["query"]["text"], "vec_text": v2["prompt"]["query"]["vec_text"]})
+#                            if "vec_text" not in v2["prompt"]["query"]:
+#                                v2["prompt"]["query"]["vec_text"] = self.get_vec_file(k, k2, "query")
+#                            similarity_prompt = dmu.calculate_similarity_vec(query_vec, v2["prompt"]["query"]["vec_text"], memory_similarity_logic)
+#                            memories_list.append({"seq": k, "sub_seq": k2, "type": v2["prompt"]["role"], "role": v2["prompt"]["role"], "timestamp": v2["prompt"]["timestamp"], "token": v2["prompt"]["query"]["token"], "similarity_prompt": similarity_prompt, "text": v2["prompt"]["query"]["text"], "vec_text": v2["prompt"]["query"]["vec_text"]})
+                            memories_list.append({"seq": k, "sub_seq": k2, "type": v2["prompt"]["role"], "role": v2["prompt"]["role"], "timestamp": v2["prompt"]["timestamp"], "token": v2["prompt"]["query"]["token"], "text": v2["prompt"]["query"]["text"]})
                         if memory_role in ["both", "assistant"]:
-                            if "vec_text" in v2["response"]:
-                                similarity_prompt = dmu.calculate_similarity_vec(query_vec, v2["response"]["vec_text"], memory_similarity_logic)
-                                memories_list.append({"seq": k, "sub_seq": k2, "type": v2["response"]["role"], "role": v2["response"]["role"], "timestamp": v2["response"]["timestamp"], "token": v2["response"]["token"], "similarity_prompt": similarity_prompt, "text": v2["response"]["text"], "vec_text": v2["response"]["vec_text"]})
+#                            if "vec_text" not in v2["response"]:
+#                                v2["response"]["vec_text"] = self.get_vec_file(k, k2, "response")
+#                            similarity_prompt = dmu.calculate_similarity_vec(query_vec, v2["response"]["vec_text"], memory_similarity_logic)
+#                            memories_list.append({"seq": k, "sub_seq": k2, "type": v2["response"]["role"], "role": v2["response"]["role"], "timestamp": v2["response"]["timestamp"], "token": v2["response"]["token"], "similarity_prompt": similarity_prompt, "text": v2["response"]["text"], "vec_text": v2["response"]["vec_text"]})
+                            memories_list.append({"seq": k, "sub_seq": k2, "type": v2["response"]["role"], "role": v2["response"]["role"], "timestamp": v2["response"]["timestamp"], "token": v2["response"]["token"], "text": v2["response"]["text"]})
 
             # 各履歴をプライオリティ順に並び替え
             if memory_priority == "latest":
                 memories_list_priority = sorted(memories_list, key=lambda x: datetime.strptime(x["timestamp"], "%Y-%m-%d %H:%M:%S.%f"), reverse=True)
             elif memory_priority == "oldest":
                 memories_list_priority = sorted(memories_list, key=lambda x: datetime.strptime(x["timestamp"], "%Y-%m-%d %H:%M:%S.%f"))
-            elif memory_priority == "similar":
-                memories_list_priority = sorted(memories_list, key=lambda x: x["similarity_prompt"])
+#            elif memory_priority == "similar":
+#                memories_list_priority = sorted(memories_list, key=lambda x: x["similarity_prompt"])
             else :
                 memories_list_priority = memories_list
             
@@ -273,7 +282,30 @@ class DigiMSession:
             memories_list_prompt = sorted(memories_list_selected, key=lambda x: datetime.strptime(x["timestamp"], "%Y-%m-%d %H:%M:%S.%f"))
         
         return memories_list_prompt
-    
+
+    # ベクトルデータをセッションフォルダに保存する
+    def save_vec_file(self, seq, sub_seq="1", mode="query", vec_text=[]):
+        # セッションフォルダがなければ作成
+        if not os.path.exists(self.session_folder_path):
+            os.makedirs(self.session_folder_path, exist_ok=True)
+        
+        # ベクトルデータの保存フォルダがなければ作成
+        if not os.path.exists(self.session_vec_folder_path):
+            os.makedirs(self.session_vec_folder_path, exist_ok=True)
+        
+        # ベクトルデータを.npy形式で保存
+        vec_file_name = seq+"-"+sub_seq+"_"+mode+".npy"
+        dmu.save_vectext_to_npy(vec_text, self.session_vec_folder_path+vec_file_name)
+
+        return vec_file_name
+
+    # ベクトルデータをセッションフォルダから読み込む
+    def get_vec_file(self, seq, sub_seq="1", mode="query"):
+        vec_file_name = seq+"-"+sub_seq+"_"+mode+".npy"
+        vec_text=[]
+        vec_text = dmu.read_vectext_to_npy(self.session_vec_folder_path+vec_file_name)
+        return vec_text
+
     # 会話履歴を保存する
     def save_history(self, seq, chat_dict_key, chat_dict, level="SEQ", sub_seq="1"):
         chat_history_dict = {}

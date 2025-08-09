@@ -45,7 +45,7 @@
         "bucket": "Communication_Memo",
         "file_path": "user/common/csv/",
         "file_name": "Sample00_Communication.csv",
-        "field_items": ["title", "RAG_Category", "category", "create_date", "memo", "session_name", "seq", "sub_seq", "query", "response"],
+        "field_items": ["title", "RAG_Category", "category", "create_date", "memo", "service_id", "user_id", "session_name", "seq", "sub_seq", "query", "response"],
         "category_items": [
             {"RAG_Category":["memo"]},
             {"category":["Feedback"]}
@@ -61,7 +61,7 @@
         "bucket": "Communication_Comment",
         "file_path": "user/common/csv/",
         "file_name": "Sample00_Communication.csv",
-        "field_items": ["title", "RAG_Category", "category", "create_date", "memo", "session_name", "seq", "sub_seq", "query", "response"],
+        "field_items": ["title", "RAG_Category", "category", "create_date", "memo", "service_id", "user_id", "session_name", "seq", "sub_seq", "query", "response"],
         "category_items": [
             {"RAG_Category":["comment"]},
             {"category":["Feedback"]}

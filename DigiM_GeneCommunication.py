@@ -29,12 +29,14 @@ def safe_parse_timestamp(timestamp_str):
         return datetime.now(jst).isoformat()
 
 # フィードバックデータの取得
-def get_feedback_data(fb_k, memo, k1, k2, v2, default_category):
+def get_feedback_data(fb_k, memo, k1, k2, v2, default_category, service_id, user_id):
     fb_data = {}
     fb_data["title"] = v2["feedback"]["name"]+"-"+fb_k+"("+v2["prompt"]["query"]["situation"]["TIME"]+")"
     fb_data["RAG_Category"] = fb_k
     fb_data["category"] = default_category
     fb_data["create_date"] = safe_parse_timestamp(v2["prompt"]["query"]["situation"]["TIME"])
+    fb_data["service_id"] = service_id
+    fb_data["user_id"] = user_id
     fb_data["session_name"] = v2["setting"]["session_name"]    
     fb_data["seq"] = int(k1)
     fb_data["sub_seq"] = int(k2)
@@ -54,6 +56,8 @@ def save_communication_csv(fb_data, save_db):
         "category",
         "create_date",
         "memo",
+        "service_id",
+        "user_id",
         "session_name",
         "seq",
         "sub_seq",
@@ -104,6 +108,8 @@ def save_communication_notion(fb_data, save_db):
     dmn.update_notion_select(page_id, "カテゴリ", fb_data["category"])
     dmn.update_notion_date(page_id, "タイムスタンプ", fb_data["create_date"])
     dmn.update_notion_rich_text_content(page_id, "コンテキスト", fb_data["memo"])
+    dmn.update_notion_rich_text_content(page_id, "サービスID", fb_data["service_id"])
+    dmn.update_notion_rich_text_content(page_id, "ユーザーID", fb_data["user_id"])
     dmn.update_notion_rich_text_content(page_id, "セッション", fb_data["session_name"])
     dmn.update_notion_num(page_id, "seq", fb_data["seq"])
     dmn.update_notion_num(page_id, "sub_seq", fb_data["sub_seq"])
@@ -120,14 +126,19 @@ def create_communication_data(session_id, agent_file=default_agent_file):
     save_db = agent.communication["SAVE_DB"]
     default_category = agent.communication["DEFAULT_CATEGORY"]
 
+    service_id = ""
+    user_id = ""
     history_dict = session.chat_history_dict
     for k1, v1 in history_dict.items():
         for k2, v2 in v1.items():
+            if k2 == "SETTING":
+                service_id = v2["service_info"]["SERVICE_ID"]
+                user_id = v2["user_info"]["USER_ID"]
             if k2 != "SETTING":
                 if "feedback" in v2.keys():
                     for fb_k, fb_v in v2["feedback"].items():
                         if fb_k != "name" and fb_v["flg"]:
-                            fb_data = get_feedback_data(fb_k, fb_v["memo"], k1, k2, v2, default_category)
+                            fb_data = get_feedback_data(fb_k, fb_v["memo"], k1, k2, v2, default_category, service_id, user_id)
                             if save_mode == "Notion":
                                 save_communication_notion(fb_data, save_db)
                             else:
