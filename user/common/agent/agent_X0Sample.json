@@ -101,7 +101,7 @@
         {
             "RAG_NAME": "Experience",
             "RETRIEVER": "Vector",
-            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"Sample02_Memo","META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}},{"DATA_TYPE":"DB", "DATA_NAME":"Sample03_Feedback","META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}},{"DATA_TYPE":"DB", "DATA_NAME":"Communication_Memo","META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}}],
+            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"Sample02_Memo", "META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}},{"DATA_TYPE":"DB", "DATA_NAME":"Sample03_Feedback","META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}},{"DATA_TYPE":"DB", "DATA_NAME":"Communication_Memo", "META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5},  "FILTER":{"PATTERN":"and", "CONDITION":{"USER_INFO":{"PATTERN":"and", "ITEMS":["user_id"]}}}}],
             "TIMESTAMP": "CREATE_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
             "HEADER_TEMPLATE": "以下はこれまであなたが学んできたことです。\n",
@@ -113,7 +113,7 @@
         {
             "RAG_NAME": "Comment",
             "RETRIEVER": "Vector",
-            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"Communication_Comment", "META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}}],
+            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"Communication_Comment", "META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}, "FILTER":{"PATTERN":"and", "CONDITION":{"SERVICE_INFO":{"PATTERN":"and", "ITEMS":["service_id"]}, "USER_INFO":{"PATTERN":"and", "ITEMS":["user_id"]}}}}],
             "TIMESTAMP": "CREATE_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
             "HEADER_TEMPLATE": "以下はこれまでの人間との会話で貰ったコメントです。\n",

@@ -141,6 +141,18 @@ def embed_text(text):
     response_vec = response.data[0].embedding    
     return response_vec
 
+# 埋め込みベクトルの配列を1つのnpyファイルに保存
+def save_vectext_to_npy(vec_text, file_path, dtype="float32"):
+    arr = np.asarray(vec_text, dtype=dtype)
+    np.save(file_path, arr)
+
+# 埋め込みベクトルの配列をnpyファイルから読込
+def read_vectext_to_npy(file_path, mmap=False):
+    if mmap:
+        return np.load(file_path, mmap_mode="r")
+    else:
+        return np.load(file_path)
+
 # 形態素解析(Owakati)
 def tokenize_Owakati(text, mode="Default", stop_words=[], grammer=('名詞', '動詞', '形容詞', '副詞')):
     mecab = MeCab.Tagger("-Owakati")

@@ -161,7 +161,7 @@ def select_rag_vector(rag_data_list, rag={}):
 
 
 # RAGからのコンテキスト取得
-def create_rag_context(query, query_vecs=[], rags=[], meta_searches=[]):
+def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searches=[]):
     rag_final_context = "\n------\n"
     rag_final_selected = []
 
@@ -181,28 +181,83 @@ def create_rag_context(query, query_vecs=[], rags=[], meta_searches=[]):
                         if collection.count() <= 50:
                             result_limit = collection.count()
     
-                        #メタデータ検索の追加
+                        # 絞込条件の追加
+                        where_limitation = []
+                        if "FILTER" in rag_data: #エージェントのRAG設定に制限条件が含まれる場合
+                            where_limitation_conditions =[]
+
+                            # サービスIDで絞込
+                            if "SERVICE_INFO" in rag_data["FILTER"]["CONDITION"]:
+                                service_id = exec_info["SERVICE_INFO"]["SERVICE_ID"]
+                                where_limitation_items = []
+                                for condition_item in rag_data["FILTER"]["CONDITION"]["SERVICE_INFO"]["ITEMS"]:
+                                    where_limitation_items.append({condition_item: {"$eq": service_id}})
+                                # 条件文の作成
+                                if len(where_limitation_items) == 1:
+                                    where_limitation_conditions.append(where_limitation_items[0])
+                                else:
+                                    if rag_data["FILTER"]["CONDITION"]["SERVICE_INFO"]["PATTERN"] == "and":
+                                        op = "$and"
+                                    else:
+                                        op = "$or"
+                                    where_limitation_conditions.append({op: where_limitation_items})
+
+                            # ユーザーIDで絞込
+                            if "USER_INFO" in rag_data["FILTER"]["CONDITION"]:
+                                user_id = exec_info["USER_INFO"]["USER_ID"]
+                                where_limitation_items = []
+                                for condition_item in rag_data["FILTER"]["CONDITION"]["USER_INFO"]["ITEMS"]:
+                                    where_limitation_items.append({condition_item: {"$eq": user_id}})
+                                # 条件文の作成                                
+                                if len(where_limitation_items) == 1:
+                                    where_limitation_conditions.append(where_limitation_items[0])
+                                else:
+                                    if rag_data["FILTER"]["CONDITION"]["USER_INFO"]["PATTERN"] == "and":
+                                        op = "$and"
+                                    else:
+                                        op = "$or"
+                                    where_limitation_conditions.append({op: where_limitation_items})
+
+                            # 条件文の作成
+                            if len(where_limitation_conditions) == 1:
+                                where_limitation.append(where_limitation_conditions[0])
+                            else:
+                                if rag_data["FILTER"]["PATTERN"] == "and":
+                                    op = "$and"
+                                else:
+                                    op = "$or"
+                                where_limitation.append({op: where_limitation_conditions})
+
+                        # メタデータ検索の追加
                         if "META_SEARCH" in rag_data: #エージェントのRAG設定にメタ検索が含まれる場合
-                            query_conditions = []
+                            query_conditions_add = []
                             for meta_search in meta_searches:
                                 if "DATE" in meta_search and "DATE" in rag_data["META_SEARCH"]["CONDITION"]:
                                     for date_range in meta_search["DATE"]:
                                         try:
                                             start_date = datetime.strptime(date_range["start"], '%Y/%m/%d').timestamp()
                                             end_date = datetime.strptime(date_range["end"], '%Y/%m/%d').timestamp()
-                                            query_conditions.append({
+                                            query_conditions_add.append({
                                                 "$and": [
                                                     {"create_date_ts": {"$gte": start_date}},
                                                     {"create_date_ts": {"$lte": end_date}}
                                                 ]
                                             })
                                         except ValueError:
-                                            continue                                                   
-                            if query_conditions:
-                                if len(query_conditions) == 1:
-                                    where_clause = query_conditions[0]
+                                            continue
+
+                            if query_conditions_add:
+                                where_add = {}
+                                if len(query_conditions_add) == 1:
+                                    where_add = query_conditions_add[0]
                                 else:
-                                    where_clause = {"$or": query_conditions}
+                                    where_add = {"$or": query_conditions_add}
+                                
+                                where_clause = {}
+                                if where_limitation:
+                                    where_limitation_add = where_limitation.copy()
+                                    where_clause = {"$and": where_limitation_add.append(where_add)}
+                                print(where_limitation)
                                 rag_data_db = collection.query(query_embeddings=[query_vec], n_results=result_limit, include=["metadatas", "embeddings", "distances"], where=where_clause)
                                 for i in range(len(rag_data_db["ids"])):
                                     for j in range(len(rag_data_db["ids"][i])):
@@ -217,7 +272,15 @@ def create_rag_context(query, query_vecs=[], rags=[], meta_searches=[]):
                                         v["query_mode"] = "(META_SEARCH:"+str(rag_data["META_SEARCH"]["BONUS"])+")"
                                         rag_data_list.append(v)
                         
-                        rag_data_db = collection.query(query_embeddings=[query_vec], n_results=result_limit, include=["metadatas", "embeddings", "distances"])
+                        if where_limitation:
+                            if len(where_limitation) == 1:
+                                where_clause = where_limitation[0]
+                            else:
+                                where_clause = {"$and": where_limitation}
+                            rag_data_db = collection.query(query_embeddings=[query_vec], n_results=result_limit, include=["metadatas", "embeddings", "distances"], where=where_clause)
+                        else:
+                            rag_data_db = collection.query(query_embeddings=[query_vec], n_results=result_limit, include=["metadatas", "embeddings", "distances"])
+
                         for i in range(len(rag_data_db["ids"])):
                             for j in range(len(rag_data_db["ids"][i])):
                                 v = {}
@@ -277,9 +340,8 @@ def get_rag_similarity_response(response_vec, rag_selected, logic="Cosine"):
         rag_ref.append(rag_data["log"])
     return rag_ref
 
-
-# レスポンスと会話メモリの類似度評価
-def get_memory_similarity_response(response_vec, memory_selected, logic="Cosine"):
+# 会話メモリの参照情報
+def get_memory_refernce(memory_selected):
     memory_ref = []
         
     for memory_data in memory_selected:
@@ -288,11 +350,9 @@ def get_memory_similarity_response(response_vec, memory_selected, logic="Cosine"
         type = memory_data["type"]
         timestamp = memory_data["timestamp"]
         text = memory_data["text"] 
-        similarity_prompt = round(memory_data["similarity_prompt"],3)
-        similarity_response = round(dmu.calculate_similarity_vec(response_vec, memory_data["vec_text"], logic),3)
         
         # 画面表示用のログ形式
-        memory_ref_log = f"{timestamp}の会話履歴：{seq}_{sub_seq}_{type}[質問との類似度：{round(similarity_prompt,3)}、回答との類似度：{round(similarity_response,3)}]{text[:50]}<br>"
+        memory_ref_log = f"{timestamp}の会話履歴：{seq}_{sub_seq}_{type}「{text[:50]}」<br>"
         
         # 記録用のデータセット
         memory_ref.append(
@@ -301,6 +361,31 @@ def get_memory_similarity_response(response_vec, memory_selected, logic="Cosine"
             }
         )
     return memory_ref
+
+
+# レスポンスと会話メモリの類似度評価
+#def get_memory_similarity_response(response_vec, memory_selected, logic="Cosine"):
+#    memory_ref = []
+#        
+#    for memory_data in memory_selected:
+#        seq = memory_data["seq"]
+#        sub_seq = memory_data["sub_seq"]
+#        type = memory_data["type"]
+#        timestamp = memory_data["timestamp"]
+#        text = memory_data["text"] 
+#        similarity_prompt = round(memory_data["similarity_prompt"],3)
+#        similarity_response = round(dmu.calculate_similarity_vec(response_vec, memory_data["vec_text"], logic),3)
+#        
+#        # 画面表示用のログ形式
+#        memory_ref_log = f"{timestamp}の会話履歴：{seq}_{sub_seq}_{type}[質問との類似度：{round(similarity_prompt,3)}、回答との類似度：{round(similarity_response,3)}]{text[:50]}<br>"
+#        
+#        # 記録用のデータセット
+#        memory_ref.append(
+#            {
+#                "log": memory_ref_log
+#            }
+#        )
+#    return memory_ref
 
 
 # RAGのチャンクデータをCSV(utf-8)から生成

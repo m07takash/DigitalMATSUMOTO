@@ -54,7 +54,7 @@ def remember_history(service_info, user_info, session_id, input):
 
 
 # 通常LLMの実行
-def generate_pureLLM(service_info, user_info, agent_file, query, memories_selected={}, prompt_temp_cd="No Template"):
+def generate_pureLLM(service_info, user_info, agent_file, query, memories_selected=[], prompt_temp_cd="No Template"):
     agent = dma.DigiM_Agent(agent_file)
 
     model_type = "LLM"
@@ -87,7 +87,7 @@ def generate_pureLLM(service_info, user_info, agent_file, query, memories_select
 
 
 # 会話のダイジェスト生成
-def dialog_digest(service_info, user_info, user_query, memories_selected={}, agent_file="agent_51DialogDigest.json"):
+def dialog_digest(service_info, user_info, user_query, memories_selected=[], agent_file="agent_51DialogDigest.json"):
     agent = dma.DigiM_Agent(agent_file)
 
     model_type = "LLM"
@@ -127,7 +127,7 @@ def dialog_digest(service_info, user_info, user_query, memories_selected={}, age
 
 
 # テキストから日付の抽出
-def extract_date(service_info, user_info, user_query, situation_prompt, query_vecs, memories_selected={}, agent_file="agent_55ExtractDate.json"):
+def extract_date(service_info, user_info, user_query, situation_prompt, query_vecs, memories_selected=[], agent_file="agent_55ExtractDate.json"):
     agent = dma.DigiM_Agent(agent_file)
 
     model_type = "LLM"
@@ -160,7 +160,7 @@ def extract_date(service_info, user_info, user_query, situation_prompt, query_ve
 
 
 # テキストからRAGクエリの生成
-def RAG_query_generator(service_info, user_info, user_query, situation_prompt, query_vecs, memories_selected={}, agent_file="agent_56RAGQueryGenerator.json"):
+def RAG_query_generator(service_info, user_info, user_query, situation_prompt, query_vecs, memories_selected=[], agent_file="agent_56RAGQueryGenerator.json"):
     agent = dma.DigiM_Agent(agent_file)
 
     model_type = "LLM"
@@ -228,7 +228,7 @@ def compare_texts(service_info, user_info, head1, text1, head2, text2, query_com
 
     
 # 画像データへの批評の生成
-def art_critics(service_info, user_info, memories_selected={}, image_paths=[], agent_file="agent_52ArtCritic.json"):
+def art_critics(service_info, user_info, memories_selected=[], image_paths=[], agent_file="agent_52ArtCritic.json"):
     agent = dma.DigiM_Agent(agent_file)
 
     model_type = "LLM"
@@ -257,61 +257,3 @@ def art_critics(service_info, user_info, memories_selected={}, image_paths=[], a
     
     return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
-
-# エシカルチェック
-def ethical_check(service_info, user_info, query, memories_selected={}):
-    agent_file = "agent_21EthicalCheck.json"
-    agent = dma.DigiM_Agent(agent_file)
-    
-    # エージェントに設定されるプロンプトテンプレートを設定
-    prompt_temp_cd = "Ethical Check"
-    prompt_template = agent.set_prompt_template(prompt_temp_cd)
-    
-    # プロンプトの設定
-    prompt = f'{prompt_template}{query}'
-
-    # LLMの実行
-    #response, completion, prompt_tokens, response_tokens = agent.generate_response("LLM", prompt, memories_selected, image_paths)
-    response = ""
-    for prompt, response_chunk, completion in agent.generate_response(model_type, prompt, memories_selected):
-        if response_chunk:
-            response += response_chunk
-    
-    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
-    response_tokens = dmu.count_token(tokenizer, model_name, response)
-    
-    response_service_info = service_info
-    response_user_info = user_info
-    
-    return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
-
-
-# 川柳の作成
-def senryu_sensei(service_info, user_info, query, memories_selected={}):
-    agent_file = "agent_22SenryuSensei.json"
-    agent = dma.DigiM_Agent(agent_file)
-
-    # RAGコンテキストを取得
-    knowledge_context, knowledge_selected, query_vec = agent.set_knowledge_context(query)
-    
-    # エージェントに設定されるプロンプトテンプレートを設定
-    prompt_temp_cd = "Senryu Template"
-    prompt_template = agent.set_prompt_template(prompt_temp_cd)
-    
-    # プロンプトの設定
-    prompt = f'{knowledge_context}{prompt_template}{query}'
-    
-    # LLMの実行
-    #response, completion, prompt_tokens, response_tokens = agent.generate_response("LLM", prompt, memories_selected, image_paths)
-    response = ""
-    for prompt, response_chunk, completion in agent.generate_response(model_type, prompt, memories_selected):
-        if response_chunk:
-            response += response_chunk
-    
-    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
-    response_tokens = dmu.count_token(tokenizer, model_name, response)
-    
-    response_service_info = service_info
-    response_user_info = user_info
-    
-    return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
