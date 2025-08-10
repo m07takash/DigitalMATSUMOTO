@@ -1,5 +1,6 @@
 import os
 import json
+from pathlib import Path
 import base64
 import PIL.Image
 from dotenv import load_dotenv
@@ -79,17 +80,14 @@ def generate_response_T_gpt(query, system_prompt, model, memories=[], image_path
         yield str(prompt), response, completion
 
 
-# oシリーズの実行
-def generate_response_T_o(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
+# OpenAIのResponses関数の実行
+def generate_response_T_gpt_response(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=False):
     os.environ["OPENAI_API_KEY"] = openai_api_key
     openai.api_key = openai_api_key
-    openai_client = OpenAI()
+    openai_client = OpenAI(timeout=600) #タイムアウトを設定(10min)
 
-    # システムプロンプトの設定
-    system_message = [
-        {"role": "developer", 
-         "content": [{"type": "text", "text": system_prompt}]}
-    ]
+    # システムプロンプトではなくインストラクションを設定
+    instructions = system_prompt
 
     # メモリをプロンプトに設定
     memory_message = []
@@ -103,23 +101,23 @@ def generate_response_T_o(query, system_prompt, model, memories=[], image_paths=
         image_message.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}})
     
     # ユーザーのプロンプトを設定
-    user_prompt = [{"type": "text", "text": query}] + image_message
+    user_prompt = [{"type": "input_text", "text": query}] + image_message
     user_message = [{"role": "user", "content": user_prompt}]
-    prompt = system_message + memory_message + user_message
+    prompt = memory_message + user_message
 
-    # ツールを設定【要検討：いったんデフォルト設定】
+    # ツールを設定
     tools = agent_tools["TOOL_LIST"]
-    tool_choice = agent_tools["CHOICE"]
     
     # モデルの実行
-    completion = openai_client.chat.completions.create(
+    completion = openai_client.responses.create(
         model = model["MODEL"],
         **model["PARAMETER"],
-        messages = prompt,
-        reasoning_effort = model["PARAMETER"]["reasoning_effort"]
+        input = prompt,
+        instructions = instructions,
+        tools = tools
     )
 
-    response = completion.choices[0].message.content
+    response = completion.output_text
     yield str(prompt), response, completion
         
 
@@ -161,56 +159,72 @@ def generate_response_openai_tool(query, system_prompt, model, memories=[], imag
         model = model["MODEL"],
         **model["PARAMETER"],
         tools = tools,
-        input = prompt
+        input = prompt,
+        stream = stream_mode
     )
 
     response = completion.output_text
     yield str(prompt), response, completion
 
 
-# Geminiの実行(https://github.com/google-gemini/cookbook/blob/main/gemini-2/get_started.ipynb)
+# Geminiの実行
 def generate_response_T_gemini(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
     gemini_client = genai.Client(api_key=gemini_api_key)
+    contents=[]
+
+    # システムプロンプトの設定
+    system_instruction = system_prompt
 
     # メモリをプロンプトに設定
     memory_message = []
     for memory in memories:
-        memory_message.append(types.Content(role=memory["role"], parts=[types.Part.from_text(memory["text"])]))
+        if memory["role"] == "user":
+            memory_message.append({"role": "user", "parts":[{"text": memory["text"]}]})
+        elif memory["role"] == "assistant":
+            memory_message.append({"role": "model", "parts":[{"text": memory["text"]}]})
+
+    contents += memory_message    
     
     # イメージ画像をプロンプトに設定
-    image = []
+    images = []
     for image_path in image_paths:
-        image.append(PIL.Image.open(image_path))
+        image_data = dmu.encode_image_file(image_path)
+        image_suffix = Path(image_path).suffix
+        image_type = ""
+        if image_suffix in ["jpeg", "jpg"]:
+            image_type = "image/jpeg"
+        elif image_suffix in ["png"]:
+            image_type = "image/png"
+        if image_type:
+            images.append({"inlineData": {"mimeType": image_type, "data": image_data}})
     
     # ユーザーのプロンプトを設定
-    user_prompt = query
-    if image:
-        user_prompt = [query] + image
+    user_prompt = [{"text": query}]
+    contents.append({"role": "user", "parts": user_prompt})   
+    contents += images
 
     # ツールを設定【修正前】
 ###    tools = agent_tools["TOOL_LIST"]
 ###    tool_choice = agent_tools["CHOICE"]
     
     # モデルの実行（モデル／システムプロンプト）
-    chat = gemini_client.chats.create(
-        model=model["MODEL"],
-        config=types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            **model["PARAMETER"]
-        ),
-        history=memory_message
-    )
-
-    prompt = query
     if stream_mode:
-        completion = chat.send_message_stream(user_prompt)
+        completion = gemini_client.models.generate_content_stream(
+            model=model["MODEL"], 
+            config=types.GenerateContentConfig(system_instruction=system_instruction),
+            contents=contents
+            )
         for chunk_completion in completion:
             response = chunk_completion.text
-            yield prompt, response, chunk_completion
+            yield str(contents), response, chunk_completion
     else:
-        completion = chat.send_message_stream(user_prompt)
+        completion = gemini_client.models.generate_content(
+            model=model["MODEL"], 
+            config=types.GenerateContentConfig(system_instruction=system_instruction), 
+            contents=contents
+            )
         response = completion.text
-        yield prompt, response, completion
+        yield str(contents), response, completion
 
 
 # llamaの実行
