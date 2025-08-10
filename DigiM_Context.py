@@ -257,7 +257,8 @@ def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searche
                                 if where_limitation:
                                     where_limitation_add = where_limitation.copy()
                                     where_clause = {"$and": where_limitation_add.append(where_add)}
-                                print(where_limitation)
+                                else:
+                                    where_clause = where_add
                                 rag_data_db = collection.query(query_embeddings=[query_vec], n_results=result_limit, include=["metadatas", "embeddings", "distances"], where=where_clause)
                                 for i in range(len(rag_data_db["ids"])):
                                     for j in range(len(rag_data_db["ids"][i])):
