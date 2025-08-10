@@ -215,7 +215,6 @@ def main():
 
         st.markdown("----")
         # セッションリストの表示
-        #st.session_state.session_list = dms.get_session_list_visible()
         num_sessions = 0
         for session_num, last_update_date in st.session_state.session_list:
             if num_session_visible > num_sessions:

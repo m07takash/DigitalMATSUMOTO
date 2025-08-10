@@ -255,17 +255,6 @@ def update_notion_rich_text_content(page_id, property_name, new_value):
             }
         }
     }
-#    data = {
-#        "properties": {
-#            property_name: {
-#                "rich_text": [{
-#                    "text": {
-#                        "content": new_value
-#                    }
-#                }]
-#            }
-#        }
-#    }
     response = requests.patch(url, headers=notion_headers, json=data)
     if response.status_code == 200:
         return "Updated successfully"
@@ -449,5 +438,5 @@ def create_page(db_id, page_title, title_item="名前"):
     print(page_title+"を作成しました")
 
     if response.status_code != 200:
-        print(f"エラーが発生しました。 {title}: {response_json}")
+        print(f"エラーが発生しました。 {page_title}: {response_json}")
     return response_json
