@@ -71,7 +71,6 @@ def generate_pureLLM(service_info, user_info, agent_file, query, memories_select
     prompt = f'{prompt_template}{query}'
 
     # LLMの実行
-    #response, completion, prompt_tokens, response_tokens = agent.generate_response("LLM", prompt, memories_selected)
     response = ""
     for prompt, response_chunk, completion in agent.generate_response(model_type, prompt, memories_selected):
         if response_chunk:
@@ -93,9 +92,6 @@ def dialog_digest(service_info, user_info, user_query, memories_selected=[], age
     model_type = "LLM"
     model_name = agent.agent["ENGINE"][model_type]["MODEL"]
     tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
-
-    # 通常LLMに設定
-    # dma.set_normal_agent(agent)
     
     # エージェントに設定されるプロンプトテンプレートを設定
     prompt_temp_cd = "Dialog Digest"
@@ -212,7 +208,6 @@ def compare_texts(service_info, user_info, head1, text1, head2, text2, query_com
     prompt = f'{prompt_template}\n\n[{head1}]\n{text1}\n\n[{head2}]\n{text2}'
 
     # LLMの実行
-    #response, completion, prompt_tokens, response_tokens = agent.generate_response("LLM", prompt)
     response = ""
     for prompt, response_chunk, completion in agent.generate_response(model_type, prompt):
         if response_chunk:
@@ -243,7 +238,6 @@ def art_critics(service_info, user_info, memories_selected=[], image_paths=[], a
     prompt = f'{prompt_template}'
 
     # LLMの実行
-    #response, completion, prompt_tokens, response_tokens = agent.generate_response("LLM", prompt, memories_selected, image_paths)
     response = ""
     for prompt, response_chunk, completion in agent.generate_response(model_type, prompt, memories_selected, image_paths):
         if response_chunk:

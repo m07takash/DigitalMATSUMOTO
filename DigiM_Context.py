@@ -365,28 +365,28 @@ def get_memory_refernce(memory_selected):
 
 
 # レスポンスと会話メモリの類似度評価
-#def get_memory_similarity_response(response_vec, memory_selected, logic="Cosine"):
-#    memory_ref = []
-#        
-#    for memory_data in memory_selected:
-#        seq = memory_data["seq"]
-#        sub_seq = memory_data["sub_seq"]
-#        type = memory_data["type"]
-#        timestamp = memory_data["timestamp"]
-#        text = memory_data["text"] 
-#        similarity_prompt = round(memory_data["similarity_prompt"],3)
-#        similarity_response = round(dmu.calculate_similarity_vec(response_vec, memory_data["vec_text"], logic),3)
-#        
-#        # 画面表示用のログ形式
-#        memory_ref_log = f"{timestamp}の会話履歴：{seq}_{sub_seq}_{type}[質問との類似度：{round(similarity_prompt,3)}、回答との類似度：{round(similarity_response,3)}]{text[:50]}<br>"
-#        
-#        # 記録用のデータセット
-#        memory_ref.append(
-#            {
-#                "log": memory_ref_log
-#            }
-#        )
-#    return memory_ref
+def get_memory_similarity_response(response_vec, memory_selected, logic="Cosine"):
+    memory_ref = []
+        
+    for memory_data in memory_selected:
+        seq = memory_data["seq"]
+        sub_seq = memory_data["sub_seq"]
+        type = memory_data["type"]
+        timestamp = memory_data["timestamp"]
+        text = memory_data["text"] 
+        similarity_prompt = round(memory_data["similarity_prompt"],3)
+        similarity_response = round(dmu.calculate_similarity_vec(response_vec, memory_data["vec_text"], logic),3)
+        
+        # 画面表示用のログ形式
+        memory_ref_log = f"{timestamp}の会話履歴：{seq}_{sub_seq}_{type}[質問との類似度：{round(similarity_prompt,3)}、回答との類似度：{round(similarity_response,3)}]{text[:50]}<br>"
+        
+        # 記録用のデータセット
+        memory_ref.append(
+            {
+                "log": memory_ref_log
+            }
+        )
+    return memory_ref
 
 
 # RAGのチャンクデータをCSV(utf-8)から生成
