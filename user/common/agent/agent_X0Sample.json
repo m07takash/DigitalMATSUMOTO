@@ -29,10 +29,10 @@
             "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
         },
         "IMAGEGEN": {
-            "NAME":"DALLE-3",
+            "NAME":"GPT-Image-1",
             "FUNC_NAME": "generate_image_dalle",
-            "MODEL": "dall-e-3",
-            "PARAMETER": {"n": 1, "size": "1024x1024", "response_format": "b64_json", "quality": "hd", "style": "vivid"},
+            "MODEL": "gpt-image-1",
+            "PARAMETER": {"size": "1024x1024", "quality": "high"},
             "TOKENIZER": "",
             "MEMORY": {"limit": 3000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
         }
