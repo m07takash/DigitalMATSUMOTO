@@ -127,8 +127,6 @@ class DigiM_Agent:
 
     # LLMの実行
     def generate_response(self, model_type, query, memories=[], image_paths={}, stream_mode=True):
-#        response, completion, prompt_tokens, response_tokens = dmfm.call_function_by_name(self.agent["ENGINE"][type]["FUNC_NAME"], query, self.system_prompt, self.agent["ENGINE"][type], memories, image_paths, self.skill)
-#        return response, completion, prompt_tokens, response_tokens    
         for prompt, response, completion in dmfm.call_function_by_name(self.agent["ENGINE"][model_type]["FUNC_NAME"], query, self.system_prompt, self.agent["ENGINE"][model_type], memories, image_paths, self.skill, stream_mode):
             yield prompt, response, completion
 
