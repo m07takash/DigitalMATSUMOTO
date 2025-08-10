@@ -293,11 +293,12 @@ def generate_image_dalle(prompt, system_prompt, model, memories=[], image_paths=
     completion = openai_client.images.generate(
         model=model["MODEL"],
         prompt=prompt_str[:3000],
-        n=model["PARAMETER"]["n"],  #イメージ枚数
-        size=model["PARAMETER"]["size"],
-        response_format=model["PARAMETER"]["response_format"],  # レスポンスフォーマット url or b64_json
-        quality=model["PARAMETER"]["quality"],  # 品質 standard or hd
-        style=model["PARAMETER"]["style"]  # スタイル vivid or natural
+        **model["PARAMETER"]
+#        n=model["PARAMETER"]["n"],  #イメージ枚数
+#        size=model["PARAMETER"]["size"],
+#        response_format=model["PARAMETER"]["response_format"],  # レスポンスフォーマット url or b64_json
+#        quality=model["PARAMETER"]["quality"],  # 品質 standard or hd
+#        style=model["PARAMETER"]["style"]  # スタイル vivid or natural
     )
 
     # TEMPフォルダに保存
