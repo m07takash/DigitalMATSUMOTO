@@ -1,5 +1,5 @@
 {
-    "DISPLAY": true,
+    "DISPLAY": false,
     "DISPLAY_NAME": "Webサーチ",
     "NAME": "Webサーチ",
     "ACT": "Webから情報を検索するAI",
