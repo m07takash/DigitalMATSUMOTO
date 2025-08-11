@@ -1,0 +1,44 @@
+{
+    "DISPLAY": true,
+    "DISPLAY_NAME": "GPT-5",
+    "NAME": "通常LLM(GPT5)",
+    "ACT": "通常のチャットアシスタント",
+    "PERSONALITY": {},
+    "ENGINE": {
+        "LLM": {
+            "NAME":"GPT-5",
+            "FUNC_NAME": "generate_response_T_gpt",
+            "MODEL": "gpt-5",
+            "PARAMETER": {},
+            "TOKENIZER": "tiktoken",
+            "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+        }
+    },
+    "HABIT": {
+        "DEFAULT": {
+            "MAGIC_WORDS": [""],
+            "PRACTICE": "practice_00Default.json",
+            "ADD_KNOWLEDGE": []
+        }
+    },
+    "KNOWLEDGE": [],
+    "SKILL": {
+        "TOOL_LIST": [
+            {"type": "function", "function": {"name": "default_tool"}}
+        ],
+        "CHOICE": "none"
+    },
+    "COMMUNICATION": {
+        "ACTIVE": "N",
+        "SAVE_MODE": "CSV",
+        "SAVE_DB": "Communication",
+        "DEFAULT_CATEGORY": "Feedback",
+        "FEEDBACK_ITEM_LIST":["memo", "comment"]
+    },
+    "SUPPORT_AGENT": {
+        "DIALOG_DIGEST": "agent_51DialogDigest.json",
+        "ART_CRITICS": "agent_52ArtCritic.json",
+        "EXTRACT_DATE": "agent_55ExtractDate.json",
+        "RAG_QUERY_GENERATOR": "agent_56RAGQueryGenerator.json"
+    }
+}
