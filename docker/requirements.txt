@@ -6,8 +6,10 @@ jupyterlab
 streamlit
 openai
 tiktoken
+anthropic
 google-genai
 llamaapi
+xai-sdk
 notion
 notion_client
 line-bot-sdk

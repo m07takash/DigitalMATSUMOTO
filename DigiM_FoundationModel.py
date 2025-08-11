@@ -9,6 +9,7 @@ import openai
 from openai import OpenAI
 from google import genai
 from google.genai import types
+import anthropic
 from llamaapi import LlamaAPI
 
 import DigiM_Util as dmu
@@ -18,8 +19,10 @@ import DigiM_Tool as dmt
 load_dotenv("system.env")
 temp_folder_path = os.getenv("TEMP_FOLDER")
 openai_api_key = os.getenv("OPENAI_API_KEY")
+anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
 gemini_api_key = os.getenv("GEMINI_API_KEY")
 llama_api_key = os.getenv("LLAMA_API_KEY")
+xai_api_key = os.getenv("XAU_API_KEY")
 
 # 文字列から関数名を取得
 def call_function_by_name(func_name, *args, **kwargs):
@@ -210,21 +213,115 @@ def generate_response_T_gemini(query, system_prompt, model, memories=[], image_p
     # モデルの実行（モデル／システムプロンプト）
     if stream_mode:
         completion = gemini_client.models.generate_content_stream(
-            model=model["MODEL"], 
-            config=types.GenerateContentConfig(system_instruction=system_instruction),
-            contents=contents
+            model = model["MODEL"], 
+            config = types.GenerateContentConfig(system_instruction=system_instruction),
+            contents = contents
             )
         for chunk_completion in completion:
             response = chunk_completion.text
             yield str(contents), response, chunk_completion
     else:
         completion = gemini_client.models.generate_content(
-            model=model["MODEL"], 
-            config=types.GenerateContentConfig(system_instruction=system_instruction), 
-            contents=contents
+            model = model["MODEL"], 
+            config = types.GenerateContentConfig(system_instruction=system_instruction), 
+            contents = contents
             )
         response = completion.text
         yield str(contents), response, completion
+
+
+# Claudeの実行
+def generate_response_T_claude(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
+    claude_client = anthropic.Anthropic(api_key=anthropic_api_key)
+
+    # メモリをプロンプトに設定
+    memory_message = []
+    for memory in memories:
+        memory_message.append({"role": memory["role"], "content": memory["text"]})
+    
+    # イメージ画像をプロンプトに設定
+    image_message = []
+    for image_path in image_paths:
+        image_base64 = dmu.encode_image_file(image_path)
+        image_message.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_base64}})
+    
+    # ユーザーのプロンプトを設定
+    user_prompt = [{"type": "text", "text": query}] + image_message
+    user_message = [{"role": "user", "content": user_prompt}]
+    prompt = memory_message + user_message
+
+    # ツールを設定【要検討：いったんデフォルト設定】
+    tools = agent_tools["TOOL_LIST"]
+    tool_choice = agent_tools["CHOICE"]
+
+    # モデルの実行
+    if stream_mode:
+        with claude_client.messages.stream(
+            model = model["MODEL"],
+            **model["PARAMETER"],
+            system = system_prompt,
+            messages = prompt
+            ) as stream:
+            for response in stream.text_stream:
+                yield str(prompt), response, stream
+    else:
+        completion = claude_client.messages.create(
+            model = model["MODEL"],
+            **model["PARAMETER"],
+            system = system_prompt,
+            messages = prompt
+            )
+        response = completion.content[0].text
+        yield str(prompt), response, completion
+    
+
+# Grokの実行
+def generate_response_T_grok(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
+    from xai_sdk import Client
+    from xai_sdk.chat import user, assistant, system, image
+
+    grok_client = Client(api_key=xai_api_key, timeout=3600)
+    grok_chat = grok_client.chat.create(model=model["MODEL"])
+
+    # システムプロンプトの設定
+    grok_chat.append(system(system_prompt))
+
+    # メモリをプロンプトに設定
+    memory_message = []
+    for memory in memories:
+        memory_data = {"role": memory["role"], "content": [{"type": "text", "text": memory["text"]}]}
+        memory_message.append(memory_data)
+        if memory["role"] == "user":
+            grok_chat.append(user(memory["text"]))
+        elif memory["role"] == "assistant":
+            grok_chat.append(assistant(memory["text"]))
+
+    # イメージ画像をプロンプトに設定
+    image_message = []
+    for image_path in image_paths:
+        image_base64 = dmu.encode_image_file(image_path)
+        image_message.append(image(image_url=f"data:image/jpeg;base64,{image_base64}"))
+
+    # ユーザーのプロンプトを設定
+    user_prompt = [{"type": "text", "text": query}]# + image_message
+    user_message = {"role": "user", "content": user_prompt}
+    user_message = {"role": "user", "content": query}
+    prompt = memory_message + [user_message]
+    grok_chat.append(user(query, *image_message))
+
+    # ツールを設定【要検討：いったんデフォルト設定】
+    tools = agent_tools["TOOL_LIST"]
+    tool_choice = agent_tools["CHOICE"]
+
+    # モデルの実行
+    if stream_mode:
+        for completion, chunk_completion in grok_chat.stream():
+            response = chunk_completion.content
+            yield str(prompt), response, chunk_completion
+    else:
+        completion = grok_chat.sample()
+        response = completion.content
+        yield str(prompt), response, completion
 
 
 # llamaの実行
