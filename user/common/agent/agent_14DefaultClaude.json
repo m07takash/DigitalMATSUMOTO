@@ -1,15 +1,15 @@
 {
     "DISPLAY": true,
-    "DISPLAY_NAME": "GPT-4.1",
-    "NAME": "通常LLM(GPT)",
+    "DISPLAY_NAME": "Claude-Sonnet-4",
+    "NAME": "通常LLM(Claude)",
     "ACT": "通常のチャットアシスタント",
     "PERSONALITY": {},
     "ENGINE": {
         "LLM": {
-            "NAME":"GPT-4.1",
-            "FUNC_NAME": "generate_response_T_gpt",
-            "MODEL": "gpt-4.1",
-            "PARAMETER": {},
+            "NAME":"Claude-Sonnet-4",
+            "FUNC_NAME": "generate_response_T_claude",
+            "MODEL": "claude-sonnet-4-20250514",
+            "PARAMETER": {"max_tokens": 20000},
             "TOKENIZER": "tiktoken",
             "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
         }
@@ -23,9 +23,7 @@
     },
     "KNOWLEDGE": [],
     "SKILL": {
-        "TOOL_LIST": [
-            {"type": "function", "function": {"name": "default_tool"}}
-        ],
+        "TOOL_LIST": [],
         "CHOICE": "none"
     },
     "COMMUNICATION": {
