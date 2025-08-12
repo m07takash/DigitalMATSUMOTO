@@ -1,14 +1,14 @@
-# JupyterLabをポート8888で起動（トークンなし、パスワードなしなのでサーバー上での実行はオススメしません！）
-jupyter lab --ip=0.0.0.0 --port=8888 --allow-root --no-browser --NotebookApp.token=''
+# JupyterLabをポート8891で起動（トークンなし、パスワードなしなのでサーバー上での実行はオススメしません！）
+jupyter lab --ip=0.0.0.0 --port=8891 --allow-root --no-browser --NotebookApp.token=''
 
-# ターミナルで実行して8889ポートで利用
-streamlit run WebDigiMatsuAgent.py --server.address 0.0.0.0 --server.port 8889
+# ターミナルで実行して8893ポートで利用
+streamlit run WebDigiMatsuAgent.py --server.address 0.0.0.0 --server.port 8893
 
-# FastAPIを8890ポートで起動
-uvicorn DigiM_API:app --host 0.0.0.0 --port 8890
+# FastAPIを8899ポートで起動
+uvicorn DigiM_API:app --host 0.0.0.0 --port 8899
 
 # APIの実行コマンド(curl)
-curl -X POST http://localhost:8890/run_function \
+curl -X POST http://localhost:8899/run_function \
   -H "Content-Type: application/json" \
   -d '{
     "service_info": {"SERVICE_ID":"Curl", "SERVICE_DATA":{}},
