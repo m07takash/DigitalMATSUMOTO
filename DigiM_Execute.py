@@ -164,8 +164,11 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         query = f'{prompt_template}{user_query}{situation_prompt}'
     
     # LLMの実行
+    prompt = ""
     response = ""
     timestamp_log += "[21.LLM実行開始]"+str(datetime.now())+"<br>"
+    response_service_info = {}
+    response_user_info = {}
     for prompt, response_chunk, completion in agent.generate_response(model_type, query, memories_selected, image_files, stream_mode):
         if response_chunk:
             response += response_chunk
@@ -175,8 +178,12 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     timestamp_end = str(datetime.now())
     timestamp_log += "[22.LLM実行完了]"+str(datetime.now())+"<br>"
 
-    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
-    response_tokens = dmu.count_token(tokenizer, model_name, response)
+    prompt_tokens = 0
+    response_tokens = 0
+    if prompt:
+        prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
+    if response:
+        response_tokens = dmu.count_token(tokenizer, model_name, response)
 
     # レスポンスとメモリ・コンテキストの類似度
     timestamp_log += "[23.結果の類似度算出開始]"+str(datetime.now())+"<br>"
