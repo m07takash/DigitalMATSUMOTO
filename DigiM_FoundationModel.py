@@ -211,6 +211,7 @@ def generate_response_T_gemini(query, system_prompt, model, memories=[], image_p
 ###    tool_choice = agent_tools["CHOICE"]
     
     # モデルの実行（モデル／システムプロンプト）
+    response_stream_total = ""
     if stream_mode:
         completion = gemini_client.models.generate_content_stream(
             model = model["MODEL"], 
@@ -219,8 +220,11 @@ def generate_response_T_gemini(query, system_prompt, model, memories=[], image_p
             )
         for chunk_completion in completion:
             response = chunk_completion.text
+            response_stream_total += response if response else ""
             yield str(contents), response, chunk_completion
-    else:
+    
+    # ストリーミングの結果が取得されない場合、ストリーミングではないモードで再実行
+    if not stream_mode or response_stream_total == "":
         completion = gemini_client.models.generate_content(
             model = model["MODEL"], 
             config = types.GenerateContentConfig(system_instruction=system_instruction), 
