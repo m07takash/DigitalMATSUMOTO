@@ -2,6 +2,7 @@ import os
 import json
 from datetime import datetime
 
+import inspect
 import pytz
 import DigiM_Util as dmu
 import DigiM_Agent as dma
@@ -477,7 +478,27 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 import_contents = in_contents
 
                 timestamp_begin = str(datetime.now())
-                response_service_info, response_user_info, output, export_contents = dmt.call_function_by_name(service_info, user_info, setting["FUNC_NAME"], session_id, input)
+#                response_service_info, response_user_info, output, export_contents = dmt.call_function_by_name(service_info, user_info, setting["FUNC_NAME"], session_id, input)
+                tool_result = dmt.call_function_by_name(service_info, user_info, setting["FUNC_NAME"], session_id, input)
+                output = ""
+                export_contents = []
+                if inspect.isgenerator(tool_result):
+                    for resp_svc, resp_usr, chunk, exp in tool_result:
+                        output += str(chunk) if chunk else ""
+                        if exp is not None:
+                            export_contents = exp
+                        if not last_only:
+                            yield resp_svc, resp_usr, chunk
+                        elif last_only and i == last_idx:
+                            yield resp_svc, resp_usr, chunk
+                    response_service_info = resp_svc
+                    response_user_info = resp_usr
+                else:
+                    response_service_info, response_user_info, output, export_contents = tool_result
+                    if not last_only:
+                        yield response_service_info, response_user_info, output
+                    elif last_only and i == last_idx:
+                        yield response_service_info, response_user_info, output
                 timestamp_end = str(datetime.now())
                 
                 # ログデータの保存
@@ -498,7 +519,9 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                     "timestamp": timestamp_begin,                
                     "text": input,
                     "query": {
+                        "token": 0,
                         "input": input,
+                        "text": input,
                         "contents": import_contents,
                         "situation": {}
                     }
@@ -508,6 +531,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 response_chat_dict = {
                     "role": "assistant",
                     "timestamp": timestamp_end,
+                    "token": 0,
                     "text": output,
                     "export_contents": export_contents
                 }
