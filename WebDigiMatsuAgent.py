@@ -82,14 +82,16 @@ def initialize_session_states():
         st.session_state.situation_setting = ""
     if 'seq_memory' not in st.session_state:
         st.session_state.seq_memory = []
-    if 'memory_use' not in st.session_state:
-        st.session_state.memory_use = True
-    if 'magic_word_use' not in st.session_state:
-        st.session_state.magic_word_use = True
     if 'stream_mode' not in st.session_state:
         st.session_state.stream_mode = True
+    if 'magic_word_use' not in st.session_state:
+        st.session_state.magic_word_use = True
     if 'save_digest' not in st.session_state:
         st.session_state.save_digest = True
+    if 'memory_use' not in st.session_state:
+        st.session_state.memory_use = True
+    if 'memory_similarity' not in st.session_state:
+        st.session_state.memory_similarity = False
     if 'meta_search' not in st.session_state:
         st.session_state.meta_search = True
     if 'RAG_query_gene' not in st.session_state:
@@ -275,6 +277,12 @@ def main():
     else:
         st.session_state.magic_word_use = False
     
+    # メモリ類似度の設定
+#    if header_col2.checkbox("Memory Similarity", value=st.session_state.memory_similarity):
+#        st.session_state.memory_similarity = True
+#    else:
+#        st.session_state.memory_similarity = False
+
     # 実行の設定
     header_col3.markdown("RAG Setting:")
 
@@ -420,14 +428,24 @@ def main():
         situation = {}
         situation["TIME"] = time_setting
         situation["SITUATION"] = situation_setting
-        
+
+        # 実行の設定
+        execution = {}
+        execution["MEMORY_USE"] = st.session_state.memory_use
+        execution["MEMORY_SIMILARITY"] = st.session_state.memory_similarity
+        execution["MAGIC_WORD_USE"] = st.session_state.magic_word_use
+        execution["STREAM_MODE"] = st.session_state.stream_mode
+        execution["SAVE_DIGEST"] = st.session_state.save_digest
+        execution["META_SEARCH"] = st.session_state.meta_search
+        execution["RAG_QUERY_GENE"] = st.session_state.RAG_query_gene
+
         # ユーザー入力の一時表示
         with st.chat_message("User"):
             st.markdown(user_input.replace("\n", "<br>"), unsafe_allow_html=True)
         with st.chat_message(st.session_state.web_title):
             response_placeholder = st.empty()
             response = ""
-            for response_service_info, response_user_info, response_chunk in dme.DigiMatsuExecute_Practice(st.session_state.web_default_service, st.session_state.web_default_user, st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, st.session_state.memory_use, st.session_state.magic_word_use, st.session_state.stream_mode, st.session_state.save_digest, st.session_state.meta_search, st.session_state.RAG_query_gene):
+            for response_service_info, response_user_info, response_chunk in dme.DigiMatsuExecute_Practice(st.session_state.web_default_service, st.session_state.web_default_user, st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, execution):
                 response += response_chunk
                 response_placeholder.markdown(response)
             st.rerun()
