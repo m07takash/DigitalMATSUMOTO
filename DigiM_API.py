@@ -33,14 +33,19 @@ class InputData(BaseModel):
     user_input: str
     situation: Dict[str, Any]
     agent_file: Optional[str] = None
+    execution: Dict[str, Any]
 
 # 実行する関数(session_idにはLINE ID等のユーザーを一意に指定できるキー)
-def exec_function(service_info: dict, user_info: dict, session_id: str, session_name: str, user_input: str, situation: dict, agent_file: str) -> tuple[dict, dict, str, str, str]:
+def exec_function(service_info: dict, user_info: dict, session_id: str, session_name: str, user_input: str, situation: dict, agent_file: str, execution: dict) -> tuple[dict, dict, str, str, str]:
     # セッションの設定（新規でセッションIDを発番）
     if not session_id: 
         session_id = dms.set_new_session_id()
     if not session_name:
         session_name = f"(User:{user_info['USER_ID']}){api_default_session_name}"
+    
+    # 実行の設定
+    if not execution or "LAST_ONLY" not in execution:
+        execution["LAST_ONLY"] = True
 
     # 実行
     response = ""
@@ -52,7 +57,7 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
         agent_file,
         user_input,
         in_situation=situation,
-        stream_mode=True
+        in_execution=execution
     ):
         response += response_chunk
     
@@ -63,8 +68,8 @@ async def run_function(data: InputData):
     agent_file = data.agent_file or api_agent_file
 
     # Pydantic → dict に変換
-    service_info = data.service_info.dict()
-    user_info = data.user_info.dict()
+    service_info = data.service_info.model_dump()
+    user_info = data.user_info.model_dump()
 
     # exec_function 呼び出し
     service_info, user_info, session_id, session_name, response = exec_function(
@@ -74,7 +79,8 @@ async def run_function(data: InputData):
         data.session_name,
         data.user_input,
         data.situation,
-        agent_file
+        agent_file,
+        data.execution
     )
 
     return {

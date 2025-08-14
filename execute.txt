@@ -17,5 +17,6 @@ curl -X POST http://localhost:8899/run_function \
     "session_name": "",
     "user_input": "こんにちは",
     "situation": {},
-    "agent_file": ""
+    "agent_file": "",
+    "execution": {}
 }'
