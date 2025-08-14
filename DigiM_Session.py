@@ -163,7 +163,7 @@ class DigiMSession:
     def get_history_active(self):
         chat_history_active_dict = {}
         if self.chat_history_dict:
-            chat_history_active_dict = {k: v for k, v in self.chat_history_dict.items() if v["SETTING"].get("FLG") == "Y"}
+            chat_history_active_dict = {k: v for k, v in self.chat_history_dict.items() if "SETTING" in v and v["SETTING"].get("FLG") == "Y"}
         return chat_history_active_dict
 
     # Sub_Seqの最大・最小の辞書型データを獲得する
