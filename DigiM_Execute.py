@@ -338,10 +338,10 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
 
 
 # プラクティスで実行
-#def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name, in_agent_file, user_query, in_contents=[], in_situation={}, in_overwrite_items={}, in_memory_use=True, in_magic_word_use=True, stream_mode=True, save_digest=True, meta_search=True, RAG_query_gene=True):
 def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name, in_agent_file, user_query, in_contents=[], in_situation={}, in_overwrite_items={}, in_execution={}):
 
     # 実行設定の取得
+    last_only = in_execution.get("LAST_ONLY", False) #APIで基本的に使用
     memory_use = in_execution.get("MEMORY_USE", True)
     memory_similarity = in_execution.get("MEMORY_SIMILARITY", False)
     magic_word_use = in_execution.get("MAGIC_WORD_USE", True)
@@ -370,7 +370,9 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
     practice = dmu.read_json_file(practice_folder_path+practice_file)
     
     # プラクティス(チェイン)の実行
-    for chain in practice["CHAINS"]:
+    chains = practice["CHAINS"]
+    last_idx = len(chains) - 1
+    for i, chain in enumerate(chains): #for chain in practice["CHAINS"]:
         result = {}
         model_type = chain["TYPE"]
         input = ""
@@ -443,8 +445,11 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
             response = ""
             for response_service_info, response_user_info, response_chunk, export_contents in DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_file, model_type, sub_seq, user_input, import_contents, situation, overwrite_items, add_knowledge, prompt_temp_cd, execution): #, seq_limit, sub_seq_limit)
                 response += response_chunk
-                yield response_service_info, response_user_info, response_chunk
-            
+                if not last_only:
+                    yield response_service_info, response_user_info, response_chunk
+                elif last_only and i==last_idx:
+                    yield response_service_info, response_user_info, response_chunk
+                
             input = user_input
             output = response
 
@@ -496,8 +501,10 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 "export_contents": export_contents
             }
             session.save_history(str(seq), "response", response_chat_dict, "SUB_SEQ", str(sub_seq))
-
-            yield response_service_info, response_user_info, output
+            if not last_only:
+                yield response_service_info, response_user_info, output
+            elif last_only and i==last_idx:
+                yield response_service_info, response_user_info, output
         
         # 結果のリストへの格納
         result["SubSEQ"]=sub_seq
