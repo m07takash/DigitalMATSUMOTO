@@ -2,6 +2,7 @@ import os
 import re
 import numpy as np
 import json
+import yaml
 import shutil
 import mimetypes
 import math
@@ -96,13 +97,29 @@ def read_pdf_file(file_name, folder_path=""):
 
 # JSONファイルの読込
 def read_json_file(file_name, folder_path=""):
+    data = {}
     file_path = folder_path + file_name
     if os.path.exists(file_path):
         with open(file_path, 'r') as file:
             data = json.load(file)
-    else:
+    return data
+
+# YAMLファイルの読込
+def read_yaml_file(file_name, folder_path=""):
+    data = {}
+    file_path = folder_path + file_name
+    if os.path.exists(file_path):
+        with open(file_path, 'r', encoding="utf-8") as file:
+            data = yaml.safe_load(file)
+    if data is None:
         data = {}
     return data
+
+# YAMLファイルの保存
+def save_yaml_file(data, file_name, folder_path=""):
+    file_path = folder_path + file_name
+    with open(file_path, 'w', encoding="utf-8") as file:
+        yaml.dump(data, file, allow_unicode=True)
 
 # 画像ファイルをbase64でエンコード　
 def encode_image_file(image_path):

@@ -15,6 +15,10 @@ temp_folder_path = os.getenv("TEMP_FOLDER")
 practice_folder_path = os.getenv("PRACTICE_FOLDER")
 timezone_setting = os.getenv("TIMEZONE")
 
+# セッションロックエラー
+class SessionLockedError(RuntimeError):
+    pass
+
 # 単体実行用の関数
 def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_file, model_type="LLM", sub_seq=1, user_input="", contents=[], situation={}, overwrite_items={}, add_knowledge=[], prompt_temp_cd="", execution={}, seq_limit="", sub_seq_limit=""):  
     export_files = []
@@ -357,171 +361,186 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
     response_service_info = service_info
     response_user_info = user_info
 
-    # プラクティスの選択
-    agent = dma.DigiM_Agent(in_agent_file)
+    # セッションのロック
+    if session.get_status() == "LOCKED":
+        raise Exception("Session is locked. Please unlock the session before executing the practice.")
+    else:
+        session.save_status("LOCKED")
     
-    habit = "DEFAULT"
-    if magic_word_use:
+    try:
+        # プラクティスの選択
         agent = dma.DigiM_Agent(in_agent_file)
-        habit = agent.set_practice_by_command(user_query)
+        
+        habit = "DEFAULT"
+        if magic_word_use:
+            agent = dma.DigiM_Agent(in_agent_file)
+            habit = agent.set_practice_by_command(user_query)
 
-    practice_file = agent.habit[habit]["PRACTICE"]
-    habit_add_knowledge = agent.habit[habit]["ADD_KNOWLEDGE"] if "ADD_KNOWLEDGE" in agent.habit[habit] else []
-    practice = dmu.read_json_file(practice_folder_path+practice_file)
-    
-    # プラクティス(チェイン)の実行
-    chains = practice["CHAINS"]
-    last_idx = len(chains) - 1
-    for i, chain in enumerate(chains): #for chain in practice["CHAINS"]:
-        result = {}
-        model_type = chain["TYPE"]
-        input = ""
-        output = ""
-        import_contents = []
-        export_contents = []
+        practice_file = agent.habit[habit]["PRACTICE"]
+        habit_add_knowledge = agent.habit[habit]["ADD_KNOWLEDGE"] if "ADD_KNOWLEDGE" in agent.habit[habit] else []
+        practice = dmu.read_json_file(practice_folder_path+practice_file)
+        
+        # プラクティス(チェイン)の実行
+        chains = practice["CHAINS"]
+        last_idx = len(chains) - 1
+        for i, chain in enumerate(chains): #for chain in practice["CHAINS"]:
+            result = {}
+            model_type = chain["TYPE"]
+            input = ""
+            output = ""
+            import_contents = []
+            export_contents = []
 
-        # TYPE「LLM」の場合
-        if model_type in ["LLM", "IMAGEGEN"]:
-            setting = chain["SETTING"]
-            # "USER":ユーザー入力(引数)、他:プラクティスファイルの設定
-            agent_file = setting["AGENT_FILE"] if setting["AGENT_FILE"] != "USER" else in_agent_file
-            overwrite_items = setting["OVERWRITE_ITEMS"] if setting["OVERWRITE_ITEMS"] != "USER" else in_overwrite_items
-            add_knowledge = []
-            for add_knowledge_data in setting["ADD_KNOWLEDGE"]:
-                if "USER" in setting["ADD_KNOWLEDGE"]: #"USER"が含まれていたら、呼び出し元エージェントの追加知識DBを参照
-                    add_knowledge.extend(habit_add_knowledge)
-                else:
-                    add_knowledge.append(add_knowledge_data)
-            prompt_temp_cd = setting["PROMPT_TEMPLATE"]
-            
-            # "USER":ユーザー入力(引数)、"INPUT{SubSeqNo}":サブSEQの入力結果、OUTPUT{SubSeqNo}":サブSEQの出力結果
-            user_input = ""
-            if setting["USER_INPUT"] == "USER":
-                user_input = user_query
-            elif setting["USER_INPUT"].startswith("INPUT"):
-                ref_subseq = int(setting["USER_INPUT"].replace("INPUT_", "").strip())
-                user_input = next((item["INPUT"] for item in results if item["SubSEQ"] == ref_subseq), None)
-            elif setting["USER_INPUT"].startswith("OUTPUT"):
-                ref_subseq = int(setting["USER_INPUT"].replace("OUTPUT_", "").strip())
-                user_input = next((item["OUTPUT"] for item in results if item["SubSEQ"] == ref_subseq), None)
-            else:
-                user_input = setting["USER_INPUT"]
-
-            # コンテンツの設定
-            import_contents = setting["CONTENTS"] if setting["CONTENTS"] != "USER" else in_contents
-            if setting["CONTENTS"] == "USER":
-                import_contents = in_contents
-            elif setting["CONTENTS"].startswith("IMPORT_"):
-                ref_subseq = int(setting["CONTENTS"].replace("IMPORT_", "").strip())
-                import_contents = next((item["IMPORT_CONTENTS"] for item in results if item["SubSEQ"] == ref_subseq), None)
-            elif setting["CONTENTS"].startswith("EXPORT_"):
-                ref_subseq = int(setting["CONTENTS"].replace("EXPORT_", "").strip())
-                import_contents = next((item["EXPORT_CONTENTS"] for item in results if item["SubSEQ"] == ref_subseq), None)
-            else:
-                import_contents = setting["CONTENTS"]
-
-            # シチュエーションの設定
-            situation = {}
-            if setting["SITUATION"] == "USER":
-                situation = in_situation
-            else:
-                situation["TIME"] = in_situation["TIME"] if setting["SITUATION"]["TIME"] == "USER" else setting["SITUATION"]["TIME"]
-                situation["SITUATION"] = in_situation["SITUATION"] if setting["SITUATION"]["SITUATION"] == "USER" else setting["SITUATION"]["SITUATION"]
-            
-    #        seq_limit = chain["PreSEQ"] #メモリ参照範囲のSeq
-    #        sub_seq_limit = chain["PreSubSEQ"] #メモリ参照範囲のsubSeq
-
-            # 実行の設定
-            execution = {}
-            execution["MEMORY_USE"] = memory_use and setting["MEMORY_USE"]
-            execution["MEMORY_SIMILARITY"] = memory_similarity
-            execution["MAGIC_WORD_USE"] = magic_word_use
-            execution["STREAM_MODE"] = stream_mode
-            execution["SAVE_DIGEST"] = save_digest
-            execution["META_SEARCH"] = meta_search
-            execution["RAG_QUERY_GENE"] = RAG_query_gene
-
-            # LLM実行
-            response = ""
-            for response_service_info, response_user_info, response_chunk, export_contents in DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_file, model_type, sub_seq, user_input, import_contents, situation, overwrite_items, add_knowledge, prompt_temp_cd, execution): #, seq_limit, sub_seq_limit)
-                response += response_chunk
-                if not last_only:
-                    yield response_service_info, response_user_info, response_chunk
-                elif last_only and i==last_idx:
-                    yield response_service_info, response_user_info, response_chunk
+            # TYPE「LLM」の場合
+            if model_type in ["LLM", "IMAGEGEN"]:
+                setting = chain["SETTING"]
+                # "USER":ユーザー入力(引数)、他:プラクティスファイルの設定
+                agent_file = setting["AGENT_FILE"] if setting["AGENT_FILE"] != "USER" else in_agent_file
+                overwrite_items = setting["OVERWRITE_ITEMS"] if setting["OVERWRITE_ITEMS"] != "USER" else in_overwrite_items
+                add_knowledge = []
+                for add_knowledge_data in setting["ADD_KNOWLEDGE"]:
+                    if "USER" in setting["ADD_KNOWLEDGE"]: #"USER"が含まれていたら、呼び出し元エージェントの追加知識DBを参照
+                        add_knowledge.extend(habit_add_knowledge)
+                    else:
+                        add_knowledge.append(add_knowledge_data)
+                prompt_temp_cd = setting["PROMPT_TEMPLATE"]
                 
-            input = user_input
-            output = response
+                # "USER":ユーザー入力(引数)、"INPUT{SubSeqNo}":サブSEQの入力結果、OUTPUT{SubSeqNo}":サブSEQの出力結果
+                user_input = ""
+                if setting["USER_INPUT"] == "USER":
+                    user_input = user_query
+                elif setting["USER_INPUT"].startswith("INPUT"):
+                    ref_subseq = int(setting["USER_INPUT"].replace("INPUT_", "").strip())
+                    user_input = next((item["INPUT"] for item in results if item["SubSEQ"] == ref_subseq), None)
+                elif setting["USER_INPUT"].startswith("OUTPUT"):
+                    ref_subseq = int(setting["USER_INPUT"].replace("OUTPUT_", "").strip())
+                    user_input = next((item["OUTPUT"] for item in results if item["SubSEQ"] == ref_subseq), None)
+                else:
+                    user_input = setting["USER_INPUT"]
 
-        elif model_type =="TOOL":           
-            # シーケンスの設定(sub_seq=1ならば発番)
-            if sub_seq == 1:
-                seq = session.get_seq_history() + 1
-            else:
-                seq = session.get_seq_history()
+                # コンテンツの設定
+                import_contents = setting["CONTENTS"] if setting["CONTENTS"] != "USER" else in_contents
+                if setting["CONTENTS"] == "USER":
+                    import_contents = in_contents
+                elif setting["CONTENTS"].startswith("IMPORT_"):
+                    ref_subseq = int(setting["CONTENTS"].replace("IMPORT_", "").strip())
+                    import_contents = next((item["IMPORT_CONTENTS"] for item in results if item["SubSEQ"] == ref_subseq), None)
+                elif setting["CONTENTS"].startswith("EXPORT_"):
+                    ref_subseq = int(setting["CONTENTS"].replace("EXPORT_", "").strip())
+                    import_contents = next((item["EXPORT_CONTENTS"] for item in results if item["SubSEQ"] == ref_subseq), None)
+                else:
+                    import_contents = setting["CONTENTS"]
 
-            # ツールの実行
-            setting = chain["SETTING"]
-            input = user_query
-            import_contents = in_contents
+                # シチュエーションの設定
+                situation = {}
+                if setting["SITUATION"] == "USER":
+                    situation = in_situation
+                else:
+                    situation["TIME"] = in_situation["TIME"] if setting["SITUATION"]["TIME"] == "USER" else setting["SITUATION"]["TIME"]
+                    situation["SITUATION"] = in_situation["SITUATION"] if setting["SITUATION"]["SITUATION"] == "USER" else setting["SITUATION"]["SITUATION"]
+                
+        #        seq_limit = chain["PreSEQ"] #メモリ参照範囲のSeq
+        #        sub_seq_limit = chain["PreSubSEQ"] #メモリ参照範囲のsubSeq
 
-            timestamp_begin = str(datetime.now())
-            response_service_info, response_user_info, output, export_contents = dmt.call_function_by_name(service_info, user_info, setting["FUNC_NAME"], session_id, input)
-            timestamp_end = str(datetime.now())
-            
-            # ログデータの保存
-            setting_chat_dict = {
-                "response_service_info": response_service_info,
-                "response_user_info": response_user_info, 
-                "session_name": session.session_name, 
-                "situation": in_situation,
-                "type": model_type,
-                "agent_file": in_agent_file,
-                "name": practice["NAME"],
-                "tool": setting["FUNC_NAME"]
-            }
-            session.save_history(str(seq), "setting", setting_chat_dict, "SUB_SEQ", str(sub_seq))
+                # 実行の設定
+                execution = {}
+                execution["MEMORY_USE"] = memory_use and setting["MEMORY_USE"]
+                execution["MEMORY_SIMILARITY"] = memory_similarity
+                execution["MAGIC_WORD_USE"] = magic_word_use
+                execution["STREAM_MODE"] = stream_mode
+                execution["SAVE_DIGEST"] = save_digest
+                execution["META_SEARCH"] = meta_search
+                execution["RAG_QUERY_GENE"] = RAG_query_gene
 
-            prompt_chat_dict = {
-                "role": "user",
-                "timestamp": timestamp_begin,                
-                "text": input,
-                "query": {
-                    "input": input,
-                    "contents": import_contents,
-                    "situation": {}
+                # LLM実行
+                response = ""
+                for response_service_info, response_user_info, response_chunk, export_contents in DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_file, model_type, sub_seq, user_input, import_contents, situation, overwrite_items, add_knowledge, prompt_temp_cd, execution): #, seq_limit, sub_seq_limit)
+                    response += response_chunk
+                    if not last_only:
+                        yield response_service_info, response_user_info, response_chunk
+                    elif last_only and i==last_idx:
+                        yield response_service_info, response_user_info, response_chunk
+                    
+                input = user_input
+                output = response
+
+            elif model_type =="TOOL":           
+                # シーケンスの設定(sub_seq=1ならば発番)
+                if sub_seq == 1:
+                    seq = session.get_seq_history() + 1
+                else:
+                    seq = session.get_seq_history()
+
+                # ツールの実行
+                setting = chain["SETTING"]
+                input = user_query
+                import_contents = in_contents
+
+                timestamp_begin = str(datetime.now())
+                response_service_info, response_user_info, output, export_contents = dmt.call_function_by_name(service_info, user_info, setting["FUNC_NAME"], session_id, input)
+                timestamp_end = str(datetime.now())
+                
+                # ログデータの保存
+                setting_chat_dict = {
+                    "response_service_info": response_service_info,
+                    "response_user_info": response_user_info, 
+                    "session_name": session.session_name, 
+                    "situation": in_situation,
+                    "type": model_type,
+                    "agent_file": in_agent_file,
+                    "name": practice["NAME"],
+                    "tool": setting["FUNC_NAME"]
                 }
-            }
-            session.save_history(str(seq), "prompt", prompt_chat_dict, "SUB_SEQ", str(sub_seq))
-        
-            response_chat_dict = {
-                "role": "assistant",
-                "timestamp": timestamp_end,
-                "text": output,
-                "export_contents": export_contents
-            }
-            session.save_history(str(seq), "response", response_chat_dict, "SUB_SEQ", str(sub_seq))
-            if not last_only:
-                yield response_service_info, response_user_info, output
-            elif last_only and i==last_idx:
-                yield response_service_info, response_user_info, output
-        
-        # 結果のリストへの格納
-        result["SubSEQ"]=sub_seq
-        result["TYPE"]=model_type
-        result["INPUT"]=input
-        chat_history_dict=session.get_history()
+                session.save_history(str(seq), "setting", setting_chat_dict, "SUB_SEQ", str(sub_seq))
+
+                prompt_chat_dict = {
+                    "role": "user",
+                    "timestamp": timestamp_begin,                
+                    "text": input,
+                    "query": {
+                        "input": input,
+                        "contents": import_contents,
+                        "situation": {}
+                    }
+                }
+                session.save_history(str(seq), "prompt", prompt_chat_dict, "SUB_SEQ", str(sub_seq))
+            
+                response_chat_dict = {
+                    "role": "assistant",
+                    "timestamp": timestamp_end,
+                    "text": output,
+                    "export_contents": export_contents
+                }
+                session.save_history(str(seq), "response", response_chat_dict, "SUB_SEQ", str(sub_seq))
+                if not last_only:
+                    yield response_service_info, response_user_info, output
+                elif last_only and i==last_idx:
+                    yield response_service_info, response_user_info, output
+            
+            # 結果のリストへの格納
+            result["SubSEQ"]=sub_seq
+            result["TYPE"]=model_type
+            result["INPUT"]=input
+            chat_history_dict=session.get_history()
+            seq = session.get_seq_history()
+            result["IMPORT_CONTENTS"]=[session.session_folder_path+"contents/"+i["file_name"] for i in chat_history_dict[str(seq)][str(sub_seq)]["prompt"]["query"]["contents"]]
+            result["OUTPUT"]=output
+            result["EXPORT_CONTENTS"]=export_contents
+            results.append(result)
+
+            # サブSEQ更新
+            sub_seq = sub_seq + 1
+
+        # ログデータの保存(Seq)
         seq = session.get_seq_history()
-        result["IMPORT_CONTENTS"]=[session.session_folder_path+"contents/"+i["file_name"] for i in chat_history_dict[str(seq)][str(sub_seq)]["prompt"]["query"]["contents"]]
-        result["OUTPUT"]=output
-        result["EXPORT_CONTENTS"]=export_contents
-        results.append(result)
+        session.save_history(str(seq), "service_info", response_service_info, "SEQ")
+        session.save_history(str(seq), "user_info", response_user_info, "SEQ")
+        session.save_history(str(seq), "practice", practice, "SEQ")
 
-        # サブSEQ更新
-        sub_seq = sub_seq + 1
-
-    # ログデータの保存(Seq)
-    seq = session.get_seq_history()
-    session.save_history(str(seq), "service_info", response_service_info, "SEQ")
-    session.save_history(str(seq), "user_info", response_user_info, "SEQ")
-    session.save_history(str(seq), "practice", practice, "SEQ")
+    except Exception as e:
+        session.save_status("UNLOCKED")
+        print(f"Error during practice execution: {e}")
+        raise e
+    
+    finally:
+        session.save_status("UNLOCKED")
