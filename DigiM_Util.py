@@ -148,6 +148,11 @@ def save_vectext_to_npy(vec_text, file_path, dtype="float32"):
 
 # 埋め込みベクトルの配列をnpyファイルから読込
 def read_vectext_to_npy(file_path, mmap=False):
+    # ファイルが存在しない場合は空の配列を返す
+    if not os.path.exists(file_path):
+        return np.array([])
+
+    # mmapがTrueの場合はメモリマップド配列として読み込む
     if mmap:
         return np.load(file_path, mmap_mode="r")
     else:

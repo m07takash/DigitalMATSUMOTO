@@ -16,11 +16,20 @@ practice_folder_path = os.getenv("PRACTICE_FOLDER")
 timezone_setting = os.getenv("TIMEZONE")
 
 # 単体実行用の関数
-def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_file, model_type="LLM", stream_mode=True, sub_seq=1, user_input="", contents=[], situation={}, overwrite_items={}, add_knowledge=[], prompt_temp_cd="", memory_use=True, save_digest=True, meta_search=True, RAG_query_gene=True, seq_limit="", sub_seq_limit=""):  
+def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_file, model_type="LLM", sub_seq=1, user_input="", contents=[], situation={}, overwrite_items={}, add_knowledge=[], prompt_temp_cd="", execution={}, seq_limit="", sub_seq_limit=""):  
     export_files = []
     timestamp_begin = str(datetime.now())
     timestamp_log = "[01.実行開始(セッション設定)]"+str(datetime.now())+"<br>"
-    
+
+    # 実行設定の取得
+    memory_use = execution.get("MEMORY_USE", True)
+    memory_similarity = execution.get("MEMORY_SIMILARITY", False)
+    magic_word_use = execution.get("MAGIC_WORD_USE", True)
+    stream_mode = execution.get("STREAM_MODE", True)
+    save_digest = execution.get("SAVE_DIGEST", True)
+    meta_search = execution.get("META_SEARCH", True)
+    RAG_query_gene = execution.get("RAG_QUERY_GENE", True)
+
     # 会話履歴データの定義
     setting_chat_dict = {}
     prompt_chat_dict = {}
@@ -99,12 +108,12 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         memory_limit_tokens = agent.agent["ENGINE"][model_type]["MEMORY"]["limit"] - (system_tokens + query_tokens)
     memory_role = agent.agent["ENGINE"][model_type]["MEMORY"]["role"]
     memory_priority = agent.agent["ENGINE"][model_type]["MEMORY"]["priority"]
-#    memory_similarity_logic = agent.agent["ENGINE"][model_type]["MEMORY"]["similarity_logic"]
+    memory_similarity_logic = agent.agent["ENGINE"][model_type]["MEMORY"]["similarity_logic"]
     memory_digest = agent.agent["ENGINE"][model_type]["MEMORY"]["digest"]
     memories_selected = []
     if memory_use:
-#        memories_selected = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
-        memories_selected = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_digest, seq_limit, sub_seq_limit)
+        memories_selected = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_similarity, memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
+#        memories_selected = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_digest, seq_limit, sub_seq_limit)
     
     # サポートエージェントの設定
     support_agent = agent.agent["SUPPORT_AGENT"]
@@ -135,7 +144,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         # ユーザー入力から時間を取得
         extract_date_agent_file = support_agent["EXTRACT_DATE"]
         _, _, extract_date_response, extract_date_model_name, extract_date_prompt_tokens, extract_date_response_tokens = dmt.extract_date(service_info, user_info, user_query, situation_prompt, [query_vec], memories_selected, agent_file=extract_date_agent_file)
-        get_date_list += dmu.extract_list_pattern(extract_date_response)
+        get_date_list += dmu.extract_list_pattern(extract_date_response) 
         meta_searches.append({"DATE": get_date_list})
         # ログに格納
         meta_search_log["date"] = {}
@@ -188,9 +197,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     # レスポンスとメモリ・コンテキストの類似度
     timestamp_log += "[23.結果の類似度算出開始]"+str(datetime.now())+"<br>"
     response_vec = dmu.embed_text(response.replace("\n", ""))
-#    memory_ref = dmc.get_memory_similarity_response(response_vec, memories_selected)
-    memory_ref = dmc.get_memory_refernce(memories_selected)
-    knowledge_ref = dmc.get_rag_similarity_response(response_vec, knowledge_selected)
+    memory_ref = dmc.get_memory_reference(memories_selected, memory_similarity, response_vec, memory_similarity_logic)
+    knowledge_ref = dmc.get_knowledge_reference(response_vec, knowledge_selected)
     
     # 入力されたコンテンツの保存
     timestamp_log += "[24.コンテンツの保存開始]"+str(datetime.now())+"<br>"
@@ -214,7 +222,12 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     
     # ログデータの保存(prompt) ※ツールの設定も追加する
     timestamp_log += "[32.ログ(prompt)の保存開始]"+str(datetime.now())+"<br>"
-#    query_vec_file = session.save_vec_file(str(seq), str(sub_seq), "query", query_vec)
+
+    # メモリ類似度を評価する場合
+    query_vec_file = ""
+    if memory_similarity:
+        query_vec_file = session.save_vec_file(str(seq), str(sub_seq), "query", query_vec)
+
     prompt_chat_dict = {
         "role": "user",
         "timestamp": timestamp_begin,
@@ -225,9 +238,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             "text": user_query,
             "contents": contents_record_to,
             "situation": situation,
-            "tools": [] #,
-#            "vec_text": query_vec,
-#            "vec_file": query_vec_file
+            "tools": [],
+            "vec_file": query_vec_file
         },
         "RAG_query_genetor": RAG_query_gene_log,
         "meta_search": meta_search_log,
@@ -262,14 +274,18 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     
     # ログデータの保存(response)
     timestamp_log += "[34.ログ(response)の保存開始]"+str(datetime.now())+"<br>"
-#    response_vec_file = session.save_vec_file(str(seq), str(sub_seq), "response", response_vec)
+    
+    # メモリ類似度を評価する場合
+    response_vec_file = ""
+    if memory_similarity:
+        response_vec_file = session.save_vec_file(str(seq), str(sub_seq), "response", response_vec)
+    
     response_chat_dict = {
         "role": "assistant",
         "timestamp": timestamp_end,
         "token": response_tokens,
         "text": response,
-#        "vec_text": response_vec,
-#        "vec_file": response_vec_file,
+        "vec_file": response_vec_file,
         "reference": {
             "memory": memory_ref,
             "knowledge_rag": knowledge_ref
@@ -281,8 +297,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     if save_digest:
         timestamp_log += "[41.メモリダイジェストの作成開始]"+str(datetime.now())+"<br>"
         session.set_history()
-#        digest_memories_selected = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
-        digest_memories_selected = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_digest, seq_limit, sub_seq_limit)
+        digest_memories_selected = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_similarity, memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
+#        digest_memories_selected = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_digest, seq_limit, sub_seq_limit)
 
         if "DIALOG_DIGEST" in support_agent:
             dialog_digest_agent_file = support_agent["DIALOG_DIGEST"]
@@ -292,19 +308,22 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             _, _, digest_response, digest_model_name, digest_prompt_tokens, digest_response_tokens = dmt.dialog_digest(service_info, user_info, "", digest_memories_selected)
 
         timestamp_digest = str(datetime.now())
-#        digest_vec = dmu.embed_text(digest_response.replace("\n", ""))
+        
+        # メモリ類似度を評価する場合
+        digest_vec_file = ""
+        if memory_similarity:
+            digest_vec = dmu.embed_text(digest_response.replace("\n", ""))
+            digest_vec_file = session.save_vec_file(str(seq), str(sub_seq), "digest", digest_vec)
         
         # ログデータの保存(digest)
-#        digest_vec_file = session.save_vec_file(str(seq), str(sub_seq), "digest", digest_vec)
         digest_chat_dict = {
             "agent_file": dialog_digest_agent_file,
             "model": digest_model_name,
             "role": "assistant",
             "timestamp": timestamp_digest,
             "token": digest_response_tokens,
-            "text": digest_response #,
-#            "vec_text": digest_vec,
-#            "vec_file": digest_vec_file
+            "text": digest_response,
+            "vec_file": digest_vec_file
         }
         session.save_history(str(seq), "digest", digest_chat_dict, "SUB_SEQ", str(sub_seq))
 
@@ -319,7 +338,19 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
 
 
 # プラクティスで実行
-def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name, in_agent_file, user_query, in_contents=[], in_situation={}, in_overwrite_items={}, in_memory_use=True, in_magic_word_use=True, stream_mode=True, save_digest=True, meta_search=True, RAG_query_gene=True):
+#def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name, in_agent_file, user_query, in_contents=[], in_situation={}, in_overwrite_items={}, in_memory_use=True, in_magic_word_use=True, stream_mode=True, save_digest=True, meta_search=True, RAG_query_gene=True):
+def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name, in_agent_file, user_query, in_contents=[], in_situation={}, in_overwrite_items={}, in_execution={}):
+
+    # 実行設定の取得
+    memory_use = in_execution.get("MEMORY_USE", True)
+    memory_similarity = in_execution.get("MEMORY_SIMILARITY", False)
+    magic_word_use = in_execution.get("MAGIC_WORD_USE", True)
+    stream_mode = in_execution.get("STREAM_MODE", True)
+    save_digest = in_execution.get("SAVE_DIGEST", True)
+    meta_search = in_execution.get("META_SEARCH", True)
+    RAG_query_gene = in_execution.get("RAG_QUERY_GENE", True)
+    
+    # セッションの設定
     session = dms.DigiMSession(session_id, session_name)
     sub_seq = 1
     results = []
@@ -330,7 +361,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
     agent = dma.DigiM_Agent(in_agent_file)
     
     habit = "DEFAULT"
-    if in_magic_word_use:
+    if magic_word_use:
         agent = dma.DigiM_Agent(in_agent_file)
         habit = agent.set_practice_by_command(user_query)
 
@@ -394,15 +425,23 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
             else:
                 situation["TIME"] = in_situation["TIME"] if setting["SITUATION"]["TIME"] == "USER" else setting["SITUATION"]["TIME"]
                 situation["SITUATION"] = in_situation["SITUATION"] if setting["SITUATION"]["SITUATION"] == "USER" else setting["SITUATION"]["SITUATION"]
-
-            # メモリ利用可否
-            memory_use = in_memory_use and setting["MEMORY_USE"]
+            
     #        seq_limit = chain["PreSEQ"] #メモリ参照範囲のSeq
     #        sub_seq_limit = chain["PreSubSEQ"] #メモリ参照範囲のsubSeq
 
+            # 実行の設定
+            execution = {}
+            execution["MEMORY_USE"] = memory_use and setting["MEMORY_USE"]
+            execution["MEMORY_SIMILARITY"] = memory_similarity
+            execution["MAGIC_WORD_USE"] = magic_word_use
+            execution["STREAM_MODE"] = stream_mode
+            execution["SAVE_DIGEST"] = save_digest
+            execution["META_SEARCH"] = meta_search
+            execution["RAG_QUERY_GENE"] = RAG_query_gene
+
             # LLM実行
             response = ""
-            for response_service_info, response_user_info, response_chunk, export_contents in DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_file, model_type, stream_mode, sub_seq, user_input, import_contents, situation, overwrite_items, add_knowledge, prompt_temp_cd, memory_use, save_digest, meta_search, RAG_query_gene): #, seq_limit, sub_seq_limit)
+            for response_service_info, response_user_info, response_chunk, export_contents in DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_file, model_type, sub_seq, user_input, import_contents, situation, overwrite_items, add_knowledge, prompt_temp_cd, execution): #, seq_limit, sub_seq_limit)
                 response += response_chunk
                 yield response_service_info, response_user_info, response_chunk
             

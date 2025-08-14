@@ -218,13 +218,10 @@ class DigiMSession:
         if sub_seq_candidates:
             max_sub_seq = max(sub_seq_candidates, key=int)
             chat_history_max_digest_dict = chat_history_active_dict[max_seq][max_sub_seq]["digest"]
- #           if "vec_text" not in chat_history_max_digest_dict:
- #               chat_history_max_digest_dict["vec_text"] = self.get_vec_file(max_seq, max_sub_seq, "digest")
         return max_seq, max_sub_seq, chat_history_max_digest_dict
     
     # 会話メモリを獲得する（トークン制限で切り取り）
-#    def get_memory(self, query_vec, model_name, tokenizer, memory_limit_tokens, memory_role="both", memory_priority="latest", memory_similarity_logic="cosine", memory_digest="Y", seq_limit="", sub_seq_limit=""):
-    def get_memory(self, query_vec, model_name, tokenizer, memory_limit_tokens, memory_role="both", memory_priority="latest", memory_digest="Y", seq_limit="", sub_seq_limit=""):
+    def get_memory(self, query_vec, model_name, tokenizer, memory_limit_tokens, memory_role="both", memory_priority="latest", memory_similarity=False, memory_similarity_logic="cosine", memory_digest="Y", seq_limit="", sub_seq_limit=""):
         memories_list = []
         memories_list_prompt = []
         total_tokens = 0
@@ -240,34 +237,38 @@ class DigiMSession:
                     # トークン制限を超えていなければ、ダイジェストを設定
                     total_tokens += chat_history_max_digest_dict["token"]
                     if total_tokens <= memory_limit_tokens:
-#                        similarity_prompt = dmu.calculate_similarity_vec(query_vec, chat_history_max_digest_dict["vec_text"], memory_similarity_logic)
-#                        memories_list.append({"seq": max_seq, "sub_seq": max_sub_seq, "type": "digest", "role": chat_history_max_digest_dict["role"], "timestamp": chat_history_max_digest_dict["timestamp"], "token": chat_history_max_digest_dict["token"], "similarity_prompt": similarity_prompt, "text": chat_history_max_digest_dict["text"], "vec_text": chat_history_max_digest_dict["vec_text"]})
-                        memories_list.append({"seq": max_seq, "sub_seq": max_sub_seq, "type": "digest", "role": chat_history_max_digest_dict["role"], "timestamp": chat_history_max_digest_dict["timestamp"], "token": chat_history_max_digest_dict["token"], "text": chat_history_max_digest_dict["text"]})
+                        chat_history_max_digest_dict["vec_text"] = []
+                        similarity_prompt = 0
+                        if memory_similarity:
+                            chat_history_max_digest_dict["vec_text"] = self.get_vec_file(max_seq, max_sub_seq, "digest")
+                            similarity_prompt = dmu.calculate_similarity_vec(query_vec, chat_history_max_digest_dict["vec_text"], memory_similarity_logic)
+                        memories_list.append({"seq": max_seq, "sub_seq": max_sub_seq, "type": "digest", "role": chat_history_max_digest_dict["role"], "timestamp": chat_history_max_digest_dict["timestamp"], "token": chat_history_max_digest_dict["token"], "similarity_prompt": similarity_prompt, "text": chat_history_max_digest_dict["text"], "vec_text": chat_history_max_digest_dict["vec_text"]})
         
             # 各履歴を取得
             for k, v in chat_history_active_dict.items():
                 for k2, v2 in v.items():
                     if k2 != "SETTING":
+                        similarity_prompt = 0
+                        v2["prompt"]["query"]["vec_text"] = []
+                        v2["response"]["vec_text"] = []
                         if memory_role in ["both", "user"]:
-#                            if "vec_text" not in v2["prompt"]["query"]:
-#                                v2["prompt"]["query"]["vec_text"] = self.get_vec_file(k, k2, "query")
-#                            similarity_prompt = dmu.calculate_similarity_vec(query_vec, v2["prompt"]["query"]["vec_text"], memory_similarity_logic)
-#                            memories_list.append({"seq": k, "sub_seq": k2, "type": v2["prompt"]["role"], "role": v2["prompt"]["role"], "timestamp": v2["prompt"]["timestamp"], "token": v2["prompt"]["query"]["token"], "similarity_prompt": similarity_prompt, "text": v2["prompt"]["query"]["text"], "vec_text": v2["prompt"]["query"]["vec_text"]})
-                            memories_list.append({"seq": k, "sub_seq": k2, "type": v2["prompt"]["role"], "role": v2["prompt"]["role"], "timestamp": v2["prompt"]["timestamp"], "token": v2["prompt"]["query"]["token"], "text": v2["prompt"]["query"]["text"]})
+                            if memory_similarity:
+                                v2["prompt"]["query"]["vec_text"] = self.get_vec_file(k, k2, "query")
+                                similarity_prompt = dmu.calculate_similarity_vec(query_vec, v2["prompt"]["query"]["vec_text"], memory_similarity_logic)
+                            memories_list.append({"seq": k, "sub_seq": k2, "type": v2["prompt"]["role"], "role": v2["prompt"]["role"], "timestamp": v2["prompt"]["timestamp"], "token": v2["prompt"]["query"]["token"], "similarity_prompt": similarity_prompt, "text": v2["prompt"]["query"]["text"], "vec_text": v2["prompt"]["query"]["vec_text"]})
                         if memory_role in ["both", "assistant"]:
-#                            if "vec_text" not in v2["response"]:
-#                                v2["response"]["vec_text"] = self.get_vec_file(k, k2, "response")
-#                            similarity_prompt = dmu.calculate_similarity_vec(query_vec, v2["response"]["vec_text"], memory_similarity_logic)
-#                            memories_list.append({"seq": k, "sub_seq": k2, "type": v2["response"]["role"], "role": v2["response"]["role"], "timestamp": v2["response"]["timestamp"], "token": v2["response"]["token"], "similarity_prompt": similarity_prompt, "text": v2["response"]["text"], "vec_text": v2["response"]["vec_text"]})
-                            memories_list.append({"seq": k, "sub_seq": k2, "type": v2["response"]["role"], "role": v2["response"]["role"], "timestamp": v2["response"]["timestamp"], "token": v2["response"]["token"], "text": v2["response"]["text"]})
+                            if memory_similarity:
+                                v2["response"]["vec_text"] = self.get_vec_file(k, k2, "response")
+                                similarity_prompt = dmu.calculate_similarity_vec(query_vec, v2["response"]["vec_text"], memory_similarity_logic)
+                            memories_list.append({"seq": k, "sub_seq": k2, "type": v2["response"]["role"], "role": v2["response"]["role"], "timestamp": v2["response"]["timestamp"], "token": v2["response"]["token"], "similarity_prompt": similarity_prompt, "text": v2["response"]["text"], "vec_text": v2["response"]["vec_text"]})
 
             # 各履歴をプライオリティ順に並び替え
             if memory_priority == "latest":
                 memories_list_priority = sorted(memories_list, key=lambda x: datetime.strptime(x["timestamp"], "%Y-%m-%d %H:%M:%S.%f"), reverse=True)
             elif memory_priority == "oldest":
                 memories_list_priority = sorted(memories_list, key=lambda x: datetime.strptime(x["timestamp"], "%Y-%m-%d %H:%M:%S.%f"))
-#            elif memory_priority == "similar":
-#                memories_list_priority = sorted(memories_list, key=lambda x: x["similarity_prompt"])
+            elif memory_similarity and memory_priority == "similar":
+                memories_list_priority = sorted(memories_list, key=lambda x: x["similarity_prompt"])
             else :
                 memories_list_priority = memories_list
             
