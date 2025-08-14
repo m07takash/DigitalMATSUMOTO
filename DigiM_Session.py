@@ -10,6 +10,7 @@ load_dotenv("system.env")
 user_folder_path = os.getenv("USER_FOLDER")
 session_folder_prefix = os.getenv("SESSION_FOLDER_PREFIX")
 session_file_name = os.getenv("SESSION_FILE_NAME")
+session_status_file_name = os.getenv("SESSION_STATUS_FILE_NAME")
 temp_move_flg = os.getenv("TEMP_MOVE_FLG")
 
 current_date = datetime.now()
@@ -128,6 +129,7 @@ class DigiMSession:
         self.session_folder_path = user_folder_path + session_folder_prefix + self.session_id +"/" 
         self.session_vec_folder_path = user_folder_path + session_folder_prefix + self.session_id +"/vecs/" 
         self.session_file_path = self.session_folder_path + session_file_name
+        self.session_status_path = self.session_folder_path + session_status_file_name
         self.set_history()
 
     # ヒストリーの再読込
@@ -152,11 +154,20 @@ class DigiMSession:
         else:
             return chat_history_dict
 
+    # セッションのステータスを獲得する
+    def get_status(self):
+        status_dict = {}
+        status_dict = dmu.read_yaml_file(self.session_status_path)
+        if "status" in status_dict:
+            status = status_dict["status"]
+        else:
+            status = "UNLOCKED"
+        return status
+
     # 全ての会話履歴を獲得する
     def get_history(self):
         chat_history_dict = {}
-        if os.path.exists(self.session_file_path):
-            chat_history_dict = dmu.read_json_file(self.session_file_path)
+        chat_history_dict = dmu.read_json_file(self.session_file_path)
         return chat_history_dict
     
     # 有効な会話履歴を獲得する
@@ -306,6 +317,18 @@ class DigiMSession:
         vec_text=[]
         vec_text = dmu.read_vectext_to_npy(self.session_vec_folder_path+vec_file_name)
         return vec_text
+
+    # セッションのステータスを保存する
+    def save_status(self, status):
+        status_dict = {"status": status}
+        
+        # セッションフォルダがなければ作成
+        if not os.path.exists(self.session_folder_path):
+            os.makedirs(self.session_folder_path, exist_ok=True)
+        
+        # セッションステータスをYAML形式で保存
+        with open(self.session_status_path, 'w', encoding='utf-8') as f:
+            dmu.save_yaml_file(status_dict, self.session_status_path)
 
     # 会話履歴を保存する
     def save_history(self, seq, chat_dict_key, chat_dict, level="SEQ", sub_seq="1"):
