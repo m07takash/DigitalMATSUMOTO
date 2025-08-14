@@ -321,7 +321,7 @@ def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searche
 
 
 # レスポンスとRAGの類似度評価
-def get_rag_similarity_response(response_vec, rag_selected, logic="Cosine"):
+def get_knowledge_reference(response_vec, rag_selected, logic="Cosine"):
     rag_ref = []
     
     # 各チャンクと類似度評価
@@ -342,7 +342,7 @@ def get_rag_similarity_response(response_vec, rag_selected, logic="Cosine"):
     return rag_ref
 
 # 会話メモリの参照情報
-def get_memory_refernce(memory_selected):
+def get_memory_reference(memory_selected, memory_similarity=False, response_vec=[], logic="Cosine"):
     memory_ref = []
         
     for memory_data in memory_selected:
@@ -354,32 +354,11 @@ def get_memory_refernce(memory_selected):
         
         # 画面表示用のログ形式
         memory_ref_log = f"{timestamp}の会話履歴：{seq}_{sub_seq}_{type}「{text[:50]}」<br>"
-        
-        # 記録用のデータセット
-        memory_ref.append(
-            {
-                "log": memory_ref_log
-            }
-        )
-    return memory_ref
-
-
-# レスポンスと会話メモリの類似度評価
-def get_memory_similarity_response(response_vec, memory_selected, logic="Cosine"):
-    memory_ref = []
-        
-    for memory_data in memory_selected:
-        seq = memory_data["seq"]
-        sub_seq = memory_data["sub_seq"]
-        type = memory_data["type"]
-        timestamp = memory_data["timestamp"]
-        text = memory_data["text"] 
-        similarity_prompt = round(memory_data["similarity_prompt"],3)
-        similarity_response = round(dmu.calculate_similarity_vec(response_vec, memory_data["vec_text"], logic),3)
-        
-        # 画面表示用のログ形式
-        memory_ref_log = f"{timestamp}の会話履歴：{seq}_{sub_seq}_{type}[質問との類似度：{round(similarity_prompt,3)}、回答との類似度：{round(similarity_response,3)}]{text[:50]}<br>"
-        
+        if memory_similarity and response_vec:
+            similarity_prompt = round(memory_data["similarity_prompt"],3)
+            similarity_response = round(dmu.calculate_similarity_vec(response_vec, memory_data["vec_text"], logic),3)
+            memory_ref_log = f"{timestamp}の会話履歴：{seq}_{sub_seq}_{type}[質問との類似度：{round(similarity_prompt,3)}、回答との類似度：{round(similarity_response,3)}]{text[:50]}<br>"
+            
         # 記録用のデータセット
         memory_ref.append(
             {
