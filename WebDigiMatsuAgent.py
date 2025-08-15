@@ -1,4 +1,5 @@
 import os
+import ast
 import json
 import datetime
 from datetime import datetime
@@ -13,6 +14,7 @@ import DigiM_Agent as dma
 import DigiM_Context as dmc
 import DigiM_Util as dmu
 import DigiM_GeneCommunication as dmgc
+import DigiM_VAnalytics as dmva
 
 # system.envファイルをロードして環境変数を設定
 load_dotenv("system.env")
@@ -392,16 +394,41 @@ def main():
                                         if any(k != "name" for k in fb_item):
                                             st.session_state.session.set_feedback_history(k, k2, feedback)
                                             dmgc.create_communication_data(st.session_state.session.session_id, v2["setting"]["agent_file"])
-                                            st.session_state.sidebar_message = f"フィードバックを保存しました({k})"
+                                            st.session_state.sidebar_message = f"フィードバックを保存しました({k}_{k2})"
                                             st.rerun()
                                         else:
-                                            st.session_state.sidebar_message = f"フィードバックに変更はありません({k})"
+                                            st.session_state.sidebar_message = f"フィードバックに変更はありません({k}_{k2})"
                         
                         # Detail
                         with st.chat_message("detail"):
                             chat_expander = st.expander("Detail Information")
                             with chat_expander:
                                 st.markdown(st.session_state.session.get_detail_info(k, k2).replace("\n", "<br>"), unsafe_allow_html=True)
+
+                        # Analytics
+                        with st.chat_message("analytics"):
+                            analytics_dict = {}
+                            if "analytics" in v2:
+                                analytics_dict = v2["analytics"]
+                            if v2["response"]["reference"]["knowledge_rag"] and "knowledge_utility" not in analytics_dict:
+                                if st.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}"):
+                                    title = f"{k}-{k2}-{st.session_state.session.session_name}"
+                                    references = []
+                                    for reference_data in v2["response"]["reference"]["knowledge_rag"]:
+                                        references.append(ast.literal_eval("{"+ reference_data.replace("\n", "").replace("$", "＄") + "}"))
+                                    result = dmva.analytics_knowledge(title, references, st.session_state.session.session_analytics_folder_path)
+                                    analytics_dict["knowledge_utility"] = result
+                                    st.session_state.session.set_analytics_history(k, k2, analytics_dict)
+                                    st.session_state.sidebar_message = f"知識活用性を分析しました({k}_{k2})"
+                                    st.rerun()
+                            if "knowledge_utility" in analytics_dict:
+                                chat_expander_analytics = st.expander("Analytics Results - Knowledge Utility")
+                                with chat_expander_analytics:
+                                    if "image_files" in analytics_dict["knowledge_utility"]:
+                                        for image_key, image_values in analytics_dict["knowledge_utility"]["image_files"].items():
+                                            for image_value in image_values:
+                                                st.image(st.session_state.session.session_analytics_folder_path + image_value)
+
             # 会話履歴の論理削除設定
             if st.checkbox(f"Delete(seq:{k})", key="del_chat_seq"+k):
                 st.session_state.seq_memory.append(k)
@@ -438,7 +465,7 @@ def main():
         execution["SAVE_DIGEST"] = st.session_state.save_digest
         execution["META_SEARCH"] = st.session_state.meta_search
         execution["RAG_QUERY_GENE"] = st.session_state.RAG_query_gene
-
+        
         # ユーザー入力の一時表示
         with st.chat_message("User"):
             st.markdown(user_input.replace("\n", "<br>"), unsafe_allow_html=True)

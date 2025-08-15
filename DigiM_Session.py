@@ -11,6 +11,8 @@ user_folder_path = os.getenv("USER_FOLDER")
 session_folder_prefix = os.getenv("SESSION_FOLDER_PREFIX")
 session_file_name = os.getenv("SESSION_FILE_NAME")
 session_status_file_name = os.getenv("SESSION_STATUS_FILE_NAME")
+session_contents_folder = os.getenv("SESSION_CONTENTS_FOLDER")
+session_analytics_folder = os.getenv("SESSION_ANALYTICS_FOLDER")
 temp_move_flg = os.getenv("TEMP_MOVE_FLG")
 
 current_date = datetime.now()
@@ -130,6 +132,8 @@ class DigiMSession:
         self.session_vec_folder_path = user_folder_path + session_folder_prefix + self.session_id +"/vecs/" 
         self.session_file_path = self.session_folder_path + session_file_name
         self.session_status_path = self.session_folder_path + session_status_file_name
+        self.session_contents_folder_path = self.session_folder_path + session_contents_folder
+        self.session_analytics_folder_path = self.session_folder_path + session_analytics_folder
         self.set_history()
 
     # ヒストリーの再読込
@@ -385,7 +389,15 @@ class DigiMSession:
             chat_history_dict[seq][sub_seq]["feedback"] = feedbacks
         with open(self.session_file_path, 'w', encoding='utf-8') as f:
             json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
-            
+
+    # 会話履歴に分析結果を保存する
+    def set_analytics_history(self, seq, sub_seq, analytics={}):
+        if os.path.exists(self.session_file_path):
+            chat_history_dict = dmu.read_json_file(session_file_name, self.session_folder_path)
+            chat_history_dict[seq][sub_seq]["analytics"] = analytics
+        with open(self.session_file_path, 'w', encoding='utf-8') as f:
+            json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
+
     # 会話履歴の詳細情報を取得する
     def get_detail_info(self, seq, sub_seq="1"):
         chat_detail_info = ""
@@ -456,7 +468,7 @@ class DigiMSession:
 
     # コンテンツファイルを保存する
     def save_contents_file(self, from_file_path, content_file_name):
-        to_folder_path = self.session_folder_path +"contents/"
+        to_folder_path = self.session_contents_folder_path
         to_file_path = to_folder_path + content_file_name
         # コンテンツフォルダがなければ作成
         if not os.path.exists(to_folder_path):
