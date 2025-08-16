@@ -21,13 +21,15 @@ class SessionLockedError(RuntimeError):
     pass
 
 # 単体実行用の関数
-def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_file, model_type="LLM", sub_seq=1, user_input="", contents=[], situation={}, overwrite_items={}, add_knowledge=[], prompt_temp_cd="", execution={}, seq_limit="", sub_seq_limit=""):  
+def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_file, model_type="LLM", sub_seq=1, user_input="", contents=[], situation={}, overwrite_items={}, add_knowledge=[], prompt_temp_cd="", execution={}, seq_limit="", sub_seq_limit=""):
     export_files = []
     timestamp_begin = str(datetime.now())
     timestamp_log = "[01.実行開始(セッション設定)]"+str(datetime.now())+"<br>"
 
     # 実行設定の取得
+    contents_save = execution.get("CONTENTS_SAVE", True)
     memory_use = execution.get("MEMORY_USE", True)
+    memory_save = execution.get("MEMORY_SAVE", True)
     memory_similarity = execution.get("MEMORY_SIMILARITY", False)
     magic_word_use = execution.get("MAGIC_WORD_USE", True)
     stream_mode = execution.get("STREAM_MODE", True)
@@ -118,7 +120,6 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     memories_selected = []
     if memory_use:
         memories_selected = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_similarity, memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
-#        memories_selected = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_digest, seq_limit, sub_seq_limit)
     
     # サポートエージェントの設定
     support_agent = agent.agent["SUPPORT_AGENT"]
@@ -132,6 +133,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         queries.append(RAG_query_gene_response)
         query_vec_RAGquery = dmu.embed_text(RAG_query_gene_response.replace("\n", ""))
         query_vecs.append(query_vec_RAGquery)
+
         # ログに格納
         RAG_query_gene_log = {}
         RAG_query_gene_log["agent_file"] = RAG_query_gene_agent_file
@@ -188,7 +190,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             response += response_chunk
             response_service_info = service_info
             response_user_info = user_info
-            yield response_service_info, response_user_info, response_chunk, export_files
+            yield response_service_info, response_user_info, response_chunk, export_files, knowledge_selected
     timestamp_end = str(datetime.now())
     timestamp_log += "[22.LLM実行完了]"+str(datetime.now())+"<br>"
 
@@ -206,140 +208,144 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     knowledge_ref = dmc.get_knowledge_reference(response_vec, knowledge_selected)
     
     # 入力されたコンテンツの保存
-    timestamp_log += "[24.コンテンツの保存開始]"+str(datetime.now())+"<br>"
-    contents_record_to = []
-    for contents_record in contents_records:
-        session.save_contents_file(contents_record["from"], contents_record["to"]["file_name"])
-        contents_record_to.append(contents_record["to"])
+    if contents_save:
+        timestamp_log += "[24.コンテンツの保存開始]"+str(datetime.now())+"<br>"
+        contents_record_to = []
+        for contents_record in contents_records:
+            session.save_contents_file(contents_record["from"], contents_record["to"]["file_name"])
+            contents_record_to.append(contents_record["to"])
 
-    # ログデータの保存(setting) ※Overwriteやメモリ保存・使用の設定も追加する
-    timestamp_log += "[31.ログ(setting)の保存開始]"+str(datetime.now())+"<br>"
-    setting_chat_dict = {
-        "session_id": session.session_id,
-        "session_name": session.session_name, 
-        "type": model_type,
-        "agent_file": agent_file,
-        "name": agent.name,
-        "engine": agent.agent["ENGINE"][model_type],
-        "communication": agent.agent["COMMUNICATION"]
-    }
-    session.save_history(str(seq), "setting", setting_chat_dict, "SUB_SEQ", str(sub_seq))
-    
-    # ログデータの保存(prompt) ※ツールの設定も追加する
-    timestamp_log += "[32.ログ(prompt)の保存開始]"+str(datetime.now())+"<br>"
+    # ログの保存
+    if memory_save:
 
-    # メモリ類似度を評価する場合
-    query_vec_file = ""
-    if memory_similarity:
-        query_vec_file = session.save_vec_file(str(seq), str(sub_seq), "query", query_vec)
-
-    prompt_chat_dict = {
-        "role": "user",
-        "timestamp": timestamp_begin,
-        "token": prompt_tokens,
-        "query": {
-            "input": user_input,
-            "token": query_tokens,
-            "text": user_query,
-            "contents": contents_record_to,
-            "situation": situation,
-            "tools": [],
-            "vec_file": query_vec_file
-        },
-        "RAG_query_genetor": RAG_query_gene_log,
-        "meta_search": meta_search_log,
-        "knowledge_rag":{
-            "setting": agent.agent["KNOWLEDGE"]
-        },
-        "prompt_template":{
-            "setting": prompt_temp_cd
-        },
-        "text": prompt
-    }
-    session.save_history(str(seq), "prompt", prompt_chat_dict, "SUB_SEQ", str(sub_seq))
-
-    # ログデータの保存(image)
-    timestamp_log += "[33.ログ(image)の保存開始]"+str(datetime.now())+"<br>"
-    if model_type=="IMAGEGEN":
-        img_dict = {}
-        i=0
-        for img_completion_path in completion:
-            img_file_name = "[OUT]seq"+str(seq)+"-"+str(sub_seq)+"_"+os.path.basename(img_completion_path)
-            session.save_contents_file(img_completion_path, img_file_name)
-            # メモリの保存(response)
-            img_dict[i] = {
-                "role": "image",
-                "timestamp": timestamp_end,
-                "file_name": img_file_name,
-                "file_type": "image/jpeg"
-            }
-            i = i + 1
-            export_files.append(session.session_folder_path +"contents/"+img_file_name)
-        session.save_history(str(seq), "image", img_dict, "SUB_SEQ", str(sub_seq))
-    
-    # ログデータの保存(response)
-    timestamp_log += "[34.ログ(response)の保存開始]"+str(datetime.now())+"<br>"
-    
-    # メモリ類似度を評価する場合
-    response_vec_file = ""
-    if memory_similarity:
-        response_vec_file = session.save_vec_file(str(seq), str(sub_seq), "response", response_vec)
-    
-    response_chat_dict = {
-        "role": "assistant",
-        "timestamp": timestamp_end,
-        "token": response_tokens,
-        "text": response,
-        "vec_file": response_vec_file,
-        "reference": {
-            "memory": memory_ref,
-            "knowledge_rag": knowledge_ref
+        # ログデータの保存(setting) ※Overwriteやメモリ保存・使用の設定も追加する
+        timestamp_log += "[31.ログ(setting)の保存開始]"+str(datetime.now())+"<br>"
+        setting_chat_dict = {
+            "session_id": session.session_id,
+            "session_name": session.session_name, 
+            "type": model_type,
+            "agent_file": agent_file,
+            "name": agent.name,
+            "engine": agent.agent["ENGINE"][model_type],
+            "communication": agent.agent["COMMUNICATION"]
         }
-    }
-    session.save_history(str(seq), "response", response_chat_dict, "SUB_SEQ", str(sub_seq))
+        session.save_history(str(seq), "setting", setting_chat_dict, "SUB_SEQ", str(sub_seq))
+        
+        # ログデータの保存(prompt) ※ツールの設定も追加する
+        timestamp_log += "[32.ログ(prompt)の保存開始]"+str(datetime.now())+"<br>"
 
-    # メモリダイジェストの作成
-    if save_digest:
-        timestamp_log += "[41.メモリダイジェストの作成開始]"+str(datetime.now())+"<br>"
-        session.set_history()
-        digest_memories_selected = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_similarity, memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
-#        digest_memories_selected = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_digest, seq_limit, sub_seq_limit)
+        # メモリ類似度を評価する場合
+        query_vec_file = ""
+        if memory_similarity:
+            query_vec_file = session.save_vec_file(str(seq), str(sub_seq), "query", query_vec)
 
-        if "DIALOG_DIGEST" in support_agent:
-            dialog_digest_agent_file = support_agent["DIALOG_DIGEST"]
-            _, _, digest_response, digest_model_name, digest_prompt_tokens, digest_response_tokens = dmt.dialog_digest(service_info, user_info, "", digest_memories_selected, dialog_digest_agent_file)
-        else:
-            dialog_digest_agent_file = "Default"
-            _, _, digest_response, digest_model_name, digest_prompt_tokens, digest_response_tokens = dmt.dialog_digest(service_info, user_info, "", digest_memories_selected)
+        prompt_chat_dict = {
+            "role": "user",
+            "timestamp": timestamp_begin,
+            "token": prompt_tokens,
+            "query": {
+                "input": user_input,
+                "token": query_tokens,
+                "text": user_query,
+                "contents": contents_record_to,
+                "situation": situation,
+                "tools": [],
+                "vec_file": query_vec_file
+            },
+            "RAG_query_genetor": RAG_query_gene_log,
+            "meta_search": meta_search_log,
+            "knowledge_rag":{
+                "setting": agent.agent["KNOWLEDGE"]
+            },
+            "prompt_template":{
+                "setting": prompt_temp_cd
+            },
+            "text": prompt
+        }
+        session.save_history(str(seq), "prompt", prompt_chat_dict, "SUB_SEQ", str(sub_seq))
 
-        timestamp_digest = str(datetime.now())
+        # ログデータの保存(image)
+        timestamp_log += "[33.ログ(image)の保存開始]"+str(datetime.now())+"<br>"
+        if model_type=="IMAGEGEN":
+            img_dict = {}
+            i=0
+            for img_completion_path in completion:
+                img_file_name = "[OUT]seq"+str(seq)+"-"+str(sub_seq)+"_"+os.path.basename(img_completion_path)
+                session.save_contents_file(img_completion_path, img_file_name)
+                # メモリの保存(response)
+                img_dict[i] = {
+                    "role": "image",
+                    "timestamp": timestamp_end,
+                    "file_name": img_file_name,
+                    "file_type": "image/jpeg"
+                }
+                i = i + 1
+                export_files.append(session.session_folder_path +"contents/"+img_file_name)
+            session.save_history(str(seq), "image", img_dict, "SUB_SEQ", str(sub_seq))
+        
+        # ログデータの保存(response)
+        timestamp_log += "[34.ログ(response)の保存開始]"+str(datetime.now())+"<br>"
         
         # メモリ類似度を評価する場合
-        digest_vec_file = ""
+        response_vec_file = ""
         if memory_similarity:
-            digest_vec = dmu.embed_text(digest_response.replace("\n", ""))
-            digest_vec_file = session.save_vec_file(str(seq), str(sub_seq), "digest", digest_vec)
+            response_vec_file = session.save_vec_file(str(seq), str(sub_seq), "response", response_vec)
         
-        # ログデータの保存(digest)
-        digest_chat_dict = {
-            "agent_file": dialog_digest_agent_file,
-            "model": digest_model_name,
+        response_chat_dict = {
             "role": "assistant",
-            "timestamp": timestamp_digest,
-            "token": digest_response_tokens,
-            "text": digest_response,
-            "vec_file": digest_vec_file
+            "timestamp": timestamp_end,
+            "token": response_tokens,
+            "text": response,
+            "vec_file": response_vec_file,
+            "reference": {
+                "memory": memory_ref,
+                "knowledge_rag": knowledge_ref
+            }
         }
-        session.save_history(str(seq), "digest", digest_chat_dict, "SUB_SEQ", str(sub_seq))
+        session.save_history(str(seq), "response", response_chat_dict, "SUB_SEQ", str(sub_seq))
 
-    # ログデータの保存(log)
-    timestamp_log += "[完了]"+str(datetime.now())+"<br>"
-    log_dict = {
-        "timestamp_log": timestamp_log
-    }
-    session.save_history(str(seq), "log", log_dict, "SUB_SEQ", str(sub_seq))
+        # メモリダイジェストの作成
+        if save_digest:
+            timestamp_log += "[41.メモリダイジェストの作成開始]"+str(datetime.now())+"<br>"
+            session.set_history()
+            digest_memories_selected = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_similarity, memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
+    #        digest_memories_selected = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_digest, seq_limit, sub_seq_limit)
+
+            if "DIALOG_DIGEST" in support_agent:
+                dialog_digest_agent_file = support_agent["DIALOG_DIGEST"]
+                _, _, digest_response, digest_model_name, digest_prompt_tokens, digest_response_tokens = dmt.dialog_digest(service_info, user_info, "", digest_memories_selected, dialog_digest_agent_file)
+            else:
+                dialog_digest_agent_file = "Default"
+                _, _, digest_response, digest_model_name, digest_prompt_tokens, digest_response_tokens = dmt.dialog_digest(service_info, user_info, "", digest_memories_selected)
+
+            timestamp_digest = str(datetime.now())
+            
+            # メモリ類似度を評価する場合
+            digest_vec_file = ""
+            if memory_similarity:
+                digest_vec = dmu.embed_text(digest_response.replace("\n", ""))
+                digest_vec_file = session.save_vec_file(str(seq), str(sub_seq), "digest", digest_vec)
+            
+            # ログデータの保存(digest)
+            digest_chat_dict = {
+                "agent_file": dialog_digest_agent_file,
+                "model": digest_model_name,
+                "role": "assistant",
+                "timestamp": timestamp_digest,
+                "token": digest_response_tokens,
+                "text": digest_response,
+                "vec_file": digest_vec_file
+            }
+            session.save_history(str(seq), "digest", digest_chat_dict, "SUB_SEQ", str(sub_seq))
+
+        # ログデータの保存(log)
+        timestamp_log += "[完了]"+str(datetime.now())+"<br>"
+        log_dict = {
+            "timestamp_log": timestamp_log
+        }
+        session.save_history(str(seq), "log", log_dict, "SUB_SEQ", str(sub_seq))
     
-    yield response_service_info, user_info, "", export_files
+    yield response_service_info, user_info, "", export_files, knowledge_ref
 
 
 # プラクティスで実行
@@ -347,7 +353,9 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
 
     # 実行設定の取得
     last_only = in_execution.get("LAST_ONLY", False) #APIで基本的に使用
+    contents_save = in_execution.get("CONTENTS_SAVE", True)
     memory_use = in_execution.get("MEMORY_USE", True)
+    memory_save = in_execution.get("MEMORY_SAVE", True)
     memory_similarity = in_execution.get("MEMORY_SIMILARITY", False)
     magic_word_use = in_execution.get("MAGIC_WORD_USE", True)
     stream_mode = in_execution.get("STREAM_MODE", True)
@@ -440,12 +448,18 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                     situation["TIME"] = in_situation["TIME"] if setting["SITUATION"]["TIME"] == "USER" else setting["SITUATION"]["TIME"]
                     situation["SITUATION"] = in_situation["SITUATION"] if setting["SITUATION"]["SITUATION"] == "USER" else setting["SITUATION"]["SITUATION"]
                 
-        #        seq_limit = chain["PreSEQ"] #メモリ参照範囲のSeq
-        #        sub_seq_limit = chain["PreSubSEQ"] #メモリ参照範囲のsubSeq
+                # 参照するメモリの設定
+                seq_limit = ""
+                sub_seq_limit = ""
+                if "PreSEQ" in chain and "PreSubSEQ" in chain:
+                    seq_limit = chain["PreSEQ"] #メモリ参照範囲のSeq
+                    sub_seq_limit = chain["PreSubSEQ"] #メモリ参照範囲のsubSeq
 
                 # 実行の設定
                 execution = {}
+                execution["CONTENTS_SAVE"] = contents_save
                 execution["MEMORY_USE"] = memory_use and setting["MEMORY_USE"]
+                execution["MEMORY_SAVE"] = memory_save
                 execution["MEMORY_SIMILARITY"] = memory_similarity
                 execution["MAGIC_WORD_USE"] = magic_word_use
                 execution["STREAM_MODE"] = stream_mode
@@ -455,7 +469,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
 
                 # LLM実行
                 response = ""
-                for response_service_info, response_user_info, response_chunk, export_contents in DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_file, model_type, sub_seq, user_input, import_contents, situation, overwrite_items, add_knowledge, prompt_temp_cd, execution): #, seq_limit, sub_seq_limit)
+                for response_service_info, response_user_info, response_chunk, export_contents, knowledge_ref in DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_file, model_type, sub_seq, user_input, import_contents, situation, overwrite_items, add_knowledge, prompt_temp_cd, execution, seq_limit, sub_seq_limit):
                     response += response_chunk
                     if not last_only:
                         yield response_service_info, response_user_info, response_chunk

@@ -31,13 +31,13 @@ def get_display_agents():
             agents.append({"AGENT": agent_data["DISPLAY_NAME"], "FILE": agent_file})
     return agents
 
-# 通常LLMエージェントのプロパティを設定
+# LLMエージェントのプロパティを設定
 def get_agent_item(agent_file, item):
     agent_data = dmu.read_json_file(agent_folder_path+agent_file)
     item_value = agent_data[item]
     return item_value
 
-# 通常LLMエージェントのプロパティを設定
+# LLMエージェントのプロパティを設定
 def set_normal_agent(agent):
     overwrite_items = {}
     overwrite_items["NAME"] = "ノーマルLLM"
