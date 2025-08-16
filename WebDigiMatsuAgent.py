@@ -439,7 +439,7 @@ def main():
                                         _, _, compare_text, compare_text_model_name, _, _ = dmt.compare_texts(st.session_state.web_default_service, st.session_state.web_default_user, exec_agend_id, v2["response"]["text"], st.session_state.compare_agent_id, compare_response)                                    
                                         if "compare_agents" not in analytics_dict:
                                             analytics_dict["compare_agents"] = []
-                                        analytics_dict["compare_agents"].append({"compare_agent":{"agent_file": compare_agent_file, "model_name": compare_model_name, "response": compare_response, "diff": compare_diff, "knowledge_ref": compare_knowledge_ref}, "compare_text": {"compare_model_name": compare_text_model_name, "text": compare_text}})
+                                        analytics_dict["compare_agents"].append({"compare_agent":{"agent_file": compare_agent_file, "model_name": compare_model_name, "response": compare_response, "diff": compare_diff, "knowledge_rag": compare_knowledge_ref}, "compare_text": {"compare_model_name": compare_text_model_name, "text": compare_text}})
                                         st.session_state.session.set_analytics_history(k, k2, analytics_dict)
                                         st.session_state.sidebar_message = f"比較分析を完了しました({k}_{k2})"
                                         st.rerun()
@@ -473,17 +473,18 @@ def main():
                                         st.markdown(f"Agent: {compare_agent_info['agent_file']}")
                                         st.markdown(f"Model: {compare_agent_info['model_name']}")
                                         st.markdown(f"Diff: {compare_agent_info['diff']}")
-                                        if "knowledge_rag" in compare_agent_info and "knowledge_utility" not in compare_agent_info:
-                                            if st.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}_compare{selected_compare_idx}"):
-                                                compare_title = f"{k}-{k2}-{st.session_state.session.session_name}_compare{selected_compare_idx}"
-                                                compare_references = []
-                                                for compare_reference_data in compare_agent_info["knowledge_rag"]:
-                                                    compare_references.append(ast.literal_eval("{"+ compare_reference_data.replace("\n", "").replace("$", "＄") + "}"))
-                                                compare_ref_result = dmva.analytics_knowledge(compare_title, compare_references, st.session_state.session.session_analytics_folder_path)
-                                                analytics_dict["compare_agents"][selected_compare_idx]["compare_agent"]["knowledge_utility"] = compare_ref_result
-                                                st.session_state.session.set_analytics_history(k, k2, analytics_dict)
-                                                st.session_state.sidebar_message = f"知識活用性を分析しました({k}_{k2}_compare{selected_compare_idx})"
-                                                st.rerun()
+                                        if "knowledge_rag" in compare_agent_info:
+                                            if compare_agent_info["knowledge_rag"] and "knowledge_utility" not in compare_agent_info:
+                                                if st.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}_compare{selected_compare_idx}"):
+                                                    compare_title = f"{k}-{k2}-{st.session_state.session.session_name}_compare{selected_compare_idx}"
+                                                    compare_references = []
+                                                    for compare_reference_data in compare_agent_info["knowledge_rag"]:
+                                                        compare_references.append(ast.literal_eval("{"+ compare_reference_data.replace("\n", "").replace("$", "＄") + "}"))
+                                                    compare_ref_result = dmva.analytics_knowledge(compare_title, compare_references, st.session_state.session.session_analytics_folder_path)
+                                                    analytics_dict["compare_agents"][selected_compare_idx]["compare_agent"]["knowledge_utility"] = compare_ref_result
+                                                    st.session_state.session.set_analytics_history(k, k2, analytics_dict)
+                                                    st.session_state.sidebar_message = f"知識活用性を分析しました({k}_{k2}_compare{selected_compare_idx})"
+                                                    st.rerun()
                                         st.markdown("")
                                         st.markdown(compare_agent_info["response"].replace("\n", "<br>"), unsafe_allow_html=True)
                                         st.markdown("")
