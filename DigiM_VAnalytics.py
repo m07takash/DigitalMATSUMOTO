@@ -4,6 +4,28 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
 
+import DigiM_Agent as dma
+import DigiM_Execute as dme
+
+# エージェントのシンプルな実行
+def genLLMAgentSimple(service_info, user_info, session_id, session_name, agent_file, model_type="LLM", sub_seq=1, query="", import_contents=[], situation={}, overwrite_items={}, add_knowledge=[], prompt_temp_cd="No Template", execution={}, seq_limit="", sub_seq_limit=""):
+    agent = dma.DigiM_Agent(agent_file)
+    model_name = agent.agent["ENGINE"][model_type]["MODEL"]
+
+    # 実行の設定
+    execution = {}
+    execution["CONTENTS_SAVE"] = False
+    execution["MEMORY_SAVE"] = False
+    execution["STREAM_MODE"] = False
+    execution["SAVE_DIGEST"] = False
+
+    # LLM実行
+    response = ""
+    for response_service_info, response_user_info, response_chunk, export_contents, knowledge_ref in dme.DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_file, model_type, sub_seq, query, import_contents, situation=situation, overwrite_items=overwrite_items, add_knowledge=add_knowledge, prompt_temp_cd=prompt_temp_cd, execution=execution, seq_limit=seq_limit, sub_seq_limit=sub_seq_limit):
+        response += response_chunk
+    
+    return response_service_info, response_user_info, response, model_name, export_contents, knowledge_ref
+
 # 知識参照度と知識活用度の分析
 def analytics_knowledge(title, reference, analytics_file_path):
     df = pd.DataFrame(reference)
@@ -116,3 +138,5 @@ def analytics_knowledge(title, reference, analytics_file_path):
     }
     
     return result
+
+
