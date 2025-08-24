@@ -488,6 +488,21 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
 
                 # ツールの実行
                 setting = chain["SETTING"]
+
+                # "USER":ユーザー入力(引数)、"INPUT{SubSeqNo}":サブSEQの入力結果、OUTPUT{SubSeqNo}":サブSEQの出力結果
+                input = ""
+                if "USER_INPUT" in setting:
+                    if setting["USER_INPUT"] == "USER":
+                        input = user_query
+                    elif setting["USER_INPUT"].startswith("INPUT"):
+                        ref_subseq = int(setting["USER_INPUT"].replace("INPUT_", "").strip())
+                        input = next((item["INPUT"] for item in results if item["SubSEQ"] == ref_subseq), None)
+                    elif setting["USER_INPUT"].startswith("OUTPUT"):
+                        ref_subseq = int(setting["USER_INPUT"].replace("OUTPUT_", "").strip())
+                        input = next((item["OUTPUT"] for item in results if item["SubSEQ"] == ref_subseq), None)
+                    else:
+                        input = setting["USER_INPUT"]
+
                 input = user_query
                 import_contents = in_contents
 
@@ -529,7 +544,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 session.save_history(str(seq), "setting", setting_chat_dict, "SUB_SEQ", str(sub_seq))
 
                 prompt_chat_dict = {
-                    "role": "user",
+                    "role": "neither",
                     "timestamp": timestamp_begin,                
                     "text": input,
                     "query": {
@@ -543,7 +558,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 session.save_history(str(seq), "prompt", prompt_chat_dict, "SUB_SEQ", str(sub_seq))
             
                 response_chat_dict = {
-                    "role": "assistant",
+                    "role": "neither",
                     "timestamp": timestamp_end,
                     "token": 0,
                     "text": output,
