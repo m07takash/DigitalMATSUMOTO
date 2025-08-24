@@ -23,8 +23,15 @@ def get_session_list():
     for session_folder_name in os.listdir(user_folder_path):
         if session_folder_name.startswith(session_folder_prefix):
             match = re.match(rf'{session_folder_prefix}(\d+)', session_folder_name)
+#            if match:
+#                session_nums.append(int(match.group(1)))
             if match:
-                session_nums.append(int(match.group(1)))
+                session_num = int(match.group(1))
+                session_folder_path = os.path.join(user_folder_path, session_folder_name)
+                # chat_memory.json の存在確認
+                file_path = os.path.join(session_folder_path, session_file_name)
+                if os.path.exists(file_path):
+                    session_nums.append(session_num)
     session_nums.sort()
     return session_nums
 
