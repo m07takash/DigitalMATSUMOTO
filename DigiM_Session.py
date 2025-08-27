@@ -38,13 +38,21 @@ def get_session_list():
 # セッションの一覧を獲得(画面用)
 def get_session_list_visible():
     session_list = []
-    for session_folder_name in os.listdir(user_folder_path):
-        if session_folder_name.startswith(session_folder_prefix):
-            match = re.match(rf'{session_folder_prefix}(\d+)', session_folder_name)
-            if match:
-                session_file_dict = get_session_data(match.group(1))
-                last_update_date = get_history_update_date(session_file_dict)
-                session_list.append([int(match.group(1)), last_update_date])
+    session_nums = get_session_list()
+    for session_num in session_nums:
+        session_id = str(session_num)
+        session_file_dict = get_session_data(session_id)
+        last_update_date = get_history_update_date(session_file_dict)
+        session_list.append([session_num, last_update_date])
+
+#    for session_folder_name in os.listdir(user_folder_path):
+#        if session_folder_name.startswith(session_folder_prefix):
+#            match = re.match(rf'{session_folder_prefix}(\d+)', session_folder_name)
+#            if match:
+#                session_file_dict = get_session_data(match.group(1))
+#                last_update_date = get_history_update_date(session_file_dict)
+#                session_list.append([int(match.group(1)), last_update_date])
+
     session_list_sorted = sorted(session_list, key=lambda x: x[1], reverse=True)
     return session_list_sorted
 
