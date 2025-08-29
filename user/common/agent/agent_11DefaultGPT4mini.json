@@ -1,7 +1,7 @@
 {
     "DISPLAY": true,
     "DISPLAY_NAME": "GPT-4.1-mini",
-    "NAME": "通常LLM(GPTmini)",
+    "NAME": "通常LLM(GPT4.1mini)",
     "ACT": "通常のチャットアシスタント",
     "PERSONALITY": {},
     "ENGINE": {
