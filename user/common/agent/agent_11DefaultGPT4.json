@@ -1,7 +1,7 @@
 {
     "DISPLAY": true,
     "DISPLAY_NAME": "GPT-4.1",
-    "NAME": "通常LLM(GPT)",
+    "NAME": "通常LLM(GPT4.1)",
     "ACT": "通常のチャットアシスタント",
     "PERSONALITY": {},
     "ENGINE": {
