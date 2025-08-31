@@ -15,7 +15,7 @@ import MeCab
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 from wordcloud import WordCloud
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
 
 import base64
 import tiktoken

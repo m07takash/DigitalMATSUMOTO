@@ -5,15 +5,24 @@ from datetime import datetime
 from dotenv import load_dotenv
 import DigiM_Util as dmu
 
+# setting.yamlからフォルダパスなどを設定
+system_setting_dict = dmu.read_yaml_file("setting.yaml")
+user_folder_path = system_setting_dict["USER_FOLDER"]
+session_folder_prefix = system_setting_dict["SESSION_FOLDER_PREFIX"]
+session_file_name = system_setting_dict["SESSION_FILE_NAME"]
+session_status_file_name = system_setting_dict["SESSION_STATUS_FILE_NAME"]
+session_contents_folder = system_setting_dict["SESSION_CONTENTS_FOLDER"]
+session_analytics_folder = system_setting_dict["SESSION_ANALYTICS_FOLDER"]
+
 # system.envファイルをロードして環境変数を設定
 load_dotenv("system.env")
-user_folder_path = os.getenv("USER_FOLDER")
-session_folder_prefix = os.getenv("SESSION_FOLDER_PREFIX")
-session_file_name = os.getenv("SESSION_FILE_NAME")
-session_status_file_name = os.getenv("SESSION_STATUS_FILE_NAME")
-session_contents_folder = os.getenv("SESSION_CONTENTS_FOLDER")
-session_analytics_folder = os.getenv("SESSION_ANALYTICS_FOLDER")
 temp_move_flg = os.getenv("TEMP_MOVE_FLG")
+#user_folder_path = os.getenv("USER_FOLDER")
+#session_folder_prefix = os.getenv("SESSION_FOLDER_PREFIX")
+#session_file_name = os.getenv("SESSION_FILE_NAME")
+#session_status_file_name = os.getenv("SESSION_STATUS_FILE_NAME")
+#session_contents_folder = os.getenv("SESSION_CONTENTS_FOLDER")
+#session_analytics_folder = os.getenv("SESSION_ANALYTICS_FOLDER")
 
 current_date = datetime.now()
 

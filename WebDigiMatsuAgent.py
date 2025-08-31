@@ -17,6 +17,19 @@ import DigiM_Tool as dmt
 import DigiM_GeneCommunication as dmgc
 import DigiM_VAnalytics as dmva
 
+# setting.yamlからフォルダパスなどを設定
+system_setting_dict = dmu.read_yaml_file("setting.yaml")
+if 'session_folder_prefix' not in st.session_state:
+    st.session_state.session_folder_prefix = system_setting_dict["SESSION_FOLDER_PREFIX"]
+if 'mst_folder_path' not in st.session_state:
+    st.session_state.mst_folder_path = system_setting_dict["MST_FOLDER"]
+if 'agent_folder_path' not in st.session_state:
+    st.session_state.agent_folder_path = system_setting_dict["AGENT_FOLDER"]
+if 'character_folder_path' not in st.session_state:
+    st.session_state.character_folder_path = system_setting_dict["CHARACTER_FOLDER"]
+if 'temp_folder_path' not in st.session_state:
+    st.session_state.temp_folder_path = system_setting_dict["TEMP_FOLDER"]
+
 # system.envファイルをロードして環境変数を設定
 load_dotenv("system.env")
 agent_folder_path = os.getenv("AGENT_FOLDER")
@@ -24,16 +37,16 @@ if 'web_title' not in st.session_state:
     st.session_state.web_title = os.getenv("WEB_TITLE")
 if 'timezone_setting' not in st.session_state:
     st.session_state.timezone_setting = os.getenv("TIMEZONE")
-if 'session_folder_prefix' not in st.session_state:
-    st.session_state.session_folder_prefix = os.getenv("SESSION_FOLDER_PREFIX")
-if 'temp_folder_path' not in st.session_state:
-    st.session_state.temp_folder_path = os.getenv("TEMP_FOLDER")
+#if 'session_folder_prefix' not in st.session_state:
+#    st.session_state.session_folder_prefix = os.getenv("SESSION_FOLDER_PREFIX")
+#if 'temp_folder_path' not in st.session_state:
+#    st.session_state.temp_folder_path = os.getenv("TEMP_FOLDER")
 if 'temp_move_flg' not in st.session_state:
     st.session_state.temp_move_flg = os.getenv("TEMP_MOVE_FLG")
-if 'mst_folder_path' not in st.session_state:
-    st.session_state.mst_folder_path = os.getenv("MST_FOLDER")
-if 'agent_folder_path' not in st.session_state:
-    st.session_state.agent_folder_path = os.getenv("AGENT_FOLDER")
+#if 'mst_folder_path' not in st.session_state:
+#    st.session_state.mst_folder_path = os.getenv("MST_FOLDER")
+#if 'agent_folder_path' not in st.session_state:
+#    st.session_state.agent_folder_path = os.getenv("AGENT_FOLDER")
 if 'default_agent' not in st.session_state:
     default_agent_data = dmu.read_json_file(os.getenv("WEB_DEFAULT_AGENT_FILE"), agent_folder_path)
     st.session_state.default_agent = default_agent_data["DISPLAY_NAME"]
@@ -41,8 +54,8 @@ if 'web_default_service' not in st.session_state:
     st.session_state.web_default_service = json.loads(os.getenv("WEB_DEFAULT_SERVICE"))
 if 'web_default_user' not in st.session_state:
     st.session_state.web_default_user = json.loads(os.getenv("WEB_DEFAULT_USER"))
-if 'character_folder_path' not in st.session_state:
-    st.session_state.character_folder_path = os.getenv("CHARACTER_FOLDER")
+#if 'character_folder_path' not in st.session_state:
+#    st.session_state.character_folder_path = os.getenv("CHARACTER_FOLDER")
 if 'prompt_template_mst_file' not in st.session_state:
     st.session_state.prompt_template_mst_file = os.getenv("PROMPT_TEMPLATE_MST_FILE")
 
