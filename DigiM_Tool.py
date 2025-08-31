@@ -1,15 +1,20 @@
-import os
-from dotenv import load_dotenv
+#import os
+#from dotenv import load_dotenv
 import DigiM_Agent as dma
 import DigiM_Util as dmu
-import DigiM_Context as dmc
+#import DigiM_Context as dmc
 import DigiM_Session as dms
 import DigiM_Execute as dme
 
-# system.envファイルをロードして環境変数を設定
-load_dotenv("system.env")
-character_folder_path = os.getenv("CHARACTER_FOLDER")
-mst_folder_path = os.getenv("MST_FOLDER")
+# setting.yamlからフォルダパスなどを設定
+system_setting_dict = dmu.read_yaml_file("setting.yaml")
+mst_folder_path = system_setting_dict["MST_FOLDER"]
+character_folder_path = system_setting_dict["CHARACTER_FOLDER"]
+
+## system.envファイルをロードして環境変数を設定
+#load_dotenv("system.env")
+#character_folder_path = os.getenv("CHARACTER_FOLDER")
+#mst_folder_path = os.getenv("MST_FOLDER")
 
 # 文字列から関数名を取得
 def call_function_by_name(service_info, user_info, func_name, *args, **kwargs):

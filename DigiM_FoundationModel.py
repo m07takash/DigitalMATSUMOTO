@@ -2,7 +2,7 @@ import os
 import json
 from pathlib import Path
 import base64
-import PIL.Image
+#import PIL.Image
 from dotenv import load_dotenv
 
 import openai
@@ -13,16 +13,20 @@ import anthropic
 from llamaapi import LlamaAPI
 
 import DigiM_Util as dmu
-import DigiM_Tool as dmt
+#import DigiM_Tool as dmt
+
+# setting.yamlからフォルダパスなどを設定
+system_setting_dict = dmu.read_yaml_file("setting.yaml")
+temp_folder_path = system_setting_dict["TEMP_FOLDER"]
 
 # system.envファイルをロードして環境変数を設定
 load_dotenv("system.env")
-temp_folder_path = os.getenv("TEMP_FOLDER")
 openai_api_key = os.getenv("OPENAI_API_KEY")
 anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
 gemini_api_key = os.getenv("GEMINI_API_KEY")
 llama_api_key = os.getenv("LLAMA_API_KEY")
 xai_api_key = os.getenv("XAU_API_KEY")
+#temp_folder_path = os.getenv("TEMP_FOLDER")
 
 # 文字列から関数名を取得
 def call_function_by_name(func_name, *args, **kwargs):

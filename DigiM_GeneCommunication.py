@@ -2,23 +2,28 @@ import os
 import pytz
 import csv
 from datetime import datetime
-from dateutil import parser
+#from dateutil import parser
 from dotenv import load_dotenv
 
 import DigiM_Agent as dma
 import DigiM_Session as dms
-import DigiM_Context as dmc
-import DigiM_Tool as dmt
+#import DigiM_Context as dmc
+#import DigiM_Tool as dmt
 import DigiM_Util as dmu
 import DigiM_Notion as dmn
+
+# setting.yamlからフォルダパスなどを設定
+system_setting_dict = dmu.read_yaml_file("setting.yaml")
+mst_folder_path = system_setting_dict["MST_FOLDER"]
+rag_data_csv_path = system_setting_dict["RAG_DATA_CSV_FOLDER"]
 
 # system.envファイルをロードして環境変数を設定
 load_dotenv("system.env")
 timezone = os.getenv("TIMEZONE")
-mst_folder_path = os.getenv("MST_FOLDER")
-rag_data_csv_path = os.getenv("RAG_DATA_CSV_FOLDER")
+#mst_folder_path = os.getenv("MST_FOLDER")
+#rag_data_csv_path = os.getenv("RAG_DATA_CSV_FOLDER")
 notion_db_mst_file = os.getenv("NOTION_MST_FILE")
-default_agent_file = os.getenv("DEFAULT_AGENT_FILE")
+#default_agent_file = os.getenv("DEFAULT_AGENT_FILE")
 
 #タイムスタンプ文字列を時刻に変換
 def safe_parse_timestamp(timestamp_str):
@@ -119,7 +124,7 @@ def save_communication_notion(fb_data, save_db):
     dmn.update_notion_chk(page_id, "確定Chk", True)
 
 # フィードバックデータの保存
-def create_communication_data(session_id, agent_file=default_agent_file):
+def create_communication_data(session_id, agent_file):
     session = dms.DigiMSession(session_id)
     agent = dma.DigiM_Agent(agent_file)
     save_mode = agent.communication["SAVE_MODE"]
@@ -145,3 +150,4 @@ def create_communication_data(session_id, agent_file=default_agent_file):
                                 save_communication_csv(fb_data, save_db)
                             v2["feedback"][fb_k]["flg"]=False
                     session.set_feedback_history(k1, k2, v2["feedback"])
+

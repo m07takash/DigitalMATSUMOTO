@@ -4,11 +4,15 @@ import DigiM_Util as dmu
 import DigiM_FoundationModel as dmfm
 import DigiM_Context as dmc
 
+# setting.yamlからフォルダパスなどを設定
+system_setting_dict = dmu.read_yaml_file("setting.yaml")
+character_folder_path = system_setting_dict["CHARACTER_FOLDER"]
+mst_folder_path = system_setting_dict["MST_FOLDER"]
+agent_folder_path = system_setting_dict["AGENT_FOLDER"]
+
 # system.envファイルをロードして環境変数を設定
-load_dotenv("system.env")
-character_folder_path = os.getenv("CHARACTER_FOLDER")
-mst_folder_path = os.getenv("MST_FOLDER")
-agent_folder_path = os.getenv("AGENT_FOLDER")
+if os.path.exists("system.env"):
+    load_dotenv("system.env")
 prompt_template_mst_file = os.getenv("PROMPT_TEMPLATE_MST_FILE")
 prompt_temp_mst_path = mst_folder_path + prompt_template_mst_file
 

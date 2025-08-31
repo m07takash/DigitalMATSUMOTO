@@ -1,6 +1,7 @@
 import os
-import json
+#import json
 from datetime import datetime
+from dotenv import load_dotenv
 
 import inspect
 import pytz
@@ -10,11 +11,20 @@ import DigiM_Context as dmc
 import DigiM_Tool as dmt
 import DigiM_Session as dms
 
-user_folder_path = os.getenv("USER_FOLDER")
-session_folder_prefix = os.getenv("SESSION_FOLDER_PREFIX")
-temp_folder_path = os.getenv("TEMP_FOLDER")
-practice_folder_path = os.getenv("PRACTICE_FOLDER")
+# setting.yamlからフォルダパスなどを設定
+system_setting_dict = dmu.read_yaml_file("setting.yaml")
+user_folder_path = system_setting_dict["USER_FOLDER"]
+session_folder_prefix = system_setting_dict["SESSION_FOLDER_PREFIX"]
+temp_folder_path = system_setting_dict["TEMP_FOLDER"]
+practice_folder_path = system_setting_dict["PRACTICE_FOLDER"]
+
+# system.envファイルをロードして環境変数を設定
+load_dotenv("system.env")
 timezone_setting = os.getenv("TIMEZONE")
+#user_folder_path = os.getenv("USER_FOLDER")
+#session_folder_prefix = os.getenv("SESSION_FOLDER_PREFIX")
+#temp_folder_path = os.getenv("TEMP_FOLDER")
+#practice_folder_path = os.getenv("PRACTICE_FOLDER")
 
 # セッションロックエラー
 class SessionLockedError(RuntimeError):
