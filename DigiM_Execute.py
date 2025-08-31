@@ -1,5 +1,4 @@
 import os
-#import json
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -19,12 +18,9 @@ temp_folder_path = system_setting_dict["TEMP_FOLDER"]
 practice_folder_path = system_setting_dict["PRACTICE_FOLDER"]
 
 # system.envファイルをロードして環境変数を設定
-load_dotenv("system.env")
+if os.path.exists("system.env"):
+    load_dotenv("system.env")
 timezone_setting = os.getenv("TIMEZONE")
-#user_folder_path = os.getenv("USER_FOLDER")
-#session_folder_prefix = os.getenv("SESSION_FOLDER_PREFIX")
-#temp_folder_path = os.getenv("TEMP_FOLDER")
-#practice_folder_path = os.getenv("PRACTICE_FOLDER")
 
 # セッションロックエラー
 class SessionLockedError(RuntimeError):
@@ -517,7 +513,6 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 import_contents = in_contents
 
                 timestamp_begin = str(datetime.now())
-#                response_service_info, response_user_info, output, export_contents = dmt.call_function_by_name(service_info, user_info, setting["FUNC_NAME"], session_id, input)
                 tool_result = dmt.call_function_by_name(service_info, user_info, setting["FUNC_NAME"], session_id, input)
                 output = ""
                 export_contents = []

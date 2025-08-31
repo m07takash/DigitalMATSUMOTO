@@ -6,7 +6,6 @@ from pydantic import BaseModel
 import uvicorn
 
 import DigiM_Session as dms
-import DigiM_Agent as dma
 import DigiM_Execute as dme
 
 # system.envファイルをロードして環境変数を設定
