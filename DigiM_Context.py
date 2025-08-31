@@ -22,12 +22,11 @@ mst_folder_path = system_setting_dict["MST_FOLDER"]
 rag_folder_db_path = system_setting_dict["RAG_FOLDER_DB"]
 
 # system.envファイルをロードして環境変数を設定
-load_dotenv("system.env")
-#mst_folder_path = os.getenv("MST_FOLDER")
+if os.path.exists("system.env"):
+    load_dotenv("system.env")
 prompt_template_mst_file = os.getenv("PROMPT_TEMPLATE_MST_FILE")
 prompt_temp_mst_path = mst_folder_path + prompt_template_mst_file
 rag_mst_file = os.getenv("RAG_MST_FILE")
-#rag_folder_db_path = os.getenv("RAG_FOLDER_DB")
 notion_db_mst_file = os.getenv("NOTION_MST_FILE")
 
 # 現在日付

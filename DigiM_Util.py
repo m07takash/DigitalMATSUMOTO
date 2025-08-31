@@ -15,7 +15,6 @@ import MeCab
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 from wordcloud import WordCloud
-#import matplotlib.pyplot as plt
 
 import base64
 import tiktoken
@@ -24,7 +23,8 @@ from openai import OpenAI
 from google import genai
 
 # system.envファイルをロードして環境変数を設定
-load_dotenv("system.env")
+if os.path.exists("system.env"):
+    load_dotenv("system.env")
 openai_api_key = os.getenv("OPENAI_API_KEY")
 gemini_api_key = os.getenv("GEMINI_API_KEY")
 embedding_model = os.getenv("EMBEDDING_MODEL")
