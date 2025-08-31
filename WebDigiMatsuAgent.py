@@ -19,34 +19,19 @@ import DigiM_VAnalytics as dmva
 
 # setting.yamlからフォルダパスなどを設定
 system_setting_dict = dmu.read_yaml_file("setting.yaml")
-if 'session_folder_prefix' not in st.session_state:
-    st.session_state.session_folder_prefix = system_setting_dict["SESSION_FOLDER_PREFIX"]
-if 'mst_folder_path' not in st.session_state:
-    st.session_state.mst_folder_path = system_setting_dict["MST_FOLDER"]
-if 'agent_folder_path' not in st.session_state:
-    st.session_state.agent_folder_path = system_setting_dict["AGENT_FOLDER"]
-if 'character_folder_path' not in st.session_state:
-    st.session_state.character_folder_path = system_setting_dict["CHARACTER_FOLDER"]
-if 'temp_folder_path' not in st.session_state:
-    st.session_state.temp_folder_path = system_setting_dict["TEMP_FOLDER"]
+session_folder_prefix = system_setting_dict["SESSION_FOLDER_PREFIX"]
+agent_folder_path = system_setting_dict["AGENT_FOLDER"]
+temp_folder_path = system_setting_dict["TEMP_FOLDER"]
 
 # system.envファイルをロードして環境変数を設定
-load_dotenv("system.env")
-agent_folder_path = os.getenv("AGENT_FOLDER")
+if os.path.exists("system.env"):
+    load_dotenv("system.env")
 if 'web_title' not in st.session_state:
     st.session_state.web_title = os.getenv("WEB_TITLE")
 if 'timezone_setting' not in st.session_state:
     st.session_state.timezone_setting = os.getenv("TIMEZONE")
-#if 'session_folder_prefix' not in st.session_state:
-#    st.session_state.session_folder_prefix = os.getenv("SESSION_FOLDER_PREFIX")
-#if 'temp_folder_path' not in st.session_state:
-#    st.session_state.temp_folder_path = os.getenv("TEMP_FOLDER")
 if 'temp_move_flg' not in st.session_state:
     st.session_state.temp_move_flg = os.getenv("TEMP_MOVE_FLG")
-#if 'mst_folder_path' not in st.session_state:
-#    st.session_state.mst_folder_path = os.getenv("MST_FOLDER")
-#if 'agent_folder_path' not in st.session_state:
-#    st.session_state.agent_folder_path = os.getenv("AGENT_FOLDER")
 if 'default_agent' not in st.session_state:
     default_agent_data = dmu.read_json_file(os.getenv("WEB_DEFAULT_AGENT_FILE"), agent_folder_path)
     st.session_state.default_agent = default_agent_data["DISPLAY_NAME"]
@@ -54,8 +39,6 @@ if 'web_default_service' not in st.session_state:
     st.session_state.web_default_service = json.loads(os.getenv("WEB_DEFAULT_SERVICE"))
 if 'web_default_user' not in st.session_state:
     st.session_state.web_default_user = json.loads(os.getenv("WEB_DEFAULT_USER"))
-#if 'character_folder_path' not in st.session_state:
-#    st.session_state.character_folder_path = os.getenv("CHARACTER_FOLDER")
 if 'prompt_template_mst_file' not in st.session_state:
     st.session_state.prompt_template_mst_file = os.getenv("PROMPT_TEMPLATE_MST_FILE")
 
@@ -85,7 +68,7 @@ def initialize_session_states():
     if 'agent_file' not in st.session_state:
         st.session_state.agent_file = st.session_state.agents[st.session_state.agent_list_index]["FILE"]
     if 'agent_data' not in st.session_state:
-        st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, st.session_state.agent_folder_path)
+        st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, agent_folder_path)
     if 'rag_data_list' not in st.session_state:
         st.session_state.rag_data_list = dmc.get_rag_list()
     if 'rag_data_list_selected' not in st.session_state:
@@ -200,7 +183,7 @@ def main():
         if agent_id_selected := st.selectbox("Select Agent:", st.session_state.agent_list, index=st.session_state.agent_list_index):
             st.session_state.agent_id = agent_id_selected
             st.session_state.agent_file = next((a2["FILE"] for a2 in st.session_state.agents if a2["AGENT"] == st.session_state.agent_id), None)
-            st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, st.session_state.agent_folder_path)
+            st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, agent_folder_path)
 
         side_col1, side_col2 = st.columns(2)
         
@@ -241,7 +224,7 @@ def main():
         for session_num, last_update_date in st.session_state.session_list:
             if num_session_visible > num_sessions:
                 session_id_list = str(session_num)
-                session_key_list = st.session_state.session_folder_prefix + session_id_list
+                session_key_list = session_folder_prefix + session_id_list
                 session_name_list = dms.get_session_name(session_id_list)
                 session_name_btn = session_name_list[:12]
                 situation = dms.get_situation(session_id_list)
@@ -538,7 +521,7 @@ def main():
         uploaded_contents = []
         if st.session_state.uploaded_files:
             for uploaded_file in st.session_state.uploaded_files:
-                uploaded_file_path = st.session_state.temp_folder_path + uploaded_file.name
+                uploaded_file_path = temp_folder_path + uploaded_file.name
                 with open(uploaded_file_path, "wb") as f:
                     f.write(uploaded_file.getbuffer())
                 uploaded_contents.append(uploaded_file_path)

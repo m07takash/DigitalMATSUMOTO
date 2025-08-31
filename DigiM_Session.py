@@ -15,14 +15,9 @@ session_contents_folder = system_setting_dict["SESSION_CONTENTS_FOLDER"]
 session_analytics_folder = system_setting_dict["SESSION_ANALYTICS_FOLDER"]
 
 # system.envファイルをロードして環境変数を設定
-load_dotenv("system.env")
+if os.path.exists("system.env"):
+    load_dotenv("system.env")
 temp_move_flg = os.getenv("TEMP_MOVE_FLG")
-#user_folder_path = os.getenv("USER_FOLDER")
-#session_folder_prefix = os.getenv("SESSION_FOLDER_PREFIX")
-#session_file_name = os.getenv("SESSION_FILE_NAME")
-#session_status_file_name = os.getenv("SESSION_STATUS_FILE_NAME")
-#session_contents_folder = os.getenv("SESSION_CONTENTS_FOLDER")
-#session_analytics_folder = os.getenv("SESSION_ANALYTICS_FOLDER")
 
 current_date = datetime.now()
 
@@ -32,8 +27,6 @@ def get_session_list():
     for session_folder_name in os.listdir(user_folder_path):
         if session_folder_name.startswith(session_folder_prefix):
             match = re.match(rf'{session_folder_prefix}(\d+)', session_folder_name)
-#            if match:
-#                session_nums.append(int(match.group(1)))
             if match:
                 session_num = int(match.group(1))
                 session_folder_path = os.path.join(user_folder_path, session_folder_name)
@@ -53,15 +46,6 @@ def get_session_list_visible():
         session_file_dict = get_session_data(session_id)
         last_update_date = get_history_update_date(session_file_dict)
         session_list.append([session_num, last_update_date])
-
-#    for session_folder_name in os.listdir(user_folder_path):
-#        if session_folder_name.startswith(session_folder_prefix):
-#            match = re.match(rf'{session_folder_prefix}(\d+)', session_folder_name)
-#            if match:
-#                session_file_dict = get_session_data(match.group(1))
-#                last_update_date = get_history_update_date(session_file_dict)
-#                session_list.append([int(match.group(1)), last_update_date])
-
     session_list_sorted = sorted(session_list, key=lambda x: x[1], reverse=True)
     return session_list_sorted
 
