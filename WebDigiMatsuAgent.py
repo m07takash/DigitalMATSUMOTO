@@ -354,11 +354,13 @@ def main():
                 if k2 != "SETTING":
                     seq_key = f"key_{k}_{k2}"
                     with st.chat_message(v2["prompt"]["role"]):
-                        st.markdown(v2["prompt"]["query"]["input"].replace("\n", "<br>"), unsafe_allow_html=True)
+#                        st.markdown(v2["prompt"]["query"]["input"].replace("\n", "<br>"), unsafe_allow_html=True)
+                        st.markdown(v2["prompt"]["query"]["input"], unsafe_allow_html=True)
                         for uploaded_content in v2["prompt"]["query"]["contents"]:
                             show_uploaded_files_memory(seq_key, st.session_state.session.session_folder_path +"contents/", uploaded_content["file_name"], uploaded_content["file_type"])
                     with st.chat_message(v2["response"]["role"]):
-                        st.markdown("**"+v2["setting"]["name"]+" ("+v2["response"]["timestamp"]+"):**\n\n"+v2["response"]["text"].replace("\n", "<br>").replace("#", ""), unsafe_allow_html=True)
+#                        st.markdown("**"+v2["setting"]["name"]+" ("+v2["response"]["timestamp"]+"):**\n\n"+v2["response"]["text"].replace("\n", "<br>").replace("#", ""), unsafe_allow_html=True)
+                        st.markdown("**"+v2["setting"]["name"]+" ("+v2["response"]["timestamp"]+"):**\n\n"+v2["response"]["text"], unsafe_allow_html=True)
                         if "image" in v2:
                             for gen_content in v2["image"].values():
                                show_uploaded_files_memory(seq_key, st.session_state.session.session_folder_path +"contents/", gen_content["file_name"], gen_content["file_type"])

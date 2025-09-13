@@ -3,7 +3,9 @@
     "DISPLAY_NAME": "GPT-4o",
     "NAME": "通常LLM(GPT4o)",
     "ACT": "通常のチャットアシスタント",
-    "PERSONALITY": {},
+    "PERSONALITY": {
+        "SPEAKING_STYLE": "Polite"
+    },
     "ENGINE": {
         "LLM": {
             "NAME":"GPT-4o",
