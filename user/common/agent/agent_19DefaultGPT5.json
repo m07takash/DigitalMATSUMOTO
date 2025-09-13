@@ -3,7 +3,9 @@
     "DISPLAY_NAME": "GPT-5",
     "NAME": "通常LLM(GPT5)",
     "ACT": "通常のチャットアシスタント",
-    "PERSONALITY": {},
+    "PERSONALITY": {
+        "SPEAKING_STYLE": "Polite"
+    },
     "ENGINE": {
         "LLM": {
             "NAME":"GPT-5",

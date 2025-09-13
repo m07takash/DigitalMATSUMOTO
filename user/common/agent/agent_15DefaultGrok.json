@@ -3,7 +3,9 @@
     "DISPLAY_NAME": "Grok-4",
     "NAME": "通常LLM(Grok)",
     "ACT": "通常のチャットアシスタント",
-    "PERSONALITY": {},
+    "PERSONALITY": {
+        "SPEAKING_STYLE": "Polite"
+    },
     "ENGINE": {
         "LLM": {
             "NAME":"Grok-4",
