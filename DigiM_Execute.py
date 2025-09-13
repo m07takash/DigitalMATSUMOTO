@@ -209,7 +209,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
 
     # レスポンスとメモリ・コンテキストの類似度
     timestamp_log += "[23.結果の類似度算出開始]"+str(datetime.now())+"<br>"
-    response_vec = dmu.embed_text(response.replace("\n", ""))
+    response_vec = dmu.embed_text(response.replace("\n", "")[:8000])
     memory_ref = dmc.get_memory_reference(memories_selected, memory_similarity, response_vec, memory_similarity_logic)
     knowledge_ref = dmc.get_knowledge_reference(response_vec, knowledge_selected)
     

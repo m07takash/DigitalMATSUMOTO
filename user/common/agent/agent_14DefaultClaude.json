@@ -3,7 +3,9 @@
     "DISPLAY_NAME": "Claude-Sonnet-4",
     "NAME": "通常LLM(Claude)",
     "ACT": "通常のチャットアシスタント",
-    "PERSONALITY": {},
+    "PERSONALITY": {
+        "SPEAKING_STYLE": "Polite"
+    },
     "ENGINE": {
         "LLM": {
             "NAME":"Claude-Sonnet-4",
