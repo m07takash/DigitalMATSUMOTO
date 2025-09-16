@@ -86,7 +86,7 @@ def get_history_update_date(chat_history_active_dict):
     max_sub_seq = 0
     last_update_date = current_date
     
-    sub_seq_candidates = [k for k, v in chat_history_active_dict[max_seq].items() if isinstance(v, dict) and "digest" in v]
+    sub_seq_candidates = [k for k, v in chat_history_active_dict[max_seq].items() if isinstance(v, dict) and "response" in v]
     if sub_seq_candidates:
         max_sub_seq = max(sub_seq_candidates, key=int)
         last_update_date = datetime.strptime(chat_history_active_dict[max_seq][max_sub_seq]["response"]["timestamp"], "%Y-%m-%d %H:%M:%S.%f")

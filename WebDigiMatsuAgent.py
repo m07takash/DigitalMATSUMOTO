@@ -226,7 +226,7 @@ def main():
                 session_id_list = str(session_num)
                 session_key_list = session_folder_prefix + session_id_list
                 session_name_list = dms.get_session_name(session_id_list)
-                session_name_btn = session_name_list[:12]
+                session_name_btn = session_id_list +"_"+ session_name_list[:10]
                 situation = dms.get_situation(session_id_list)
                 if not situation:
                     situation["TIME"] = now_time.strftime("%Y/%m/%d %H:%M:%S")
