@@ -555,6 +555,7 @@ def main():
             for response_service_info, response_user_info, response_chunk in dme.DigiMatsuExecute_Practice(st.session_state.web_default_service, st.session_state.web_default_user, st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, execution):
                 response += response_chunk
                 response_placeholder.markdown(response)
+            st.session_state.sidebar_message = ""
             st.rerun()
 
 if __name__ == "__main__":
