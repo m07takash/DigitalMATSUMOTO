@@ -199,6 +199,8 @@ user/common/csv/*
 # DigiM Folder
 user/session*/
 user/common/analytics/*
+user/common/temp/*
+!user/common/temp/tempファイルの格納先
 test/*
 !test/Sample*.xlsx
 backup/
