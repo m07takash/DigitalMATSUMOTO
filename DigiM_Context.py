@@ -334,6 +334,12 @@ def get_knowledge_reference(response_vec, rag_selected, logic="Cosine"):
         similarity_response = dmu.calculate_similarity_vec(response_vec, rag_data["vector_data_value_text"], logic)
         rag_data["similarity_response"] = round(similarity_response,3)
 
+        # メタ検索の補正値を反映
+        if rag_data["query_mode"] != "NORMAL":
+            key, value = rag_data["query_mode"].strip("()").split(":")
+            if key == "META_SEARCH":
+                rag_data["similarity_response"] = round(similarity_response*float(value),3)
+
         # 画面表示用のログ形式
         chunk_item_list = re.findall(r"\{(.*?)\}", rag_data["log_format"])
         chunk_items = {}
