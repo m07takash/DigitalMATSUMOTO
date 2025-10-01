@@ -103,7 +103,10 @@ def analytics_knowledge(title, reference, analytics_file_path):
         
         # Calculate positions for the bars
         y_positions = range(len(group))
-        ax.barh([y - bar_height / 2 for y in y_positions], group['similarity_Q'], height=bar_height, color='blue', label='similarity_Q')
+        
+        q_colors = ["blue" if mode == "NORMAL" else "deepskyblue" for mode in group['QUERY_MODE']]
+        
+        ax.barh([y - bar_height / 2 for y in y_positions], group['similarity_Q'], height=bar_height, color=q_colors, label='similarity_Q')
         ax.barh([y + bar_height / 2 for y in y_positions], group['similarity_A'], height=bar_height, color='orange', label='similarity_A')
         
         # Set labels and title
