@@ -338,7 +338,8 @@ def get_knowledge_reference(response_vec, rag_selected, logic="Cosine"):
         if rag_data["query_mode"] != "NORMAL":
             key, value = rag_data["query_mode"].strip("()").split(":")
             if key == "META_SEARCH":
-                rag_data["similarity_response"] = round(similarity_response*float(value),3)
+                rag_data["similarity_prompt"] = round(rag_data["similarity_prompt"]/float(value),3)
+#                rag_data["similarity_response"] = round(similarity_response*float(value),3)
 
         # 画面表示用のログ形式
         chunk_item_list = re.findall(r"\{(.*?)\}", rag_data["log_format"])
