@@ -166,7 +166,7 @@ def select_rag_vector(rag_data_list, rag={}):
 
 # RAGからのコンテキスト取得
 def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searches=[]):
-    rag_final_context = "\n------\n"
+    rag_final_context = ""
     rag_final_selected = []
 
     # RAGデータセットごとに処理    
@@ -319,7 +319,8 @@ def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searche
             rag_final_context += rag_context
             rag_final_selected += rag_selected
 
-    rag_final_context += "----\nこれらの情報を踏まえて、次の質問に日本語で回答してください。\n----\n"
+    if rag_final_context:
+        rag_final_context += "----\nこれらの情報を踏まえて、次の質問に日本語で回答してください。\n----\n"
 
     return rag_final_context, rag_final_selected
 
