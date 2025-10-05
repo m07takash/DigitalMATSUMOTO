@@ -8,9 +8,9 @@
     },
     "ENGINE": {
         "LLM": {
-            "NAME":"Claude-Sonnet-4",
+            "NAME":"Claude-Sonnet-4.5",
             "FUNC_NAME": "generate_response_T_claude",
-            "MODEL": "claude-sonnet-4-20250514",
+            "MODEL": "claude-sonnet-4-5",
             "PARAMETER": {"max_tokens": 20000},
             "TOKENIZER": "tiktoken",
             "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}

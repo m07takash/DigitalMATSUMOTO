@@ -5,7 +5,7 @@
             "TYPE": "LLM",
             "SETTING": {
                 "AGENT_FILE": "USER",
-                "OVERWRITE_ITEMS": {},
+                "OVERWRITE_ITEMS": "USER",
                 "ADD_KNOWLEDGE": [],
                 "PROMPT_TEMPLATE": "Normal Template",
                 "USER_INPUT": "USER",
