@@ -81,14 +81,15 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
 
     # シチュエーションの設定
     timestamp_log += "[04.シチュエーション設定]"+str(datetime.now())+"<br>"
-    situation_setting = ""
-    time_setting = str(datetime.now(pytz.timezone(timezone_setting)).strftime('%Y/%m/%d %H:%M:%S'))
+    situation_prompt = ""
     if situation:
+        situation_setting = ""
+        time_setting = str(datetime.now(pytz.timezone(timezone_setting)).strftime('%Y/%m/%d %H:%M:%S'))
         if "SITUATION" in situation:
             situation_setting = situation["SITUATION"]+"\n"
         if "TIME" in situation:
             time_setting = situation["TIME"]
-    situation_prompt = f"\n【状況】\n{situation_setting}現在は「{time_setting}」です。"
+        situation_prompt = f"\n【状況】\n{situation_setting}現在は「{time_setting}」です。"
 
     # 会話のダイジェストを取得
     if memory_use:

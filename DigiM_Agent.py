@@ -79,7 +79,11 @@ class DigiM_Agent:
 
     # システムプロンプトの設定
     def set_system_prompt(self):
-        system_prompt = f"あなたの名前は「{self.name}」です。{self.act}として振る舞ってください。"
+        system_prompt = ""
+        if self.name:
+            system_prompt += f"あなたの名前は「{self.name}」です。"
+        if self.act:
+            system_prompt += f"{self.act}として振る舞ってください。"
         
         # パーソナリティ
         if self.personality:
