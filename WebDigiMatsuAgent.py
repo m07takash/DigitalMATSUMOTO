@@ -113,6 +113,8 @@ def initialize_session_states():
         st.session_state.overwrite_flg_prompt_temp = False
     if 'overwrite_flg_rag' not in st.session_state:
         st.session_state.overwrite_flg_rag = False
+    if 'dl_type' not in st.session_state:
+        st.session_state.dl_type = "Chats Only"
         
 # セッションのリフレッシュ（ヒストリーを更新するために、同一セッションIDで再度Sessionクラスを呼び出すこともある）
 def refresh_session(session_id, session_name, situation, new_session_flg=False):
@@ -169,6 +171,22 @@ def show_uploaded_files_widget(uploaded_files):
             st.video(uploaded_file)
         elif "audio" in file_type:
             st.audio(uploaded_file)
+
+# ダウンロード用ファイル形式の設定
+def set_dl_file(chat_history, dl_type="Chats Only", file_id="Chat_History"):
+    markdown_lines = []
+    for msg in chat_history:
+        if (dl_type=="Chats Only" and msg["role"] in ["user", "assistant"]) or dl_type == "ALL":
+            if "content" in msg:
+                markdown_lines.append(f"**{msg['role'].capitalize()}**\n {msg['content']}")
+            if "image" in msg:
+                b64 = dmu.encode_image_file(msg['image']).replace("\n","").replace("\r","")
+                markdown_lines.append(f"![alt](data:image/png;base64,{b64})")
+
+    data = "\n\n".join(markdown_lines)
+    file_name = f"{file_id}_{dl_type}.md"
+    mime = "text/markdown"
+    return data, file_name, mime
 
 ### Streamlit画面 ###
 def main():
@@ -347,6 +365,7 @@ def main():
         seq_visible_key = 0
     
     # 会話履歴の表示
+    download_data = []
     for k, v in st.session_state.chat_history_visible_dict.items():
         if int(k) >= seq_visible_key:
             st.markdown("----")
@@ -354,16 +373,22 @@ def main():
                 if k2 != "SETTING":
                     seq_key = f"key_{k}_{k2}"
                     with st.chat_message(v2["prompt"]["role"]):
-#                        st.markdown(v2["prompt"]["query"]["input"].replace("\n", "<br>"), unsafe_allow_html=True)
-                        st.markdown(v2["prompt"]["query"]["input"], unsafe_allow_html=True)
+                        content_text = v2["prompt"]["query"]["input"]
+                        download_data.append({"role": v2["prompt"]["role"], "content": content_text})
+#                        st.markdown(content_text.replace("\n", "<br>"), unsafe_allow_html=True)
+                        st.markdown(content_text, unsafe_allow_html=True)
                         for uploaded_content in v2["prompt"]["query"]["contents"]:
+                            download_data.append({"role": v2["prompt"]["role"], "image": st.session_state.session.session_folder_path +"contents/"+ uploaded_content["file_name"]})
                             show_uploaded_files_memory(seq_key, st.session_state.session.session_folder_path +"contents/", uploaded_content["file_name"], uploaded_content["file_type"])
                     with st.chat_message(v2["response"]["role"]):
-#                        st.markdown("**"+v2["setting"]["name"]+" ("+v2["response"]["timestamp"]+"):**\n\n"+v2["response"]["text"].replace("\n", "<br>").replace("#", ""), unsafe_allow_html=True)
-                        st.markdown("**"+v2["setting"]["name"]+" ("+v2["response"]["timestamp"]+"):**\n\n"+v2["response"]["text"], unsafe_allow_html=True)
+                        content_text = "**"+v2["setting"]["name"]+" ("+v2["response"]["timestamp"]+"):**\n\n"+v2["response"]["text"]
+                        download_data.append({"role": v2["response"]["role"], "content": content_text})
+#                        st.markdown(content_text.replace("\n", "<br>").replace("#", ""), unsafe_allow_html=True)
+                        st.markdown(content_text, unsafe_allow_html=True)
                         if "image" in v2:
                             for gen_content in v2["image"].values():
-                               show_uploaded_files_memory(seq_key, st.session_state.session.session_folder_path +"contents/", gen_content["file_name"], gen_content["file_type"])
+                                download_data.append({"role": v2["response"]["role"], "image": st.session_state.session.session_folder_path +"contents/"+ gen_content["file_name"]})
+                                show_uploaded_files_memory(seq_key, st.session_state.session.session_folder_path +"contents/", gen_content["file_name"], gen_content["file_type"])
 
                     if v2["setting"]["type"] in ["LLM","IMAGEGEN"]:
                         if "communication" in v2["setting"]:
@@ -410,12 +435,22 @@ def main():
                         
                         # Detail
                         with st.chat_message("detail"):
+                            download_data.append({"role": "detail", "content": st.session_state.session.get_detail_info(k, k2)})
                             chat_expander = st.expander("Detail Information")
                             with chat_expander:
                                 st.markdown(st.session_state.session.get_detail_info(k, k2).replace("\n", "<br>"), unsafe_allow_html=True)
 
                         # Analytics
                         with st.chat_message("analytics"):
+                            if "analytics" in v2:
+                                if "knowledge_utility" in v2["analytics"]:
+                                    similarity_utility_dict = v2["analytics"]["knowledge_utility"]["similarity_utility"]
+                                    download_data.append({"role": "analytics", "content": "**knowledge Utility:**"})
+                                    if "image_files" in v2["analytics"]["knowledge_utility"]:
+                                        for image_key, image_values in v2["analytics"]["knowledge_utility"]["image_files"].items():
+                                            for image_value in image_values:
+                                                download_data.append({"role": "analytics", "image": st.session_state.session.session_analytics_folder_path + image_value})
+
                             chat_expander = st.expander("Analytics Results")
                             with chat_expander:
                                 analytics_dict = {}
@@ -516,6 +551,13 @@ def main():
     uploaded_files = st.file_uploader("Attached Files:", type=["txt", "csv", "jpg", "jpeg", "png"], accept_multiple_files=True)
     st.session_state.uploaded_files = uploaded_files
     show_uploaded_files_widget(st.session_state.uploaded_files)
+
+    # ファイルダウンローダー
+    footer_col1, footer_col2 = st.columns(2)
+    st.session_state.dl_type = footer_col1.radio("Download Mode:", ("Chats Only", "ALL"))
+    dl_file_id = st.session_state.session.session_id +"_"+ st.session_state.session.session_name[:20]
+    dl_data, dl_file_name, dl_mime = set_dl_file(download_data, st.session_state.dl_type, file_id=dl_file_id)
+    footer_col2.download_button(label="Download(.md)", data=dl_data, file_name=dl_file_name, mime=dl_mime)
     
     # ユーザーの問合せ入力
     if user_input := st.chat_input("Your Message"):

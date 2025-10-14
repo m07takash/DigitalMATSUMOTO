@@ -7,6 +7,7 @@ import DigiM_Execute as dme
 system_setting_dict = dmu.read_yaml_file("setting.yaml")
 mst_folder_path = system_setting_dict["MST_FOLDER"]
 character_folder_path = system_setting_dict["CHARACTER_FOLDER"]
+practice_folder_path = system_setting_dict["PRACTICE_FOLDER"]
 
 # 文字列から関数名を取得
 def call_function_by_name(service_info, user_info, func_name, *args, **kwargs):
@@ -111,8 +112,13 @@ def dialog_digest(service_info, user_info, user_query, memories_selected=[], age
     model_name = agent.agent["ENGINE"][model_type]["MODEL"]
     tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
     
-    # エージェントに設定されるプロンプトテンプレートを設定
-    prompt_temp_cd = "Dialog Digest"
+    # エージェントファイルのDEFAULTに設定しているPRACTICEの1つ目からプロンプトテンプレートを取得する
+    practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
+    practice = dmu.read_json_file(practice_folder_path+practice_file)
+    if practice["CHAINS"][0]["TYPE"] == "LLM":
+        prompt_temp_cd = practice["CHAINS"][0]["SETTING"]["PROMPT_TEMPLATE"]
+    else:
+        prompt_temp_cd = "Dialog Digest"
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
 
     # メモリをテキスト化
@@ -148,8 +154,13 @@ def extract_date(service_info, user_info, user_query, situation_prompt, query_ve
     model_name = agent.agent["ENGINE"][model_type]["MODEL"]
     tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
 
-    # エージェントに設定されるプロンプトテンプレートを設定
-    prompt_temp_cd = "Extract Date"
+    # エージェントファイルのDEFAULTに設定しているPRACTICEの1つ目からプロンプトテンプレートを取得する
+    practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
+    practice = dmu.read_json_file(practice_folder_path+practice_file)
+    if practice["CHAINS"][0]["TYPE"] == "LLM":
+        prompt_temp_cd = practice["CHAINS"][0]["SETTING"]["PROMPT_TEMPLATE"]
+    else:
+        prompt_temp_cd = "Extract Date"
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
 
     # RAG実行
@@ -181,8 +192,13 @@ def RAG_query_generator(service_info, user_info, user_query, situation_prompt, q
     model_name = agent.agent["ENGINE"][model_type]["MODEL"]
     tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
 
-    # エージェントに設定されるプロンプトテンプレートを設定
-    prompt_temp_cd = "RAG Query Generator"
+    # エージェントファイルのDEFAULTに設定しているPRACTICEの1つ目からプロンプトテンプレートを取得する
+    practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
+    practice = dmu.read_json_file(practice_folder_path+practice_file)
+    if practice["CHAINS"][0]["TYPE"] == "LLM":
+        prompt_temp_cd = practice["CHAINS"][0]["SETTING"]["PROMPT_TEMPLATE"]
+    else:
+        prompt_temp_cd = "RAG Query Generator"
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
 
     # RAG実行
@@ -248,8 +264,13 @@ def art_critics(service_info, user_info, memories_selected=[], image_paths=[], a
     model_name = agent.agent["ENGINE"][model_type]["MODEL"]
     tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
     
-    # エージェントに設定されるプロンプトテンプレートを設定
-    prompt_temp_cd = "Art Critic"
+    # エージェントファイルのDEFAULTに設定しているPRACTICEの1つ目からプロンプトテンプレートを取得する
+    practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
+    practice = dmu.read_json_file(practice_folder_path+practice_file)
+    if practice["CHAINS"][0]["TYPE"] == "LLM":
+        prompt_temp_cd = practice["CHAINS"][0]["SETTING"]["PROMPT_TEMPLATE"]
+    else:
+        prompt_temp_cd = "Art Critic"
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
     
     # プロンプトの設定
