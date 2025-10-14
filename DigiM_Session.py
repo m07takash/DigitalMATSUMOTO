@@ -281,7 +281,7 @@ class DigiMSession:
                                     similarity_prompt = dmu.calculate_similarity_vec(query_vec, v2["prompt"]["query"]["vec_text"], memory_similarity_logic)
                                 memories_list.append({"seq": k, "sub_seq": k2, "type": v2["prompt"]["role"], "role": v2["prompt"]["role"], "timestamp": v2["prompt"]["timestamp"], "token": v2["prompt"]["query"]["token"], "similarity_prompt": similarity_prompt, "text": v2["prompt"]["query"]["text"], "vec_text": v2["prompt"]["query"]["vec_text"]})
                         if memory_role in ["both", "assistant"]:
-                            if v2["prompt"]["role"] == "assistant":
+                            if v2["response"]["role"] == "assistant":
                                 if memory_similarity:
                                     v2["response"]["vec_text"] = self.get_vec_file(k, k2, "response")
                                     similarity_prompt = dmu.calculate_similarity_vec(query_vec, v2["response"]["vec_text"], memory_similarity_logic)
