@@ -1,3 +1,6 @@
+import os
+from dotenv import load_dotenv
+import requests
 import DigiM_Agent as dma
 import DigiM_Util as dmu
 import DigiM_Session as dms
@@ -289,3 +292,49 @@ def art_critics(service_info, user_info, memories_selected=[], image_paths=[], a
     response_user_info = user_info
     
     return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
+
+
+# WEB検索(PerplexityAI)
+def WebSearch_PerplexityAI(service_info, user_info, session_id, input):
+    if os.path.exists("system.env"):
+        load_dotenv("system.env")
+    api_key = os.getenv("PERPLEXITY_API_KEY")
+
+    system_setting_dict = dmu.read_yaml_file("setting.yaml")
+    url = system_setting_dict["PERPLEXITY_URL"]
+    model = system_setting_dict["PERPLEXITY_MODEL"]
+    system_prompt = system_setting_dict["PERPLEXITY_SYSTEM_PROMPT"]
+    user_prompt = system_setting_dict["PERPLEXITY_USER_PROMPT"]
+    max_tokens = system_setting_dict["PERPLEXITY_MAX_TOKENS"]
+    reasoning_effort = system_setting_dict["PERPLEXITY_REASONING_EFFORT"]
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": system_prompt
+            },
+            {
+                "role": "user",
+                "content": user_prompt +"\n"+ input,
+                "max_tokens": max_tokens,
+                "reasoning_effort": reasoning_effort
+            }
+        ]
+    }
+
+    response_service_info = service_info
+    response_user_info = user_info
+
+    results = requests.post(url, json=payload, headers=headers)
+
+    response = results.json()["choices"][0]["message"]["content"]
+    export_contents = results.json()["search_results"]  
+
+    return response_service_info, response_user_info, response, export_contents
