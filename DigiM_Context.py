@@ -247,7 +247,8 @@ def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searche
                                                     {"create_date_ts": {"$lte": end_date}}
                                                 ]
                                             })
-                                        except ValueError:
+                                        except Exception as e:
+                                            print("Exception:", e)
                                             continue
 
                             if query_conditions_add:

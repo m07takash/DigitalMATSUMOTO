@@ -423,16 +423,31 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 
                 # "USER":ユーザー入力(引数)、"INPUT{SubSeqNo}":サブSEQの入力結果、OUTPUT{SubSeqNo}":サブSEQの出力結果
                 user_input = ""
-                if setting["USER_INPUT"] == "USER":
-                    user_input = user_query
-                elif setting["USER_INPUT"].startswith("INPUT"):
-                    ref_subseq = int(setting["USER_INPUT"].replace("INPUT_", "").strip())
-                    user_input = next((item["INPUT"] for item in results if item["SubSEQ"] == ref_subseq), None)
-                elif setting["USER_INPUT"].startswith("OUTPUT"):
-                    ref_subseq = int(setting["USER_INPUT"].replace("OUTPUT_", "").strip())
-                    user_input = next((item["OUTPUT"] for item in results if item["SubSEQ"] == ref_subseq), None)
+                if isinstance(setting["USER_INPUT"], list):
+                    for set_user_input in setting["USER_INPUT"]:
+                        print(set_user_input)
+                        ref_subseq = 0
+                        if set_user_input == "USER":
+                            user_input += user_query
+                        elif set_user_input.startswith("INPUT"):
+                            ref_subseq = int(set_user_input.replace("INPUT_", "").strip())
+                            user_input += next((item["INPUT"] for item in results if item["SubSEQ"] == ref_subseq), None)
+                        elif set_user_input.startswith("OUTPUT"):
+                            ref_subseq += int(set_user_input.replace("OUTPUT_", "").strip())
+                            user_input += next((item["OUTPUT"] for item in results if item["SubSEQ"] == ref_subseq), None)
+                        else:
+                            user_input += set_user_input
                 else:
-                    user_input = setting["USER_INPUT"]
+                    if setting["USER_INPUT"] == "USER":
+                        user_input = user_query
+                    elif setting["USER_INPUT"].startswith("INPUT"):
+                        ref_subseq = int(setting["USER_INPUT"].replace("INPUT_", "").strip())
+                        user_input = next((item["INPUT"] for item in results if item["SubSEQ"] == ref_subseq), None)
+                    elif setting["USER_INPUT"].startswith("OUTPUT"):
+                        ref_subseq = int(setting["USER_INPUT"].replace("OUTPUT_", "").strip())
+                        user_input = next((item["OUTPUT"] for item in results if item["SubSEQ"] == ref_subseq), None)
+                    else:
+                        user_input = setting["USER_INPUT"]
 
                 # コンテンツの設定
                 import_contents = setting["CONTENTS"] if setting["CONTENTS"] != "USER" else in_contents
