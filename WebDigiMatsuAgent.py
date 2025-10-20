@@ -49,7 +49,7 @@ now_time = datetime.now(tz)
 # Streamlitの設定
 st.set_page_config(page_title=st.session_state.web_title, layout="wide")
 
-# セッションステートの初期化
+# セッションステートの初期宣言
 def initialize_session_states():
     if 'sidebar_message' not in st.session_state:
         st.session_state.sidebar_message = ""
@@ -113,9 +113,47 @@ def initialize_session_states():
         st.session_state.overwrite_flg_prompt_temp = False
     if 'overwrite_flg_rag' not in st.session_state:
         st.session_state.overwrite_flg_rag = False
+    if 'web_search' not in st.session_state:
+        st.session_state.web_search = False
     if 'dl_type' not in st.session_state:
         st.session_state.dl_type = "Chats Only"
-        
+
+# セッション変数のリフレッシュ
+def refresh_session_states():
+    st.session_state.sidebar_message = ""
+    st.session_state.display_name = st.session_state.default_agent
+    st.session_state.agents = dma.get_display_agents()
+    st.session_state.agent_list = [a1["AGENT"] for a1 in st.session_state.agents]
+    st.session_state.agent_list_index = st.session_state.agent_list.index(st.session_state.display_name)
+    st.session_state.agent_id = st.session_state.agents[st.session_state.agent_list_index]["AGENT"]
+    st.session_state.compare_agent_id = st.session_state.agents[st.session_state.agent_list_index]["AGENT"]
+    st.session_state.agent_file = st.session_state.agents[st.session_state.agent_list_index]["FILE"]
+    st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, agent_folder_path)
+    st.session_state.rag_data_list = dmc.get_rag_list()
+    st.session_state.rag_data_list_selected = []
+    st.session_state.session_list = dms.get_session_list_visible()
+    st.session_state.session = dms.DigiMSession(dms.set_new_session_id(), "New Chat")
+    st.session_state.time_setting = now_time.strftime("%Y/%m/%d %H:%M:%S")
+    st.session_state.situation_setting = ""
+    st.session_state.seq_memory = []
+    st.session_state.stream_mode = True
+    st.session_state.magic_word_use = True
+    st.session_state.save_digest = True
+    st.session_state.memory_use = True
+    st.session_state.memory_save = True
+    st.session_state.memory_similarity = False
+    st.session_state.meta_search = True
+    st.session_state.RAG_query_gene = True
+    st.session_state.uploaded_files = []
+    st.session_state.file_uploader = st.file_uploader
+    st.session_state.chat_history_visible_dict = {}
+    st.session_state.seq_visible_set = True
+    st.session_state.overwrite_flg_persona = False
+    st.session_state.overwrite_flg_prompt_temp = False
+    st.session_state.overwrite_flg_rag = False
+    st.session_state.web_search = False
+    st.session_state.dl_type = "Chats Only"
+
 # セッションのリフレッシュ（ヒストリーを更新するために、同一セッションIDで再度Sessionクラスを呼び出すこともある）
 def refresh_session(session_id, session_name, situation, new_session_flg=False):
     st.session_state.session = dms.DigiMSession(session_id, session_name)
@@ -552,6 +590,12 @@ def main():
     st.session_state.uploaded_files = uploaded_files
     show_uploaded_files_widget(st.session_state.uploaded_files)
 
+    # WEB検索の設定
+    if st.checkbox("WEB Search", value=st.session_state.web_search):
+        st.session_state.web_search = True
+    else:
+        st.session_state.web_search = False
+
     # ファイルダウンローダー
     footer_col1, footer_col2 = st.columns(2)
     st.session_state.dl_type = footer_col1.radio("Download Mode:", ("Chats Only", "ALL"))
@@ -587,6 +631,7 @@ def main():
         execution["SAVE_DIGEST"] = st.session_state.save_digest
         execution["META_SEARCH"] = st.session_state.meta_search
         execution["RAG_QUERY_GENE"] = st.session_state.RAG_query_gene
+        execution["WEB_SEARCH"] = st.session_state.web_search
         
         # ユーザー入力の一時表示
         with st.chat_message("User"):
