@@ -42,6 +42,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     save_digest = execution.get("SAVE_DIGEST", True)
     meta_search = execution.get("META_SEARCH", True)
     RAG_query_gene = execution.get("RAG_QUERY_GENE", True)
+    web_search = execution.get("WEB_SEARCH", False)
 
     # 会話履歴データの定義
     setting_chat_dict = {}
@@ -98,9 +99,24 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             max_seq, max_sub_seq, chat_history_max_digest_dict = session.get_history_max_digest()#session.chat_history_active_dict)
             if chat_history_max_digest_dict:
                 digest_text = "会話履歴のダイジェスト:\n"+chat_history_max_digest_dict["text"]+"\n---\n"
-    
+
+    # Web検索を実行
+    timestamp_log += "[06.WEB検索を開始]"+str(datetime.now())+"<br>"
+    web_context = ""
+    web_search_log = {}
+    if web_search:
+        search_text = user_query
+        if digest_text or situation_prompt:
+            search_text = "検索して欲しい内容:\n"+user_query +"\n\n[参考]これまでの会話:\n"+ digest_text +"\n\n[参考]今の状況:\n"+ situation_prompt
+        response_service_info, response_user_info, web_result_text, export_urls = dmt.WebSearch_PerplexityAI(service_info, user_info, session_id, search_text)
+        web_context = "[参考]関連するWEBの検索結果:\n" + web_result_text
+        web_search_log["urls"] = export_urls
+        web_search_log["web_context"] = web_context
+
+    user_query += f"\n{web_context}"
+
     # クエリのベクトル化（RAGの検索は「0.ユーザ入力」「1.ユーザー入力＋メモリダイジェスト」の類似している方を取る）
-    timestamp_log += "[06.クエリのベクトル化開始]"+str(datetime.now())+"<br>"
+    timestamp_log += "[07.クエリのベクトル化開始]"+str(datetime.now())+"<br>"
     queries = []
     query_vecs = []    
     queries.append(user_query)
@@ -115,7 +131,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         query_vecs.append(query_vec_digest_situation)
 
     # 会話メモリの取得
-    timestamp_log += "[07.会話メモリの取得開始]"+str(datetime.now())+"<br>"
+    timestamp_log += "[08.会話メモリの取得開始]"+str(datetime.now())+"<br>"
     if model_type == "LLM":
         memory_limit_tokens = agent.agent["ENGINE"][model_type]["MEMORY"]["limit"]
     else:
@@ -259,6 +275,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                 "tools": [],
                 "vec_file": query_vec_file
             },
+            "web_search": web_search_log,
             "RAG_query_genetor": RAG_query_gene_log,
             "meta_search": meta_search_log,
             "knowledge_rag":{
@@ -369,7 +386,8 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
     save_digest = in_execution.get("SAVE_DIGEST", True)
     meta_search = in_execution.get("META_SEARCH", True)
     RAG_query_gene = in_execution.get("RAG_QUERY_GENE", True)
-    
+    web_search = in_execution.get("WEB_SEARCH", False)
+
     # セッションの設定
     session = dms.DigiMSession(session_id, session_name)
     sub_seq = 1
@@ -488,6 +506,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 execution["SAVE_DIGEST"] = save_digest
                 execution["META_SEARCH"] = meta_search
                 execution["RAG_QUERY_GENE"] = RAG_query_gene
+                execution["WEB_SEARCH"] = web_search
 
                 # LLM実行
                 response = ""

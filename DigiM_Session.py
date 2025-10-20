@@ -471,7 +471,19 @@ class DigiMSession:
             chat_detail_info += "\n【コンテンツコンテキスト】\n"
             for content_dict in chat_history_dict_seq["prompt"]["query"]["contents"]:
                 chat_detail_info += content_dict["context"]+"\n"
-                
+
+            chat_detail_info += "\n【WEB検索結果】"
+            if "web_search" in chat_history_dict_seq["prompt"]:
+                web_dict = chat_history_dict_seq["prompt"]["web_search"]
+                if web_dict:
+                    chat_detail_info += web_dict["web_context"]+"\n"
+                    chat_detail_info += "参考URL：\n"
+                    for url in web_dict["urls"]:
+                        url_title = url.get("title") or ""
+                        url_date = url.get("date") or ""
+                        url_link = url.get("url") or ""
+                        chat_detail_info += f"{url_title}({url_date}){url_link}\n"
+                        
         return chat_detail_info
 
     # コンテンツファイルを保存する
