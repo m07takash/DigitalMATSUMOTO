@@ -498,7 +498,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 # 実行の設定
                 execution = {}
                 execution["CONTENTS_SAVE"] = contents_save
-                execution["MEMORY_USE"] = memory_use and setting["MEMORY_USE"]
+                execution["MEMORY_USE"] = memory_use and setting["MEMORY_USE"] if "MEMORY_USE" in setting else memory_use
                 execution["MEMORY_SAVE"] = memory_save
                 execution["MEMORY_SIMILARITY"] = memory_similarity
                 execution["MAGIC_WORD_USE"] = magic_word_use
@@ -506,7 +506,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 execution["SAVE_DIGEST"] = save_digest
                 execution["META_SEARCH"] = meta_search
                 execution["RAG_QUERY_GENE"] = RAG_query_gene
-                execution["WEB_SEARCH"] = web_search
+                execution["WEB_SEARCH"] = web_search and setting["WEB_SEARCH"] if "WEB_SEARCH" in setting else web_search
 
                 # LLM実行
                 response = ""
@@ -531,20 +531,49 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 setting = chain["SETTING"]
 
                 # "USER":ユーザー入力(引数)、"INPUT{SubSeqNo}":サブSEQの入力結果、OUTPUT{SubSeqNo}":サブSEQの出力結果
-                input = ""
-                if "USER_INPUT" in setting:
-                    if setting["USER_INPUT"] == "USER":
-                        input = user_query
-                    elif setting["USER_INPUT"].startswith("INPUT"):
-                        ref_subseq = int(setting["USER_INPUT"].replace("INPUT_", "").strip())
-                        input = next((item["INPUT"] for item in results if item["SubSEQ"] == ref_subseq), None)
-                    elif setting["USER_INPUT"].startswith("OUTPUT"):
-                        ref_subseq = int(setting["USER_INPUT"].replace("OUTPUT_", "").strip())
-                        input = next((item["OUTPUT"] for item in results if item["SubSEQ"] == ref_subseq), None)
-                    else:
-                        input = setting["USER_INPUT"]
+#                user_input = ""
+#                if "USER_INPUT" in setting:
+#                    if setting["USER_INPUT"] == "USER":
+#                        user_input = user_query
+#                    elif setting["USER_INPUT"].startswith("INPUT"):
+#                        ref_subseq = int(setting["USER_INPUT"].replace("INPUT_", "").strip())
+#                        user_input = next((item["INPUT"] for item in results if item["SubSEQ"] == ref_subseq), None)
+#                    elif setting["USER_INPUT"].startswith("OUTPUT"):
+#                        ref_subseq = int(setting["USER_INPUT"].replace("OUTPUT_", "").strip())
+#                        user_input = next((item["OUTPUT"] for item in results if item["SubSEQ"] == ref_subseq), None)
+#                    else:
+#                        user_input = setting["USER_INPUT"]
 
-                input = user_query
+                # "USER":ユーザー入力(引数)、"INPUT{SubSeqNo}":サブSEQの入力結果、OUTPUT{SubSeqNo}":サブSEQの出力結果
+                user_input = ""
+                if "USER_INPUT" in setting:
+                    if isinstance(setting["USER_INPUT"], list):
+                        for set_user_input in setting["USER_INPUT"]:
+                            print(set_user_input)
+                            ref_subseq = 0
+                            if set_user_input == "USER":
+                                user_input += user_query
+                            elif set_user_input.startswith("INPUT"):
+                                ref_subseq = int(set_user_input.replace("INPUT_", "").strip())
+                                user_input += next((item["INPUT"] for item in results if item["SubSEQ"] == ref_subseq), None)
+                            elif set_user_input.startswith("OUTPUT"):
+                                ref_subseq += int(set_user_input.replace("OUTPUT_", "").strip())
+                                user_input += next((item["OUTPUT"] for item in results if item["SubSEQ"] == ref_subseq), None)
+                            else:
+                                user_input += set_user_input
+                    else:
+                        if setting["USER_INPUT"] == "USER":
+                            user_input = user_query
+                        elif setting["USER_INPUT"].startswith("INPUT"):
+                            ref_subseq = int(setting["USER_INPUT"].replace("INPUT_", "").strip())
+                            user_input = next((item["INPUT"] for item in results if item["SubSEQ"] == ref_subseq), None)
+                        elif setting["USER_INPUT"].startswith("OUTPUT"):
+                            ref_subseq = int(setting["USER_INPUT"].replace("OUTPUT_", "").strip())
+                            user_input = next((item["OUTPUT"] for item in results if item["SubSEQ"] == ref_subseq), None)
+                        else:
+                            user_input = setting["USER_INPUT"]
+
+                input = user_input
                 import_contents = in_contents
 
                 timestamp_begin = str(datetime.now())
@@ -626,8 +655,8 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
 
         # ログデータの保存(Seq)
         seq = session.get_seq_history()
-        session.save_history(str(seq), "service_info", response_service_info, "SEQ")
-        session.save_history(str(seq), "user_info", response_user_info, "SEQ")
+        session.save_history(str(seq), "service_info", service_info, "SEQ")
+        session.save_history(str(seq), "user_info", user_info, "SEQ")
         session.save_history(str(seq), "practice", practice, "SEQ")
 
     except Exception as e:
