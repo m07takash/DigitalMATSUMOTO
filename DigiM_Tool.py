@@ -335,6 +335,6 @@ def WebSearch_PerplexityAI(service_info, user_info, session_id, input):
     results = requests.post(url, json=payload, headers=headers)
 
     response = results.json()["choices"][0]["message"]["content"]
-    export_contents = results.json()["search_results"]  
+    export_contents = results.json()["search_results"]
 
     return response_service_info, response_user_info, response, export_contents

@@ -132,6 +132,10 @@ def create_communication_data(session_id, agent_file):
     for k1, v1 in history_dict.items():
         for k2, v2 in v1.items():
             if k2 == "SETTING":
+                if v2["FLG"] == "N":
+                    continue
+                if "service_info" not in v2.keys():
+                    continue
                 service_id = v2["service_info"]["SERVICE_ID"]
                 user_id = v2["user_info"]["USER_ID"]
             if k2 != "SETTING":
