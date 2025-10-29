@@ -43,7 +43,7 @@ def get_feedback_data(fb_k, memo, k1, k2, v2, default_category, service_id, user
     fb_data["query"] = v2["prompt"]["query"]["input"]
     situation = v2["prompt"]["query"]["situation"]["SITUATION"]
     if situation:
-        query += "\n"+situation
+        fb_data["query"] = fb_data["query"]+"\n"+situation
     fb_data["response"] = v2["response"]["text"]
     fb_data["memo"] = memo
     return fb_data
