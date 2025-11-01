@@ -1,8 +1,8 @@
 {
     "DISPLAY": true,
     "DISPLAY_NAME": "Gemini-2.5",
-    "NAME": "通常LLM(Gemini)",
-    "ACT": "通常のチャットアシスタント",
+    "NAME": "通常LLM(Gemini2.5)",
+    "ACT": "",
     "PERSONALITY": {
         "SPEAKING_STYLE": "Polite"
     },

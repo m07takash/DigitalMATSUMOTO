@@ -1,17 +1,15 @@
 {
     "DISPLAY": true,
-    "DISPLAY_NAME": "Claude-Sonnet-4.5",
-    "NAME": "通常LLM(ClaudeSonnet4.5)",
+    "DISPLAY_NAME": "GPT-5-mini",
+    "NAME": "通常LLM(GPT5mini)",
     "ACT": "",
-    "PERSONALITY": {
-        "SPEAKING_STYLE": "Polite"
-    },
+    "PERSONALITY": {},
     "ENGINE": {
         "LLM": {
-            "NAME":"Claude-Sonnet-4.5",
-            "FUNC_NAME": "generate_response_T_claude",
-            "MODEL": "claude-sonnet-4-5",
-            "PARAMETER": {"max_tokens": 20000},
+            "NAME":"GPT-5-mini",
+            "FUNC_NAME": "generate_response_T_gpt",
+            "MODEL": "gpt-5-mini-2025-08-07",
+            "PARAMETER": {},
             "TOKENIZER": "tiktoken",
             "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
         }
@@ -25,7 +23,9 @@
     },
     "KNOWLEDGE": [],
     "SKILL": {
-        "TOOL_LIST": [],
+        "TOOL_LIST": [
+            {"type": "function", "function": {"name": "default_tool"}}
+        ],
         "CHOICE": "none"
     },
     "COMMUNICATION": {
