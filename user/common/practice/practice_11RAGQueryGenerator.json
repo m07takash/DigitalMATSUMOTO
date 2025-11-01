@@ -6,7 +6,7 @@
             "SETTING": {
                 "AGENT_FILE": "USER",
                 "OVERWRITE_ITEMS": {},
-                "ADD_KNOWLEDGE": [],
+                "ADD_KNOWLEDGE": ["USER"],
                 "PROMPT_TEMPLATE": "RAG Query Generator",
                 "USER_INPUT": "USER",
                 "CONTENTS": "USER",

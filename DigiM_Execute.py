@@ -402,14 +402,16 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
         session.save_status("LOCKED")
     
     try:
-        # プラクティスの選択
-        agent = dma.DigiM_Agent(in_agent_file)
-        
+        # エージェントの選択
+        agent = dma.DigiM_Agent(in_agent_file)      
+
+        # Habitの設定
         habit = "DEFAULT"
         if magic_word_use:
             agent = dma.DigiM_Agent(in_agent_file)
             habit = agent.set_practice_by_command(user_query)
 
+        # プラクティスの選択
         practice_file = agent.habit[habit]["PRACTICE"]
         habit_add_knowledge = agent.habit[habit]["ADD_KNOWLEDGE"] if "ADD_KNOWLEDGE" in agent.habit[habit] else []
         practice = dmu.read_json_file(practice_folder_path+practice_file)
