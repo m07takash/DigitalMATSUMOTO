@@ -79,8 +79,8 @@ def get_text_content(agent_data, content, seq, sub_seq, file_seq):
         image_file = content
     #elif "video" in file_type:
         #将来的にコンテキストを取得
-    #elif "audio" in file_type:
-        #将来的にコンテキストを取得
+    elif "audio" in file_type:
+        content_context = "<br>---------<br>ファイル名: "+file_name+"<br><br>"+dmu.mp3_to_text(content)
 
     # コンテンツの記録
     content_records = {"from": content, "to":{"file_name": file_name, "file_type": file_type, "file_size": file_size, "context": content_context}}

@@ -121,6 +121,22 @@ def save_yaml_file(data, file_name, folder_path=""):
     with open(file_path, 'w', encoding="utf-8") as file:
         yaml.dump(data, file, allow_unicode=True)
 
+# MP3ファイルをテキストに変換
+def mp3_to_text(file_name, folder_path=""):
+    client = OpenAI(api_key=openai_api_key)
+    file_path = folder_path + file_name
+    if os.path.exists(file_path):
+        with open(file_path, "rb") as audio_file:
+            transcript = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file,
+                language="ja"
+            )
+        data = transcript.text
+    else:
+        data = ""
+    return data
+
 # 画像ファイルをbase64でエンコード　
 def encode_image_file(image_path):
     image_base64 = None

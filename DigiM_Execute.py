@@ -508,7 +508,10 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 execution["SAVE_DIGEST"] = save_digest
                 execution["META_SEARCH"] = meta_search
                 execution["RAG_QUERY_GENE"] = RAG_query_gene
-                execution["WEB_SEARCH"] = web_search and setting["WEB_SEARCH"] if "WEB_SEARCH" in setting else web_search
+                if "WEB_SEARCH" in setting:
+                    execution["WEB_SEARCH"] = setting["WEB_SEARCH"]
+                else:
+                    execution["WEB_SEARCH"] = web_search
 
                 # LLM実行
                 response = ""
