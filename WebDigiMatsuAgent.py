@@ -586,7 +586,7 @@ def main():
                 st.session_state.seq_memory.append(k)
 
     # ファイルアップローダー
-    uploaded_files = st.file_uploader("Attached Files:", type=["txt", "csv", "jpg", "jpeg", "png"], accept_multiple_files=True)
+    uploaded_files = st.file_uploader("Attached Files:", type=["txt", "csv", "json", "pdf", "jpg", "jpeg", "png", "mp3"], accept_multiple_files=True)
     st.session_state.uploaded_files = uploaded_files
     show_uploaded_files_widget(st.session_state.uploaded_files)
 
