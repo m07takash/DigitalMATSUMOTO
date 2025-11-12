@@ -170,7 +170,19 @@ def convert_to_ymd(date_str, date_format='%Y-%m-%d'):
 def embed_text(text):
     openai.api_key = openai_api_key
     openai_client = OpenAI()
-    response = openai_client.embeddings.create(model=embedding_model, input=text)
+
+    # 埋め込みベクトル化モデルの最大コンテキストウィンドウを設定
+    max_tokens = 8192
+
+    # 最大トークンで入力を切り取り
+    enc = tiktoken.encoding_for_model(embedding_model)    
+    tokens = enc.encode(text)
+    if len(tokens) > max_tokens:
+        tokens = tokens[:max_tokens]
+    safe_text = enc.decode(tokens)
+    
+    # 埋め込みベクトル化
+    response = openai_client.embeddings.create(model=embedding_model, input=safe_text)
     response_vec = response.data[0].embedding    
     return response_vec
 
