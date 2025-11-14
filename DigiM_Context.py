@@ -165,7 +165,7 @@ def select_rag_vector(rag_data_list, rag={}):
 
 
 # RAGからのコンテキスト取得
-def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searches=[]):
+def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searches=[], define_code={}):
     rag_final_context = ""
     rag_final_selected = []
 
@@ -222,6 +222,22 @@ def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searche
                                         op = "$or"
                                     where_limitation_conditions.append({op: where_limitation_items})
 
+                            # ユーザーIDで絞込
+                            if "DEFINE_CODE" in rag_data["FILTER"]["CONDITION"]:
+                                where_limitation_items = []
+                                for k, v in rag_data["FILTER"]["CONDITION"]["DEFINE_CODE"]["CODES"].items():
+                                    define_code_item = define_code[k]
+                                    where_limitation_items.append({v: {"$eq": define_code_item}})
+                                # 条件文の作成                                
+                                if len(where_limitation_items) == 1:
+                                    where_limitation_conditions.append(where_limitation_items[0])
+                                else:
+                                    if rag_data["FILTER"]["CONDITION"]["DEFINE_CODE"]["PATTERN"] == "and":
+                                        op = "$and"
+                                    else:
+                                        op = "$or"
+                                    where_limitation_conditions.append({op: where_limitation_items})
+
                             # 条件文の作成
                             if len(where_limitation_conditions) == 1:
                                 where_limitation.append(where_limitation_conditions[0])
@@ -261,9 +277,16 @@ def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searche
                                 where_clause = {}
                                 if where_limitation:
                                     where_limitation_add = where_limitation.copy()
-                                    where_clause = {"$and": where_limitation_add.append(where_add)}
+                                    if "$and" in where_add:
+                                        where_limitation_add.extend(where_add["$and"])
+                                    else:
+                                        where_limitation_add.append(where_add)
+                                    where_clause = {"$and": where_limitation_add}
                                 else:
-                                    where_clause = where_add
+                                    if "$and" in where_add:
+                                        where_clause = where_add
+                                    else:
+                                        where_clause = {"$and": [where_add]}
                                 rag_data_db = collection.query(query_embeddings=[query_vec], n_results=result_limit, include=["metadatas", "embeddings", "distances"], where=where_clause)
                                 for i in range(len(rag_data_db["ids"])):
                                     for j in range(len(rag_data_db["ids"][i])):

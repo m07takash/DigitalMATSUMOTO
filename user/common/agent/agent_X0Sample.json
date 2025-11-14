@@ -101,7 +101,7 @@
         {
             "RAG_NAME": "Experience",
             "RETRIEVER": "Vector",
-            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"Sample02_Memo", "META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}},{"DATA_TYPE":"DB", "DATA_NAME":"Sample03_Feedback","META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}},{"DATA_TYPE":"DB", "DATA_NAME":"Communication_Memo", "META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5},  "FILTER":{"PATTERN":"and", "CONDITION":{"USER_INFO":{"PATTERN":"and", "ITEMS":["user_id"]}}}}],
+            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"Sample02_Memo", "META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}},{"DATA_TYPE":"DB", "DATA_NAME":"Sample03_Feedback","META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5},"FILTER":{"PATTERN":"and", "CONDITION":{"DEFINE_CODE":{"PATTERN":"and", "CODES":{"EMP_CODE":"emp_code"}}}}},{"DATA_TYPE":"DB", "DATA_NAME":"Communication_Memo", "META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5},  "FILTER":{"PATTERN":"and", "CONDITION":{"USER_INFO":{"PATTERN":"and", "ITEMS":["user_id"]}}}}],
             "TIMESTAMP": "CREATE_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
             "HEADER_TEMPLATE": "以下はこれまであなたが学んできたことです。\n",
@@ -128,6 +128,11 @@
             {"type": "function", "function": {"name": "default_tool"}}
         ],
         "CHOICE": "none"
+    },
+    "DEFINE_CODE":{
+        "COMPANY_CODE": "",
+        "DEPT_CODE": "",
+        "EMP_CODE": "emp001"
     },
     "COMMUNICATION": {
         "ACTIVE": "Y",
