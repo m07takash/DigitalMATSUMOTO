@@ -32,7 +32,7 @@
         "bucket": "Sample03_Feedback",
         "file_path": "user/common/csv/",
         "file_name": "Sample03_Feedback.csv",
-        "field_items": ["speaker", "create_date", "feedback"],
+        "field_items": ["emp_code", "speaker", "create_date", "feedback"],
         "category_items": [],
         "title": ["speaker", "create_date"],
         "key_text": ["speaker", "feedback"],
