@@ -22,7 +22,7 @@ def call_function_by_name(service_info, user_info, func_name, *args, **kwargs):
 
 
 # セッションの会話履歴の削除
-def forget_history(service_info, user_info, session_id, input):
+def forget_history(service_info, user_info, session_id, session_name, input):
     session = dms.DigiMSession(session_id)
     chat_history_dict = session.get_history()
 
@@ -39,7 +39,7 @@ def forget_history(service_info, user_info, session_id, input):
 
 
 # セッションの会話履歴の回復
-def remember_history(service_info, user_info, session_id, input):
+def remember_history(service_info, user_info, session_id, session_name, input):
     session = dms.DigiMSession(session_id)
     chat_history_dict = session.get_history()
 
@@ -295,7 +295,7 @@ def art_critics(service_info, user_info, memories_selected=[], image_paths=[], a
 
 
 # WEB検索(PerplexityAI)
-def WebSearch_PerplexityAI(service_info, user_info, session_id, input):
+def WebSearch_PerplexityAI(service_info, user_info, session_id, session_name, input):
     if os.path.exists("system.env"):
         load_dotenv("system.env")
     api_key = os.getenv("PERPLEXITY_API_KEY")

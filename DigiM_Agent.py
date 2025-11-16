@@ -75,6 +75,8 @@ class DigiM_Agent:
         self.skill = self.agent["SKILL"]
         self.communication = self.agent["COMMUNICATION"]
         self.support_agent = self.agent["SUPPORT_AGENT"]
+        self.define_code = self.agent["DEFINE_CODE"] if "DEFINE_CODE" in self.agent else {}
+        self.book = self.agent["BOOK"] if "BOOK" in self.agent else []
         self.system_prompt = self.set_system_prompt()
 
     # システムプロンプトの設定
@@ -130,8 +132,8 @@ class DigiM_Agent:
     
     # ナレッジコンテキスト(RAG)の生成
     def set_knowledge_context(self, query, query_vecs=[], exec_info={}, meta_searches=[]):
-        define_code = self.agent["DEFINE_CODE"] if "DEFINE_CODE" in self.agent else {}
-        knowledge_context, knowledge_selected = dmc.create_rag_context(query, query_vecs=query_vecs, rags=self.knowledge, exec_info=exec_info, meta_searches=meta_searches, define_code=define_code)
+        #define_code = self.agent["DEFINE_CODE"] if "DEFINE_CODE" in self.agent else {}
+        knowledge_context, knowledge_selected = dmc.create_rag_context(query, query_vecs=query_vecs, rags=self.knowledge, exec_info=exec_info, meta_searches=meta_searches, define_code=self.define_code)
         return knowledge_context, knowledge_selected
 
     # LLMの実行
