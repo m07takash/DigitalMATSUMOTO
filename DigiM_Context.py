@@ -268,25 +268,25 @@ def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searche
                                             continue
 
                             if query_conditions_add:
-                                where_add = {}
                                 if len(query_conditions_add) == 1:
                                     where_add = query_conditions_add[0]
                                 else:
                                     where_add = {"$or": query_conditions_add}
                                 
-                                where_clause = {}
                                 if where_limitation:
                                     where_limitation_add = where_limitation.copy()
                                     if "$and" in where_add:
                                         where_limitation_add.extend(where_add["$and"])
                                     else:
                                         where_limitation_add.append(where_add)
-                                    where_clause = {"$and": where_limitation_add}
-                                else:
-                                    if "$and" in where_add:
-                                        where_clause = where_add
+
+                                    if len(where_limitation_add) == 1:
+                                        where_clause = where_limitation_add[0]
                                     else:
-                                        where_clause = {"$and": [where_add]}
+                                        where_clause = {"$and": where_limitation_add}
+                                else:
+                                    where_clause = where_add
+
                                 rag_data_db = collection.query(query_embeddings=[query_vec], n_results=result_limit, include=["metadatas", "embeddings", "distances"], where=where_clause)
                                 for i in range(len(rag_data_db["ids"])):
                                     for j in range(len(rag_data_db["ids"][i])):
