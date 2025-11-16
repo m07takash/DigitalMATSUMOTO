@@ -108,7 +108,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         search_text = user_query
         if digest_text or situation_prompt:
             search_text = "検索して欲しい内容:\n"+user_query +"\n\n[参考]これまでの会話:\n"+ digest_text +"\n\n[参考]今の状況:\n"+ situation_prompt
-        response_service_info, response_user_info, web_result_text, export_urls = dmt.WebSearch_PerplexityAI(service_info, user_info, session_id, search_text)
+        response_service_info, response_user_info, web_result_text, export_urls = dmt.WebSearch_PerplexityAI(service_info, user_info, session_id, session_name, search_text)
         web_context = "[参考]関連するWEBの検索結果:\n" + web_result_text
         web_search_log["urls"] = export_urls
         web_search_log["web_context"] = web_context
@@ -582,7 +582,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 import_contents = in_contents
 
                 timestamp_begin = str(datetime.now())
-                tool_result = dmt.call_function_by_name(service_info, user_info, setting["FUNC_NAME"], session_id, input)
+                tool_result = dmt.call_function_by_name(service_info, user_info, setting["FUNC_NAME"], session_id, session_name, input)
                 output = ""
                 export_contents = []
                 if inspect.isgenerator(tool_result):
