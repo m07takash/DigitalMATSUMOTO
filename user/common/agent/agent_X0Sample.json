@@ -146,5 +146,6 @@
         "ART_CRITICS": "agent_52ArtCritic.json",
         "EXTRACT_DATE": "agent_55ExtractDate.json",
         "RAG_QUERY_GENERATOR": "agent_56RAGQueryGenerator.json"
-    }
+    },
+    "BOOK":[]
 }
