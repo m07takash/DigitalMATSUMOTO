@@ -373,7 +373,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
 
 
 # プラクティスで実行
-def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name, in_agent_file, user_query, in_contents=[], in_situation={}, in_overwrite_items={}, in_execution={}):
+def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name, in_agent_file, user_query, in_contents=[], in_situation={}, in_overwrite_items={}, in_add_knowledge=[], in_execution={}):
 
     # 実行設定の取得
     last_only = in_execution.get("LAST_ONLY", False) #APIで基本的に使用
@@ -433,12 +433,19 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 # "USER":ユーザー入力(引数)、他:プラクティスファイルの設定
                 agent_file = setting["AGENT_FILE"] if setting["AGENT_FILE"] != "USER" else in_agent_file
                 overwrite_items = setting["OVERWRITE_ITEMS"] if setting["OVERWRITE_ITEMS"] != "USER" else in_overwrite_items
+
                 add_knowledge = []
+                # プラクティスの設定から追加
                 for add_knowledge_data in setting["ADD_KNOWLEDGE"]:
                     if "USER" in setting["ADD_KNOWLEDGE"]: #"USER"が含まれていたら、呼び出し元エージェントの追加知識DBを参照
                         add_knowledge.extend(habit_add_knowledge)
                     else:
                         add_knowledge.append(add_knowledge_data)
+                # 入力から追加
+                for add_knowledge_data in in_add_knowledge:
+                    add_knowledge.append(add_knowledge_data)
+                
+                # プロンプトテンプレート
                 prompt_temp_cd = setting["PROMPT_TEMPLATE"]
                 
                 # "USER":ユーザー入力(引数)、"INPUT{SubSeqNo}":サブSEQの入力結果、OUTPUT{SubSeqNo}":サブSEQの出力結果
