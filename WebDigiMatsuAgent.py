@@ -115,6 +115,8 @@ def initialize_session_states():
         st.session_state.overwrite_flg_rag = False
     if 'web_search' not in st.session_state:
         st.session_state.web_search = False
+    if 'book_selected' in st.session_state:
+        st.session_state.book_selected = []
     if 'dl_type' not in st.session_state:
         st.session_state.dl_type = "Chats Only"
 
@@ -152,6 +154,7 @@ def refresh_session_states():
     st.session_state.overwrite_flg_prompt_temp = False
     st.session_state.overwrite_flg_rag = False
     st.session_state.web_search = False
+    st.session_state.book_selected = []
     st.session_state.dl_type = "Chats Only"
 
 # セッションのリフレッシュ（ヒストリーを更新するために、同一セッションIDで再度Sessionクラスを呼び出すこともある）
@@ -160,7 +163,11 @@ def refresh_session(session_id, session_name, situation, new_session_flg=False):
     if new_session_flg:
         st.session_state.display_name = st.session_state.default_agent
     else:
-        st.session_state.display_name = dma.get_agent_item(dms.get_agent_file(st.session_state.session.session_id), "DISPLAY_NAME")
+        session_agent_file = dms.get_agent_file(st.session_state.session.session_id)
+        if os.path.exists(agent_folder_path + session_agent_file):
+            st.session_state.display_name = dma.get_agent_item(session_agent_file, "DISPLAY_NAME")
+        else:
+            st.session_state.display_name = st.session_state.default_agent
     st.session_state.time_setting = situation["TIME"]
     st.session_state.situation_setting = situation["SITUATION"]
     st.session_state.seq_memory = []
@@ -250,6 +257,7 @@ def main():
             situation = {}
             situation["TIME"] = now_time.strftime("%Y/%m/%d %H:%M:%S")
             situation["SITUATION"] = ""
+            refresh_session_states()
             refresh_session(session_id, session_name, situation, True)
 
         # 会話履歴の更新
@@ -288,6 +296,7 @@ def main():
                     situation["TIME"] = now_time.strftime("%Y/%m/%d %H:%M:%S")
                     situation["SITUATION"] = ""
                 if st.button(session_name_btn, key=session_key_list):
+                    refresh_session_states()
                     refresh_session(session_id_list, session_name_list, situation)
                 num_sessions += 1
 
@@ -596,6 +605,11 @@ def main():
     else:
         st.session_state.web_search = False
 
+    # BOOKから選択
+    if "BOOK" in st.session_state.agent_data:
+        st.session_state.book_selected = st.multiselect("BOOK", [item["RAG_NAME"] for item in st.session_state.agent_data["BOOK"]])
+
+
     # ファイルダウンローダー
     footer_col1, footer_col2 = st.columns(2)
     st.session_state.dl_type = footer_col1.radio("Download Mode:", ("Chats Only", "ALL"))
@@ -613,8 +627,17 @@ def main():
                 with open(uploaded_file_path, "wb") as f:
                     f.write(uploaded_file.getbuffer())
                 uploaded_contents.append(uploaded_file_path)
+
         # オーバーライト項目の設定
         overwrite_items = {}
+
+        # 知識の追加
+        add_knowledges = []
+        # BOOKの設定
+        if st.session_state.book_selected:
+            for book_data in st.session_state.agent_data["BOOK"]:
+                if book_data["RAG_NAME"] in st.session_state.book_selected:
+                    add_knowledges.append(book_data)
 
         # シチュエーションの設定
         situation = {}
@@ -639,7 +662,7 @@ def main():
         with st.chat_message(st.session_state.web_title):
             response_placeholder = st.empty()
             response = ""
-            for response_service_info, response_user_info, response_chunk in dme.DigiMatsuExecute_Practice(st.session_state.web_default_service, st.session_state.web_default_user, st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, execution):
+            for response_service_info, response_user_info, response_chunk in dme.DigiMatsuExecute_Practice(st.session_state.web_default_service, st.session_state.web_default_user, st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, add_knowledges, execution):
                 response += response_chunk
                 response_placeholder.markdown(response)
             st.session_state.sidebar_message = ""
