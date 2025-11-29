@@ -119,6 +119,10 @@ def initialize_session_states():
         st.session_state.book_selected = []
     if 'dl_type' not in st.session_state:
         st.session_state.dl_type = "Chats Only"
+    if 'analytics_knowledge_mode' not in st.session_state:
+        st.session_state.analytics_knowledge_mode = ""
+    if 'analytics_knowledge_mode_compare' not in st.session_state:
+        st.session_state.analytics_knowledge_mode_compare = ""
 
 # セッション変数のリフレッシュ
 def refresh_session_states():
@@ -156,6 +160,8 @@ def refresh_session_states():
     st.session_state.web_search = False
     st.session_state.book_selected = []
     st.session_state.dl_type = "Chats Only"
+    st.session_state.analytics_knowledge_mode = ""
+    st.session_state.analytics_knowledge_mode_compare = ""
 
 # セッションのリフレッシュ（ヒストリーを更新するために、同一セッションIDで再度Sessionクラスを呼び出すこともある）
 def refresh_session(session_id, session_name, situation, new_session_flg=False):
@@ -227,11 +233,42 @@ def set_dl_file(chat_history, dl_type="Chats Only", file_id="Chat_History"):
             if "image" in msg:
                 b64 = dmu.encode_image_file(msg['image']).replace("\n","").replace("\r","")
                 markdown_lines.append(f"![alt](data:image/png;base64,{b64})")
+            markdown_lines.append("---")
 
     data = "\n\n".join(markdown_lines)
     file_name = f"{file_id}_{dl_type}.md"
     mime = "text/markdown"
     return data, file_name, mime
+
+def seq_label(x: str) -> str:
+    return {
+        "0": "クエリ①「入力そのまま」",
+        "1": "クエリ②「会話履歴付き入力」",
+        "2": "クエリ③「入力の意図」",
+    }.get(x, x)
+
+def mode_label(x: str) -> str:
+    if x == "NORMAL":
+        return ""
+    if isinstance(x, str) and x.startswith("(META_SEARCH:"):
+        return "＋期間の絞込"
+    return x
+
+def ak_line(ak_dict):
+    query_seq = seq_label(ak_dict.get("QUERY_SEQ", ""))
+    query_mode = mode_label(ak_dict.get("QUERY_MODE", ""))
+    title = ak_dict.get("title", "")
+    sq = ak_dict.get("similarity_Q", "")
+    sa = ak_dict.get("similarity_A", "")
+    ku = ak_dict.get("knowledge_utility", "")
+
+    # 数値は小数3桁に整形（数値でなければそのまま）
+    fmt = lambda x: f"{x:.3f}" if isinstance(x, (int, float)) else x
+    line = (
+        f'{title}（質問との近さ：{fmt(sq)}→回答との近さ：{fmt(sa)}'
+        f'=知識活用性：{fmt(ku)}）{query_seq}{query_mode}'
+    )
+    return line
 
 ### Streamlit画面 ###
 def main():
@@ -523,13 +560,15 @@ def main():
                                         st.session_state.session.set_analytics_history(k, k2, analytics_dict)
                                         st.session_state.sidebar_message = f"比較分析を完了しました({k}_{k2})"
                                         st.rerun()
-                                if v2["response"]["reference"]["knowledge_rag"] and "knowledge_utility" not in analytics_dict:
-                                    if compare_col2.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}"):
+                                if v2["response"]["reference"]["knowledge_rag"]:
+                                    ak_col1, ak_col2 = st.columns(2)
+                                    st.session_state.analytics_knowledge_mode = ak_col2.radio("Analytics Knowledge Mode:", ["Default", "Norm(All)", "Norm(Group)"], index=1, key=f"akmode_{k}_{k2}")
+                                    if ak_col1.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}"):
                                         title = f"{k}-{k2}-{st.session_state.session.session_name}"
                                         references = []
                                         for reference_data in v2["response"]["reference"]["knowledge_rag"]:
                                             references.append(ast.literal_eval("{"+ reference_data.replace("\n", "").replace("$", "＄") + "}"))
-                                        result = dmva.analytics_knowledge(title, references, st.session_state.session.session_analytics_folder_path)
+                                        result = dmva.analytics_knowledge(title, references, st.session_state.session.session_analytics_folder_path, st.session_state.analytics_knowledge_mode)
                                         analytics_dict["knowledge_utility"] = result
                                         st.session_state.session.set_analytics_history(k, k2, analytics_dict)
                                         st.session_state.sidebar_message = f"知識活用性を分析しました({k}_{k2})"
@@ -554,13 +593,15 @@ def main():
                                         st.markdown(f"Model: {compare_agent_info['model_name']}")
                                         st.markdown(f"Diff: {compare_agent_info['diff']}")
                                         if "knowledge_rag" in compare_agent_info:
-                                            if compare_agent_info["knowledge_rag"] and "knowledge_utility" not in compare_agent_info:
-                                                if st.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}_compare{selected_compare_idx}"):
+                                            if compare_agent_info["knowledge_rag"]: #and "knowledge_utility" not in compare_agent_info:
+                                                ak_compare_col1, ak_compare_col2 = st.columns(2)
+                                                st.session_state.analytics_knowledge_mode_compare = ak_compare_col2.radio("Analytics Knowledge Mode:", ["Default", "Norm(All)", "Norm(Group)"], index=1, key=f"akmode_compare_{k}_{k2}")
+                                                if ak_compare_col1.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}_compare{selected_compare_idx}"):
                                                     compare_title = f"{k}-{k2}-{st.session_state.session.session_name}_compare{selected_compare_idx}"
                                                     compare_references = []
                                                     for compare_reference_data in compare_agent_info["knowledge_rag"]:
                                                         compare_references.append(ast.literal_eval("{"+ compare_reference_data.replace("\n", "").replace("$", "＄") + "}"))
-                                                    compare_ref_result = dmva.analytics_knowledge(compare_title, compare_references, st.session_state.session.session_analytics_folder_path)
+                                                    compare_ref_result = dmva.analytics_knowledge(compare_title, compare_references, st.session_state.session.session_analytics_folder_path, st.session_state.analytics_knowledge_mode_compare)
                                                     analytics_dict["compare_agents"][selected_compare_idx]["compare_agent"]["knowledge_utility"] = compare_ref_result
                                                     st.session_state.session.set_analytics_history(k, k2, analytics_dict)
                                                     st.session_state.sidebar_message = f"知識活用性を分析しました({k}_{k2}_compare{selected_compare_idx})"
@@ -572,13 +613,18 @@ def main():
                                         st.markdown(compare_agent["compare_text"]["text"].replace("\n", "<br>"), unsafe_allow_html=True)
                                         st.markdown("")
                                         if "knowledge_utility" in compare_agent_info:
-                                            compare_similarity_utility_dict = compare_agent_info["knowledge_utility"]["similarity_utility"]
-                                            st.markdown("**knowledge Utility:**")
-                                            st.markdown(", ".join(f"{k}: {v}" for k, v in compare_similarity_utility_dict.items()))
-                                            if "image_files" in compare_agent_info["knowledge_utility"]:
-                                                for image_key, image_values in compare_agent_info["knowledge_utility"]["image_files"].items():
-                                                    for image_value in image_values:
-                                                        st.image(st.session_state.session.session_analytics_folder_path + image_value)
+                                            chat_expander_analytics_compare = st.expander("Analytics Results - Knowledge Utility")
+                                            with chat_expander_analytics_compare:
+                                                compare_similarity_utility_dict = compare_agent_info["knowledge_utility"]["similarity_utility"]
+                                                st.markdown("**knowledge Utility:**")
+                                                st.markdown(", ".join(f"{k}: {v}" for k, v in compare_similarity_utility_dict.items()))
+                                                if "image_files" in compare_agent_info["knowledge_utility"]:
+                                                    for image_key, image_values in compare_agent_info["knowledge_utility"]["image_files"].items():
+                                                        for image_value in image_values:
+                                                            st.image(st.session_state.session.session_analytics_folder_path + image_value)
+                                                            rag_category = os.path.splitext(image_value)[0].split("_")[-1]
+                                                            for ak_dict in compare_agent_info["knowledge_utility"]["similarity_rank"][rag_category]:
+                                                                st.markdown(ak_line(ak_dict))
                                 if "knowledge_utility" in analytics_dict:
                                     chat_expander_analytics = st.expander("Analytics Results - Knowledge Utility")
                                     with chat_expander_analytics:
@@ -589,6 +635,9 @@ def main():
                                             for image_key, image_values in analytics_dict["knowledge_utility"]["image_files"].items():
                                                 for image_value in image_values:
                                                     st.image(st.session_state.session.session_analytics_folder_path + image_value)
+                                                    rag_category = os.path.splitext(image_value)[0].split("_")[-1]
+                                                    for ak_dict in analytics_dict["knowledge_utility"]["similarity_rank"][rag_category]:
+                                                        st.markdown(ak_line(ak_dict))
 
             # 会話履歴の論理削除設定
             if st.checkbox(f"Delete(seq:{k})", key="del_chat_seq"+k):
@@ -608,7 +657,6 @@ def main():
     # BOOKから選択
     if "BOOK" in st.session_state.agent_data:
         st.session_state.book_selected = st.multiselect("BOOK", [item["RAG_NAME"] for item in st.session_state.agent_data["BOOK"]])
-
 
     # ファイルダウンローダー
     footer_col1, footer_col2 = st.columns(2)
