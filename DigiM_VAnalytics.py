@@ -27,8 +27,18 @@ def genLLMAgentSimple(service_info, user_info, session_id, session_name, agent_f
     return response_service_info, response_user_info, response, model_name, export_contents, knowledge_ref
 
 # 知識参照度と知識活用度の分析
-def analytics_knowledge(title, reference, analytics_file_path):
+def analytics_knowledge(title, reference, analytics_file_path, ak_mode="Default"):
     df = pd.DataFrame(reference)
+
+    # 正規化
+    if ak_mode == "Norm(All)":
+        max_val_Q = df["similarity_Q"].max()
+        max_val_A = df["similarity_A"].max()
+        df["similarity_Q"] = df["similarity_Q"]/max_val_Q
+        df["similarity_A"] = df["similarity_A"]/max_val_A
+    elif ak_mode == "Norm(Group)":
+        df["similarity_Q"] = df["similarity_Q"] / df.groupby("rag")["similarity_Q"].transform("max")
+        df["similarity_A"] = df["similarity_A"] / df.groupby("rag")["similarity_A"].transform("max")
 
     df['knowledge_utility'] = round(df['similarity_Q'] - df['similarity_A'], 3)
     file_title = title[:30]

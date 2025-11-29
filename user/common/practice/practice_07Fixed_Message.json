@@ -1,0 +1,12 @@
+{
+    "NAME": "FixedMessage",
+    "CHAINS": [
+        {
+            "TYPE": "TOOL",
+            "SETTING": {
+                "USER_INPUT": "USER",
+                "FUNC_NAME": "fixed_message"
+            }
+        }
+    ]
+}
