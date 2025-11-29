@@ -83,6 +83,16 @@
             "MAGIC_WORDS": ["画像を生成してください。", "画像を作成してください。"],
             "PRACTICE": "practice_06Image_Gen.json",
             "ADD_KNOWLEDGE": []
+        },
+        "REPEAT_RESPONSE": {
+            "MAGIC_WORDS": ["オウム返ししてください。"],
+            "PRACTICE": "practice_07Fixed_Message.json",
+            "ADD_KNOWLEDGE": []
+        },
+        "MANAGEMENT_ANALYSIS": {
+            "MAGIC_WORDS": ["経営分析してください。"],
+            "PRACTICE": "practice_21ManagementAnalysis.json",
+            "ADD_KNOWLEDGE": []
         }
     },
     "KNOWLEDGE": [
