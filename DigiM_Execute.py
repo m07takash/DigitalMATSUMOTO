@@ -96,7 +96,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     if memory_use:
         timestamp_log += "[05.会話ダイジェスト読込開始]"+str(datetime.now())+"<br>"
         if session.chat_history_active_dict:
-            max_seq, max_sub_seq, chat_history_max_digest_dict = session.get_history_max_digest()#session.chat_history_active_dict)
+            max_seq, max_sub_seq, chat_history_max_digest_dict = session.get_history_max_digest()
             if chat_history_max_digest_dict:
                 digest_text = "会話履歴のダイジェスト:\n"+chat_history_max_digest_dict["text"]+"\n---\n"
 
@@ -108,7 +108,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         search_text = user_query
         if digest_text or situation_prompt:
             search_text = "検索して欲しい内容:\n"+user_query +"\n\n[参考]これまでの会話:\n"+ digest_text +"\n\n[参考]今の状況:\n"+ situation_prompt
-        response_service_info, response_user_info, web_result_text, export_urls = dmt.WebSearch_PerplexityAI(service_info, user_info, session_id, session_name, search_text)
+        response_service_info, response_user_info, web_result_text, export_urls = dmt.WebSearch_PerplexityAI(service_info, user_info, session_id, session_name, agent_file, search_text, [], {})
         web_context = "[参考]関連するWEBの検索結果:\n" + web_result_text
         web_search_log["urls"] = export_urls
         web_search_log["web_context"] = web_context
@@ -151,8 +151,14 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     timestamp_log += "[11.RAG検索用クエリ(意図)の生成]"+str(datetime.now())+"<br>"
     RAG_query_gene_log = {}
     if RAG_query_gene and "RAG_QUERY_GENERATOR" in support_agent:
+        # 付属情報の設定
+        add_info = {}
+        add_info["Memories_Selected"] = memories_selected
+        add_info["Situation"] = situation_prompt
+        add_info["QueryVecs"] = [query_vec] 
+
         RAG_query_gene_agent_file = support_agent["RAG_QUERY_GENERATOR"]
-        _, _, RAG_query_gene_response, RAG_query_gene_model_name, RAG_query_gene_prompt_tokens, RAG_query_gene_response_tokens = dmt.RAG_query_generator(service_info, user_info, user_query, situation_prompt, query_vecs, memories_selected, agent_file=RAG_query_gene_agent_file)
+        _, _, RAG_query_gene_response, RAG_query_gene_model_name, RAG_query_gene_prompt_tokens, RAG_query_gene_response_tokens = dmt.RAG_query_generator(service_info, user_info, session_id, session_name, RAG_query_gene_agent_file, user_query, [], add_info)
         queries.append(RAG_query_gene_response)
         query_vec_RAGquery = dmu.embed_text(RAG_query_gene_response.replace("\n", ""))
         query_vecs.append(query_vec_RAGquery)
@@ -171,9 +177,15 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     get_date_list = []
     timestamp_log += "[12.クエリからメタデータ検索情報の取得]"+str(datetime.now())+"<br>"
     if meta_search and "EXTRACT_DATE" in support_agent:
+        # 付属情報の設定
+        add_info = {}
+        add_info["Memories_Selected"] = memories_selected
+        add_info["Situation"] = situation_prompt
+        add_info["QueryVecs"] = [query_vec] 
+
         # ユーザー入力から時間を取得
         extract_date_agent_file = support_agent["EXTRACT_DATE"]
-        _, _, extract_date_response, extract_date_model_name, extract_date_prompt_tokens, extract_date_response_tokens = dmt.extract_date(service_info, user_info, user_query, situation_prompt, [query_vec], memories_selected, agent_file=extract_date_agent_file)
+        _, _, extract_date_response, extract_date_model_name, extract_date_prompt_tokens, extract_date_response_tokens = dmt.extract_date(service_info, user_info, session_id, session_name, extract_date_agent_file, user_query, [], add_info)
         get_date_list += dmu.extract_list_pattern(extract_date_response) 
         meta_searches.append({"DATE": get_date_list})
         # ログに格納
@@ -331,16 +343,15 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         # メモリダイジェストの作成
         if save_digest:
             timestamp_log += "[41.メモリダイジェストの作成開始]"+str(datetime.now())+"<br>"
-            session.set_history()
-            digest_memories_selected = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_similarity, memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
-    #        digest_memories_selected = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_digest, seq_limit, sub_seq_limit)
-
+            dialog_digest_agent_file = ""
             if "DIALOG_DIGEST" in support_agent:
                 dialog_digest_agent_file = support_agent["DIALOG_DIGEST"]
-                _, _, digest_response, digest_model_name, digest_prompt_tokens, digest_response_tokens = dmt.dialog_digest(service_info, user_info, "", digest_memories_selected, dialog_digest_agent_file)
-            else:
-                dialog_digest_agent_file = "Default"
-                _, _, digest_response, digest_model_name, digest_prompt_tokens, digest_response_tokens = dmt.dialog_digest(service_info, user_info, "", digest_memories_selected)
+
+            # 付属情報の設定
+            add_info = {}
+            session.set_history()
+            add_info["Memories_Selected"] = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_similarity, memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
+            _, _, digest_response, digest_model_name, digest_prompt_tokens, digest_response_tokens = dmt.dialog_digest(service_info, user_info, session_id, session_name, dialog_digest_agent_file, [], add_info)
 
             timestamp_digest = str(datetime.now())
             
@@ -584,12 +595,36 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                             user_input = next((item["OUTPUT"] for item in results if item["SubSEQ"] == ref_subseq), None)
                         else:
                             user_input = setting["USER_INPUT"]
-
                 input = user_input
-                import_contents = in_contents
+
+                # コンテンツの設定
+                import_contents = []
+                if "CONTENTS" in setting:
+                    import_contents = setting["CONTENTS"] if setting["CONTENTS"] != "USER" else in_contents
+                    if setting["CONTENTS"] == "USER":
+                        import_contents = in_contents
+                    elif setting["CONTENTS"].startswith("IMPORT_"):
+                        ref_subseq = int(setting["CONTENTS"].replace("IMPORT_", "").strip())
+                        import_contents = next((item["IMPORT_CONTENTS"] for item in results if item["SubSEQ"] == ref_subseq), None)
+                    elif setting["CONTENTS"].startswith("EXPORT_"):
+                        ref_subseq = int(setting["CONTENTS"].replace("EXPORT_", "").strip())
+                        import_contents = next((item["EXPORT_CONTENTS"] for item in results if item["SubSEQ"] == ref_subseq), None)
+                    else:
+                        import_contents = setting["CONTENTS"]
+                
+                # エージェントファイルの設
+                agent_file = ""
+                if "AGENT_FILE" in setting:
+                    agent_file = setting["AGENT_FILE"] if setting["AGENT_FILE"] != "USER" else in_agent_file
+
+                # 付随情報の設定
+                add_info={}
+                if "ADD_INFO" in setting:
+                    add_info = setting["ADD_INFO"]
 
                 timestamp_begin = str(datetime.now())
-                tool_result = dmt.call_function_by_name(service_info, user_info, setting["FUNC_NAME"], session_id, session_name, input)
+                tool_result = dmt.call_function_by_name(service_info, user_info, setting["FUNC_NAME"], session_id, session_name, agent_file, input, import_contents, add_info)
+
                 output = ""
                 export_contents = []
                 if inspect.isgenerator(tool_result):
@@ -646,6 +681,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                     "export_contents": export_contents
                 }
                 session.save_history(str(seq), "response", response_chat_dict, "SUB_SEQ", str(sub_seq))
+
                 if not last_only:
                     yield response_service_info, response_user_info, output
                 elif last_only and i==last_idx:
