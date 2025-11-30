@@ -518,18 +518,15 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 # 実行の設定
                 execution = {}
                 execution["CONTENTS_SAVE"] = contents_save
-                execution["MEMORY_USE"] = memory_use and setting["MEMORY_USE"] if "MEMORY_USE" in setting else memory_use
+                execution["MEMORY_USE"] = memory_use and setting.get("MEMORY_USE", True)
                 execution["MEMORY_SAVE"] = memory_save
                 execution["MEMORY_SIMILARITY"] = memory_similarity
                 execution["MAGIC_WORD_USE"] = magic_word_use
                 execution["STREAM_MODE"] = stream_mode
                 execution["SAVE_DIGEST"] = save_digest
-                execution["META_SEARCH"] = meta_search
-                execution["RAG_QUERY_GENE"] = RAG_query_gene
-                if "WEB_SEARCH" in setting:
-                    execution["WEB_SEARCH"] = setting["WEB_SEARCH"]
-                else:
-                    execution["WEB_SEARCH"] = web_search
+                execution["META_SEARCH"] = meta_search and setting.get("META_SEARCH", True)
+                execution["RAG_QUERY_GENE"] = RAG_query_gene and setting.get("RAG_QUERY_GENE", True)
+                execution["WEB_SEARCH"]  = setting.get("WEB_SEARCH", web_search) #WEB検索だけはOR条件
 
                 # LLM実行
                 response = ""
