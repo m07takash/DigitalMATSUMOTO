@@ -205,7 +205,7 @@ user/common/temp/*
 !user/common/temp/tempファイルの格納先
 test/*
 !test/Sample*.xlsx
-!test/ManagementAnalytics.xlsx
+!test/Tool*.xlsx
 backup/
 
 # nohup
