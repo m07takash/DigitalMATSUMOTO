@@ -117,9 +117,12 @@ def read_yaml_file(file_name, folder_path=""):
 
 # YAMLファイルの保存
 def save_yaml_file(data, file_name, folder_path=""):
+    current_data = read_yaml_file(file_name, folder_path)
+    current_data.update(data)
     file_path = folder_path + file_name
-    with open(file_path, 'w', encoding="utf-8") as file:
-        yaml.dump(data, file, allow_unicode=True)
+    with open(file_path, 'w', encoding="utf-8") as f:
+#        yaml.dump(data, file, allow_unicode=True)
+        yaml.dump(current_data, f, allow_unicode=True)
 
 # MP3ファイルをテキストに変換
 def mp3_to_text(file_name, folder_path=""):
