@@ -37,6 +37,19 @@ def get_session_list():
     session_nums.sort()
     return session_nums
 
+# セッションの一覧を獲得(無効)
+def get_session_list_inactive():
+    session_list = []
+    session_nums = get_session_list()
+    for session_num in session_nums:
+        session_id = str(session_num)
+        session_active_flg = get_active_session(session_id)
+        if session_active_flg == "N":
+            session_name = get_session_name(session_id)
+            session_list.append([session_num, session_name])
+    session_list_sorted = sorted(session_list, key=lambda x: x[0], reverse=True)
+    return session_list_sorted
+
 # セッションの一覧を獲得(画面用)
 def get_session_list_visible():
     session_list = []
@@ -109,6 +122,18 @@ def get_agent_file(session_id):
 
     return agent_file
 
+# セッションのアクティブ状態を獲得する
+def get_active_session(session_id):
+    session_key = session_folder_prefix + session_id
+    session_status_path = user_folder_path + session_key + "/" + session_status_file_name
+    status_dict = {}
+    status_dict = dmu.read_yaml_file(session_status_path)
+    if "active" in status_dict:
+        active_flg = status_dict["active"]
+    else:
+        active_flg = "Y"
+    return active_flg
+
 # シチュエーションを取得
 def get_situation(session_id):
     session_key = session_folder_prefix + session_id
@@ -131,11 +156,12 @@ def set_new_session_id():
     new_session_id = str(new_session_num)
     return new_session_id
 
+
 # セッションクラス
 class DigiMSession:
     def __init__(self, session_id="", session_name=""):
         self.session_id = session_id if session_id else set_new_session_id()
-        self.session_name = session_name
+        self.session_name = session_name if session_name else get_session_name(self.session_id)
         self.session_folder_path = user_folder_path + session_folder_prefix + self.session_id +"/" 
         self.session_vec_folder_path = user_folder_path + session_folder_prefix + self.session_id +"/vecs/" 
         self.session_file_path = self.session_folder_path + session_file_name
@@ -175,6 +201,11 @@ class DigiMSession:
         else:
             status = "UNLOCKED"
         return status
+
+    # セッションのアクティブ状態を獲得する
+    def get_active_session(self):
+        active_flg = get_active_session(self.session_id)
+        return active_flg
 
     # 全ての会話履歴を獲得する
     def get_history(self):
@@ -341,8 +372,13 @@ class DigiMSession:
             os.makedirs(self.session_folder_path, exist_ok=True)
         
         # セッションステータスをYAML形式で保存
-        with open(self.session_status_path, 'w', encoding='utf-8') as f:
-            dmu.save_yaml_file(status_dict, self.session_status_path)
+        #with open(self.session_status_path, 'w', encoding='utf-8') as f:
+        dmu.save_yaml_file(status_dict, self.session_status_path)
+
+    # セッションのアクティブ状態を更新する
+    def save_active_session(self, active_flg):
+        status_dict = {"active": active_flg}
+        dmu.save_yaml_file(status_dict, self.session_status_path)
 
     # 会話履歴を保存する
     def save_history(self, seq, chat_dict_key, chat_dict, level="SEQ", sub_seq="1"):
