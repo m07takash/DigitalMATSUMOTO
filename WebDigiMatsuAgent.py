@@ -75,6 +75,10 @@ def initialize_session_states():
         st.session_state.rag_data_list_selected = []
     if 'session_list' not in st.session_state:
         st.session_state.session_list = dms.get_session_list_visible()
+    if 'session_inactive_list' not in st.session_state:
+        st.session_state.session_inactive_list = dms.get_session_list_inactive()
+    if 'session_inactive_list_selected' not in st.session_state:
+        st.session_state.session_inactive_list_selected = []
     if 'session' not in st.session_state:
         st.session_state.session = dms.DigiMSession(dms.set_new_session_id(), "New Chat")
     if 'time_setting' not in st.session_state:
@@ -138,6 +142,8 @@ def refresh_session_states():
     st.session_state.rag_data_list = dmc.get_rag_list()
     st.session_state.rag_data_list_selected = []
     st.session_state.session_list = dms.get_session_list_visible()
+    st.session_state.session_inactive_list = dms.get_session_list_inactive()
+    st.session_state.session_inactive_list_selected = []
     st.session_state.session = dms.DigiMSession(dms.set_new_session_id(), "New Chat")
     st.session_state.time_setting = now_time.strftime("%Y/%m/%d %H:%M:%S")
     st.session_state.situation_setting = ""
@@ -300,7 +306,21 @@ def main():
         # 会話履歴の更新
         if side_col2.button("Refresh List", key="refresh_session_list"):
             st.session_state.session_list = dms.get_session_list_visible()
-        num_session_visible = st.number_input(label="Visible Sessions", value=5, step=1, format="%d")
+
+        # セッションの管理
+        sessions_expander = st.expander("Sessions")
+        with sessions_expander:
+            num_session_visible = st.number_input(label="Visible Sessions", value=5, step=1, format="%d")
+            st.session_state.session_inactive_list = dms.get_session_list_inactive()
+            st.session_state.session_inactive_list_selected = st.multiselect("Activate Sessions", [f"{str(item[0])}_{item[1]}" for item in st.session_state.session_inactive_list])
+            if st.button("Activate", key="activate_sessions"):
+                for session_list_selected in st.session_state.session_inactive_list_selected:
+                    session_id_selected = session_list_selected.split("_")[0]
+                    activate_session = dms.DigiMSession(session_id_selected)
+                    activate_session.save_active_session("Y")
+                activate_sessions_str = ", ".join(st.session_state.session_inactive_list_selected)
+                st.session_state.sidebar_message = f"セッションを再表示しました({activate_sessions_str})"
+                st.rerun()
     
         # 知識更新の処理
         rag_expander = st.expander("RAG Management")
@@ -326,16 +346,25 @@ def main():
             if num_session_visible > num_sessions:
                 session_id_list = str(session_num)
                 session_key_list = session_folder_prefix + session_id_list
-                session_name_list = dms.get_session_name(session_id_list)
-                session_name_btn = session_id_list +"_"+ session_name_list[:10]
-                situation = dms.get_situation(session_id_list)
-                if not situation:
-                    situation["TIME"] = now_time.strftime("%Y/%m/%d %H:%M:%S")
-                    situation["SITUATION"] = ""
-                if st.button(session_name_btn, key=session_key_list):
-                    refresh_session_states()
-                    refresh_session(session_id_list, session_name_list, situation)
-                num_sessions += 1
+                session_list = dms.DigiMSession(session_id_list)
+                session_name_list = session_list.session_name
+#                session_name_list = dms.get_session_name(session_id_list)
+                session_active_flg = session_list.get_active_session()
+                if session_active_flg != "N":
+                    session_name_btn = session_id_list +"_"+ session_name_list[:10]
+                    situation = dms.get_situation(session_id_list)                
+                    if not situation:
+                        situation["TIME"] = now_time.strftime("%Y/%m/%d %H:%M:%S")
+                        situation["SITUATION"] = ""
+                    if st.button(session_name_btn, key=session_key_list):
+                        refresh_session_states()
+                        refresh_session(session_id_list, session_name_list, situation)
+                    if st.button(f"Delete:{session_id_list}", key=f"{session_key_list}_del_btn"):
+                        del_session = dms.DigiMSession(session_id_list, session_name_list)
+                        del_session.save_active_session("N")
+                        st.session_state.sidebar_message = f"セッションを非表示にしました({session_id_list}_{session_name_list})"
+                        st.rerun()
+                    num_sessions += 1
 
     # チャットセッション名の設定
     if session_name := st.text_input("Chat Name:", value=st.session_state.session.session_name):
