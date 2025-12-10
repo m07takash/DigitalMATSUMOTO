@@ -7,19 +7,6 @@
                 "FUNC_NAME": "WebSearch_PerplexityAI",
                 "USER_INPUT": "USER"
             }
-        },
-        {
-            "TYPE": "LLM",
-            "SETTING": {
-                "AGENT_FILE": "USER",
-                "OVERWRITE_ITEMS": {},
-                "ADD_KNOWLEDGE": [],
-                "PROMPT_TEMPLATE": "Normal Template",
-                "USER_INPUT": ["USER","\n\n[参考]関連するWEBの検索結果:\n","OUTPUT_1"],
-                "CONTENTS": "USER",
-                "SITUATION": "USER",
-                "MEMORY_USE": true
-            }
         }
     ]
 }
