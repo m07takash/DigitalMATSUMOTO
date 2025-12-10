@@ -37,8 +37,12 @@ if 'default_agent' not in st.session_state:
     st.session_state.default_agent = default_agent_data["DISPLAY_NAME"]
 if 'web_default_service' not in st.session_state:
     st.session_state.web_default_service = json.loads(os.getenv("WEB_DEFAULT_SERVICE"))
+if 'web_default_service_id' not in st.session_state:
+    st.session_state.web_default_service_id = st.session_state.web_default_service["SERVICE_ID"]
 if 'web_default_user' not in st.session_state:
     st.session_state.web_default_user = json.loads(os.getenv("WEB_DEFAULT_USER"))
+if 'web_default_user_id' not in st.session_state:
+    st.session_state.web_default_user_id = st.session_state.web_default_user["USER_ID"]
 if 'prompt_template_mst_file' not in st.session_state:
     st.session_state.prompt_template_mst_file = os.getenv("PROMPT_TEMPLATE_MST_FILE")
 
@@ -51,6 +55,10 @@ st.set_page_config(page_title=st.session_state.web_title, layout="wide")
 
 # セッションステートの初期宣言
 def initialize_session_states():
+    if 'service_id' not in st.session_state:
+        st.session_state.service_id = st.session_state.web_default_service_id #【個別修正】ログインしたサービスに置換
+    if 'user_id' not in st.session_state:
+        st.session_state.user_id = st.session_state.web_default_user_id #【個別修正】ログインしたユーザーに置換
     if 'sidebar_message' not in st.session_state:
         st.session_state.sidebar_message = ""
     if 'display_name' not in st.session_state:
@@ -74,7 +82,7 @@ def initialize_session_states():
     if 'rag_data_list_selected' not in st.session_state:
         st.session_state.rag_data_list_selected = []
     if 'session_list' not in st.session_state:
-        st.session_state.session_list = dms.get_session_list_visible()
+        st.session_state.session_list = dms.get_session_list_visible(st.session_state.service_id, st.session_state.user_id)
     if 'session_inactive_list' not in st.session_state:
         st.session_state.session_inactive_list = dms.get_session_list_inactive()
     if 'session_inactive_list_selected' not in st.session_state:
@@ -130,6 +138,8 @@ def initialize_session_states():
 
 # セッション変数のリフレッシュ
 def refresh_session_states():
+    st.session_state.service_id = st.session_state.web_default_service_id   #【個別修正】ログインしたサービスに置換
+    st.session_state.user_id = st.session_state.web_default_user_id #【個別修正】ログインしたユーザーに置換
     st.session_state.sidebar_message = ""
     st.session_state.display_name = st.session_state.default_agent
     st.session_state.agents = dma.get_display_agents()
@@ -141,8 +151,8 @@ def refresh_session_states():
     st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, agent_folder_path)
     st.session_state.rag_data_list = dmc.get_rag_list()
     st.session_state.rag_data_list_selected = []
-    st.session_state.session_list = dms.get_session_list_visible()
-    st.session_state.session_inactive_list = dms.get_session_list_inactive()
+    st.session_state.session_list = dms.get_session_list_visible(st.session_state.service_id, st.session_state.user_id)
+    st.session_state.session_inactive_list = dms.get_session_list_inactive_visible(st.session_state.service_id, st.session_state.user_id)
     st.session_state.session_inactive_list_selected = []
     st.session_state.session = dms.DigiMSession(dms.set_new_session_id(), "New Chat")
     st.session_state.time_setting = now_time.strftime("%Y/%m/%d %H:%M:%S")
@@ -305,7 +315,7 @@ def main():
 
         # 会話履歴の更新
         if side_col2.button("Refresh List", key="refresh_session_list"):
-            st.session_state.session_list = dms.get_session_list_visible()
+            st.session_state.session_list = dms.get_session_list_visible(st.session_state.service_id, st.session_state.user_id)
 
         # セッションの管理
         sessions_expander = st.expander("Sessions")

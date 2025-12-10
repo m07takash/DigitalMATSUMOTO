@@ -37,7 +37,7 @@ def get_session_list():
     session_nums.sort()
     return session_nums
 
-# セッションの一覧を獲得(無効)
+# 無効セッションの一覧を獲得
 def get_session_list_inactive():
     session_list = []
     session_nums = get_session_list()
@@ -51,14 +51,30 @@ def get_session_list_inactive():
     return session_list_sorted
 
 # セッションの一覧を獲得(画面用)
-def get_session_list_visible():
+def get_session_list_visible(input_service_id, input_user_id):
     session_list = []
     session_nums = get_session_list()
     for session_num in session_nums:
         session_id = str(session_num)
         session_file_dict = get_session_data(session_id)
-        last_update_date = get_history_update_date(session_file_dict)
-        session_list.append([session_num, last_update_date])
+        service_id, user_id = get_history_ids(session_file_dict)
+        if input_service_id == service_id and input_user_id == user_id:
+            last_update_date = get_history_update_date(session_file_dict)
+            session_list.append([session_num, last_update_date])
+    session_list_sorted = sorted(session_list, key=lambda x: x[1], reverse=True)
+    return session_list_sorted
+
+# 無効セッションの一覧を獲得(画面用)
+def get_session_list_inactive_visible(input_service_id, input_user_id):
+    session_list = []
+    session_nums = [x[0] for x in get_session_list_inactive()]
+    for session_num in session_nums:
+        session_id = str(session_num)
+        session_file_dict = get_session_data(session_id)
+        service_id, user_id = get_history_ids(session_file_dict)
+        if input_service_id == service_id and input_user_id == user_id:
+            last_update_date = get_history_update_date(session_file_dict)
+            session_list.append([session_num, last_update_date])
     session_list_sorted = sorted(session_list, key=lambda x: x[1], reverse=True)
     return session_list_sorted
 
@@ -92,6 +108,17 @@ def get_session_name(session_id):
         session_name = session_file_active_dict[max_seq][max_sub_seq]["setting"]["session_name"]
 
     return session_name
+
+# 会話履歴のサービス名とユーザー名を取得
+def get_history_ids(chat_history_active_dict):
+    max_seq = max(chat_history_active_dict.keys(), key=int)
+    service_id = ""
+    user_id = ""
+    if "service_info" in chat_history_active_dict[max_seq]["SETTING"]:
+        service_id = chat_history_active_dict[max_seq]["SETTING"]["service_info"]["SERVICE_ID"]
+    if "user_info" in chat_history_active_dict[max_seq]["SETTING"]:
+        user_id = chat_history_active_dict[max_seq]["SETTING"]["user_info"]["USER_ID"]    
+    return service_id, user_id
 
 # 会話履歴の最終更新日を取得
 def get_history_update_date(chat_history_active_dict):
