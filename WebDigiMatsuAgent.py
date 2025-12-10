@@ -59,6 +59,12 @@ def initialize_session_states():
         st.session_state.service_id = st.session_state.web_default_service_id #【個別修正】ログインしたサービスに置換
     if 'user_id' not in st.session_state:
         st.session_state.user_id = st.session_state.web_default_user_id #【個別修正】ログインしたユーザーに置換
+    if 'web_service' not in st.session_state:
+        st.session_state.web_service = st.session_state.web_default_service
+        st.session_state.web_service["SERVICE_ID"] = st.session_state.service_id
+    if 'web_user' not in st.session_state:
+        st.session_state.web_user = st.session_state.web_default_user
+        st.session_state.web_user["USER_ID"] = st.session_state.user_id
     if 'sidebar_message' not in st.session_state:
         st.session_state.sidebar_message = ""
     if 'display_name' not in st.session_state:
@@ -140,6 +146,10 @@ def initialize_session_states():
 def refresh_session_states():
     st.session_state.service_id = st.session_state.web_default_service_id   #【個別修正】ログインしたサービスに置換
     st.session_state.user_id = st.session_state.web_default_user_id #【個別修正】ログインしたユーザーに置換
+    st.session_state.web_service = st.session_state.web_default_service
+    st.session_state.web_service["SERVICE_ID"] = st.session_state.service_id
+    st.session_state.web_user = st.session_state.web_default_user
+    st.session_state.web_user["USER_ID"] = st.session_state.user_id
     st.session_state.sidebar_message = ""
     st.session_state.display_name = st.session_state.default_agent
     st.session_state.agents = dma.get_display_agents()
@@ -587,12 +597,12 @@ def main():
                                         compare_seq = k
                                         compare_sub_seq = str(int(k2)-1)
                                         compare_agent_file = next((a2["FILE"] for a2 in st.session_state.agents if a2["AGENT"] == st.session_state.compare_agent_id), None)
-                                        _, _, compare_response, compare_model_name, compare_export_contents, compare_knowledge_ref = dmva.genLLMAgentSimple(st.session_state.web_default_service, st.session_state.web_default_user, v2["setting"]["session_id"], v2["setting"]["session_name"], compare_agent_file, model_type="LLM", sub_seq=1, query=v2["prompt"]["query"]["input"], import_contents=[], situation=v2["prompt"]["query"]["situation"], prompt_temp_cd=v2["prompt"]["prompt_template"]["setting"], seq_limit=compare_seq, sub_seq_limit=compare_sub_seq)
+                                        _, _, compare_response, compare_model_name, compare_export_contents, compare_knowledge_ref = dmva.genLLMAgentSimple(st.session_state.web_service, st.session_state.web_user, v2["setting"]["session_id"], v2["setting"]["session_name"], compare_agent_file, model_type="LLM", sub_seq=1, query=v2["prompt"]["query"]["input"], import_contents=[], situation=v2["prompt"]["query"]["situation"], prompt_temp_cd=v2["prompt"]["prompt_template"]["setting"], seq_limit=compare_seq, sub_seq_limit=compare_sub_seq)
                                         vec_response = dmu.embed_text(v2["response"]["text"])
                                         vec_compare_response = dmu.embed_text(compare_response)
                                         compare_diff = dmu.calculate_cosine_distance(vec_response, vec_compare_response)
                                         exec_agend_id = dma.get_agent_item(v2["setting"]["agent_file"], "DISPLAY_NAME")
-                                        _, _, compare_text, compare_text_model_name, _, _ = dmt.compare_texts(st.session_state.web_default_service, st.session_state.web_default_user, exec_agend_id, v2["response"]["text"], st.session_state.compare_agent_id, compare_response)                                    
+                                        _, _, compare_text, compare_text_model_name, _, _ = dmt.compare_texts(st.session_state.web_service, st.session_state.web_user, exec_agend_id, v2["response"]["text"], st.session_state.compare_agent_id, compare_response)                                    
                                         if "compare_agents" not in analytics_dict:
                                             analytics_dict["compare_agents"] = []
                                         analytics_dict["compare_agents"].append({"compare_agent":{"agent_file": compare_agent_file, "model_name": compare_model_name, "response": compare_response, "diff": compare_diff, "knowledge_rag": compare_knowledge_ref}, "compare_text": {"compare_model_name": compare_text_model_name, "text": compare_text}})
@@ -749,7 +759,7 @@ def main():
         with st.chat_message(st.session_state.web_title):
             response_placeholder = st.empty()
             response = ""
-            for response_service_info, response_user_info, response_chunk in dme.DigiMatsuExecute_Practice(st.session_state.web_default_service, st.session_state.web_default_user, st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, add_knowledges, execution):
+            for response_service_info, response_user_info, response_chunk in dme.DigiMatsuExecute_Practice(st.session_state.web_service, st.session_state.web_user, st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, add_knowledges, execution):
                 response += response_chunk
                 response_placeholder.markdown(response)
             st.session_state.sidebar_message = ""
