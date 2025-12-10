@@ -359,7 +359,7 @@ def main():
                     if st.button(session_name_btn, key=session_key_list):
                         refresh_session_states()
                         refresh_session(session_id_list, session_name_list, situation)
-                    if st.button(f"Delete:{session_id_list}", key=f"{session_key_list}_del_btn"):
+                    if st.button(f"Del:{session_id_list}", key=f"{session_key_list}_del_btn"):
                         del_session = dms.DigiMSession(session_id_list, session_name_list)
                         del_session.save_active_session("N")
                         st.session_state.sidebar_message = f"セッションを非表示にしました({session_id_list}_{session_name_list})"
