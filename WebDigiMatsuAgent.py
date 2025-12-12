@@ -8,6 +8,8 @@ import pytz
 from dotenv import load_dotenv
 import streamlit as st
 import pandas as pd
+from dataclasses import dataclass
+from typing import Any, Dict
 
 import DigiM_Execute as dme
 import DigiM_Session as dms
@@ -18,56 +20,86 @@ import DigiM_Tool as dmt
 import DigiM_GeneCommunication as dmgc
 import DigiM_VAnalytics as dmva
 
+@dataclass(frozen=True)
+class AppConfig:
+    # setting.yaml
+    session_folder_prefix: str
+    agent_folder_path: str
+    temp_folder_path: str
+    mst_folder_path: str
+
+    # system.env
+    web_title: str
+    timezone: str
+    login_enable_flg: str | None
+    user_mst_file: str | None
+    web_default_service: Dict[str, Any]
+    web_default_user: Dict[str, Any]
+    web_default_agent_file: str | None
+
+@st.cache_resource(show_spinner=False)
+def load_config() -> AppConfig:
+    # system.env は基本固定。ここで 1 回だけ読む
+    if os.path.exists("system.env"):
+        load_dotenv("system.env")
+
+    system_setting_dict = dmu.read_yaml_file("setting.yaml")
+
+    return AppConfig(
+        session_folder_prefix=system_setting_dict["SESSION_FOLDER_PREFIX"],
+        agent_folder_path=system_setting_dict["AGENT_FOLDER"],
+        temp_folder_path=system_setting_dict["TEMP_FOLDER"],
+        mst_folder_path=system_setting_dict["MST_FOLDER"],
+
+        web_title=os.getenv("WEB_TITLE") or "Digital Twin",
+        timezone=os.getenv("TIMEZONE") or "Asia/Tokyo",
+        login_enable_flg=os.getenv("LOGIN_ENABLE_FLG"),
+        user_mst_file=os.getenv("USER_MST_FILE"),
+        web_default_service=json.loads(os.getenv("WEB_DEFAULT_SERVICE") or "{}"),
+        web_default_user=json.loads(os.getenv("WEB_DEFAULT_USER") or "{}"),
+        web_default_agent_file=os.getenv("WEB_DEFAULT_AGENT_FILE"),
+    )
+
+# 設定のキャッシュ
+cfg = load_config()
+
 # setting.yamlからフォルダパスなどを設定
-system_setting_dict = dmu.read_yaml_file("setting.yaml")
-session_folder_prefix = system_setting_dict["SESSION_FOLDER_PREFIX"]
-agent_folder_path = system_setting_dict["AGENT_FOLDER"]
-temp_folder_path = system_setting_dict["TEMP_FOLDER"]
-mst_folder_path = system_setting_dict["MST_FOLDER"]
+session_folder_prefix = cfg.session_folder_prefix
+agent_folder_path = cfg.agent_folder_path
+temp_folder_path = cfg.temp_folder_path
+mst_folder_path = cfg.mst_folder_path
 
 # system.envファイルをロードして環境変数を設定
 if os.path.exists("system.env"):
     load_dotenv("system.env")
-if 'web_title' not in st.session_state:
-    st.session_state.web_title = os.getenv("WEB_TITLE")
-if 'timezone_setting' not in st.session_state:
-    st.session_state.timezone_setting = os.getenv("TIMEZONE")
-if 'temp_move_flg' not in st.session_state:
-    st.session_state.temp_move_flg = os.getenv("TEMP_MOVE_FLG")
-if 'login_enable_flg' not in st.session_state:
-    st.session_state.login_enable_flg = os.getenv("LOGIN_ENABLE_FLG")
+web_title = cfg.web_title
+login_enable_flg = cfg.login_enable_flg
+user_mst_file = cfg.user_mst_file
+web_default_service = cfg.web_default_service
+web_default_service_id = web_default_service["SERVICE_ID"]
+web_default_user = cfg.web_default_user
+web_default_user_id = web_default_user["USER_ID"]
+
 if 'default_agent' not in st.session_state:
-    default_agent_data = dmu.read_json_file(os.getenv("WEB_DEFAULT_AGENT_FILE"), agent_folder_path)
+    default_agent_data = dmu.read_json_file(cfg.web_default_agent_file, agent_folder_path)
     st.session_state.default_agent = default_agent_data["DISPLAY_NAME"]
-if 'web_default_service' not in st.session_state:
-    st.session_state.web_default_service = json.loads(os.getenv("WEB_DEFAULT_SERVICE"))
-if 'web_default_service_id' not in st.session_state:
-    st.session_state.web_default_service_id = st.session_state.web_default_service["SERVICE_ID"]
-if 'web_default_user' not in st.session_state:
-    st.session_state.web_default_user = json.loads(os.getenv("WEB_DEFAULT_USER"))
-if 'web_default_user_id' not in st.session_state:
-    st.session_state.web_default_user_id = st.session_state.web_default_user["USER_ID"]
-if 'prompt_template_mst_file' not in st.session_state:
-    st.session_state.prompt_template_mst_file = os.getenv("PROMPT_TEMPLATE_MST_FILE")
-if 'user_mst_file' not in st.session_state:
-    st.session_state.user_mst_file = os.getenv("USER_MST_FILE")
 if 'service_id' not in st.session_state:
-    st.session_state.service_id = st.session_state.web_default_service_id
+    st.session_state.service_id = web_default_service_id
 if 'user_id' not in st.session_state:
-    st.session_state.user_id = st.session_state.web_default_user_id
+    st.session_state.user_id = web_default_user_id
 if 'user_admin_flg' not in st.session_state:
     st.session_state.user_admin_flg = "Y"
 
 # 時刻の設定
-tz = pytz.timezone(st.session_state.timezone_setting)
+tz = pytz.timezone(cfg.timezone)
 now_time = datetime.now(tz)
 
 # Streamlitの設定
-st.set_page_config(page_title=st.session_state.web_title, layout="wide")
+st.set_page_config(page_title=web_title, layout="wide")
 
 # ユーザーログイン
 def load_user_master():
-    user_mst_path = mst_folder_path + st.session_state.user_mst_file
+    user_mst_path = mst_folder_path + user_mst_file
     try:
         with open(user_mst_path, "r", encoding="utf-8") as f:
             return json.load(f)
@@ -99,7 +131,7 @@ def ensure_login():
     if "login_user" in st.session_state and st.session_state.login_user:
         return
 
-    st.title(st.session_state.web_title)
+    st.title(web_title)
     st.subheader("Login:")
 
     # ユーザーマスタの読み込み
@@ -130,10 +162,10 @@ def ensure_login():
 # セッションステートの初期宣言
 def initialize_session_states():
     if 'web_service' not in st.session_state:
-        st.session_state.web_service = st.session_state.web_default_service
+        st.session_state.web_service = dict(web_default_service)
         st.session_state.web_service["SERVICE_ID"] = st.session_state.service_id
     if 'web_user' not in st.session_state:
-        st.session_state.web_user = st.session_state.web_default_user
+        st.session_state.web_user = dict(web_default_user)
         st.session_state.web_user["USER_ID"] = st.session_state.user_id
     if 'sidebar_message' not in st.session_state:
         st.session_state.sidebar_message = ""
@@ -218,9 +250,9 @@ def initialize_session_states():
 
 # セッション変数のリフレッシュ
 def refresh_session_states():
-    st.session_state.web_service = st.session_state.web_default_service
+    st.session_state.web_service = dict(web_default_service)
     st.session_state.web_service["SERVICE_ID"] = st.session_state.service_id
-    st.session_state.web_user = st.session_state.web_default_user
+    st.session_state.web_user = dict(web_default_user)
     st.session_state.web_user["USER_ID"] = st.session_state.user_id
     st.session_state.sidebar_message = ""
     st.session_state.display_name = st.session_state.default_agent
@@ -384,15 +416,15 @@ def main():
     initialize_session_states()
 
     # ログイン処理の実行
-    if st.session_state.login_enable_flg == "Y":
+    if login_enable_flg == "Y":
         ensure_login()
 
     # サイドバーの設定
     with st.sidebar:
-        st.title(st.session_state.web_title)
+        st.title(web_title)
 
         # ログインユーザー情報の表示
-        if st.session_state.login_enable_flg == "Y":
+        if login_enable_flg == "Y":
             if "login_user" in st.session_state and st.session_state.login_user:
                 lu = st.session_state.login_user
                 st.markdown(f"User: {lu.get('Name', '')}")
@@ -533,7 +565,7 @@ def main():
 #        st.session_state.memory_save = True
 #    else:
 #        st.session_state.memory_save = False
-#
+
 #    # メモリ類似度の設定
 #    if header_col2.checkbox("Memory Similarity", value=st.session_state.memory_similarity):
 #        st.session_state.memory_similarity = True
@@ -855,7 +887,7 @@ def main():
             # ユーザー入力の一時表示
             with st.chat_message("User"):
                 st.markdown(user_input.replace("\n", "<br>"), unsafe_allow_html=True)
-            with st.chat_message(st.session_state.web_title):
+            with st.chat_message(web_title):
                 response_placeholder = st.empty()
                 response = ""
                 for response_service_info, response_user_info, response_chunk in dme.DigiMatsuExecute_Practice(st.session_state.web_service, st.session_state.web_user, st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, add_knowledges, execution):
