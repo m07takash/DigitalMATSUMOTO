@@ -1,4 +1,5 @@
 import os
+import re
 import ast
 import json
 import datetime
@@ -22,6 +23,7 @@ system_setting_dict = dmu.read_yaml_file("setting.yaml")
 session_folder_prefix = system_setting_dict["SESSION_FOLDER_PREFIX"]
 agent_folder_path = system_setting_dict["AGENT_FOLDER"]
 temp_folder_path = system_setting_dict["TEMP_FOLDER"]
+mst_folder_path = system_setting_dict["MST_FOLDER"]
 
 # system.envファイルをロードして環境変数を設定
 if os.path.exists("system.env"):
@@ -32,6 +34,8 @@ if 'timezone_setting' not in st.session_state:
     st.session_state.timezone_setting = os.getenv("TIMEZONE")
 if 'temp_move_flg' not in st.session_state:
     st.session_state.temp_move_flg = os.getenv("TEMP_MOVE_FLG")
+if 'login_enable_flg' not in st.session_state:
+    st.session_state.login_enable_flg = os.getenv("LOGIN_ENABLE_FLG")
 if 'default_agent' not in st.session_state:
     default_agent_data = dmu.read_json_file(os.getenv("WEB_DEFAULT_AGENT_FILE"), agent_folder_path)
     st.session_state.default_agent = default_agent_data["DISPLAY_NAME"]
@@ -45,6 +49,14 @@ if 'web_default_user_id' not in st.session_state:
     st.session_state.web_default_user_id = st.session_state.web_default_user["USER_ID"]
 if 'prompt_template_mst_file' not in st.session_state:
     st.session_state.prompt_template_mst_file = os.getenv("PROMPT_TEMPLATE_MST_FILE")
+if 'user_mst_file' not in st.session_state:
+    st.session_state.user_mst_file = os.getenv("USER_MST_FILE")
+if 'service_id' not in st.session_state:
+    st.session_state.service_id = st.session_state.web_default_service_id
+if 'user_id' not in st.session_state:
+    st.session_state.user_id = st.session_state.web_default_user_id
+if 'user_admin_flg' not in st.session_state:
+    st.session_state.user_admin_flg = "Y"
 
 # 時刻の設定
 tz = pytz.timezone(st.session_state.timezone_setting)
@@ -53,12 +65,70 @@ now_time = datetime.now(tz)
 # Streamlitの設定
 st.set_page_config(page_title=st.session_state.web_title, layout="wide")
 
+# ユーザーログイン
+def load_user_master():
+    user_mst_path = mst_folder_path + st.session_state.user_mst_file
+    try:
+        with open(user_mst_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError:
+        return {}
+
+# ログインユーザー情報の保持
+def set_login_user_to_session(user_id: str, user_info: dict):
+    st.session_state.login_user = {
+        "USER_ID": user_id,
+        "Name": user_info.get("Name", ""),
+        "Group": user_info.get("Group", ""),
+        "Agent": user_info.get("Agent", "")
+    }
+    st.session_state.user_id = user_id
+    st.session_state.session_user_id = st.session_state.user_id
+    st.session_state.user_admin_flg = "Y" if st.session_state.login_user["Group"] == "Admin" else "N"
+    if st.session_state.login_user["Agent"] == "DEFAULT":
+        st.session_state.display_name = st.session_state.default_agent 
+    else:
+        default_agent_data = dmu.read_json_file(st.session_state.login_user["Agent"], agent_folder_path)
+        st.session_state.default_agent = default_agent_data["DISPLAY_NAME"]
+
+# ログイン処理
+def ensure_login():
+    # すでにログイン済みなら何もしない
+    if "login_user" in st.session_state and st.session_state.login_user:
+        return
+
+    st.title(st.session_state.web_title)
+    st.subheader("Login:")
+
+    # ユーザーマスタの読み込み
+    users = load_user_master()
+    if not users:
+        st.error(f"users.json が読めませんでした。")
+        st.stop()
+
+    # ログインフォーム
+    with st.form("login_form"):
+        input_user_id = st.text_input("User ID")
+        input_pw = st.text_input("Password", type="password")
+        submitted = st.form_submit_button("Login")
+
+    if submitted:
+        user_info = users.get(input_user_id)
+        if user_info and user_info.get("PW") == input_pw:
+            set_login_user_to_session(input_user_id, user_info)
+            st.success("ログインしました")
+            refresh_session_states()
+            st.rerun()
+        else:
+            st.error("ユーザーID または パスワードが正しくありません")
+
+    # ここで処理を止めて、ログイン画面以降を表示させない
+    st.stop()
+
 # セッションステートの初期宣言
 def initialize_session_states():
-    if 'service_id' not in st.session_state:
-        st.session_state.service_id = st.session_state.web_default_service_id #【個別修正】ログインしたサービスに置換
-    if 'user_id' not in st.session_state:
-        st.session_state.user_id = st.session_state.web_default_user_id #【個別修正】ログインしたユーザーに置換
     if 'web_service' not in st.session_state:
         st.session_state.web_service = st.session_state.web_default_service
         st.session_state.web_service["SERVICE_ID"] = st.session_state.service_id
@@ -88,13 +158,17 @@ def initialize_session_states():
     if 'rag_data_list_selected' not in st.session_state:
         st.session_state.rag_data_list_selected = []
     if 'session_list' not in st.session_state:
-        st.session_state.session_list = dms.get_session_list_visible(st.session_state.service_id, st.session_state.user_id)
+        st.session_state.session_list = dms.get_session_list_visible(st.session_state.service_id, st.session_state.user_id, "Y")
     if 'session_inactive_list' not in st.session_state:
-        st.session_state.session_inactive_list = dms.get_session_list_inactive()
+        st.session_state.session_inactive_list = dms.get_session_list_inactive_visible(st.session_state.service_id, st.session_state.user_id, "Y")
     if 'session_inactive_list_selected' not in st.session_state:
         st.session_state.session_inactive_list_selected = []
     if 'session' not in st.session_state:
         st.session_state.session = dms.DigiMSession(dms.set_new_session_id(), "New Chat")
+    if 'session_service_id' not in st.session_state:
+        st.session_state.session_service_id = st.session_state.service_id
+    if 'session_user_id' not in st.session_state:
+        st.session_state.session_user_id = st.session_state.user_id
     if 'time_setting' not in st.session_state:
         st.session_state.time_setting = now_time.strftime("%Y/%m/%d %H:%M:%S")
     if 'situation_setting' not in st.session_state:
@@ -144,8 +218,6 @@ def initialize_session_states():
 
 # セッション変数のリフレッシュ
 def refresh_session_states():
-    st.session_state.service_id = st.session_state.web_default_service_id   #【個別修正】ログインしたサービスに置換
-    st.session_state.user_id = st.session_state.web_default_user_id #【個別修正】ログインしたユーザーに置換
     st.session_state.web_service = st.session_state.web_default_service
     st.session_state.web_service["SERVICE_ID"] = st.session_state.service_id
     st.session_state.web_user = st.session_state.web_default_user
@@ -161,10 +233,15 @@ def refresh_session_states():
     st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, agent_folder_path)
     st.session_state.rag_data_list = dmc.get_rag_list()
     st.session_state.rag_data_list_selected = []
-    st.session_state.session_list = dms.get_session_list_visible(st.session_state.service_id, st.session_state.user_id)
-    st.session_state.session_inactive_list = dms.get_session_list_inactive_visible(st.session_state.service_id, st.session_state.user_id)
+    st.session_state.session_list = dms.get_session_list_visible(st.session_state.service_id, st.session_state.user_id, st.session_state.user_admin_flg)
+    st.session_state.session_inactive_list = dms.get_session_list_inactive_visible(st.session_state.service_id, st.session_state.user_id, st.session_state.user_admin_flg)
     st.session_state.session_inactive_list_selected = []
     st.session_state.session = dms.DigiMSession(dms.set_new_session_id(), "New Chat")
+    st.session_state.session_service_id, st.session_state.session_user_id = dms.get_history_ids(dms.get_session_data(st.session_state.session.session_id))
+    if st.session_state.session_service_id == "":
+        st.session_state.session_service_id = st.session_state.service_id
+    if st.session_state.session_user_id == "":
+        st.session_state.session_user_id = st.session_state.user_id
     st.session_state.time_setting = now_time.strftime("%Y/%m/%d %H:%M:%S")
     st.session_state.situation_setting = ""
     st.session_state.seq_memory = []
@@ -192,6 +269,11 @@ def refresh_session_states():
 # セッションのリフレッシュ（ヒストリーを更新するために、同一セッションIDで再度Sessionクラスを呼び出すこともある）
 def refresh_session(session_id, session_name, situation, new_session_flg=False):
     st.session_state.session = dms.DigiMSession(session_id, session_name)
+    st.session_state.session_service_id, st.session_state.session_user_id = dms.get_history_ids(dms.get_session_data(session_id))
+    if st.session_state.session_service_id == "":
+        st.session_state.session_service_id = st.session_state.service_id
+    if st.session_state.session_user_id == "":
+        st.session_state.session_user_id = st.session_state.user_id
     if new_session_flg:
         st.session_state.display_name = st.session_state.default_agent
     else:
@@ -301,10 +383,25 @@ def main():
     # セッションステートを初期化
     initialize_session_states()
 
+    # ログイン処理の実行
+    if st.session_state.login_enable_flg == "Y":
+        ensure_login()
+
     # サイドバーの設定
     with st.sidebar:
         st.title(st.session_state.web_title)
-        
+
+        # ログインユーザー情報の表示
+        if st.session_state.login_enable_flg == "Y":
+            if "login_user" in st.session_state and st.session_state.login_user:
+                lu = st.session_state.login_user
+                st.markdown(f"User: {lu.get('Name', '')}")
+                if st.button("Logout"):
+                    for key in ["login_user", "service_id", "user_id"]:
+                        if key in st.session_state:
+                            del st.session_state[key]
+                    st.rerun()
+
         # エージェントを選択（JSON)
         if agent_id_selected := st.selectbox("Select Agent:", st.session_state.agent_list, index=st.session_state.agent_list_index):
             st.session_state.agent_id = agent_id_selected
@@ -684,7 +781,7 @@ def main():
                                             for image_key, image_values in analytics_dict["knowledge_utility"]["image_files"].items():
                                                 for image_value in image_values:
                                                     st.image(st.session_state.session.session_analytics_folder_path + image_value)
-                                                    rag_category = os.path.splitext(image_value)[0].split("_")[-1]
+                                                    rag_category = re.search(r'KUtilPlot_(.+?)\.png', image_value).group(1) if re.search(r'KUtilPlot_(.+?)\.png', image_value) else None
                                                     for ak_dict in analytics_dict["knowledge_utility"]["similarity_rank"][rag_category]:
                                                         st.markdown(ak_line(ak_dict))
 
@@ -692,20 +789,21 @@ def main():
             if st.checkbox(f"Delete(seq:{k})", key="del_chat_seq"+k):
                 st.session_state.seq_memory.append(k)
 
-    # ファイルアップローダー
-    uploaded_files = st.file_uploader("Attached Files:", type=["txt", "csv", "json", "pdf", "jpg", "jpeg", "png", "mp3"], accept_multiple_files=True)
-    st.session_state.uploaded_files = uploaded_files
-    show_uploaded_files_widget(st.session_state.uploaded_files)
+    if st.session_state.session_user_id == st.session_state.user_id:
+        # ファイルアップローダー
+        uploaded_files = st.file_uploader("Attached Files:", type=["txt", "csv", "json", "pdf", "jpg", "jpeg", "png", "mp3"], accept_multiple_files=True)
+        st.session_state.uploaded_files = uploaded_files
+        show_uploaded_files_widget(st.session_state.uploaded_files)
 
-    # WEB検索の設定
-    if st.checkbox("WEB Search", value=st.session_state.web_search):
-        st.session_state.web_search = True
-    else:
-        st.session_state.web_search = False
+        # WEB検索の設定
+        if st.checkbox("WEB Search", value=st.session_state.web_search):
+            st.session_state.web_search = True
+        else:
+            st.session_state.web_search = False
 
-    # BOOKから選択
-    if "BOOK" in st.session_state.agent_data:
-        st.session_state.book_selected = st.multiselect("BOOK", [item["RAG_NAME"] for item in st.session_state.agent_data["BOOK"]])
+        # BOOKから選択
+        if "BOOK" in st.session_state.agent_data:
+            st.session_state.book_selected = st.multiselect("BOOK", [item["RAG_NAME"] for item in st.session_state.agent_data["BOOK"]])
 
     # ファイルダウンローダー
     footer_col1, footer_col2 = st.columns(2)
@@ -715,55 +813,56 @@ def main():
     footer_col2.download_button(label="Download(.md)", data=dl_data, file_name=dl_file_name, mime=dl_mime)
     
     # ユーザーの問合せ入力
-    if user_input := st.chat_input("Your Message"):
-        # 添付ファイルの設定
-        uploaded_contents = []
-        if st.session_state.uploaded_files:
-            for uploaded_file in st.session_state.uploaded_files:
-                uploaded_file_path = temp_folder_path + uploaded_file.name
-                with open(uploaded_file_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
-                uploaded_contents.append(uploaded_file_path)
+    if st.session_state.session_user_id == st.session_state.user_id:
+        if user_input := st.chat_input("Your Message"):
+            # 添付ファイルの設定
+            uploaded_contents = []
+            if st.session_state.uploaded_files:
+                for uploaded_file in st.session_state.uploaded_files:
+                    uploaded_file_path = temp_folder_path + uploaded_file.name
+                    with open(uploaded_file_path, "wb") as f:
+                        f.write(uploaded_file.getbuffer())
+                    uploaded_contents.append(uploaded_file_path)
 
-        # オーバーライト項目の設定
-        overwrite_items = {}
+            # オーバーライト項目の設定
+            overwrite_items = {}
 
-        # 知識の追加
-        add_knowledges = []
-        # BOOKの設定
-        if st.session_state.book_selected:
-            for book_data in st.session_state.agent_data["BOOK"]:
-                if book_data["RAG_NAME"] in st.session_state.book_selected:
-                    add_knowledges.append(book_data)
+            # 知識の追加
+            add_knowledges = []
+            # BOOKの設定
+            if st.session_state.book_selected:
+                for book_data in st.session_state.agent_data["BOOK"]:
+                    if book_data["RAG_NAME"] in st.session_state.book_selected:
+                        add_knowledges.append(book_data)
 
-        # シチュエーションの設定
-        situation = {}
-        situation["TIME"] = time_setting
-        situation["SITUATION"] = situation_setting
+            # シチュエーションの設定
+            situation = {}
+            situation["TIME"] = time_setting
+            situation["SITUATION"] = situation_setting
 
-        # 実行の設定
-        execution = {}
-        execution["MEMORY_USE"] = st.session_state.memory_use
-        execution["MEMORY_SAVE"] = st.session_state.memory_save
-        execution["MEMORY_SIMILARITY"] = st.session_state.memory_similarity
-        execution["MAGIC_WORD_USE"] = st.session_state.magic_word_use
-        execution["STREAM_MODE"] = st.session_state.stream_mode
-        execution["SAVE_DIGEST"] = st.session_state.save_digest
-        execution["META_SEARCH"] = st.session_state.meta_search
-        execution["RAG_QUERY_GENE"] = st.session_state.RAG_query_gene
-        execution["WEB_SEARCH"] = st.session_state.web_search
-        
-        # ユーザー入力の一時表示
-        with st.chat_message("User"):
-            st.markdown(user_input.replace("\n", "<br>"), unsafe_allow_html=True)
-        with st.chat_message(st.session_state.web_title):
-            response_placeholder = st.empty()
-            response = ""
-            for response_service_info, response_user_info, response_chunk in dme.DigiMatsuExecute_Practice(st.session_state.web_service, st.session_state.web_user, st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, add_knowledges, execution):
-                response += response_chunk
-                response_placeholder.markdown(response)
-            st.session_state.sidebar_message = ""
-            st.rerun()
+            # 実行の設定
+            execution = {}
+            execution["MEMORY_USE"] = st.session_state.memory_use
+            execution["MEMORY_SAVE"] = st.session_state.memory_save
+            execution["MEMORY_SIMILARITY"] = st.session_state.memory_similarity
+            execution["MAGIC_WORD_USE"] = st.session_state.magic_word_use
+            execution["STREAM_MODE"] = st.session_state.stream_mode
+            execution["SAVE_DIGEST"] = st.session_state.save_digest
+            execution["META_SEARCH"] = st.session_state.meta_search
+            execution["RAG_QUERY_GENE"] = st.session_state.RAG_query_gene
+            execution["WEB_SEARCH"] = st.session_state.web_search
+            
+            # ユーザー入力の一時表示
+            with st.chat_message("User"):
+                st.markdown(user_input.replace("\n", "<br>"), unsafe_allow_html=True)
+            with st.chat_message(st.session_state.web_title):
+                response_placeholder = st.empty()
+                response = ""
+                for response_service_info, response_user_info, response_chunk in dme.DigiMatsuExecute_Practice(st.session_state.web_service, st.session_state.web_user, st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, add_knowledges, execution):
+                    response += response_chunk
+                    response_placeholder.markdown(response)
+                st.session_state.sidebar_message = ""
+                st.rerun()
 
 if __name__ == "__main__":
     main()
