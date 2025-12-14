@@ -1,5 +1,4 @@
 import os
-import pytz
 import csv
 from datetime import datetime
 from dotenv import load_dotenv
@@ -17,24 +16,15 @@ rag_data_csv_path = system_setting_dict["RAG_DATA_CSV_FOLDER"]
 # system.envファイルをロードして環境変数を設定
 if os.path.exists("system.env"):
     load_dotenv("system.env")
-timezone = os.getenv("TIMEZONE")
 notion_db_mst_file = os.getenv("NOTION_MST_FILE")
 
-#タイムスタンプ文字列を時刻に変換
-def safe_parse_timestamp(timestamp_str):
-    jst = pytz.timezone(timezone)
-    try:
-        return jst.localize(datetime.strptime(timestamp_str, "%Y/%m/%d %H:%M:%S")).isoformat()
-    except ValueError:
-        return datetime.now(jst).isoformat()
-
-# フィードバックデータの取得
+# フィードバックデータの定義
 def get_feedback_data(fb_k, memo, k1, k2, v2, default_category, service_id, user_id):
     fb_data = {}
     fb_data["title"] = v2["feedback"]["name"]+"-"+fb_k+"("+v2["prompt"]["query"]["situation"]["TIME"]+")"
     fb_data["RAG_Category"] = fb_k
     fb_data["category"] = default_category
-    fb_data["create_date"] = safe_parse_timestamp(v2["prompt"]["query"]["situation"]["TIME"])
+    fb_data["create_date"] = dmu.safe_parse_timestamp(v2["prompt"]["query"]["situation"]["TIME"])
     fb_data["service_id"] = service_id
     fb_data["user_id"] = user_id
     fb_data["session_name"] = v2["setting"]["session_name"]    

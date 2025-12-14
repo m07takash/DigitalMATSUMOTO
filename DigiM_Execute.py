@@ -7,8 +7,8 @@ import pytz
 import DigiM_Util as dmu
 import DigiM_Agent as dma
 import DigiM_Context as dmc
-import DigiM_Tool as dmt
 import DigiM_Session as dms
+import DigiM_Tool as dmt
 
 # setting.yamlからフォルダパスなどを設定
 system_setting_dict = dmu.read_yaml_file("setting.yaml")
@@ -351,7 +351,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             add_info = {}
             session.set_history()
             add_info["Memories_Selected"] = session.get_memory(query_vec, model_name, tokenizer, memory_limit_tokens, memory_role, memory_priority, memory_similarity, memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
-            _, _, digest_response, digest_model_name, digest_prompt_tokens, digest_response_tokens = dmt.dialog_digest(service_info, user_info, session_id, session_name, dialog_digest_agent_file, [], add_info)
+            _, _, digest_response, digest_model_name, digest_prompt_tokens, digest_response_tokens = dmt.dialog_digest(service_info, user_info, session_id, session_name, dialog_digest_agent_file, "", [], add_info)
 
             timestamp_digest = str(datetime.now())
             
@@ -379,6 +379,9 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             "timestamp_log": timestamp_log
         }
         session.save_history(str(seq), "log", log_dict, "SUB_SEQ", str(sub_seq))
+
+        # ユーザーダイアログを未保存に設定
+        session.save_user_dialog_session("UNSAVED")
     
     yield response_service_info, user_info, "", export_files, knowledge_ref
 

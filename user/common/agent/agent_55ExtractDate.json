@@ -6,9 +6,9 @@
     "PERSONALITY": {},
     "ENGINE": {
         "LLM": {
-            "NAME":"gpt-4.1-mini",
+            "NAME":"GPT-5-nano",
             "FUNC_NAME": "generate_response_T_gpt",
-            "MODEL": "gpt-4.1-mini-2025-04-14",
+            "MODEL": "gpt-5-nano-2025-08-07",
             "PARAMETER": {},
             "TOKENIZER": "tiktoken",
             "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}

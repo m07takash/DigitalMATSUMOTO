@@ -1,8 +1,8 @@
 {
     "DISPLAY": false,
-    "DISPLAY_NAME": "RAGクエリ生成",
-    "NAME": "RAGクエリ生成",
-    "ACT": "深層心理や潜在意識を理解するAI",
+    "DISPLAY_NAME": "セッション名設定",
+    "NAME": "セッション名設定",
+    "ACT": "会話セッションの名前を設定する専用のAI",
     "PERSONALITY": {},
     "ENGINE": {
         "LLM": {
@@ -17,7 +17,7 @@
     "HABIT": {
         "DEFAULT": {
             "MAGIC_WORDS": [""],
-            "PRACTICE": "practice_11RAGQueryGenerator.json",
+            "PRACTICE": "practice_12SessionName.json",
             "ADD_KNOWLEDGE": []
         }
     },

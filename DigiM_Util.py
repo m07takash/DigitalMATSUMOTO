@@ -1,4 +1,5 @@
 import os
+import pytz
 import re
 import numpy as np
 import json
@@ -13,7 +14,6 @@ from dotenv import load_dotenv
 
 import MeCab
 from sklearn.feature_extraction.text import TfidfVectorizer
-
 from wordcloud import WordCloud
 
 import base64
@@ -25,9 +25,18 @@ from google import genai
 # system.envファイルをロードして環境変数を設定
 if os.path.exists("system.env"):
     load_dotenv("system.env")
+timezone = os.getenv("TIMEZONE")
 openai_api_key = os.getenv("OPENAI_API_KEY")
 gemini_api_key = os.getenv("GEMINI_API_KEY")
 embedding_model = os.getenv("EMBEDDING_MODEL")
+
+#タイムスタンプ文字列を時刻に変換
+def safe_parse_timestamp(timestamp_str):
+    jst = pytz.timezone(timezone)
+    try:
+        return jst.localize(datetime.strptime(timestamp_str, "%Y/%m/%d %H:%M:%S")).isoformat()
+    except ValueError:
+        return datetime.now(jst).isoformat()
 
 # ローカルファイルをStreamlitのUploadedFileと同じオブジェクト型に変換
 class ConvertedLocalFile:
