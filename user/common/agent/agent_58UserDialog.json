@@ -1,8 +1,8 @@
 {
     "DISPLAY": false,
-    "DISPLAY_NAME": "RAGクエリ生成",
-    "NAME": "RAGクエリ生成",
-    "ACT": "深層心理や潜在意識を理解するAI",
+    "DISPLAY_NAME": "ユーザーダイアログ",
+    "NAME": "ユーザーダイアログ",
+    "ACT": "会話セッションからユーザーの特徴的な主張を抽出する専用のAI",
     "PERSONALITY": {},
     "ENGINE": {
         "LLM": {
@@ -11,13 +11,13 @@
             "MODEL": "gpt-5-nano-2025-08-07",
             "PARAMETER": {},
             "TOKENIZER": "tiktoken",
-            "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            "MEMORY": {"limit": 8000, "role": "user", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
         }
     },
     "HABIT": {
         "DEFAULT": {
             "MAGIC_WORDS": [""],
-            "PRACTICE": "practice_11RAGQueryGenerator.json",
+            "PRACTICE": "practice_13UserDialog.json",
             "ADD_KNOWLEDGE": []
         }
     },

@@ -217,6 +217,97 @@ def dialog_digest(service_info, user_info, session_id, session_name, agent_file,
     return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
 
+# セッション名の生成
+def gene_session_name(service_info, user_info, session_id, session_name, agent_file, user_query, import_contents=[], add_info={}):
+    if not agent_file:
+        agent_file = "agent_57SessionName.json"
+    agent = dma.DigiM_Agent(agent_file)
+
+    model_type = "LLM"
+    model_name = agent.agent["ENGINE"][model_type]["MODEL"]
+    tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
+
+    memories_selected = []
+    if "Memories_Selected" in add_info:
+        memories_selected = add_info["Memories_Selected"]
+
+    # エージェントファイルのDEFAULTに設定しているPRACTICEの1つ目からプロンプトテンプレートを取得する
+    practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
+    practice = dmu.read_json_file(practice_folder_path+practice_file)
+    if practice["CHAINS"][0]["TYPE"] == "LLM":
+        prompt_temp_cd = practice["CHAINS"][0]["SETTING"]["PROMPT_TEMPLATE"]
+    else:
+        prompt_temp_cd = "Session Name"
+    prompt_template = agent.set_prompt_template(prompt_temp_cd)
+
+    # メモリをテキスト化
+    digest_memories_selected = [{"role": item["role"], "content": item["text"]} for item in memories_selected]
+    digest_memories_text = str(digest_memories_selected)[1:-1]
+
+    # プロンプトの設定
+    query = f'{prompt_template}\n{digest_memories_text}'
+
+    # LLMの実行
+    response = ""
+    for prompt, response_chunk, completion in agent.generate_response(model_type, query, stream_mode=False):
+        if response_chunk:
+            response += response_chunk
+    
+    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
+    response_tokens = dmu.count_token(tokenizer, model_name, response)
+    
+    response_service_info = service_info
+    response_user_info = user_info
+    
+    return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
+
+
+# ユーザーダイアログの生成(会話履歴の中におけるユーザーの特徴や意見)
+def gene_user_dialog(service_info, user_info, session_id, session_name, agent_file, user_query, import_contents=[], add_info={}):
+    if not agent_file:
+        agent_file = "agent_58UserDialog.json"
+    agent = dma.DigiM_Agent(agent_file)
+
+    model_type = "LLM"
+    model_name = agent.agent["ENGINE"][model_type]["MODEL"]
+    tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
+    memory_limit_tokens = agent.agent["ENGINE"][model_type]["MEMORY"]["limit"]
+    memory_role = agent.agent["ENGINE"][model_type]["MEMORY"]["role"]
+
+    session = dms.DigiMSession(session_id, session_name)
+    memories_selected = session.get_memory([], model_name, tokenizer, memory_limit_tokens, memory_role)
+
+    # エージェントファイルのDEFAULTに設定しているPRACTICEの1つ目からプロンプトテンプレートを取得する
+    practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
+    practice = dmu.read_json_file(practice_folder_path+practice_file)
+    if practice["CHAINS"][0]["TYPE"] == "LLM":
+        prompt_temp_cd = practice["CHAINS"][0]["SETTING"]["PROMPT_TEMPLATE"]
+    else:
+        prompt_temp_cd = "User Dialog"
+    prompt_template = agent.set_prompt_template(prompt_temp_cd)
+
+    # メモリをテキスト化
+    user_dialogs_selected = [{"role": item["role"], "content": item["text"]} for item in memories_selected if item.get("sub_seq") == "1"]
+    user_dialogs_text = str(user_dialogs_selected)[1:-1]
+
+    # プロンプトの設定
+    query = f'{prompt_template}\n{user_dialogs_text}'
+
+    # LLMの実行
+    response = ""
+    for prompt, response_chunk, completion in agent.generate_response(model_type, query, stream_mode=False):
+        if response_chunk:
+            response += response_chunk
+    
+    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
+    response_tokens = dmu.count_token(tokenizer, model_name, response)
+    
+    response_service_info = service_info
+    response_user_info = user_info
+    
+    return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
+
+
 # WEB検索(PerplexityAI)
 def WebSearch_PerplexityAI(service_info, user_info, session_id, session_name, agent_file, input, import_contents=[], add_info={}):
     if os.path.exists("system.env"):
