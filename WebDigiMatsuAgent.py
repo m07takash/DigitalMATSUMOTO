@@ -57,7 +57,7 @@ def load_config() -> AppConfig:
         timezone=os.getenv("TIMEZONE") or "Asia/Tokyo",
         login_enable_flg=os.getenv("LOGIN_ENABLE_FLG"),
         user_mst_file=os.getenv("USER_MST_FILE"),
-        user_dialog_auto_save_flg=os.getenv("USER_DIALOG_AUTO_SAVE_FLG")
+        user_dialog_auto_save_flg=os.getenv("USER_DIALOG_AUTO_SAVE_FLG"),
         web_default_service=json.loads(os.getenv("WEB_DEFAULT_SERVICE") or "{}"),
         web_default_user=json.loads(os.getenv("WEB_DEFAULT_USER") or "{}"),
         web_default_agent_file=os.getenv("WEB_DEFAULT_AGENT_FILE"),
