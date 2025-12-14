@@ -162,6 +162,19 @@ def get_active_session(session_id):
         active_flg = "Y"
     return active_flg
 
+# セッションのユーザーダイアログ保存状態を獲得する
+def get_user_dialog_session(session_id):
+    session_key = session_folder_prefix + session_id
+    session_status_path = user_folder_path + session_key + "/" + session_status_file_name
+    status_dict = {}
+    status_dict = dmu.read_yaml_file(session_status_path)
+    # user_dialogはSAVED/UNSAVED/DISCARD/NONEのいずれか
+    if "user_dialog" in status_dict:
+        user_dialog_status = status_dict["user_dialog"]
+    else:
+        user_dialog_status = "UNSAVED"
+    return user_dialog_status
+
 # シチュエーションを取得
 def get_situation(session_id):
     session_key = session_folder_prefix + session_id
@@ -183,7 +196,6 @@ def set_new_session_id():
     new_session_num = max(get_session_list())+1 if get_session_list() else 0
     new_session_id = str(new_session_num)
     return new_session_id
-
 
 # セッションクラス
 class DigiMSession:
@@ -234,6 +246,11 @@ class DigiMSession:
     def get_active_session(self):
         active_flg = get_active_session(self.session_id)
         return active_flg
+
+    # セッションのユーザーダイアログ保存状態を獲得する
+    def get_user_dialog_session(self):
+        user_dialog_status = get_user_dialog_session(self.session_id)
+        return user_dialog_status
 
     # 全ての会話履歴を獲得する
     def get_history(self):
@@ -305,7 +322,7 @@ class DigiMSession:
     # 会話メモリを獲得する（トークン制限で切り取り）
     def get_memory(self, query_vec, model_name, tokenizer, memory_limit_tokens, memory_role="both", memory_priority="latest", memory_similarity=False, memory_similarity_logic="cosine", memory_digest="Y", seq_limit="", sub_seq_limit=""):
         memories_list = []
-        memories_list_prompt = []
+        memories_list_final = []
         total_tokens = 0
         
         # アクティブな会話履歴からメモリに設定する履歴を取得
@@ -364,9 +381,9 @@ class DigiMSession:
                     memories_list_selected.append(memory_list_priority)
 
             # 最後にタイムスタンプでソート
-            memories_list_prompt = sorted(memories_list_selected, key=lambda x: datetime.strptime(x["timestamp"], "%Y-%m-%d %H:%M:%S.%f"))
+            memories_list_final = sorted(memories_list_selected, key=lambda x: datetime.strptime(x["timestamp"], "%Y-%m-%d %H:%M:%S.%f"))
         
-        return memories_list_prompt
+        return memories_list_final
 
     # ベクトルデータをセッションフォルダに保存する
     def save_vec_file(self, seq, sub_seq="1", mode="query", vec_text=[]):
@@ -393,19 +410,23 @@ class DigiMSession:
 
     # セッションのステータスを保存する
     def save_status(self, status):
-        status_dict = {"status": status}
-        
-        # セッションフォルダがなければ作成
         if not os.path.exists(self.session_folder_path):
             os.makedirs(self.session_folder_path, exist_ok=True)
-        
-        # セッションステータスをYAML形式で保存
-        #with open(self.session_status_path, 'w', encoding='utf-8') as f:
+        status_dict = {"status": status}
         dmu.save_yaml_file(status_dict, self.session_status_path)
 
     # セッションのアクティブ状態を更新する
     def save_active_session(self, active_flg):
+        if not os.path.exists(self.session_folder_path):
+            os.makedirs(self.session_folder_path, exist_ok=True)
         status_dict = {"active": active_flg}
+        dmu.save_yaml_file(status_dict, self.session_status_path)
+
+    # セッションのユーザーダイアログ保存状態を更新する
+    def save_user_dialog_session(self, user_dialog_status):
+        if not os.path.exists(self.session_folder_path):
+            os.makedirs(self.session_folder_path, exist_ok=True)
+        status_dict = {"user_dialog": user_dialog_status}
         dmu.save_yaml_file(status_dict, self.session_status_path)
 
     # 会話履歴を保存する
@@ -437,6 +458,17 @@ class DigiMSession:
         # 会話履歴を保存
         with open(self.session_file_path, 'w', encoding='utf-8') as f:
             json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
+
+    # セッション名を変更する
+    def chg_session_name(self, new_session_name):
+        if os.path.exists(self.session_file_path):
+            session_file_dict = dmu.read_json_file(self.session_file_path)
+            session_file_active_dict = {k: v for k, v in session_file_dict.items() if v["SETTING"].get("FLG") == "Y"}
+            max_seq = max_seq_dict(session_file_active_dict)
+            max_sub_seq = max_seq_dict(session_file_active_dict[max_seq])
+            session_file_dict[max_seq][max_sub_seq]["setting"]["session_name"] = new_session_name
+        with open(self.session_file_path, 'w', encoding='utf-8') as f:
+            json.dump(session_file_dict, f, ensure_ascii=False, indent=4)
 
     # 会話履歴のシーケンスを取得する
     def get_seq_history(self):
