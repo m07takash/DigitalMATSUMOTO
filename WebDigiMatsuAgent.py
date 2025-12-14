@@ -18,6 +18,7 @@ import DigiM_Context as dmc
 import DigiM_Util as dmu
 import DigiM_Tool as dmt
 import DigiM_GeneCommunication as dmgc
+import DigiM_GeneUserDialog as dmgu
 import DigiM_VAnalytics as dmva
 
 @dataclass(frozen=True)
@@ -33,6 +34,7 @@ class AppConfig:
     timezone: str
     login_enable_flg: str | None
     user_mst_file: str | None
+    user_dialog_auto_save_flg: str | None
     web_default_service: Dict[str, Any]
     web_default_user: Dict[str, Any]
     web_default_agent_file: str | None
@@ -55,6 +57,7 @@ def load_config() -> AppConfig:
         timezone=os.getenv("TIMEZONE") or "Asia/Tokyo",
         login_enable_flg=os.getenv("LOGIN_ENABLE_FLG"),
         user_mst_file=os.getenv("USER_MST_FILE"),
+        user_dialog_auto_save_flg=os.getenv("USER_DIALOG_AUTO_SAVE_FLG")
         web_default_service=json.loads(os.getenv("WEB_DEFAULT_SERVICE") or "{}"),
         web_default_user=json.loads(os.getenv("WEB_DEFAULT_USER") or "{}"),
         web_default_agent_file=os.getenv("WEB_DEFAULT_AGENT_FILE"),
@@ -323,6 +326,10 @@ def refresh_session(session_id, session_name, situation, new_session_flg=False):
     st.session_state.overwrite_flg_rag = False
     #st.rerun()
 
+# セッションリストのリフレッシュ
+def refresh_session_list(service_id, user_id):
+    st.session_state.session_list = dms.get_session_list_visible(service_id, user_id)
+
 # アップロードしたファイルの表示
 def show_uploaded_files_memory(seq_key, file_path, file_name, file_type):
     uploaded_file = file_path+file_name
@@ -454,7 +461,7 @@ def main():
 
         # 会話履歴の更新
         if side_col2.button("Refresh List", key="refresh_session_list"):
-            st.session_state.session_list = dms.get_session_list_visible(st.session_state.service_id, st.session_state.user_id)
+            refresh_session_list(st.session_state.service_id, st.session_state.user_id)
 
         # セッションの管理
         sessions_expander = st.expander("Sessions")
@@ -467,6 +474,7 @@ def main():
                     session_id_selected = session_list_selected.split("_")[0]
                     activate_session = dms.DigiMSession(session_id_selected)
                     activate_session.save_active_session("Y")
+                    activate_session.save_user_dialog_session("UNSAVED")
                 activate_sessions_str = ", ".join(st.session_state.session_inactive_list_selected)
                 st.session_state.sidebar_message = f"セッションを再表示しました({activate_sessions_str})"
                 st.rerun()
@@ -477,6 +485,8 @@ def main():
             # RAGの更新処理
             if st.button("Update RAG Data", key="update_rag"):
                 dmc.generate_rag()
+                if cfg.user_dialog_auto_save_flg == "Y":
+                    dmgu.save_user_dialogs(st.session_state.web_service, st.session_state.web_user)
                 st.session_state.sidebar_message = "RAGの更新が完了しました"
             
             # RAGの削除処理(未選択は全削除)
@@ -485,7 +495,13 @@ def main():
                 dmc.del_rag_db(st.session_state.rag_data_list_selected)
                 st.session_state.sidebar_message = "RAGを削除しました"
                 st.session_state.rag_data_list = dmc.get_rag_list()
-        
+
+            # セッションのユーザーダイアログ保存
+            if cfg.user_dialog_auto_save_flg == "N":
+                if st.button("Save User Dialog", key="save_user_dialog"):
+                    dmgu.save_user_dialogs(st.session_state.web_service, st.session_state.web_user)
+                    st.session_state.sidebar_message = "ユーザーダイアログを保存しました"
+
         st.write(st.session_state.sidebar_message)
 
         st.markdown("----")
@@ -511,6 +527,7 @@ def main():
                     if st.button(f"Del:{session_id_list}", key=f"{session_key_list}_del_btn"):
                         del_session = dms.DigiMSession(session_id_list, session_name_list)
                         del_session.save_active_session("N")
+                        del_session.save_user_dialog_session("DISCARD")
                         st.session_state.sidebar_message = f"セッションを非表示にしました({session_id_list}_{session_name_list})"
                         st.rerun()
                     num_sessions += 1
@@ -518,6 +535,11 @@ def main():
     # チャットセッション名の設定
     if session_name := st.text_input("Chat Name:", value=st.session_state.session.session_name):
         st.session_state.session = dms.DigiMSession(st.session_state.session.session_id, session_name)
+        if session_name != dms.get_session_name(st.session_state.session.session_id) and dms.get_session_name(st.session_state.session.session_id) != "":
+            if st.button("Change Session Name", key="chg_session_name"):
+                st.session_state.session.chg_session_name(session_name)
+                st.session_state.sidebar_message = "セッション名を変更しました"
+                st.rerun()
 
     # Webパーツのレイアウト
     header_col1, header_col2, header_col3, header_col4 = st.columns(4)
@@ -893,7 +915,11 @@ def main():
                 for response_service_info, response_user_info, response_chunk in dme.DigiMatsuExecute_Practice(st.session_state.web_service, st.session_state.web_user, st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, add_knowledges, execution):
                     response += response_chunk
                     response_placeholder.markdown(response)
+                if st.session_state.session.session_name == "New Chat":
+                    _, _, new_session_name, _, _, _ = dmt.gene_session_name(st.session_state.web_service, st.session_state.web_user, st.session_state.session.session_id, st.session_state.session.session_name, "", "")
+                    st.session_state.session.chg_session_name(new_session_name)
                 st.session_state.sidebar_message = ""
+                refresh_session_list(st.session_state.service_id, st.session_state.user_id)
                 st.rerun()
 
 if __name__ == "__main__":
