@@ -1,16 +1,16 @@
 {
     "DISPLAY": true,
-    "DISPLAY_NAME": "Gemini-2.5",
-    "NAME": "通常LLM(Gemini)",
-    "ACT": "通常のチャットアシスタント",
+    "DISPLAY_NAME": "Gemini-3",
+    "NAME": "通常LLM(Gemini3)",
+    "ACT": "",
     "PERSONALITY": {
         "SPEAKING_STYLE": "Polite"
     },
     "ENGINE": {
         "LLM": {
-            "NAME":"Gemini-2.5",
+            "NAME":"Gemini-3",
             "FUNC_NAME": "generate_response_T_gemini",
-            "MODEL": "gemini-2.5-pro",
+            "MODEL": "gemini-3-pro-preview",
             "PARAMETER": {},
             "TOKENIZER": "tiktoken",
             "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}

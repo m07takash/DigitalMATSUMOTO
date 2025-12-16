@@ -2,16 +2,10 @@
     "NAME": "Web Search",
     "CHAINS": [
         {
-            "TYPE": "LLM",
+            "TYPE": "TOOL",
             "SETTING": {
-                "AGENT_FILE": "USER",
-                "OVERWRITE_ITEMS": {},
-                "ADD_KNOWLEDGE": [],
-                "PROMPT_TEMPLATE": "Web Search",
-                "USER_INPUT": "USER",
-                "CONTENTS": "USER",
-                "SITUATION": "USER",
-                "MEMORY_USE": true
+                "FUNC_NAME": "WebSearch_PerplexityAI",
+                "USER_INPUT": "USER"
             }
         }
     ]

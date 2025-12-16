@@ -32,7 +32,7 @@
         "bucket": "Sample03_Feedback",
         "file_path": "user/common/csv/",
         "file_name": "Sample03_Feedback.csv",
-        "field_items": ["speaker", "create_date", "feedback"],
+        "field_items": ["emp_code", "speaker", "create_date", "feedback"],
         "category_items": [],
         "title": ["speaker", "create_date"],
         "key_text": ["speaker", "feedback"],
@@ -69,5 +69,18 @@
         "title": ["title"],
         "key_text": ["memo"],
         "value_text": ["memo"]
+    },
+    "User_Dialog":{
+        "active": "Y",
+        "input" : "csv",
+        "data_type" : "chromadb",
+        "bucket": "User_Dialog",
+        "file_path": "user/common/csv/",
+        "file_name": "Sample10_UserDialog.csv",
+        "field_items": ["title", "flg", "create_date", "service_id", "user_id", "session_id", "session_name", "seq", "sub_seq", "dialog"],
+        "category_items": [],
+        "title": ["title"],
+        "key_text": ["dialog"],
+        "value_text": ["dialog"]
     }
 }

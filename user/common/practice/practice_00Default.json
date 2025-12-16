@@ -6,7 +6,7 @@
             "SETTING": {
                 "AGENT_FILE": "USER",
                 "OVERWRITE_ITEMS": "USER",
-                "ADD_KNOWLEDGE": [],
+                "ADD_KNOWLEDGE": ["USER"],
                 "PROMPT_TEMPLATE": "Normal Template",
                 "USER_INPUT": "USER",
                 "CONTENTS": "USER",
