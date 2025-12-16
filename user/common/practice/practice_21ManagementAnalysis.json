@@ -1,0 +1,13 @@
+{
+    "NAME": "ManagementAnalysis",
+    "CHAINS": [
+        {
+            "TYPE": "TOOL",
+            "SETTING": {
+                "AGENT_FILE": "USER",
+                "USER_INPUT": "USER",
+                "FUNC_NAME": "management_analysis"
+            }
+        }
+    ]
+}

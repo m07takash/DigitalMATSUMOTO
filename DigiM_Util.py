@@ -1,4 +1,5 @@
 import os
+import pytz
 import re
 import numpy as np
 import json
@@ -13,7 +14,6 @@ from dotenv import load_dotenv
 
 import MeCab
 from sklearn.feature_extraction.text import TfidfVectorizer
-
 from wordcloud import WordCloud
 
 import base64
@@ -25,9 +25,18 @@ from google import genai
 # system.envファイルをロードして環境変数を設定
 if os.path.exists("system.env"):
     load_dotenv("system.env")
+timezone = os.getenv("TIMEZONE")
 openai_api_key = os.getenv("OPENAI_API_KEY")
 gemini_api_key = os.getenv("GEMINI_API_KEY")
 embedding_model = os.getenv("EMBEDDING_MODEL")
+
+#タイムスタンプ文字列を時刻に変換
+def safe_parse_timestamp(timestamp_str):
+    jst = pytz.timezone(timezone)
+    try:
+        return jst.localize(datetime.strptime(timestamp_str, "%Y/%m/%d %H:%M:%S")).isoformat()
+    except ValueError:
+        return datetime.now(jst).isoformat()
 
 # ローカルファイルをStreamlitのUploadedFileと同じオブジェクト型に変換
 class ConvertedLocalFile:
@@ -117,9 +126,28 @@ def read_yaml_file(file_name, folder_path=""):
 
 # YAMLファイルの保存
 def save_yaml_file(data, file_name, folder_path=""):
+    current_data = read_yaml_file(file_name, folder_path)
+    current_data.update(data)
     file_path = folder_path + file_name
-    with open(file_path, 'w', encoding="utf-8") as file:
-        yaml.dump(data, file, allow_unicode=True)
+    with open(file_path, 'w', encoding="utf-8") as f:
+#        yaml.dump(data, file, allow_unicode=True)
+        yaml.dump(current_data, f, allow_unicode=True)
+
+# MP3ファイルをテキストに変換
+def mp3_to_text(file_name, folder_path=""):
+    client = OpenAI(api_key=openai_api_key)
+    file_path = folder_path + file_name
+    if os.path.exists(file_path):
+        with open(file_path, "rb") as audio_file:
+            transcript = client.audio.transcriptions.create(
+                model="whisper-1",
+                file=audio_file,
+                language="ja"
+            )
+        data = transcript.text
+    else:
+        data = ""
+    return data
 
 # 画像ファイルをbase64でエンコード　
 def encode_image_file(image_path):
@@ -154,7 +182,19 @@ def convert_to_ymd(date_str, date_format='%Y-%m-%d'):
 def embed_text(text):
     openai.api_key = openai_api_key
     openai_client = OpenAI()
-    response = openai_client.embeddings.create(model=embedding_model, input=text)
+
+    # 埋め込みベクトル化モデルの最大コンテキストウィンドウを設定
+    max_tokens = 8192
+
+    # 最大トークンで入力を切り取り
+    enc = tiktoken.encoding_for_model(embedding_model)    
+    tokens = enc.encode(text)
+    if len(tokens) > max_tokens:
+        tokens = tokens[:max_tokens]
+    safe_text = enc.decode(tokens)
+    
+    # 埋め込みベクトル化
+    response = openai_client.embeddings.create(model=embedding_model, input=safe_text)
     response_vec = response.data[0].embedding    
     return response_vec
 

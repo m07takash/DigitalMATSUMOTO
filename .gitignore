@@ -167,8 +167,7 @@ VAnalytics*
 user/common/agent/*.json
 !user/common/agent/agent_X0Sample.json
 !user/common/agent/agent_1*Default*.json
-!user/common/agent/agent_21EthicalCheck.json
-!user/common/agent/agent_22SenryuSensei.json
+!user/common/agent/agent_2*.json
 !user/common/agent/agent_5*.json
 user/common/agent/character/*.txt
 !user/common/agent/character/Sample.txt
@@ -183,6 +182,8 @@ user/common/mst/*
 user/common/practice/*
 !user/common/practice/practice_0*.json
 !user/common/practice/practice_1*.json
+!user/common/practice/practice_2*.json
+!user/common/practice/practice_3*.json
 
 # DigiM Folder(rag)
 user/common/rag/chromadb/*
@@ -203,6 +204,7 @@ user/common/temp/*
 !user/common/temp/tempファイルの格納先
 test/*
 !test/Sample*.xlsx
+!test/Tool*.xlsx
 backup/
 
 # nohup

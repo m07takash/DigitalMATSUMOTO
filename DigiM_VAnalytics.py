@@ -27,8 +27,18 @@ def genLLMAgentSimple(service_info, user_info, session_id, session_name, agent_f
     return response_service_info, response_user_info, response, model_name, export_contents, knowledge_ref
 
 # 知識参照度と知識活用度の分析
-def analytics_knowledge(title, reference, analytics_file_path):
+def analytics_knowledge(title, reference, analytics_file_path, ak_mode="Default"):
     df = pd.DataFrame(reference)
+
+    # 正規化
+    if ak_mode == "Norm(All)":
+        max_val_Q = df["similarity_Q"].max()
+        max_val_A = df["similarity_A"].max()
+        df["similarity_Q"] = df["similarity_Q"]/max_val_Q
+        df["similarity_A"] = df["similarity_A"]/max_val_A
+    elif ak_mode == "Norm(Group)":
+        df["similarity_Q"] = df["similarity_Q"] / df.groupby("rag")["similarity_Q"].transform("max")
+        df["similarity_A"] = df["similarity_A"] / df.groupby("rag")["similarity_A"].transform("max")
 
     df['knowledge_utility'] = round(df['similarity_Q'] - df['similarity_A'], 3)
     file_title = title[:30]
@@ -104,8 +114,22 @@ def analytics_knowledge(title, reference, analytics_file_path):
         # Calculate positions for the bars
         y_positions = range(len(group))
         
-        q_colors = ["blue" if mode == "NORMAL" else "deepskyblue" for mode in group['QUERY_MODE']]
-        
+#        q_colors = ["blue" if mode == "NORMAL" else "deepskyblue" for mode in group['QUERY_MODE']]
+        color_map = {
+            "1": ("blue", "lightskyblue"),
+            "2": ("navy", "cornflowerblue"),
+            "default": ("deepskyblue", "powderblue")
+        }
+
+        q_colors = [
+            (
+                color_map.get(seq, color_map["default"])[0]
+                if mode == "NORMAL"
+                else color_map.get(seq, color_map["default"])[1]
+            )
+            for seq, mode in zip(group["QUERY_SEQ"], group["QUERY_MODE"])
+        ]
+
         ax.barh([y - bar_height / 2 for y in y_positions], group['similarity_Q'], height=bar_height, color=q_colors, label='similarity_Q')
         ax.barh([y + bar_height / 2 for y in y_positions], group['similarity_A'], height=bar_height, color='orange', label='similarity_A')
         
