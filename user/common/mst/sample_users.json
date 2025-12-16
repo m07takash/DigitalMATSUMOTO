@@ -1,0 +1,26 @@
+{
+  "ADMIN0001": {
+    "Name": "Administrator",
+    "PW": "password",
+    "Group": "Admin",
+    "Agent": "DEFAULT"
+  },
+  "USER0001": {
+    "Name": "Consult Oh",
+    "PW": "password",
+    "Group": "User",
+    "Agent": "DEFAULT"
+  },
+  "USER0002": {
+    "Name": "Normal Man",
+    "PW": "password",
+    "Group": "User",
+    "Agent": "agent_13DefaultGemini.json"
+  },
+  "USER0003": {
+    "Name": "Senryu Seito",
+    "PW": "password",
+    "Group": "User",
+    "Agent": "agent_22SenryuSensei.json"
+  }
+}
