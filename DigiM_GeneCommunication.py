@@ -1,5 +1,4 @@
 import os
-import pytz
 import csv
 from datetime import datetime
 from dotenv import load_dotenv
@@ -17,24 +16,15 @@ rag_data_csv_path = system_setting_dict["RAG_DATA_CSV_FOLDER"]
 # system.envファイルをロードして環境変数を設定
 if os.path.exists("system.env"):
     load_dotenv("system.env")
-timezone = os.getenv("TIMEZONE")
 notion_db_mst_file = os.getenv("NOTION_MST_FILE")
 
-#タイムスタンプ文字列を時刻に変換
-def safe_parse_timestamp(timestamp_str):
-    jst = pytz.timezone(timezone)
-    try:
-        return jst.localize(datetime.strptime(timestamp_str, "%Y/%m/%d %H:%M:%S")).isoformat()
-    except ValueError:
-        return datetime.now(jst).isoformat()
-
-# フィードバックデータの取得
+# フィードバックデータの定義
 def get_feedback_data(fb_k, memo, k1, k2, v2, default_category, service_id, user_id):
     fb_data = {}
     fb_data["title"] = v2["feedback"]["name"]+"-"+fb_k+"("+v2["prompt"]["query"]["situation"]["TIME"]+")"
     fb_data["RAG_Category"] = fb_k
     fb_data["category"] = default_category
-    fb_data["create_date"] = safe_parse_timestamp(v2["prompt"]["query"]["situation"]["TIME"])
+    fb_data["create_date"] = dmu.safe_parse_timestamp(v2["prompt"]["query"]["situation"]["TIME"])
     fb_data["service_id"] = service_id
     fb_data["user_id"] = user_id
     fb_data["session_name"] = v2["setting"]["session_name"]    
@@ -43,7 +33,7 @@ def get_feedback_data(fb_k, memo, k1, k2, v2, default_category, service_id, user
     fb_data["query"] = v2["prompt"]["query"]["input"]
     situation = v2["prompt"]["query"]["situation"]["SITUATION"]
     if situation:
-        query += "\n"+situation
+        fb_data["query"] = fb_data["query"]+"\n"+situation
     fb_data["response"] = v2["response"]["text"]
     fb_data["memo"] = memo
     return fb_data
@@ -132,6 +122,10 @@ def create_communication_data(session_id, agent_file):
     for k1, v1 in history_dict.items():
         for k2, v2 in v1.items():
             if k2 == "SETTING":
+                if v2["FLG"] == "N":
+                    continue
+                if "service_info" not in v2.keys():
+                    continue
                 service_id = v2["service_info"]["SERVICE_ID"]
                 user_id = v2["user_info"]["USER_ID"]
             if k2 != "SETTING":

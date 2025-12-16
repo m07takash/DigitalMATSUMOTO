@@ -58,6 +58,43 @@ def set_normal_agent(agent):
     dmu.update_dict(agent.agent, overwrite_items)
     agent.set_property(agent.agent)
 
+
+# 通常LLMの実行
+def generate_pureLLM(base_agent, query, memories_selected=[], prompt_temp_cd="No Template"):
+    agent = base_agent
+
+    model_type = "LLM"
+    model_name = agent.agent["ENGINE"][model_type]["MODEL"]
+    tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
+    
+    # 通常LLMに設定
+    set_normal_agent(agent)
+    
+    # エージェントに設定されるプロンプトテンプレートを設定
+    prompt_template = agent.set_prompt_template(prompt_temp_cd)
+
+    # プロンプトの設定
+    prompt = f'{prompt_template}{query}'
+
+    # LLMの実行
+    response = ""
+    for prompt, response_chunk, completion in agent.generate_response(model_type, prompt, memories_selected):
+        if response_chunk:
+            response += response_chunk
+    
+    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
+    response_tokens = dmu.count_token(tokenizer, model_name, response)
+    
+    return response, model_name, prompt_tokens, response_tokens
+
+
+# 通常LLMの実行(外部呼出)
+def ext_generate_pureLLM(agent_file, query, memories_selected=[], prompt_temp_cd="No Template"):
+    base_agent = DigiM_Agent(agent_file)
+    response, model_name, prompt_tokens, response_tokens = generate_pureLLM(base_agent, query, memories_selected=[], prompt_temp_cd="No Template")
+    return response, model_name, prompt_tokens, response_tokens
+
+
 # Agent
 class DigiM_Agent:
     def __init__(self, agent_file):
@@ -75,6 +112,8 @@ class DigiM_Agent:
         self.skill = self.agent["SKILL"]
         self.communication = self.agent["COMMUNICATION"]
         self.support_agent = self.agent["SUPPORT_AGENT"]
+        self.define_code = self.agent["DEFINE_CODE"] if "DEFINE_CODE" in self.agent else {}
+        self.book = self.agent["BOOK"] if "BOOK" in self.agent else []
         self.system_prompt = self.set_system_prompt()
 
     # システムプロンプトの設定
@@ -130,13 +169,19 @@ class DigiM_Agent:
     
     # ナレッジコンテキスト(RAG)の生成
     def set_knowledge_context(self, query, query_vecs=[], exec_info={}, meta_searches=[]):
-        knowledge_context, knowledge_selected = dmc.create_rag_context(query, query_vecs=query_vecs, rags=self.knowledge, exec_info=exec_info, meta_searches=meta_searches)
+        #define_code = self.agent["DEFINE_CODE"] if "DEFINE_CODE" in self.agent else {}
+        knowledge_context, knowledge_selected = dmc.create_rag_context(query, query_vecs=query_vecs, rags=self.knowledge, exec_info=exec_info, meta_searches=meta_searches, define_code=self.define_code)
         return knowledge_context, knowledge_selected
 
     # LLMの実行
     def generate_response(self, model_type, query, memories=[], image_paths={}, stream_mode=True):
         for prompt, response, completion in dmfm.call_function_by_name(self.agent["ENGINE"][model_type]["FUNC_NAME"], query, self.system_prompt, self.agent["ENGINE"][model_type], memories, image_paths, self.skill, stream_mode):
             yield prompt, response, completion
+
+    # 通常LLMの実行(ペルソナなし)
+    def generate_pureLLM(self, query, memories=[], prompt_temp_cd="No Template"):
+        response, model_name, prompt_tokens, response_tokens = generate_pureLLM(self.agent, query, memories, prompt_temp_cd)
+        return response, model_name, prompt_tokens, response_tokens
 
     # クエリに含まれているコマンド(MAGIC_WORD)でエージェントモードを変更【マジックワードはタスクに移行】
     def set_practice_by_command(self, query):

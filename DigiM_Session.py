@@ -37,15 +37,44 @@ def get_session_list():
     session_nums.sort()
     return session_nums
 
+# 無効セッションの一覧を獲得
+def get_session_list_inactive():
+    session_list = []
+    session_nums = get_session_list()
+    for session_num in session_nums:
+        session_id = str(session_num)
+        session_active_flg = get_active_session(session_id)
+        if session_active_flg == "N":
+            session_name = get_session_name(session_id)
+            session_list.append([session_num, session_name])
+    session_list_sorted = sorted(session_list, key=lambda x: x[0], reverse=True)
+    return session_list_sorted
+
 # セッションの一覧を獲得(画面用)
-def get_session_list_visible():
+def get_session_list_visible(input_service_id, input_user_id, admin_flg="N"):
     session_list = []
     session_nums = get_session_list()
     for session_num in session_nums:
         session_id = str(session_num)
         session_file_dict = get_session_data(session_id)
-        last_update_date = get_history_update_date(session_file_dict)
-        session_list.append([session_num, last_update_date])
+        service_id, user_id = get_history_ids(session_file_dict)
+        if admin_flg=="Y" or (input_service_id == service_id and input_user_id == user_id):
+            last_update_date = get_history_update_date(session_file_dict)
+            session_list.append([session_num, last_update_date])
+    session_list_sorted = sorted(session_list, key=lambda x: x[1], reverse=True)
+    return session_list_sorted
+
+# 無効セッションの一覧を獲得(画面用)
+def get_session_list_inactive_visible(input_service_id, input_user_id, admin_flg="N"):
+    session_list = []
+    session_nums = [x[0] for x in get_session_list_inactive()]
+    for session_num in session_nums:
+        session_id = str(session_num)
+        session_file_dict = get_session_data(session_id)
+        service_id, user_id = get_history_ids(session_file_dict)
+        if admin_flg=="Y" or (input_service_id == service_id and input_user_id == user_id):
+            last_update_date = get_history_update_date(session_file_dict)
+            session_list.append([session_num, last_update_date])
     session_list_sorted = sorted(session_list, key=lambda x: x[1], reverse=True)
     return session_list_sorted
 
@@ -80,6 +109,18 @@ def get_session_name(session_id):
 
     return session_name
 
+# 会話履歴のサービス名とユーザー名を取得
+def get_history_ids(chat_history_active_dict):
+    service_id = ""
+    user_id = ""
+    if chat_history_active_dict:
+        max_seq = max(chat_history_active_dict.keys(), key=int)
+        if "service_info" in chat_history_active_dict[max_seq]["SETTING"]:
+            service_id = chat_history_active_dict[max_seq]["SETTING"]["service_info"]["SERVICE_ID"]
+        if "user_info" in chat_history_active_dict[max_seq]["SETTING"]:
+            user_id = chat_history_active_dict[max_seq]["SETTING"]["user_info"]["USER_ID"]    
+    return service_id, user_id
+
 # 会話履歴の最終更新日を取得
 def get_history_update_date(chat_history_active_dict):
     max_seq = max(chat_history_active_dict.keys(), key=int)
@@ -109,6 +150,31 @@ def get_agent_file(session_id):
 
     return agent_file
 
+# セッションのアクティブ状態を獲得する
+def get_active_session(session_id):
+    session_key = session_folder_prefix + session_id
+    session_status_path = user_folder_path + session_key + "/" + session_status_file_name
+    status_dict = {}
+    status_dict = dmu.read_yaml_file(session_status_path)
+    if "active" in status_dict:
+        active_flg = status_dict["active"]
+    else:
+        active_flg = "Y"
+    return active_flg
+
+# セッションのユーザーダイアログ保存状態を獲得する
+def get_user_dialog_session(session_id):
+    session_key = session_folder_prefix + session_id
+    session_status_path = user_folder_path + session_key + "/" + session_status_file_name
+    status_dict = {}
+    status_dict = dmu.read_yaml_file(session_status_path)
+    # user_dialogはSAVED/UNSAVED/DISCARD/NONEのいずれか
+    if "user_dialog" in status_dict:
+        user_dialog_status = status_dict["user_dialog"]
+    else:
+        user_dialog_status = "UNSAVED"
+    return user_dialog_status
+
 # シチュエーションを取得
 def get_situation(session_id):
     session_key = session_folder_prefix + session_id
@@ -135,7 +201,7 @@ def set_new_session_id():
 class DigiMSession:
     def __init__(self, session_id="", session_name=""):
         self.session_id = session_id if session_id else set_new_session_id()
-        self.session_name = session_name
+        self.session_name = session_name if session_name else get_session_name(self.session_id)
         self.session_folder_path = user_folder_path + session_folder_prefix + self.session_id +"/" 
         self.session_vec_folder_path = user_folder_path + session_folder_prefix + self.session_id +"/vecs/" 
         self.session_file_path = self.session_folder_path + session_file_name
@@ -175,6 +241,16 @@ class DigiMSession:
         else:
             status = "UNLOCKED"
         return status
+
+    # セッションのアクティブ状態を獲得する
+    def get_active_session(self):
+        active_flg = get_active_session(self.session_id)
+        return active_flg
+
+    # セッションのユーザーダイアログ保存状態を獲得する
+    def get_user_dialog_session(self):
+        user_dialog_status = get_user_dialog_session(self.session_id)
+        return user_dialog_status
 
     # 全ての会話履歴を獲得する
     def get_history(self):
@@ -246,7 +322,7 @@ class DigiMSession:
     # 会話メモリを獲得する（トークン制限で切り取り）
     def get_memory(self, query_vec, model_name, tokenizer, memory_limit_tokens, memory_role="both", memory_priority="latest", memory_similarity=False, memory_similarity_logic="cosine", memory_digest="Y", seq_limit="", sub_seq_limit=""):
         memories_list = []
-        memories_list_prompt = []
+        memories_list_final = []
         total_tokens = 0
         
         # アクティブな会話履歴からメモリに設定する履歴を取得
@@ -281,7 +357,7 @@ class DigiMSession:
                                     similarity_prompt = dmu.calculate_similarity_vec(query_vec, v2["prompt"]["query"]["vec_text"], memory_similarity_logic)
                                 memories_list.append({"seq": k, "sub_seq": k2, "type": v2["prompt"]["role"], "role": v2["prompt"]["role"], "timestamp": v2["prompt"]["timestamp"], "token": v2["prompt"]["query"]["token"], "similarity_prompt": similarity_prompt, "text": v2["prompt"]["query"]["text"], "vec_text": v2["prompt"]["query"]["vec_text"]})
                         if memory_role in ["both", "assistant"]:
-                            if v2["prompt"]["role"] == "assistant":
+                            if v2["response"]["role"] == "assistant":
                                 if memory_similarity:
                                     v2["response"]["vec_text"] = self.get_vec_file(k, k2, "response")
                                     similarity_prompt = dmu.calculate_similarity_vec(query_vec, v2["response"]["vec_text"], memory_similarity_logic)
@@ -305,9 +381,9 @@ class DigiMSession:
                     memories_list_selected.append(memory_list_priority)
 
             # 最後にタイムスタンプでソート
-            memories_list_prompt = sorted(memories_list_selected, key=lambda x: datetime.strptime(x["timestamp"], "%Y-%m-%d %H:%M:%S.%f"))
+            memories_list_final = sorted(memories_list_selected, key=lambda x: datetime.strptime(x["timestamp"], "%Y-%m-%d %H:%M:%S.%f"))
         
-        return memories_list_prompt
+        return memories_list_final
 
     # ベクトルデータをセッションフォルダに保存する
     def save_vec_file(self, seq, sub_seq="1", mode="query", vec_text=[]):
@@ -334,15 +410,24 @@ class DigiMSession:
 
     # セッションのステータスを保存する
     def save_status(self, status):
-        status_dict = {"status": status}
-        
-        # セッションフォルダがなければ作成
         if not os.path.exists(self.session_folder_path):
             os.makedirs(self.session_folder_path, exist_ok=True)
-        
-        # セッションステータスをYAML形式で保存
-        with open(self.session_status_path, 'w', encoding='utf-8') as f:
-            dmu.save_yaml_file(status_dict, self.session_status_path)
+        status_dict = {"status": status}
+        dmu.save_yaml_file(status_dict, self.session_status_path)
+
+    # セッションのアクティブ状態を更新する
+    def save_active_session(self, active_flg):
+        if not os.path.exists(self.session_folder_path):
+            os.makedirs(self.session_folder_path, exist_ok=True)
+        status_dict = {"active": active_flg}
+        dmu.save_yaml_file(status_dict, self.session_status_path)
+
+    # セッションのユーザーダイアログ保存状態を更新する
+    def save_user_dialog_session(self, user_dialog_status):
+        if not os.path.exists(self.session_folder_path):
+            os.makedirs(self.session_folder_path, exist_ok=True)
+        status_dict = {"user_dialog": user_dialog_status}
+        dmu.save_yaml_file(status_dict, self.session_status_path)
 
     # 会話履歴を保存する
     def save_history(self, seq, chat_dict_key, chat_dict, level="SEQ", sub_seq="1"):
@@ -373,6 +458,17 @@ class DigiMSession:
         # 会話履歴を保存
         with open(self.session_file_path, 'w', encoding='utf-8') as f:
             json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
+
+    # セッション名を変更する
+    def chg_session_name(self, new_session_name):
+        if os.path.exists(self.session_file_path):
+            session_file_dict = dmu.read_json_file(self.session_file_path)
+            session_file_active_dict = {k: v for k, v in session_file_dict.items() if v["SETTING"].get("FLG") == "Y"}
+            max_seq = max_seq_dict(session_file_active_dict)
+            max_sub_seq = max_seq_dict(session_file_active_dict[max_seq])
+            session_file_dict[max_seq][max_sub_seq]["setting"]["session_name"] = new_session_name
+        with open(self.session_file_path, 'w', encoding='utf-8') as f:
+            json.dump(session_file_dict, f, ensure_ascii=False, indent=4)
 
     # 会話履歴のシーケンスを取得する
     def get_seq_history(self):
@@ -471,7 +567,19 @@ class DigiMSession:
             chat_detail_info += "\n【コンテンツコンテキスト】\n"
             for content_dict in chat_history_dict_seq["prompt"]["query"]["contents"]:
                 chat_detail_info += content_dict["context"]+"\n"
-                
+
+            chat_detail_info += "\n【WEB検索結果】"
+            if "web_search" in chat_history_dict_seq["prompt"]:
+                web_dict = chat_history_dict_seq["prompt"]["web_search"]
+                if web_dict:
+                    chat_detail_info += web_dict["web_context"]+"\n"
+                    chat_detail_info += "参考URL：\n"
+                    for url in web_dict["urls"]:
+                        url_title = url.get("title") or ""
+                        url_date = url.get("date") or ""
+                        url_link = url.get("url") or ""
+                        chat_detail_info += f"{url_title}({url_date}){url_link}\n"
+                        
         return chat_detail_info
 
     # コンテンツファイルを保存する
