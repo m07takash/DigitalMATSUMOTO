@@ -1,17 +1,15 @@
 {
     "DISPLAY": true,
-    "DISPLAY_NAME": "Claude-Sonnet-4.5",
-    "NAME": "通常LLM(ClaudeSonnet4.5)",
+    "DISPLAY_NAME": "Grok-4-Fast-Reasoning",
+    "NAME": "通常LLM(Grok4FastReasoning)",
     "ACT": "",
-    "PERSONALITY": {
-        "SPEAKING_STYLE": "Polite"
-    },
+    "PERSONALITY": {},
     "ENGINE": {
         "LLM": {
-            "NAME":"Claude-Sonnet-4.5",
-            "FUNC_NAME": "generate_response_T_claude",
-            "MODEL": "claude-sonnet-4-5",
-            "PARAMETER": {"max_tokens": 20000},
+            "NAME":"Grok-4-Fast-Reasoning",
+            "FUNC_NAME": "generate_response_T_grok",
+            "MODEL": "grok-4-fast-reasoning",
+            "PARAMETER": {},
             "TOKENIZER": "tiktoken",
             "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
         }
