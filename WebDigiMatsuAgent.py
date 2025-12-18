@@ -327,8 +327,9 @@ def refresh_session(session_id, session_name, situation, new_session_flg=False):
     #st.rerun()
 
 # セッションリストのリフレッシュ
-def refresh_session_list(service_id, user_id):
-    st.session_state.session_list = dms.get_session_list_visible(service_id, user_id)
+def refresh_session_list(service_id, user_id, user_admin_flg):
+    st.session_state.session_list = dms.get_session_list_visible(service_id, user_id, user_admin_flg)
+    st.session_state.session_inactive_list = dms.get_session_list_inactive_visible(service_id, user_id, user_admin_flg)
 
 # アップロードしたファイルの表示
 def show_uploaded_files_memory(seq_key, file_path, file_name, file_type):
@@ -461,7 +462,7 @@ def main():
 
         # 会話履歴の更新
         if side_col2.button("Refresh List", key="refresh_session_list"):
-            refresh_session_list(st.session_state.service_id, st.session_state.user_id)
+            refresh_session_list(st.session_state.service_id, st.session_state.user_id, st.session_state.user_admin_flg)
 
         # セッションの管理
         sessions_expander = st.expander("Sessions")
@@ -919,7 +920,7 @@ def main():
                     _, _, new_session_name, _, _, _ = dmt.gene_session_name(st.session_state.web_service, st.session_state.web_user, st.session_state.session.session_id, st.session_state.session.session_name, "", "")
                     st.session_state.session.chg_session_name(new_session_name)
                 st.session_state.sidebar_message = ""
-                refresh_session_list(st.session_state.service_id, st.session_state.user_id)
+                refresh_session_list(st.session_state.service_id, st.session_state.user_id, st.session_state.user_admin_flg)
                 st.rerun()
 
 if __name__ == "__main__":
