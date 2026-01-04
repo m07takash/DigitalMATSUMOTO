@@ -7,6 +7,7 @@ import uvicorn
 
 import DigiM_Session as dms
 import DigiM_Execute as dme
+import DigiM_Tool as dmt
 
 # system.envファイルをロードして環境変数を設定
 load_dotenv("system.env")
@@ -38,9 +39,9 @@ class InputData(BaseModel):
 def exec_function(service_info: dict, user_info: dict, session_id: str, session_name: str, user_input: str, situation: dict, agent_file: str, execution: dict) -> tuple[dict, dict, str, str, str]:
     # セッションの設定（新規でセッションIDを発番）
     if not session_id: 
-        session_id = dms.set_new_session_id()
-    if not session_name:
-        session_name = f"(User:{user_info['USER_ID']}){api_default_session_name}"
+        session_id = "API"+ dms.set_new_session_id()
+#    if not session_name:
+#        session_name = f"(User:{user_info['USER_ID']}){api_default_session_name}"
     
     # 実行の設定
     if not execution or "LAST_ONLY" not in execution:
@@ -59,7 +60,13 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
         in_execution=execution
     ):
         response += response_chunk
-    
+
+    if not session_name:
+        session = dms.DigiMSession(session_id, session_name)
+        _, _, new_session_name, _, _, _ = dmt.gene_session_name(service_info, user_info, session.session_id, session.session_name, "", user_input)
+        session_name = f"(User:{user_info['USER_ID']}){new_session_name}"
+        session.chg_session_name(session_name)
+
     return response_service_info, response_user_info, session_id, session_name, response
 
 @app.post("/run_function")

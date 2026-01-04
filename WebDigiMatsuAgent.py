@@ -272,7 +272,8 @@ def refresh_session_states():
     st.session_state.session_inactive_list = dms.get_session_list_inactive_visible(st.session_state.service_id, st.session_state.user_id, st.session_state.user_admin_flg)
     st.session_state.session_inactive_list_selected = []
     st.session_state.session = dms.DigiMSession(dms.set_new_session_id(), "New Chat")
-    st.session_state.session_service_id, st.session_state.session_user_id = dms.get_history_ids(dms.get_session_data(st.session_state.session.session_id))
+#    st.session_state.session_service_id, st.session_state.session_user_id = dms.get_history_ids(dms.get_session_data(st.session_state.session.session_id))
+    st.session_state.session_service_id, st.session_state.session_user_id = dms.get_ids(st.session_state.session.session_id)
     if st.session_state.session_service_id == "":
         st.session_state.session_service_id = st.session_state.service_id
     if st.session_state.session_user_id == "":
@@ -304,7 +305,8 @@ def refresh_session_states():
 # セッションのリフレッシュ（ヒストリーを更新するために、同一セッションIDで再度Sessionクラスを呼び出すこともある）
 def refresh_session(session_id, session_name, situation, new_session_flg=False):
     st.session_state.session = dms.DigiMSession(session_id, session_name)
-    st.session_state.session_service_id, st.session_state.session_user_id = dms.get_history_ids(dms.get_session_data(session_id))
+#    st.session_state.session_service_id, st.session_state.session_user_id = dms.get_history_ids(dms.get_session_data(session_id))
+    st.session_state.session_service_id, st.session_state.session_user_id = dms.get_ids(session_id)
     if st.session_state.session_service_id == "":
         st.session_state.session_service_id = st.session_state.service_id
     if st.session_state.session_user_id == "":
@@ -330,6 +332,7 @@ def refresh_session(session_id, session_name, situation, new_session_flg=False):
 def refresh_session_list(service_id, user_id, user_admin_flg):
     st.session_state.session_list = dms.get_session_list_visible(service_id, user_id, user_admin_flg)
     st.session_state.session_inactive_list = dms.get_session_list_inactive_visible(service_id, user_id, user_admin_flg)
+    st.session_state.session_inactive_list_selected = []
 
 # アップロードしたファイルの表示
 def show_uploaded_files_memory(seq_key, file_path, file_name, file_type):
@@ -469,7 +472,7 @@ def main():
         with sessions_expander:
             num_session_visible = st.number_input(label="Visible Sessions", value=5, step=1, format="%d")
             st.session_state.session_inactive_list = dms.get_session_list_inactive()
-            st.session_state.session_inactive_list_selected = st.multiselect("Activate Sessions", [f"{str(item[0])}_{item[1]}" for item in st.session_state.session_inactive_list])
+            st.session_state.session_inactive_list_selected = st.multiselect("Activate Sessions", [f"{item['id']}_{item['name']}" for item in st.session_state.session_inactive_list])
             if st.button("Activate", key="activate_sessions"):
                 for session_list_selected in st.session_state.session_inactive_list_selected:
                     session_id_selected = session_list_selected.split("_")[0]
@@ -508,16 +511,19 @@ def main():
         st.markdown("----")
         # セッションリストの表示
         num_sessions = 0
-        for session_num, last_update_date in st.session_state.session_list:
+        for session_dict in st.session_state.session_list:
             if num_session_visible > num_sessions:
-                session_id_list = str(session_num)
+                session_id_list = session_dict["id"]
                 session_key_list = session_folder_prefix + session_id_list
                 session_list = dms.DigiMSession(session_id_list)
                 session_name_list = session_list.session_name
-#                session_name_list = dms.get_session_name(session_id_list)
                 session_active_flg = session_list.get_active_session()
                 if session_active_flg != "N":
-                    session_name_btn = session_id_list +"_"+ session_name_list[:10]
+                    if bool(re.fullmatch(r"[+-]?\d+(\.\d+)?", session_id_list)):
+                        session_name_btn = session_id_list +"_"+ session_name_list
+                    else:
+                        session_name_btn = session_name_list
+                    session_name_btn = session_name_btn[:15]
                     situation = dms.get_situation(session_id_list)                
                     if not situation:
                         situation["TIME"] = now_time.strftime("%Y/%m/%d %H:%M:%S")
@@ -525,7 +531,8 @@ def main():
                     if st.button(session_name_btn, key=session_key_list):
                         refresh_session_states()
                         refresh_session(session_id_list, session_name_list, situation)
-                    if st.button(f"Del:{session_id_list}", key=f"{session_key_list}_del_btn"):
+#                    if st.button(f"Del:{session_id_list}", key=f"{session_key_list}_del_btn"):
+                    if st.button(f"Del", key=f"{session_key_list}_del_btn"):
                         del_session = dms.DigiMSession(session_id_list, session_name_list)
                         del_session.save_active_session("N")
                         del_session.save_user_dialog_session("DISCARD")
@@ -916,8 +923,8 @@ def main():
                 for response_service_info, response_user_info, response_chunk in dme.DigiMatsuExecute_Practice(st.session_state.web_service, st.session_state.web_user, st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, add_knowledges, execution):
                     response += response_chunk
                     response_placeholder.markdown(response)
-                if st.session_state.session.session_name == "New Chat":
-                    _, _, new_session_name, _, _, _ = dmt.gene_session_name(st.session_state.web_service, st.session_state.web_user, st.session_state.session.session_id, st.session_state.session.session_name, "", "")
+                if not st.session_state.session.session_name or st.session_state.session.session_name == "New Chat":
+                    _, _, new_session_name, _, _, _ = dmt.gene_session_name(st.session_state.web_service, st.session_state.web_user, st.session_state.session.session_id, st.session_state.session.session_name, "", user_input)
                     st.session_state.session.chg_session_name(new_session_name)
                 st.session_state.sidebar_message = ""
                 refresh_session_list(st.session_state.service_id, st.session_state.user_id, st.session_state.user_admin_flg)

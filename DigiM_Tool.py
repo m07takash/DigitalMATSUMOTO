@@ -245,7 +245,7 @@ def gene_session_name(service_info, user_info, session_id, session_name, agent_f
     digest_memories_text = str(digest_memories_selected)[1:-1]
 
     # プロンプトの設定
-    query = f'{prompt_template}\n{digest_memories_text}'
+    query = f'{prompt_template}\n{digest_memories_text}\n{user_query}'
 
     # LLMの実行
     response = ""

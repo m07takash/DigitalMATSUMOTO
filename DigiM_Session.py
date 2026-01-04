@@ -23,60 +23,111 @@ current_date = datetime.now()
 
 # セッションの一覧を獲得
 def get_session_list():
-    session_nums = []
+    sessions = [] 
     for session_folder_name in os.listdir(user_folder_path):
         if session_folder_name.startswith(session_folder_prefix):
-            match = re.match(rf'{session_folder_prefix}(\d+)', session_folder_name)
-            if match:
-                session_num = int(match.group(1))
-                session_folder_path = os.path.join(user_folder_path, session_folder_name)
-                # chat_memory.json の存在確認
-                file_path = os.path.join(session_folder_path, session_file_name)
-                if os.path.exists(file_path):
-                    session_nums.append(session_num)
-    session_nums.sort()
-    return session_nums
+            session_folder_path = os.path.join(user_folder_path, session_folder_name)
+            session_status_path = session_folder_path +"/"+ session_status_file_name
+            status_dict = {}
+            status_dict = dmu.read_yaml_file(session_status_path)
+            if "id" not in status_dict:
+                match = re.match(rf'{session_folder_prefix}(\d+)', session_folder_name)
+                if match:
+                    status_dict["id"] = match.group(1)
+            session_id = status_dict["id"]
+            if "name" not in status_dict:
+                status_dict["name"] = get_session_name(session_id)
+            if "active" not in status_dict:
+                status_dict["active"] = "Y"
+            if "agent" not in status_dict:
+                status_dict["agent"] = get_agent_file(session_id)
+            if "last_update_date" not in status_dict:
+                status_dict["last_update_date"] = get_last_update_date(session_id)
+            if "service_id" not in status_dict or "user_id" not in status_dict:
+                service_id, user_id = get_ids(session_id)
+                if "service_id" not in status_dict:
+                    status_dict["service_id"] = service_id
+                if "user_id" not in status_dict:
+                    status_dict["user_id"] = user_id
+            sessions.append(status_dict)
+    return sessions
+
+#    session_nums = []
+#    for session_folder_name in os.listdir(user_folder_path):
+#            match = re.match(rf'{session_folder_prefix}(\d+)', session_folder_name)
+#            if match:
+#                session_num = int(match.group(1))
+#                session_folder_path = os.path.join(user_folder_path, session_folder_name)
+#                # chat_memory.json の存在確認
+#                file_path = os.path.join(session_folder_path, session_file_name)
+#                if os.path.exists(file_path):
+#                    session_nums.append(session_num)
+#    session_nums.sort()
+#    return session_nums
 
 # 無効セッションの一覧を獲得
 def get_session_list_inactive():
-    session_list = []
-    session_nums = get_session_list()
-    for session_num in session_nums:
-        session_id = str(session_num)
-        session_active_flg = get_active_session(session_id)
-        if session_active_flg == "N":
-            session_name = get_session_name(session_id)
-            session_list.append([session_num, session_name])
-    session_list_sorted = sorted(session_list, key=lambda x: x[0], reverse=True)
-    return session_list_sorted
+    sessions_list = []
+    sessions = get_session_list()
+    for session_status in sessions:
+        if session_status["active"] == "N":
+            sessions_list.append(session_status)
+    return sessions_list
+
+#    session_list = []
+#    session_nums = get_session_list()
+#    for session_num in session_nums:
+#        session_id = str(session_num)
+#        session_active_flg = get_active_session(session_id)
+#        if session_active_flg == "N":
+#            session_name = get_session_name(session_id)
+#            session_list.append([session_id, session_name])
+#    session_list_sorted = sorted(session_list, key=lambda x: x[0], reverse=True)
+#    return session_list_sorted
 
 # セッションの一覧を獲得(画面用)
 def get_session_list_visible(input_service_id, input_user_id, admin_flg="N"):
-    session_list = []
-    session_nums = get_session_list()
-    for session_num in session_nums:
-        session_id = str(session_num)
-        session_file_dict = get_session_data(session_id)
-        service_id, user_id = get_history_ids(session_file_dict)
-        if admin_flg=="Y" or (input_service_id == service_id and input_user_id == user_id):
-            last_update_date = get_history_update_date(session_file_dict)
-            session_list.append([session_num, last_update_date])
-    session_list_sorted = sorted(session_list, key=lambda x: x[1], reverse=True)
-    return session_list_sorted
+    sessions_list = []
+    sessions = get_session_list()
+    for session_status in sessions:
+        if admin_flg=="Y" or (input_service_id == session_status["service_id"] and input_user_id == session_status["user_id"]):
+            sessions_list.append(session_status)
+    sessions_list_sorted = sorted(sessions_list, key=lambda x: x.get("last_update_date"), reverse=True)
+    return sessions_list_sorted
+
+#    session_list = []
+#    session_nums = get_session_list()
+#    for session_num in session_nums:
+#        session_id = str(session_num)
+#        session_file_dict = get_session_data(session_id)
+#        service_id, user_id = get_history_ids(session_file_dict)
+#        if admin_flg=="Y" or (input_service_id == service_id and input_user_id == user_id):
+#            last_update_date = get_history_update_date(session_file_dict)
+#            session_list.append([session_num, last_update_date])
+#    session_list_sorted = sorted(session_list, key=lambda x: x[1], reverse=True)
+#    return session_list_sorted
 
 # 無効セッションの一覧を獲得(画面用)
 def get_session_list_inactive_visible(input_service_id, input_user_id, admin_flg="N"):
-    session_list = []
-    session_nums = [x[0] for x in get_session_list_inactive()]
-    for session_num in session_nums:
-        session_id = str(session_num)
-        session_file_dict = get_session_data(session_id)
-        service_id, user_id = get_history_ids(session_file_dict)
-        if admin_flg=="Y" or (input_service_id == service_id and input_user_id == user_id):
-            last_update_date = get_history_update_date(session_file_dict)
-            session_list.append([session_num, last_update_date])
-    session_list_sorted = sorted(session_list, key=lambda x: x[1], reverse=True)
-    return session_list_sorted
+    sessions_list = []
+    sessions = get_session_list_inactive()
+    for session_status in sessions:
+        if admin_flg=="Y" or (input_service_id == session_status["service_id"] and input_user_id == session_status["user_id"]):
+            sessions_list.append(session_status)
+    sessions_list_sorted = sorted(sessions_list, key=lambda x: x.get("last_update_date"), reverse=True)
+    return sessions_list_sorted
+
+#    session_list = []
+#    session_nums = [x[0] for x in get_session_list_inactive()]
+#    for session_num in session_nums:
+#        session_id = str(session_num)
+#        session_file_dict = get_session_data(session_id)
+#        service_id, user_id = get_history_ids(session_file_dict)
+#        if admin_flg=="Y" or (input_service_id == service_id and input_user_id == user_id):
+#            last_update_date = get_history_update_date(session_file_dict)
+#            session_list.append([session_num, last_update_date])
+#    session_list_sorted = sorted(session_list, key=lambda x: x[1], reverse=True)
+#    return session_list_sorted
 
 # セッションIDを元にセッションの辞書データを取得する関数
 def get_session_data(session_id):
@@ -85,7 +136,14 @@ def get_session_data(session_id):
     session_file_dict = dmu.read_json_file(session_file_path)
     return session_file_dict
 
-# 辞書データから最大のキーを取得する関数
+# セッションIDを元にセッションのステータスデータを取得する関数
+def get_status_data(session_id):
+    session_key = session_folder_prefix + session_id
+    session_status_path = user_folder_path + session_key + "/" + session_status_file_name
+    status_dict = dmu.read_yaml_file(session_status_path)
+    return status_dict
+
+# 辞書データから最大のシーケンスを取得する関数
 def max_seq_dict(session_dict):
     max_seq = 0
     seqs = [int(k) for k in session_dict.keys() if k.isdigit()]
@@ -96,59 +154,123 @@ def max_seq_dict(session_dict):
 # セッション名を取得
 def get_session_name(session_id):
     session_key = session_folder_prefix + session_id
-    session_file_path = user_folder_path + session_key + "/" + session_file_name
-    session_file_dict = dmu.read_json_file(session_file_path)   
-    session_file_active_dict = {k: v for k, v in session_file_dict.items() if v["SETTING"].get("FLG") == "Y"}
+    session_status_path = user_folder_path + session_key + "/" + session_status_file_name
+    status_dict = {}
+    status_dict = dmu.read_yaml_file(session_status_path)
     session_name = ""
-
-    # 最大シーケンス／サブシーケンスからセッション名を取得
-    if session_file_active_dict:
-        max_seq = max_seq_dict(session_file_active_dict)
-        max_sub_seq = max_seq_dict(session_file_active_dict[max_seq])
-        session_name = session_file_active_dict[max_seq][max_sub_seq]["setting"]["session_name"]
-
+    if "name" in status_dict:
+        session_name = status_dict["name"]
+    else:
+        session_file_dict = get_session_data(session_id)
+        session_file_active_dict = {k: v for k, v in session_file_dict.items() if v["SETTING"].get("FLG") == "Y"}
+        if session_file_active_dict:
+            max_seq = max_seq_dict(session_file_active_dict)
+            max_sub_seq = max_seq_dict(session_file_active_dict[max_seq])
+            session_name = session_file_active_dict[max_seq][max_sub_seq]["setting"]["session_name"]
     return session_name
 
 # 会話履歴のサービス名とユーザー名を取得
-def get_history_ids(chat_history_active_dict):
+def get_ids(session_id):
+    session_key = session_folder_prefix + session_id
+    session_status_path = user_folder_path + session_key + "/" + session_status_file_name
+    status_dict = {}
+    status_dict = dmu.read_yaml_file(session_status_path)
     service_id = ""
+    if "service_id" in status_dict:
+        service_id = status_dict["service_id"]
+    else:
+        session_file_dict = get_session_data(session_id)
+        session_file_active_dict = {k: v for k, v in session_file_dict.items() if v["SETTING"].get("FLG") == "Y"}
+        if session_file_active_dict:
+            max_seq = max(session_file_active_dict.keys(), key=int)
+            if "service_info" in session_file_active_dict[max_seq]["SETTING"]:
+                service_id = session_file_active_dict[max_seq]["SETTING"]["service_info"]["SERVICE_ID"]            
     user_id = ""
-    if chat_history_active_dict:
-        max_seq = max(chat_history_active_dict.keys(), key=int)
-        if "service_info" in chat_history_active_dict[max_seq]["SETTING"]:
-            service_id = chat_history_active_dict[max_seq]["SETTING"]["service_info"]["SERVICE_ID"]
-        if "user_info" in chat_history_active_dict[max_seq]["SETTING"]:
-            user_id = chat_history_active_dict[max_seq]["SETTING"]["user_info"]["USER_ID"]    
+    if "user_id" in status_dict:
+        user_id = status_dict["user_id"]
+    else:
+        session_file_dict = get_session_data(session_id)
+        session_file_active_dict = {k: v for k, v in session_file_dict.items() if v["SETTING"].get("FLG") == "Y"}
+        if session_file_active_dict:
+            max_seq = max(session_file_active_dict.keys(), key=int)
+            if "user_info" in session_file_active_dict[max_seq]["SETTING"]:
+                user_id = session_file_active_dict[max_seq]["SETTING"]["user_info"]["USER_ID"] 
     return service_id, user_id
 
+# 会話履歴のサービス名とユーザー名を取得
+#def get_history_ids(chat_history_active_dict):
+#    service_id = ""
+#    user_id = ""
+#    if chat_history_active_dict:
+#        max_seq = max(chat_history_active_dict.keys(), key=int)
+#        if "service_info" in chat_history_active_dict[max_seq]["SETTING"]:
+#            service_id = chat_history_active_dict[max_seq]["SETTING"]["service_info"]["SERVICE_ID"]
+#        if "user_info" in chat_history_active_dict[max_seq]["SETTING"]:
+#            user_id = chat_history_active_dict[max_seq]["SETTING"]["user_info"]["USER_ID"]    
+#    return service_id, user_id
+
 # 会話履歴の最終更新日を取得
-def get_history_update_date(chat_history_active_dict):
-    max_seq = max(chat_history_active_dict.keys(), key=int)
-    max_sub_seq = 0
+def get_last_update_date(session_id):
+    session_key = session_folder_prefix + session_id
+    session_status_path = user_folder_path + session_key + "/" + session_status_file_name
+    status_dict = {}
+    status_dict = dmu.read_yaml_file(session_status_path)
     last_update_date = current_date
-    
-    sub_seq_candidates = [k for k, v in chat_history_active_dict[max_seq].items() if isinstance(v, dict) and "response" in v]
-    if sub_seq_candidates:
-        max_sub_seq = max(sub_seq_candidates, key=int)
-        last_update_date = datetime.strptime(chat_history_active_dict[max_seq][max_sub_seq]["response"]["timestamp"], "%Y-%m-%d %H:%M:%S.%f")
-        
-    return last_update_date
+    if "last_update_date" in status_dict:
+        last_update_date = datetime.strptime(status_dict["last_update_date"], "%Y-%m-%d %H:%M:%S.%f")
+    else:
+        session_file_dict = get_session_data(session_id)
+        session_file_active_dict = {k: v for k, v in session_file_dict.items() if v["SETTING"].get("FLG") == "Y"}
+        max_seq = max(session_file_active_dict.keys(), key=int)
+        max_sub_seq = 0
+        sub_seq_candidates = [k for k, v in session_file_active_dict[max_seq].items() if isinstance(v, dict) and "response" in v]
+        if sub_seq_candidates:
+            max_sub_seq = max(sub_seq_candidates, key=int)
+            last_update_date = datetime.strptime(session_file_active_dict[max_seq][max_sub_seq]["response"]["timestamp"], "%Y-%m-%d %H:%M:%S.%f")
+    last_update_date_str = str(last_update_date)
+    return last_update_date_str
+
+## 会話履歴の最終更新日を取得
+#def get_history_update_date(chat_history_active_dict):
+#    max_seq = max(chat_history_active_dict.keys(), key=int)
+#    max_sub_seq = 0
+#    last_update_date = current_date
+#    sub_seq_candidates = [k for k, v in chat_history_active_dict[max_seq].items() if isinstance(v, dict) and "response" in v]
+#    if sub_seq_candidates:
+#        max_sub_seq = max(sub_seq_candidates, key=int)
+#        last_update_date = datetime.strptime(chat_history_active_dict[max_seq][max_sub_seq]["response"]["timestamp"], "%Y-%m-%d %H:%M:%S.%f")        
+#    return last_update_date
 
 # エージェントファイルを取得
 def get_agent_file(session_id):
     session_key = session_folder_prefix + session_id
-    session_file_path = user_folder_path + session_key + "/" + session_file_name
-    session_file_dict = dmu.read_json_file(session_file_path)   
-    session_file_active_dict = {k: v for k, v in session_file_dict.items() if v["SETTING"].get("FLG") == "Y"}
+    session_status_path = user_folder_path + session_key + "/" + session_status_file_name
+    status_dict = {}
+    status_dict = dmu.read_yaml_file(session_status_path)
     agent_file = ""
-
-    # 最大シーケンス／サブシーケンスからエージェントファイルを取得
-    if session_file_active_dict:
-        max_seq = max_seq_dict(session_file_active_dict)
-        max_sub_seq = max_seq_dict(session_file_active_dict[max_seq])
-        agent_file = session_file_active_dict[max_seq][max_sub_seq]["setting"]["agent_file"]
-
+    if "agent" in status_dict:
+        agent_file = status_dict["agent"]
+    else:
+        session_file_dict = get_session_data(session_id)
+        session_file_active_dict = {k: v for k, v in session_file_dict.items() if v["SETTING"].get("FLG") == "Y"}
+        if session_file_active_dict:
+            max_seq = max_seq_dict(session_file_active_dict)
+            max_sub_seq = max_seq_dict(session_file_active_dict[max_seq])
+            agent_file = session_file_active_dict[max_seq]["1"]["setting"]["agent_file"]        
     return agent_file
+
+#    session_key = session_folder_prefix + session_id
+#    session_file_path = user_folder_path + session_key + "/" + session_file_name
+#    session_file_dict = dmu.read_json_file(session_file_path)   
+#    session_file_active_dict = {k: v for k, v in session_file_dict.items() if v["SETTING"].get("FLG") == "Y"}
+#    agent_file = ""
+#
+#    # 最大シーケンス／サブシーケンスからエージェントファイルを取得
+#    if session_file_active_dict:
+#        max_seq = max_seq_dict(session_file_active_dict)
+#        max_sub_seq = max_seq_dict(session_file_active_dict[max_seq])
+#        agent_file = session_file_active_dict[max_seq]["1"]["setting"]["agent_file"]
+#    return agent_file
 
 # セッションのアクティブ状態を獲得する
 def get_active_session(session_id):
@@ -191,10 +313,26 @@ def get_situation(session_id):
 
     return situation
 
-# 新しいセッションIDを発番する
+# 新しいセッションIDを発番する【数値のシーケンスだけ】
 def set_new_session_id():
-    new_session_num = max(get_session_list())+1 if get_session_list() else 0
-    new_session_id = str(new_session_num)
+#    new_session_num = max(get_session_list())+1 if get_session_list() else 0
+#    new_session_id = str(new_session_num)
+    new_session_prefix = datetime.now().strftime("%Y%m%d_%H%M%S")
+    session_list = get_session_list()
+
+    session_nums = []
+    for item in session_list:
+        id_val = item.get("id", "")
+        if id_val.startswith(new_session_prefix + "_"):
+            try:
+                session_nums.append(int(id_val.split("_", 1)[1]))
+            except ValueError:
+                pass
+    if session_nums:
+        new_session_id = new_session_prefix+"_"+str(max(session_nums))
+    else:
+        new_session_id = new_session_prefix+"_0"
+
     return new_session_id
 
 # セッションクラス
@@ -408,6 +546,48 @@ class DigiMSession:
         vec_text = dmu.read_vectext_to_npy(self.session_vec_folder_path+vec_file_name)
         return vec_text
 
+    # セッションIDを設定する
+    def save_session_id(self):
+        if not os.path.exists(self.session_folder_path):
+            os.makedirs(self.session_folder_path, exist_ok=True)
+        status_dict = {"id": self.session_id}
+        dmu.save_yaml_file(status_dict, self.session_status_path)
+
+    # セッション名を設定する
+    def save_session_name(self):
+        if not os.path.exists(self.session_folder_path):
+            os.makedirs(self.session_folder_path, exist_ok=True)
+        status_dict = {"name": self.session_name}
+        dmu.save_yaml_file(status_dict, self.session_status_path)
+
+    # セッションのサービスIDを保存する
+    def save_service_id(self, service_id):
+        if not os.path.exists(self.session_folder_path):
+            os.makedirs(self.session_folder_path, exist_ok=True)
+        status_dict = {"service_id": service_id}
+        dmu.save_yaml_file(status_dict, self.session_status_path)
+
+    # セッションのユーザーIDを保存する
+    def save_user_id(self, user_id):
+        if not os.path.exists(self.session_folder_path):
+            os.makedirs(self.session_folder_path, exist_ok=True)
+        status_dict = {"user_id": user_id}
+        dmu.save_yaml_file(status_dict, self.session_status_path)
+
+    # セッションのサービスIDを保存する
+    def save_agent_file(self, agent_file):
+        if not os.path.exists(self.session_folder_path):
+            os.makedirs(self.session_folder_path, exist_ok=True)
+        status_dict = {"agent": agent_file}
+        dmu.save_yaml_file(status_dict, self.session_status_path)
+
+    # セッションの最終更新日を保存する
+    def save_last_update_date(self, last_update_date):
+        if not os.path.exists(self.session_folder_path):
+            os.makedirs(self.session_folder_path, exist_ok=True)
+        status_dict = {"last_update_date": last_update_date}
+        dmu.save_yaml_file(status_dict, self.session_status_path)
+
     # セッションのステータスを保存する
     def save_status(self, status):
         if not os.path.exists(self.session_folder_path):
@@ -461,14 +641,16 @@ class DigiMSession:
 
     # セッション名を変更する
     def chg_session_name(self, new_session_name):
-        if os.path.exists(self.session_file_path):
-            session_file_dict = dmu.read_json_file(self.session_file_path)
-            session_file_active_dict = {k: v for k, v in session_file_dict.items() if v["SETTING"].get("FLG") == "Y"}
-            max_seq = max_seq_dict(session_file_active_dict)
-            max_sub_seq = max_seq_dict(session_file_active_dict[max_seq])
-            session_file_dict[max_seq][max_sub_seq]["setting"]["session_name"] = new_session_name
-        with open(self.session_file_path, 'w', encoding='utf-8') as f:
-            json.dump(session_file_dict, f, ensure_ascii=False, indent=4)
+        self.session_name = new_session_name
+        self.save_session_name()
+#        if os.path.exists(self.session_file_path):
+#            session_file_dict = dmu.read_json_file(self.session_file_path)
+#            session_file_active_dict = {k: v for k, v in session_file_dict.items() if v["SETTING"].get("FLG") == "Y"}
+#            max_seq = max_seq_dict(session_file_active_dict)
+#            max_sub_seq = max_seq_dict(session_file_active_dict[max_seq])
+#            session_file_dict[max_seq][max_sub_seq]["setting"]["session_name"] = new_session_name
+#        with open(self.session_file_path, 'w', encoding='utf-8') as f:
+#            json.dump(session_file_dict, f, ensure_ascii=False, indent=4)
 
     # 会話履歴のシーケンスを取得する
     def get_seq_history(self):
