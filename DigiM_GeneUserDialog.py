@@ -28,11 +28,12 @@ def get_user_dialog_data(session_id):
     if history_dict:
         max_seq = dms.max_seq_dict(history_dict)
         if "SETTING" in history_dict[max_seq]:
-            create_date = dms.get_history_update_date(history_dict)
-            service_id = history_dict[max_seq]["SETTING"]["service_info"]["SERVICE_ID"]
-            user_id = history_dict[max_seq]["SETTING"]["user_info"]["USER_ID"]
+            create_date = dms.get_last_update_date(session_id) #dms.get_history_update_date(history_dict)
+            service_id, user_id = dms.get_ids(session_id)
+            #service_id = history_dict[max_seq]["SETTING"]["service_info"]["SERVICE_ID"]
+            #user_id = history_dict[max_seq]["SETTING"]["user_info"]["USER_ID"]
+            session_name = dms.get_session_name(session_id) #history_dict[max_seq][max_sub_seq]["setting"]["session_name"]
             max_sub_seq = dms.max_seq_dict(history_dict[max_seq])
-            session_name = history_dict[max_seq][max_sub_seq]["setting"]["session_name"]
 
             user_dialog_data["title"] = f"[ユーザーの傾向]セッション{session_id}"
             user_dialog_data["create_date"] = dmu.safe_parse_timestamp(create_date.strftime("%Y/%m/%d %H:%M:%S"))
@@ -166,11 +167,11 @@ def save_user_dialog_notion(service_info, user_info, save_session_ids, del_sessi
 
 # ユーザーダイアログの保存
 def save_user_dialogs(service_info, user_info):
-    session_nums = dms.get_session_list()
+    sessions = dms.get_session_list()
     save_session_ids = []
     del_session_ids = []
-    for session_num in session_nums:
-        session_id = str(session_num)
+    for session_dict in sessions:
+        session_id = session_dict["id"]
         user_dialog_status = dms.get_user_dialog_session(session_id)
         if user_dialog_status == "UNSAVED":
             save_session_ids.append(session_id)
