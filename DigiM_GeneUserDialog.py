@@ -36,7 +36,8 @@ def get_user_dialog_data(session_id):
             max_sub_seq = dms.max_seq_dict(history_dict[max_seq])
 
             user_dialog_data["title"] = f"[ユーザーの傾向]セッション{session_id}"
-            user_dialog_data["create_date"] = dmu.safe_parse_timestamp(create_date.strftime("%Y/%m/%d %H:%M:%S"))
+#            user_dialog_data["create_date"] = dmu.safe_parse_timestamp(create_date.strftime("%Y/%m/%d %H:%M:%S"))
+            user_dialog_data["create_date"] = dmu.safe_parse_timestamp(datetime.fromisoformat(create_date).strftime("%Y/%m/%d %H:%M:%S"))
             user_dialog_data["service_id"] = service_id
             user_dialog_data["user_id"] = user_id
             user_dialog_data["session_id"] = session_id
