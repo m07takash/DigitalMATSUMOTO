@@ -707,6 +707,15 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
         session.save_history(str(seq), "user_info", user_info, "SEQ")
         session.save_history(str(seq), "practice", practice, "SEQ")
 
+        # セッションステータス(status.yaml)の更新
+        session.save_session_id()
+        session.save_session_name()
+        session.save_service_id(service_info["SERVICE_ID"])
+        session.save_user_id(user_info["USER_ID"])
+        session.save_agent_file(in_agent_file)
+        session.save_last_update_date(str(datetime.now()))
+        session.save_active_session("Y")
+
     except Exception as e:
         session.save_status("UNLOCKED")
         print(f"Error during practice execution: {e}")

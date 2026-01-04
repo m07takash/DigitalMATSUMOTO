@@ -7,6 +7,7 @@ import yaml
 import shutil
 import mimetypes
 import math
+import bcrypt
 import pdfplumber
 from dateutil import parser
 from datetime import datetime
@@ -37,6 +38,26 @@ def safe_parse_timestamp(timestamp_str):
         return jst.localize(datetime.strptime(timestamp_str, "%Y/%m/%d %H:%M:%S")).isoformat()
     except ValueError:
         return datetime.now(jst).isoformat()
+
+#日付型文字列の変換
+def parse_date(d):
+    try:
+        return datetime.fromisoformat(d)
+    except Exception:
+        return datetime.min
+
+# パスワードのハッシュ化と検証
+def hash_password(plain: str) -> str:
+    # bcrypt は bytes を扱う
+    salt = bcrypt.gensalt(rounds=12)
+    hashed = bcrypt.hashpw(plain.encode("utf-8"), salt)
+    return hashed.decode("utf-8")
+
+# パスワードの検証
+def verify_password(plain: str, stored: str) -> bool:
+    if stored.startswith("$2a$") or stored.startswith("$2b$") or stored.startswith("$2y$"):
+        return bcrypt.checkpw(plain.encode("utf-8"), stored.encode("utf-8"))
+    return plain == stored
 
 # ローカルファイルをStreamlitのUploadedFileと同じオブジェクト型に変換
 class ConvertedLocalFile:
