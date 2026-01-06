@@ -25,31 +25,36 @@ current_date = datetime.now()
 def get_session_list():
     sessions = [] 
     for session_folder_name in os.listdir(user_folder_path):
-        if session_folder_name.startswith(session_folder_prefix):
-            session_folder_path = os.path.join(user_folder_path, session_folder_name)
-            session_status_path = session_folder_path +"/"+ session_status_file_name
-            status_dict = {}
-            status_dict = dmu.read_yaml_file(session_status_path)
-            if "id" not in status_dict:
-                match = re.match(rf'{session_folder_prefix}(\d+)', session_folder_name)
-                if match:
-                    status_dict["id"] = match.group(1)
-            session_id = status_dict["id"]
-            if "name" not in status_dict:
-                status_dict["name"] = get_session_name(session_id)
-            if "active" not in status_dict:
-                status_dict["active"] = "Y"
-            if "agent" not in status_dict:
-                status_dict["agent"] = get_agent_file(session_id)
-            if "last_update_date" not in status_dict:
-                status_dict["last_update_date"] = get_last_update_date(session_id)
-            if "service_id" not in status_dict or "user_id" not in status_dict:
-                service_id, user_id = get_ids(session_id)
-                if "service_id" not in status_dict:
-                    status_dict["service_id"] = service_id
-                if "user_id" not in status_dict:
-                    status_dict["user_id"] = user_id
-            sessions.append(status_dict)
+        try:
+            if session_folder_name.startswith(session_folder_prefix):
+                session_folder_path = os.path.join(user_folder_path, session_folder_name)
+                session_status_path = session_folder_path +"/"+ session_status_file_name
+                status_dict = {}
+                status_dict = dmu.read_yaml_file(session_status_path)
+                if "id" not in status_dict:
+                    match = re.match(rf'{session_folder_prefix}(\d+)', session_folder_name)
+                    if match:
+                        status_dict["id"] = match.group(1)
+                session_id = status_dict["id"]
+                if "name" not in status_dict:
+                    status_dict["name"] = get_session_name(session_id)
+                if "active" not in status_dict:
+                    status_dict["active"] = "Y"
+                if "agent" not in status_dict:
+                    status_dict["agent"] = get_agent_file(session_id)
+                if "last_update_date" not in status_dict:
+                    status_dict["last_update_date"] = get_last_update_date(session_id)
+                if "service_id" not in status_dict or "user_id" not in status_dict:
+                    service_id, user_id = get_ids(session_id)
+                    if "service_id" not in status_dict:
+                        status_dict["service_id"] = service_id
+                    if "user_id" not in status_dict:
+                        status_dict["user_id"] = user_id
+                sessions.append(status_dict)
+        except Exception as e:
+            print(f"{session_folder_name}の描画でエラーのためスキップしました: {e}")
+            continue
+
     return sessions
 
 #    session_nums = []
