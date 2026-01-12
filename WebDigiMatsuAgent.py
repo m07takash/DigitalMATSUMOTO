@@ -785,8 +785,11 @@ def main():
             for k2, v2 in v.items():
                 if k2 != "SETTING":
                     seq_key = f"key_{k}_{k2}"
-                    with st.chat_message(v2["prompt"]["role"]):
-                        content_text = v2["prompt"]["query"]["input"]
+                    prompt_role = v2["prompt"]["role"]
+                    if v.get("SETTING", {}).get("user_info", {}).get("USER_ID") is not None:
+                        prompt_role = v["SETTING"]["user_info"]["USER_ID"]
+                    with st.chat_message(prompt_role):
+                        content_text = "**"+prompt_role+" ("+v2["prompt"]["timestamp"]+"):**\n\n"+v2["prompt"]["query"]["input"]
                         download_data.append({"role": v2["prompt"]["role"], "content": content_text})
 #                        st.markdown(content_text.replace("\n", "<br>"), unsafe_allow_html=True)
                         st.markdown(content_text, unsafe_allow_html=True)
@@ -1047,7 +1050,7 @@ def main():
             execution["WEB_SEARCH"] = st.session_state.web_search
             
             # ユーザー入力の一時表示
-            with st.chat_message("User"):
+            with st.chat_message(st.session_state.user_id):
                 st.markdown(user_input.replace("\n", "<br>"), unsafe_allow_html=True)
             with st.chat_message(web_title):
                 response_placeholder = st.empty()
