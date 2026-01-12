@@ -199,7 +199,7 @@ def get_ids(session_id):
         if session_file_active_dict:
             max_seq = max(session_file_active_dict.keys(), key=int)
             if "user_info" in session_file_active_dict[max_seq]["SETTING"]:
-                user_id = session_file_active_dict[max_seq]["SETTING"]["user_info"]["USER_ID"] 
+                user_id = session_file_active_dict[max_seq]["SETTING"]["user_info"]["USER_ID"]
     return service_id, user_id
 
 # 会話履歴のサービス名とユーザー名を取得
