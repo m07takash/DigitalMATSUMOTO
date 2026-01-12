@@ -143,6 +143,7 @@ def save_user_master(users: dict):
     with open(user_mst_path, "w", encoding="utf-8") as f:
         json.dump(users, f, ensure_ascii=False, indent=2)
 
+# パスワード変更
 def change_password(user_id: str, current_pw: str, new_pw: str) -> tuple[bool, str]:
     """ログイン中ユーザーのパスワード変更。成功時はハッシュで保存する。"""
     users = load_user_master()
