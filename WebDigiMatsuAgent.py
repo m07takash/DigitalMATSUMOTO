@@ -112,6 +112,29 @@ def load_user_master():
         return {}
 
 # ログインユーザー情報の保持
+def save_user_master(users: dict):
+    """ユーザーマスタを保存（PWは平文/ハッシュどちらも許容）"""
+    user_mst_path = mst_folder_path + user_mst_file
+    # mst_folder_path が存在しない場合に備える
+    os.makedirs(os.path.dirname(user_mst_path), exist_ok=True)
+    with open(user_mst_path, "w", encoding="utf-8") as f:
+        json.dump(users, f, ensure_ascii=False, indent=2)
+
+def change_password(user_id: str, current_pw: str, new_pw: str) -> tuple[bool, str]:
+    """ログイン中ユーザーのパスワード変更。成功時はハッシュで保存する。"""
+    users = load_user_master()
+    user_info = users.get(user_id)
+    if not user_info:
+        return False, "ユーザーが見つかりませんでした。"
+    stored_pw = user_info.get("PW", "")
+    if not dmu.verify_password(current_pw, stored_pw):
+        return False, "現在のパスワードが正しくありません。"
+
+    # 新PWをハッシュ化して保存（UIからは必ずハッシュ保存）
+    users[user_id]["PW"] = dmu.hash_password(new_pw)
+    save_user_master(users)
+    return True, "パスワードを変更しました。"
+
 def set_login_user_to_session(user_id: str, user_info: dict):
     st.session_state.login_user = {
         "USER_ID": user_id,
@@ -123,7 +146,9 @@ def set_login_user_to_session(user_id: str, user_info: dict):
     st.session_state.session_user_id = st.session_state.user_id
     st.session_state.user_admin_flg = "Y" if st.session_state.login_user["Group"] == "Admin" else "N"
     if st.session_state.login_user["Agent"] == "DEFAULT":
-        st.session_state.display_name = st.session_state.default_agent 
+        default_agent_data = dmu.read_json_file(cfg.web_default_agent_file, agent_folder_path)
+        st.session_state.default_agent = default_agent_data["DISPLAY_NAME"]
+#        st.session_state.display_name = st.session_state.default_agent 
     else:
         default_agent_data = dmu.read_json_file(st.session_state.login_user["Agent"], agent_folder_path)
         st.session_state.default_agent = default_agent_data["DISPLAY_NAME"]
@@ -140,24 +165,69 @@ def ensure_login():
     # ユーザーマスタの読み込み
     users = load_user_master()
     if not users:
-        st.error(f"users.json が読めませんでした。")
+        st.error("users.json が読めませんでした。")
         st.stop()
 
-    # ログインフォーム
-    with st.form("login_form"):
-        input_user_id = st.text_input("User ID")
-        input_pw = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Login")
+    tab_login, tab_change = st.tabs(["Login", "Change Password"])
 
-    if submitted:
-        user_info = users.get(input_user_id)
-        if user_info and user_info.get("PW") == input_pw:
-            set_login_user_to_session(input_user_id, user_info)
-            st.success("ログインしました")
-            refresh_session_states()
-            st.rerun()
-        else:
-            st.error("ユーザーID または パスワードが正しくありません")
+    # ログインフォーム
+    with tab_login:
+        with st.form("login_form"):
+            input_user_id = st.text_input("User ID")
+            input_pw = st.text_input("Password", type="password")
+            submitted = st.form_submit_button("Login")
+
+        if submitted:
+            user_info = users.get(input_user_id)
+            stored_pw = (user_info or {}).get("PW", "")
+
+            # PWは平文/ハッシュの両対応（DigiM_Util.verify_password が判定）
+            if user_info and dmu.verify_password(input_pw, stored_pw):
+                # 旧仕様（平文PW）のままログインできた場合は、次回以降のために自動でハッシュへ移行
+                if stored_pw and not (isinstance(stored_pw, str) and stored_pw.startswith(("$2a$", "$2b$", "$2y$"))):
+                    try:
+                        users[input_user_id]["PW"] = dmu.hash_password(input_pw)
+                        save_user_master(users)
+                    except Exception:
+                        # 移行に失敗してもログイン自体は継続
+                        pass
+
+                set_login_user_to_session(input_user_id, user_info)
+                st.success("ログインしました")
+                refresh_session_states()
+                st.rerun()
+            else:
+                st.error("ユーザーID または パスワードが正しくありません")
+
+    # --- Change Password (ログイン前に実施できる方式：User ID + 現在PWで本人確認) ---
+    with tab_change:
+        st.caption("User ID と現在のパスワードを入力して、パスワードを変更します。")
+        with st.form("change_password_form"):
+            cp_user_id = st.text_input("User ID", key="cp_user_id")
+            cp_current_pw = st.text_input("Current Password", type="password", key="cp_current_pw")
+            cp_new_pw = st.text_input("New Password", type="password", key="cp_new_pw")
+            cp_new_pw2 = st.text_input("New Password (confirm)", type="password", key="cp_new_pw2")
+            cp_submit = st.form_submit_button("Change Password")
+
+        if cp_submit:
+            user_info = users.get(cp_user_id)
+            stored_pw = (user_info or {}).get("PW", "")
+
+            if not user_info:
+                st.error("ユーザーID が見つかりません")
+            elif not dmu.verify_password(cp_current_pw, stored_pw):
+                st.error("現在のパスワードが正しくありません")
+            elif not cp_new_pw:
+                st.error("新しいパスワードを入力してください")
+            elif cp_new_pw != cp_new_pw2:
+                st.error("新しいパスワード（確認）が一致しません")
+            else:
+                try:
+                    users[cp_user_id]["PW"] = dmu.hash_password(cp_new_pw)
+                    save_user_master(users)
+                    st.success("パスワードを変更しました。Login タブからログインしてください。")
+                except Exception as e:
+                    st.error(f"保存に失敗しました: {e}")
 
     # ここで処理を止めて、ログイン画面以降を表示させない
     st.stop()
@@ -444,6 +514,25 @@ def main():
                         if key in st.session_state:
                             del st.session_state[key]
                     st.rerun()
+                # パスワード変更
+                with st.expander("Account"):
+                    with st.form("change_password_form", clear_on_submit=True):
+                        current_pw = st.text_input("Current Password", type="password")
+                        new_pw = st.text_input("New Password", type="password")
+                        new_pw2 = st.text_input("New Password (confirm)", type="password")
+                        submitted_pw = st.form_submit_button("Change Password")
+
+                    if submitted_pw:
+                        if not new_pw:
+                            st.error("新しいパスワードを入力してください。")
+                        elif new_pw != new_pw2:
+                            st.error("新しいパスワード（確認）が一致しません。")
+                        else:
+                            ok, msg = change_password(st.session_state.user_id, current_pw, new_pw)
+                            if ok:
+                                st.success(msg)
+                            else:
+                                st.error(msg)
 
         # エージェントを選択（JSON)
         if agent_id_selected := st.selectbox("Select Agent:", st.session_state.agent_list, index=st.session_state.agent_list_index):
@@ -512,33 +601,38 @@ def main():
         # セッションリストの表示
         num_sessions = 0
         for session_dict in st.session_state.session_list:
-            if num_session_visible > num_sessions:
-                session_id_list = session_dict["id"]
-                session_key_list = session_folder_prefix + session_id_list
-                session_list = dms.DigiMSession(session_id_list)
-                session_name_list = session_list.session_name
-                session_active_flg = session_list.get_active_session()
-                if session_active_flg != "N":
-                    if bool(re.fullmatch(r"[+-]?\d+(\.\d+)?", session_id_list)):
-                        session_name_btn = session_id_list +"_"+ session_name_list
-                    else:
-                        session_name_btn = session_name_list
-                    session_name_btn = session_name_btn[:15]
-                    situation = dms.get_situation(session_id_list)                
-                    if not situation:
-                        situation["TIME"] = now_time.strftime("%Y/%m/%d %H:%M:%S")
-                        situation["SITUATION"] = ""
-                    if st.button(session_name_btn, key=session_key_list):
-                        refresh_session_states()
-                        refresh_session(session_id_list, session_name_list, situation)
-#                    if st.button(f"Del:{session_id_list}", key=f"{session_key_list}_del_btn"):
-                    if st.button(f"Del", key=f"{session_key_list}_del_btn"):
-                        del_session = dms.DigiMSession(session_id_list, session_name_list)
-                        del_session.save_active_session("N")
-                        del_session.save_user_dialog_session("DISCARD")
-                        st.session_state.sidebar_message = f"セッションを非表示にしました({session_id_list}_{session_name_list})"
-                        st.rerun()
-                    num_sessions += 1
+            try:
+                if num_session_visible > num_sessions:
+                    session_id_list = session_dict["id"]
+                    session_key_list = session_folder_prefix + session_id_list
+                    session_list = dms.DigiMSession(session_id_list)
+                    session_name_list = session_list.session_name
+                    session_active_flg = session_list.get_active_session()
+                    if session_active_flg != "N":
+                        if bool(re.fullmatch(r"[+-]?\d+(\.\d+)?", session_id_list)):
+                            session_name_btn = session_id_list +"_"+ session_name_list
+                        else:
+                            session_name_btn = session_name_list
+                        session_name_btn = session_name_btn[:15]
+                        situation = dms.get_situation(session_id_list)                
+                        if not situation:
+                            situation["TIME"] = now_time.strftime("%Y/%m/%d %H:%M:%S")
+                            situation["SITUATION"] = ""
+                        if st.button(session_name_btn, key=session_key_list):
+                            refresh_session_states()
+                            refresh_session(session_id_list, session_name_list, situation)
+#                        if st.button(f"Del:{session_id_list}", key=f"{session_key_list}_del_btn"):
+                        if st.button(f"Del", key=f"{session_key_list}_del_btn"):
+                            del_session = dms.DigiMSession(session_id_list, session_name_list)
+                            del_session.save_active_session("N")
+                            del_session.save_user_dialog_session("DISCARD")
+                            st.session_state.sidebar_message = f"セッションを非表示にしました({session_id_list}_{session_name_list})"
+                            st.rerun()
+                        num_sessions += 1
+            except Exception as e:
+                sid = session_dict["id"]
+                st.warning(f"セッション {sid} の描画でエラーのためスキップしました: {e}")
+                continue
 
     # チャットセッション名の設定
     if session_name := st.text_input("Chat Name:", value=st.session_state.session.session_name):
