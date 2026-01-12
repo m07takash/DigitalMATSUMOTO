@@ -92,6 +92,29 @@ if 'user_id' not in st.session_state:
     st.session_state.user_id = web_default_user_id
 if 'user_admin_flg' not in st.session_state:
     st.session_state.user_admin_flg = "Y"
+if 'group_cd' not in st.session_state:
+    st.session_state.group_cd = "All"
+
+if 'allowed_rag_management' not in st.session_state:
+    st.session_state.allowed_rag_management = True
+if 'allowed_exec_setting' not in st.session_state:
+    st.session_state.allowed_exec_setting = True
+if 'allowed_rag_setting' not in st.session_state:
+    st.session_state.allowed_rag_setting = True
+if 'allowed_feedback' not in st.session_state:
+    st.session_state.allowed_feedback = True
+if 'allowed_details' not in st.session_state:
+    st.session_state.allowed_details = True
+if 'allowed_analytics_knowledge' not in st.session_state:
+    st.session_state.allowed_analytics_knowledge = True
+if 'allowed_analytics_compare' not in st.session_state:
+    st.session_state.allowed_analytics_compare = True
+if 'allowed_web_search' not in st.session_state:
+    st.session_state.allowed_web_search = True
+if 'allowed_book' not in st.session_state:
+    st.session_state.allowed_book = True
+if 'allowed_download_md' not in st.session_state:
+    st.session_state.allowed_download_md = True
 
 # 時刻の設定
 tz = pytz.timezone(cfg.timezone)
@@ -135,16 +158,20 @@ def change_password(user_id: str, current_pw: str, new_pw: str) -> tuple[bool, s
     save_user_master(users)
     return True, "パスワードを変更しました。"
 
+# ログインユーザー情報をセッションに設定
 def set_login_user_to_session(user_id: str, user_info: dict):
     st.session_state.login_user = {
         "USER_ID": user_id,
         "Name": user_info.get("Name", ""),
         "Group": user_info.get("Group", ""),
-        "Agent": user_info.get("Agent", "")
+        "Agent": user_info.get("Agent", ""),
+        "Allowed": user_info.get("Allowed", {})
     }
     st.session_state.user_id = user_id
     st.session_state.session_user_id = st.session_state.user_id
     st.session_state.user_admin_flg = "Y" if st.session_state.login_user["Group"] == "Admin" else "N"
+    if st.session_state.login_user["Group"]:
+        st.session_state.group_cd = st.session_state.login_user["Group"]
     if st.session_state.login_user["Agent"] == "DEFAULT":
         default_agent_data = dmu.read_json_file(cfg.web_default_agent_file, agent_folder_path)
         st.session_state.default_agent = default_agent_data["DISPLAY_NAME"]
@@ -152,6 +179,8 @@ def set_login_user_to_session(user_id: str, user_info: dict):
     else:
         default_agent_data = dmu.read_json_file(st.session_state.login_user["Agent"], agent_folder_path)
         st.session_state.default_agent = default_agent_data["DISPLAY_NAME"]
+    if st.session_state.login_user["Allowed"]:
+        user_allowed_parameter(st.session_state.login_user["Allowed"])
 
 # ログイン処理
 def ensure_login():
@@ -232,6 +261,19 @@ def ensure_login():
     # ここで処理を止めて、ログイン画面以降を表示させない
     st.stop()
 
+# ユーザーの利用可能な画面機能の設定
+def user_allowed_parameter(allowded_dict):
+    st.session_state.allowed_rag_management = allowded_dict.get("RAG Management", True)
+    st.session_state.allowed_exec_setting = allowded_dict.get("Exec Setting", True)
+    st.session_state.allowed_rag_setting = allowded_dict.get("RAG Setting", True)
+    st.session_state.allowed_feedback = allowded_dict.get("Feedback", True)
+    st.session_state.allowed_details = allowded_dict.get("Details", True)
+    st.session_state.allowed_analytics_knowledge = allowded_dict.get("Analytics Knowledge", True)
+    st.session_state.allowed_analytics_compare = allowded_dict.get("Analytics Compare", True)
+    st.session_state.allowed_web_search = allowded_dict.get("WEB Search", True)
+    st.session_state.allowed_book = allowded_dict.get("Book", True)
+    st.session_state.allowed_download_md = allowded_dict.get("Download Md", True)
+
 # セッションステートの初期宣言
 def initialize_session_states():
     if 'web_service' not in st.session_state:
@@ -245,7 +287,7 @@ def initialize_session_states():
     if 'display_name' not in st.session_state:
         st.session_state.display_name = st.session_state.default_agent
     if 'agents' not in st.session_state:
-        st.session_state.agents = dma.get_display_agents()
+        st.session_state.agents = dma.get_display_agents(st.session_state.group_cd)
     if 'agent_list' not in st.session_state:
         st.session_state.agent_list = [a1["AGENT"] for a1 in st.session_state.agents]
     if 'agent_list_index' not in st.session_state:
@@ -329,7 +371,7 @@ def refresh_session_states():
     st.session_state.web_user["USER_ID"] = st.session_state.user_id
     st.session_state.sidebar_message = ""
     st.session_state.display_name = st.session_state.default_agent
-    st.session_state.agents = dma.get_display_agents()
+    st.session_state.agents = dma.get_display_agents(st.session_state.group_cd)
     st.session_state.agent_list = [a1["AGENT"] for a1 in st.session_state.agents]
     st.session_state.agent_list_index = st.session_state.agent_list.index(st.session_state.display_name)
     st.session_state.agent_id = st.session_state.agents[st.session_state.agent_list_index]["AGENT"]
@@ -514,25 +556,6 @@ def main():
                         if key in st.session_state:
                             del st.session_state[key]
                     st.rerun()
-                # パスワード変更
-                with st.expander("Account"):
-                    with st.form("change_password_form", clear_on_submit=True):
-                        current_pw = st.text_input("Current Password", type="password")
-                        new_pw = st.text_input("New Password", type="password")
-                        new_pw2 = st.text_input("New Password (confirm)", type="password")
-                        submitted_pw = st.form_submit_button("Change Password")
-
-                    if submitted_pw:
-                        if not new_pw:
-                            st.error("新しいパスワードを入力してください。")
-                        elif new_pw != new_pw2:
-                            st.error("新しいパスワード（確認）が一致しません。")
-                        else:
-                            ok, msg = change_password(st.session_state.user_id, current_pw, new_pw)
-                            if ok:
-                                st.success(msg)
-                            else:
-                                st.error(msg)
 
         # エージェントを選択（JSON)
         if agent_id_selected := st.selectbox("Select Agent:", st.session_state.agent_list, index=st.session_state.agent_list_index):
@@ -573,27 +596,28 @@ def main():
                 st.rerun()
     
         # 知識更新の処理
-        rag_expander = st.expander("RAG Management")
-        with rag_expander:
-            # RAGの更新処理
-            if st.button("Update RAG Data", key="update_rag"):
-                dmc.generate_rag()
-                if cfg.user_dialog_auto_save_flg == "Y":
-                    dmgu.save_user_dialogs(st.session_state.web_service, st.session_state.web_user)
-                st.session_state.sidebar_message = "RAGの更新が完了しました"
-            
-            # RAGの削除処理(未選択は全削除)
-            st.session_state.rag_data_list_selected = st.multiselect("RAG DB", st.session_state.rag_data_list)
-            if st.button("Delete RAG DB", key="delete_rag_db"):
-                dmc.del_rag_db(st.session_state.rag_data_list_selected)
-                st.session_state.sidebar_message = "RAGを削除しました"
-                st.session_state.rag_data_list = dmc.get_rag_list()
+        if st.session_state.allowed_rag_management:
+            rag_expander = st.expander("RAG Management")
+            with rag_expander:
+                # RAGの更新処理
+                if st.button("Update RAG Data", key="update_rag"):
+                    dmc.generate_rag()
+                    if cfg.user_dialog_auto_save_flg == "Y":
+                        dmgu.save_user_dialogs(st.session_state.web_service, st.session_state.web_user)
+                    st.session_state.sidebar_message = "RAGの更新が完了しました"
+                
+                # RAGの削除処理(未選択は全削除)
+                st.session_state.rag_data_list_selected = st.multiselect("RAG DB", st.session_state.rag_data_list)
+                if st.button("Delete RAG DB", key="delete_rag_db"):
+                    dmc.del_rag_db(st.session_state.rag_data_list_selected)
+                    st.session_state.sidebar_message = "RAGを削除しました"
+                    st.session_state.rag_data_list = dmc.get_rag_list()
 
-            # セッションのユーザーダイアログ保存
-            if cfg.user_dialog_auto_save_flg == "N":
-                if st.button("Save User Dialog", key="save_user_dialog"):
-                    dmgu.save_user_dialogs(st.session_state.web_service, st.session_state.web_user)
-                    st.session_state.sidebar_message = "ユーザーダイアログを保存しました"
+                # セッションのユーザーダイアログ保存
+                if cfg.user_dialog_auto_save_flg == "N":
+                    if st.button("Save User Dialog", key="save_user_dialog"):
+                        dmgu.save_user_dialogs(st.session_state.web_service, st.session_state.web_user)
+                        st.session_state.sidebar_message = "ユーザーダイアログを保存しました"
 
         st.write(st.session_state.sidebar_message)
 
@@ -658,58 +682,60 @@ def main():
     time_setting = str(selected_time_setting)
 
     # 実行の設定
-    header_col2.markdown("Exec Setting:")
+    if st.session_state.allowed_exec_setting:
+        header_col2.markdown("Exec Setting:")
 
-    # ストリーミングの設定
-    if header_col2.checkbox("Streaming Mode", value=st.session_state.stream_mode):
-        st.session_state.stream_mode = True
-    else:
-        st.session_state.stream_mode = False
-    
-    # 会話メモリ利用の設定
-    if header_col2.checkbox("Memory Use", value=st.session_state.memory_use):
-        st.session_state.memory_use = True
-    else:
-        st.session_state.memory_use = False
+        # ストリーミングの設定
+        if header_col2.checkbox("Streaming Mode", value=st.session_state.stream_mode):
+            st.session_state.stream_mode = True
+        else:
+            st.session_state.stream_mode = False
+        
+        # 会話メモリ利用の設定
+        if header_col2.checkbox("Memory Use", value=st.session_state.memory_use):
+            st.session_state.memory_use = True
+        else:
+            st.session_state.memory_use = False
 
-    # メモリダイジェスト保存の設定
-    if header_col2.checkbox("Save Digest", value=st.session_state.save_digest):
-        st.session_state.save_digest = True
-    else:
-        st.session_state.save_digest = False
+        # メモリダイジェスト保存の設定
+        if header_col2.checkbox("Save Digest", value=st.session_state.save_digest):
+            st.session_state.save_digest = True
+        else:
+            st.session_state.save_digest = False
 
-    # マジックワード利用の設定
-    if header_col2.checkbox("Magic Word", value=st.session_state.magic_word_use):
-        st.session_state.magic_word_use = True
-    else:
-        st.session_state.magic_word_use = False
+        # マジックワード利用の設定
+        if header_col2.checkbox("Magic Word", value=st.session_state.magic_word_use):
+            st.session_state.magic_word_use = True
+        else:
+            st.session_state.magic_word_use = False
 
-#    # メモリ保存の設定
-#    if header_col2.checkbox("Memory Save", value=st.session_state.memory_save):
-#        st.session_state.memory_save = True
-#    else:
-#        st.session_state.memory_save = False
+    #    # メモリ保存の設定
+    #    if header_col2.checkbox("Memory Save", value=st.session_state.memory_save):
+    #        st.session_state.memory_save = True
+    #    else:
+    #        st.session_state.memory_save = False
 
-#    # メモリ類似度の設定
-#    if header_col2.checkbox("Memory Similarity", value=st.session_state.memory_similarity):
-#        st.session_state.memory_similarity = True
-#    else:
-#        st.session_state.memory_similarity = False
-#
+    #    # メモリ類似度の設定
+    #    if header_col2.checkbox("Memory Similarity", value=st.session_state.memory_similarity):
+    #        st.session_state.memory_similarity = True
+    #    else:
+    #        st.session_state.memory_similarity = False
+
     # 実行の設定
-    header_col3.markdown("RAG Setting:")
+    if st.session_state.allowed_rag_setting:
+        header_col3.markdown("RAG Setting:")
 
-    # RAG検索用クエリ生成の設定
-    if header_col3.checkbox("RAG Query Gen", value=st.session_state.RAG_query_gene):
-        st.session_state.RAG_query_gene = True
-    else:
-        st.session_state.RAG_query_gene = False
+        # RAG検索用クエリ生成の設定
+        if header_col3.checkbox("RAG Query Gen", value=st.session_state.RAG_query_gene):
+            st.session_state.RAG_query_gene = True
+        else:
+            st.session_state.RAG_query_gene = False
 
-    # メタ検索の設定
-    if header_col3.checkbox("Meta Search", value=st.session_state.meta_search):
-        st.session_state.meta_search = True
-    else:
-        st.session_state.meta_search = False
+        # メタ検索の設定
+        if header_col3.checkbox("Meta Search", value=st.session_state.meta_search):
+            st.session_state.meta_search = True
+        else:
+            st.session_state.meta_search = False
 
     # 会話履歴の表示対象切替
     num_seq_visible = 10
@@ -777,169 +803,177 @@ def main():
                                 show_uploaded_files_memory(seq_key, st.session_state.session.session_folder_path +"contents/", gen_content["file_name"], gen_content["file_type"])
 
                     if v2["setting"]["type"] in ["LLM","IMAGEGEN"]:
-                        if "communication" in v2["setting"]:
-                            agent_communication = v2["setting"]["communication"]
+                        if st.session_state.allowed_feedback:
+                            if "communication" in v2["setting"]:
+                                agent_communication = v2["setting"]["communication"]
 
-                            if agent_communication["ACTIVE"] == "Y":
-                                with st.chat_message("Feedback"):
-                                    feedback = {}
-                                    feedback["name"] = "Chunk Title"
-                                    if "feedback" in v2:
-                                        feedback["name"] = v2.get("feedback", {}).get("name", feedback["name"])
-                                    feedback["name"] = st.text_input("Feedback_Name:", key=f"feedback_name{k}_{k2}", value=feedback["name"], label_visibility="collapsed")
-                                                                                    
-                                    for fb_item in agent_communication["FEEDBACK_ITEM_LIST"]:
-                                        feedback[fb_item] = {}
-                                        feedback[fb_item]["visible"] = False
-                                        feedback[fb_item]["flg"] = False
-                                        feedback[fb_item]["memo"] = ""                           
+                                if agent_communication["ACTIVE"] == "Y":
+                                    with st.chat_message("Feedback"):
+                                        feedback = {}
+                                        feedback["name"] = "Chunk Title"
                                         if "feedback" in v2:
-                                            feedback[fb_item] = v2.get("feedback", {}).get(fb_item, feedback[fb_item])
-                                        feedback[fb_item]["saved_memo"] = feedback[fb_item]["memo"]
-                                
-                                        if st.checkbox(f"{fb_item}", key=f"feedback_{fb_item}_{k}_{k2}", value=feedback[fb_item]["visible"]):
-                                            feedback[fb_item]["memo"] = st.text_input("Memo:", key=f"feedback_{fb_item}_memo{k}_{k2}", value=feedback[fb_item]["memo"], label_visibility="collapsed")
-                                            feedback[fb_item]["visible"] = True
-                                        else:
-                                            feedback[fb_item]["memo"] = ""
-                                            feedback[fb_item]["visible"] = False
-
-                                    if st.button("Feedback", key=f"feedback_btn{k}_{k2}"):
+                                            feedback["name"] = v2.get("feedback", {}).get("name", feedback["name"])
+                                        feedback["name"] = st.text_input("Feedback_Name:", key=f"feedback_name{k}_{k2}", value=feedback["name"], label_visibility="collapsed")
+                                                                                        
                                         for fb_item in agent_communication["FEEDBACK_ITEM_LIST"]:
-                                            if feedback[fb_item]["memo"]!=feedback[fb_item]["saved_memo"] and feedback[fb_item]["memo"]!="":
-                                                feedback[fb_item]["flg"] = True
-                                            if feedback[fb_item]["memo"]=="":
-                                                feedback[fb_item]["flg"] = False
+                                            feedback[fb_item] = {}
+                                            feedback[fb_item]["visible"] = False
+                                            feedback[fb_item]["flg"] = False
+                                            feedback[fb_item]["memo"] = ""                           
+                                            if "feedback" in v2:
+                                                feedback[fb_item] = v2.get("feedback", {}).get(fb_item, feedback[fb_item])
+                                            feedback[fb_item]["saved_memo"] = feedback[fb_item]["memo"]
+                                    
+                                            if st.checkbox(f"{fb_item}", key=f"feedback_{fb_item}_{k}_{k2}", value=feedback[fb_item]["visible"]):
+                                                feedback[fb_item]["memo"] = st.text_input("Memo:", key=f"feedback_{fb_item}_memo{k}_{k2}", value=feedback[fb_item]["memo"], label_visibility="collapsed")
+                                                feedback[fb_item]["visible"] = True
+                                            else:
+                                                feedback[fb_item]["memo"] = ""
+                                                feedback[fb_item]["visible"] = False
 
-                                        if any(k != "name" for k in fb_item):
-                                            st.session_state.session.set_feedback_history(k, k2, feedback)
-                                            dmgc.create_communication_data(st.session_state.session.session_id, v2["setting"]["agent_file"])
-                                            st.session_state.sidebar_message = f"フィードバックを保存しました({k}_{k2})"
-                                            st.rerun()
-                                        else:
-                                            st.session_state.sidebar_message = f"フィードバックに変更はありません({k}_{k2})"
-                        
+                                        if st.button("Feedback", key=f"feedback_btn{k}_{k2}"):
+                                            for fb_item in agent_communication["FEEDBACK_ITEM_LIST"]:
+                                                if feedback[fb_item]["memo"]!=feedback[fb_item]["saved_memo"] and feedback[fb_item]["memo"]!="":
+                                                    feedback[fb_item]["flg"] = True
+                                                if feedback[fb_item]["memo"]=="":
+                                                    feedback[fb_item]["flg"] = False
+
+                                            if any(k != "name" for k in fb_item):
+                                                st.session_state.session.set_feedback_history(k, k2, feedback)
+                                                dmgc.create_communication_data(st.session_state.session.session_id, v2["setting"]["agent_file"])
+                                                st.session_state.sidebar_message = f"フィードバックを保存しました({k}_{k2})"
+                                                st.rerun()
+                                            else:
+                                                st.session_state.sidebar_message = f"フィードバックに変更はありません({k}_{k2})"
+
                         # Detail
-                        with st.chat_message("detail"):
-                            download_data.append({"role": "detail", "content": st.session_state.session.get_detail_info(k, k2)})
-                            chat_expander = st.expander("Detail Information")
-                            with chat_expander:
-                                st.markdown(st.session_state.session.get_detail_info(k, k2).replace("\n", "<br>"), unsafe_allow_html=True)
+                        if st.session_state.allowed_details:
+                            with st.chat_message("detail"):
+                                download_data.append({"role": "detail", "content": st.session_state.session.get_detail_info(k, k2)})
+                                chat_expander = st.expander("Detail Information")
+                                with chat_expander:
+                                    st.markdown(st.session_state.session.get_detail_info(k, k2).replace("\n", "<br>"), unsafe_allow_html=True)
 
                         # Analytics
-                        with st.chat_message("analytics"):
-                            if "analytics" in v2:
-                                if "knowledge_utility" in v2["analytics"]:
-                                    similarity_utility_dict = v2["analytics"]["knowledge_utility"]["similarity_utility"]
-                                    download_data.append({"role": "analytics", "content": "**knowledge Utility:**"})
-                                    if "image_files" in v2["analytics"]["knowledge_utility"]:
-                                        for image_key, image_values in v2["analytics"]["knowledge_utility"]["image_files"].items():
-                                            for image_value in image_values:
-                                                download_data.append({"role": "analytics", "image": st.session_state.session.session_analytics_folder_path + image_value})
-
-                            chat_expander = st.expander("Analytics Results")
-                            with chat_expander:
-                                analytics_dict = {}
+                        if st.session_state.allowed_analytics_knowledge or st.session_state.allowed_analytics_compare:
+                            with st.chat_message("analytics"):
                                 if "analytics" in v2:
-                                    analytics_dict = v2["analytics"]
-                                if "LLM" == v2["setting"]["type"]:
-                                    if compare_agent_id_selected := st.selectbox("Select Compare Agent:", st.session_state.agent_list, index=st.session_state.agent_list_index, key=f"conpareAgent_list{k}_{k2}"):
-                                        st.session_state.compare_agent_id = compare_agent_id_selected
-                                    compare_col1, compare_col2 = st.columns(2)
-                                    if compare_col1.button("Analytics Results - Compare Agents", key=f"conpareAgent_btn{k}_{k2}"):
-                                        compare_seq = k
-                                        compare_sub_seq = str(int(k2)-1)
-                                        compare_agent_file = next((a2["FILE"] for a2 in st.session_state.agents if a2["AGENT"] == st.session_state.compare_agent_id), None)
-                                        _, _, compare_response, compare_model_name, compare_export_contents, compare_knowledge_ref = dmva.genLLMAgentSimple(st.session_state.web_service, st.session_state.web_user, v2["setting"]["session_id"], v2["setting"]["session_name"], compare_agent_file, model_type="LLM", sub_seq=1, query=v2["prompt"]["query"]["input"], import_contents=[], situation=v2["prompt"]["query"]["situation"], prompt_temp_cd=v2["prompt"]["prompt_template"]["setting"], seq_limit=compare_seq, sub_seq_limit=compare_sub_seq)
-                                        vec_response = dmu.embed_text(v2["response"]["text"])
-                                        vec_compare_response = dmu.embed_text(compare_response)
-                                        compare_diff = dmu.calculate_cosine_distance(vec_response, vec_compare_response)
-                                        exec_agend_id = dma.get_agent_item(v2["setting"]["agent_file"], "DISPLAY_NAME")
-                                        _, _, compare_text, compare_text_model_name, _, _ = dmt.compare_texts(st.session_state.web_service, st.session_state.web_user, exec_agend_id, v2["response"]["text"], st.session_state.compare_agent_id, compare_response)                                    
-                                        if "compare_agents" not in analytics_dict:
-                                            analytics_dict["compare_agents"] = []
-                                        analytics_dict["compare_agents"].append({"compare_agent":{"agent_file": compare_agent_file, "model_name": compare_model_name, "response": compare_response, "diff": compare_diff, "knowledge_rag": compare_knowledge_ref}, "compare_text": {"compare_model_name": compare_text_model_name, "text": compare_text}})
-                                        st.session_state.session.set_analytics_history(k, k2, analytics_dict)
-                                        st.session_state.sidebar_message = f"比較分析を完了しました({k}_{k2})"
-                                        st.rerun()
-                                if v2["response"]["reference"]["knowledge_rag"]:
-                                    ak_col1, ak_col2 = st.columns(2)
-                                    st.session_state.analytics_knowledge_mode = ak_col2.radio("Analytics Knowledge Mode:", ["Default", "Norm(All)", "Norm(Group)"], index=1, key=f"akmode_{k}_{k2}")
-                                    if ak_col1.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}"):
-                                        title = f"{k}-{k2}-{st.session_state.session.session_name}"
-                                        references = []
-                                        for reference_data in v2["response"]["reference"]["knowledge_rag"]:
-                                            references.append(ast.literal_eval("{"+ reference_data.replace("\n", "").replace("$", "＄") + "}"))
-                                        result = dmva.analytics_knowledge(title, references, st.session_state.session.session_analytics_folder_path, st.session_state.analytics_knowledge_mode)
-                                        analytics_dict["knowledge_utility"] = result
-                                        st.session_state.session.set_analytics_history(k, k2, analytics_dict)
-                                        st.session_state.sidebar_message = f"知識活用性を分析しました({k}_{k2})"
-                                        st.rerun()
-                                if "compare_agents" in analytics_dict:
-                                    chat_expander_compare = st.expander("Analytics Results - Compare Agents")
-                                    with chat_expander_compare:
-                                        compare_agents = analytics_dict["compare_agents"]
-                                        compare_agent_labels = [
-                                            f"{i+1}: {agent['compare_agent']['agent_file']} ({agent['compare_agent']['model_name']})"
-                                            for i, agent in enumerate(compare_agents)
-                                        ]
-                                        selected_compare_idx = st.selectbox(
-                                            "Select Compare Agent Result:",
-                                            range(len(compare_agents)),
-                                            format_func=lambda idx: compare_agent_labels[idx],
-                                            key=f"compare_agent_select_{k}_{k2}"
-                                        )
-                                        compare_agent = compare_agents[selected_compare_idx]
-                                        compare_agent_info = compare_agent["compare_agent"]
-                                        st.markdown(f"Agent: {compare_agent_info['agent_file']}")
-                                        st.markdown(f"Model: {compare_agent_info['model_name']}")
-                                        st.markdown(f"Diff: {compare_agent_info['diff']}")
-                                        if "knowledge_rag" in compare_agent_info:
-                                            if compare_agent_info["knowledge_rag"]: #and "knowledge_utility" not in compare_agent_info:
-                                                ak_compare_col1, ak_compare_col2 = st.columns(2)
-                                                st.session_state.analytics_knowledge_mode_compare = ak_compare_col2.radio("Analytics Knowledge Mode:", ["Default", "Norm(All)", "Norm(Group)"], index=1, key=f"akmode_compare_{k}_{k2}")
-                                                if ak_compare_col1.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}_compare{selected_compare_idx}"):
-                                                    compare_title = f"{k}-{k2}-{st.session_state.session.session_name}_compare{selected_compare_idx}"
-                                                    compare_references = []
-                                                    for compare_reference_data in compare_agent_info["knowledge_rag"]:
-                                                        compare_references.append(ast.literal_eval("{"+ compare_reference_data.replace("\n", "").replace("$", "＄") + "}"))
-                                                    compare_ref_result = dmva.analytics_knowledge(compare_title, compare_references, st.session_state.session.session_analytics_folder_path, st.session_state.analytics_knowledge_mode_compare)
-                                                    analytics_dict["compare_agents"][selected_compare_idx]["compare_agent"]["knowledge_utility"] = compare_ref_result
-                                                    st.session_state.session.set_analytics_history(k, k2, analytics_dict)
-                                                    st.session_state.sidebar_message = f"知識活用性を分析しました({k}_{k2}_compare{selected_compare_idx})"
-                                                    st.rerun()
-                                        st.markdown("")
-                                        st.markdown(compare_agent_info["response"].replace("\n", "<br>"), unsafe_allow_html=True)
-                                        st.markdown("")
-                                        st.markdown(f"**Compare Text:** {compare_agent['compare_text']['compare_model_name']}")
-                                        st.markdown(compare_agent["compare_text"]["text"].replace("\n", "<br>"), unsafe_allow_html=True)
-                                        st.markdown("")
-                                        if "knowledge_utility" in compare_agent_info:
-                                            chat_expander_analytics_compare = st.expander("Analytics Results - Knowledge Utility")
-                                            with chat_expander_analytics_compare:
-                                                compare_similarity_utility_dict = compare_agent_info["knowledge_utility"]["similarity_utility"]
+                                    if "knowledge_utility" in v2["analytics"]:
+                                        similarity_utility_dict = v2["analytics"]["knowledge_utility"]["similarity_utility"]
+                                        download_data.append({"role": "analytics", "content": "**knowledge Utility:**"})
+                                        if "image_files" in v2["analytics"]["knowledge_utility"]:
+                                            for image_key, image_values in v2["analytics"]["knowledge_utility"]["image_files"].items():
+                                                for image_value in image_values:
+                                                    download_data.append({"role": "analytics", "image": st.session_state.session.session_analytics_folder_path + image_value})
+
+                                chat_expander = st.expander("Analytics Results")
+                                with chat_expander:
+                                    analytics_dict = {}
+                                    if "analytics" in v2:
+                                        analytics_dict = v2["analytics"]
+                                    if "LLM" == v2["setting"]["type"]:
+                                        if st.session_state.allowed_analytics_compare:
+                                            if compare_agent_id_selected := st.selectbox("Select Compare Agent:", st.session_state.agent_list, index=st.session_state.agent_list_index, key=f"conpareAgent_list{k}_{k2}"):
+                                                st.session_state.compare_agent_id = compare_agent_id_selected
+                                            compare_col1, compare_col2 = st.columns(2)
+                                            if compare_col1.button("Analytics Results - Compare Agents", key=f"conpareAgent_btn{k}_{k2}"):
+                                                compare_seq = k
+                                                compare_sub_seq = str(int(k2)-1)
+                                                compare_agent_file = next((a2["FILE"] for a2 in st.session_state.agents if a2["AGENT"] == st.session_state.compare_agent_id), None)
+                                                _, _, compare_response, compare_model_name, compare_export_contents, compare_knowledge_ref = dmva.genLLMAgentSimple(st.session_state.web_service, st.session_state.web_user, v2["setting"]["session_id"], v2["setting"]["session_name"], compare_agent_file, model_type="LLM", sub_seq=1, query=v2["prompt"]["query"]["input"], import_contents=[], situation=v2["prompt"]["query"]["situation"], prompt_temp_cd=v2["prompt"]["prompt_template"]["setting"], seq_limit=compare_seq, sub_seq_limit=compare_sub_seq)
+                                                vec_response = dmu.embed_text(v2["response"]["text"])
+                                                vec_compare_response = dmu.embed_text(compare_response)
+                                                compare_diff = dmu.calculate_cosine_distance(vec_response, vec_compare_response)
+                                                exec_agend_id = dma.get_agent_item(v2["setting"]["agent_file"], "DISPLAY_NAME")
+                                                _, _, compare_text, compare_text_model_name, _, _ = dmt.compare_texts(st.session_state.web_service, st.session_state.web_user, exec_agend_id, v2["response"]["text"], st.session_state.compare_agent_id, compare_response)                                    
+                                                if "compare_agents" not in analytics_dict:
+                                                    analytics_dict["compare_agents"] = []
+                                                analytics_dict["compare_agents"].append({"compare_agent":{"agent_file": compare_agent_file, "model_name": compare_model_name, "response": compare_response, "diff": compare_diff, "knowledge_rag": compare_knowledge_ref}, "compare_text": {"compare_model_name": compare_text_model_name, "text": compare_text}})
+                                                st.session_state.session.set_analytics_history(k, k2, analytics_dict)
+                                                st.session_state.sidebar_message = f"比較分析を完了しました({k}_{k2})"
+                                                st.rerun()
+                                    if st.session_state.allowed_analytics_knowledge:
+                                        if v2["response"]["reference"]["knowledge_rag"]:
+                                            ak_col1, ak_col2 = st.columns(2)
+                                            st.session_state.analytics_knowledge_mode = ak_col2.radio("Analytics Knowledge Mode:", ["Default", "Norm(All)", "Norm(Group)"], index=1, key=f"akmode_{k}_{k2}")
+                                            if ak_col1.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}"):
+                                                title = f"{k}-{k2}-{st.session_state.session.session_name}"
+                                                references = []
+                                                for reference_data in v2["response"]["reference"]["knowledge_rag"]:
+                                                    references.append(ast.literal_eval("{"+ reference_data.replace("\n", "").replace("$", "＄") + "}"))
+                                                result = dmva.analytics_knowledge(title, references, st.session_state.session.session_analytics_folder_path, st.session_state.analytics_knowledge_mode)
+                                                analytics_dict["knowledge_utility"] = result
+                                                st.session_state.session.set_analytics_history(k, k2, analytics_dict)
+                                                st.session_state.sidebar_message = f"知識活用性を分析しました({k}_{k2})"
+                                                st.rerun()
+                                    if "compare_agents" in analytics_dict:
+                                        chat_expander_compare = st.expander("Analytics Results - Compare Agents")
+                                        with chat_expander_compare:
+                                            compare_agents = analytics_dict["compare_agents"]
+                                            compare_agent_labels = [
+                                                f"{i+1}: {agent['compare_agent']['agent_file']} ({agent['compare_agent']['model_name']})"
+                                                for i, agent in enumerate(compare_agents)
+                                            ]
+                                            selected_compare_idx = st.selectbox(
+                                                "Select Compare Agent Result:",
+                                                range(len(compare_agents)),
+                                                format_func=lambda idx: compare_agent_labels[idx],
+                                                key=f"compare_agent_select_{k}_{k2}"
+                                            )
+                                            compare_agent = compare_agents[selected_compare_idx]
+                                            compare_agent_info = compare_agent["compare_agent"]
+                                            st.markdown(f"Agent: {compare_agent_info['agent_file']}")
+                                            st.markdown(f"Model: {compare_agent_info['model_name']}")
+                                            st.markdown(f"Diff: {compare_agent_info['diff']}")
+                                            if st.session_state.allowed_analytics_knowledge:
+                                                if "knowledge_rag" in compare_agent_info:
+                                                    if compare_agent_info["knowledge_rag"]: #and "knowledge_utility" not in compare_agent_info:
+                                                        ak_compare_col1, ak_compare_col2 = st.columns(2)
+                                                        st.session_state.analytics_knowledge_mode_compare = ak_compare_col2.radio("Analytics Knowledge Mode:", ["Default", "Norm(All)", "Norm(Group)"], index=1, key=f"akmode_compare_{k}_{k2}")
+                                                        if ak_compare_col1.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}_compare{selected_compare_idx}"):
+                                                            compare_title = f"{k}-{k2}-{st.session_state.session.session_name}_compare{selected_compare_idx}"
+                                                            compare_references = []
+                                                            for compare_reference_data in compare_agent_info["knowledge_rag"]:
+                                                                compare_references.append(ast.literal_eval("{"+ compare_reference_data.replace("\n", "").replace("$", "＄") + "}"))
+                                                            compare_ref_result = dmva.analytics_knowledge(compare_title, compare_references, st.session_state.session.session_analytics_folder_path, st.session_state.analytics_knowledge_mode_compare)
+                                                            analytics_dict["compare_agents"][selected_compare_idx]["compare_agent"]["knowledge_utility"] = compare_ref_result
+                                                            st.session_state.session.set_analytics_history(k, k2, analytics_dict)
+                                                            st.session_state.sidebar_message = f"知識活用性を分析しました({k}_{k2}_compare{selected_compare_idx})"
+                                                            st.rerun()
+                                            st.markdown("")
+                                            st.markdown(compare_agent_info["response"].replace("\n", "<br>"), unsafe_allow_html=True)
+                                            st.markdown("")
+                                            st.markdown(f"**Compare Text:** {compare_agent['compare_text']['compare_model_name']}")
+                                            st.markdown(compare_agent["compare_text"]["text"].replace("\n", "<br>"), unsafe_allow_html=True)
+                                            st.markdown("")
+                                            if st.session_state.allowed_analytics_knowledge:
+                                                if "knowledge_utility" in compare_agent_info:
+                                                    chat_expander_analytics_compare = st.expander("Analytics Results - Knowledge Utility")
+                                                    with chat_expander_analytics_compare:
+                                                        compare_similarity_utility_dict = compare_agent_info["knowledge_utility"]["similarity_utility"]
+                                                        st.markdown("**knowledge Utility:**")
+                                                        st.markdown(", ".join(f"{k}: {v}" for k, v in compare_similarity_utility_dict.items()))
+                                                        if "image_files" in compare_agent_info["knowledge_utility"]:
+                                                            for image_key, image_values in compare_agent_info["knowledge_utility"]["image_files"].items():
+                                                                for image_value in image_values:
+                                                                    st.image(st.session_state.session.session_analytics_folder_path + image_value)
+                                                                    rag_category = os.path.splitext(image_value)[0].split("_")[-1]
+                                                                    for ak_dict in compare_agent_info["knowledge_utility"]["similarity_rank"][rag_category]:
+                                                                        st.markdown(ak_line(ak_dict))
+                                    if st.session_state.allowed_analytics_knowledge:
+                                        if "knowledge_utility" in analytics_dict:
+                                            chat_expander_analytics = st.expander("Analytics Results - Knowledge Utility")
+                                            with chat_expander_analytics:
+                                                similarity_utility_dict = analytics_dict["knowledge_utility"]["similarity_utility"]
                                                 st.markdown("**knowledge Utility:**")
-                                                st.markdown(", ".join(f"{k}: {v}" for k, v in compare_similarity_utility_dict.items()))
-                                                if "image_files" in compare_agent_info["knowledge_utility"]:
-                                                    for image_key, image_values in compare_agent_info["knowledge_utility"]["image_files"].items():
+                                                st.markdown(", ".join(f"{k}: {v}" for k, v in similarity_utility_dict.items()))
+                                                if "image_files" in analytics_dict["knowledge_utility"]:
+                                                    for image_key, image_values in analytics_dict["knowledge_utility"]["image_files"].items():
                                                         for image_value in image_values:
                                                             st.image(st.session_state.session.session_analytics_folder_path + image_value)
-                                                            rag_category = os.path.splitext(image_value)[0].split("_")[-1]
-                                                            for ak_dict in compare_agent_info["knowledge_utility"]["similarity_rank"][rag_category]:
+                                                            rag_category = re.search(r'KUtilPlot_(.+?)\.png', image_value).group(1) if re.search(r'KUtilPlot_(.+?)\.png', image_value) else None
+                                                            for ak_dict in analytics_dict["knowledge_utility"]["similarity_rank"][rag_category]:
                                                                 st.markdown(ak_line(ak_dict))
-                                if "knowledge_utility" in analytics_dict:
-                                    chat_expander_analytics = st.expander("Analytics Results - Knowledge Utility")
-                                    with chat_expander_analytics:
-                                        similarity_utility_dict = analytics_dict["knowledge_utility"]["similarity_utility"]
-                                        st.markdown("**knowledge Utility:**")
-                                        st.markdown(", ".join(f"{k}: {v}" for k, v in similarity_utility_dict.items()))
-                                        if "image_files" in analytics_dict["knowledge_utility"]:
-                                            for image_key, image_values in analytics_dict["knowledge_utility"]["image_files"].items():
-                                                for image_value in image_values:
-                                                    st.image(st.session_state.session.session_analytics_folder_path + image_value)
-                                                    rag_category = re.search(r'KUtilPlot_(.+?)\.png', image_value).group(1) if re.search(r'KUtilPlot_(.+?)\.png', image_value) else None
-                                                    for ak_dict in analytics_dict["knowledge_utility"]["similarity_rank"][rag_category]:
-                                                        st.markdown(ak_line(ak_dict))
 
             # 会話履歴の論理削除設定
             if st.checkbox(f"Delete(seq:{k})", key="del_chat_seq"+k):
@@ -952,21 +986,24 @@ def main():
         show_uploaded_files_widget(st.session_state.uploaded_files)
 
         # WEB検索の設定
-        if st.checkbox("WEB Search", value=st.session_state.web_search):
-            st.session_state.web_search = True
-        else:
-            st.session_state.web_search = False
+        if st.session_state.allowed_web_search:
+            if st.checkbox("WEB Search", value=st.session_state.web_search):
+                st.session_state.web_search = True
+            else:
+                st.session_state.web_search = False
 
         # BOOKから選択
-        if "BOOK" in st.session_state.agent_data:
-            st.session_state.book_selected = st.multiselect("BOOK", [item["RAG_NAME"] for item in st.session_state.agent_data["BOOK"]])
+        if st.session_state.allowed_book:
+            if "BOOK" in st.session_state.agent_data:
+                st.session_state.book_selected = st.multiselect("BOOK", [item["RAG_NAME"] for item in st.session_state.agent_data["BOOK"]])
 
     # ファイルダウンローダー
-    footer_col1, footer_col2 = st.columns(2)
-    st.session_state.dl_type = footer_col1.radio("Download Mode:", ("Chats Only", "ALL"))
-    dl_file_id = st.session_state.session.session_id +"_"+ st.session_state.session.session_name[:20]
-    dl_data, dl_file_name, dl_mime = set_dl_file(download_data, st.session_state.dl_type, file_id=dl_file_id)
-    footer_col2.download_button(label="Download(.md)", data=dl_data, file_name=dl_file_name, mime=dl_mime)
+    if st.session_state.allowed_download_md:
+        footer_col1, footer_col2 = st.columns(2)
+        st.session_state.dl_type = footer_col1.radio("Download Mode:", ("Chats Only", "ALL"))
+        dl_file_id = st.session_state.session.session_id +"_"+ st.session_state.session.session_name[:20]
+        dl_data, dl_file_name, dl_mime = set_dl_file(download_data, st.session_state.dl_type, file_id=dl_file_id)
+        footer_col2.download_button(label="Download(.md)", data=dl_data, file_name=dl_file_name, mime=dl_mime)
     
     # ユーザーの問合せ入力
     if st.session_state.session_user_id == st.session_state.user_id:

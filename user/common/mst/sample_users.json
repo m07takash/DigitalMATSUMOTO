@@ -15,12 +15,36 @@
     "Name": "Normal Man",
     "PW": "password",
     "Group": "User",
-    "Agent": "agent_13DefaultGemini.json"
+    "Agent": "agent_13DefaultGemini.json",
+    "Allowed": {
+      "RAG Management": true,
+      "Exec Setting": true,
+      "RAG Setting": true,
+      "Feedback": true,
+      "Details": true,
+      "Analytics Knowledge": true,
+      "Analytics Compare": false,
+      "WEB Search": true,
+      "Book": true,
+      "Download Md": true
+    }
   },
   "USER0003": {
     "Name": "Senryu Seito",
     "PW": "password",
     "Group": "User",
-    "Agent": "agent_22SenryuSensei.json"
+    "Agent": "agent_22SenryuSensei.json",
+    "Allowed": {
+      "RAG Management": false,
+      "Exec Setting": false,
+      "RAG Setting": false,
+      "Feedback": false,
+      "Details": false,
+      "Analytics Knowledge": false,
+      "Analytics Compare": false,
+      "WEB Search": false,
+      "Book": false,
+      "Download Md": false
+    }
   }
 }

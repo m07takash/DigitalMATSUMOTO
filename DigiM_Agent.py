@@ -26,13 +26,19 @@ def get_all_agents():
     return agents
 
 # 選択可能なエージェント一覧の取得
-def get_display_agents():
+def get_display_agents(group_cd="All"):
     agent_files = dmu.get_files(agent_folder_path, ".json")
     agents = []
     for agent_file in agent_files:
         agent_data = dmu.read_json_file(agent_file, agent_folder_path)
         if agent_data["DISPLAY"]:
-            agents.append({"AGENT": agent_data["DISPLAY_NAME"], "FILE": agent_file})
+            if "GROUP" not in agent_data:
+                agents.append({"AGENT": agent_data["DISPLAY_NAME"], "FILE": agent_file})
+            else:
+                if group_cd in ["All", "Admin"]:
+                    agents.append({"AGENT": agent_data["DISPLAY_NAME"], "FILE": agent_file})
+                elif group_cd in agent_data["GROUP"]:
+                    agents.append({"AGENT": agent_data["DISPLAY_NAME"], "FILE": agent_file})
     return agents
 
 # LLMエージェントのプロパティを設定

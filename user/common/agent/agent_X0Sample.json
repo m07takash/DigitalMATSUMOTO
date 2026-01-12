@@ -1,6 +1,7 @@
 {
     "DISPLAY": true,
     "DISPLAY_NAME": "デジタルツイン(サンプル)",
+    "GROUP": ["User"],
     "NAME": "デジタルコンサル",
     "ACT": "コンサルティングファームのパートナー",
     "PERSONALITY": {
