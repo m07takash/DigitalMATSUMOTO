@@ -13,6 +13,9 @@ from dateutil import parser
 from datetime import datetime
 from dotenv import load_dotenv
 
+import unicodedata
+from pathlib import Path
+
 import MeCab
 from sklearn.feature_extraction.text import TfidfVectorizer
 from wordcloud import WordCloud
@@ -45,6 +48,80 @@ def parse_date(d):
         return datetime.fromisoformat(d)
     except Exception:
         return datetime.min
+    
+# ファイル名のサニタイズ
+def sanitize_filename(name: str,
+                      replacement: str = "_",
+                      max_length: int = 255,
+                      keep_unicode: bool = True) -> str:
+    """
+    ファイル名として危険/不便な文字を除去 or 置換して返す。
+    - パス区切り /, \\ や制御文字などは除去
+    - Windows 禁止文字 <>:"/\\|?* を除去
+    - 例にある ", ', $, %, / も除去対象
+    - 末尾のドット/スペースを除去（Windows対策）
+    - 空になった場合は 'untitled'
+    """
+    if name is None:
+        return "untitled"
+    
+    # Windows予約語（拡張子無し部分がこれだと保存できない/面倒）
+    _WINDOWS_RESERVED = {
+        "CON", "PRN", "AUX", "NUL",
+        *(f"COM{i}" for i in range(1, 10)),
+        *(f"LPT{i}" for i in range(1, 10)),
+    }
+
+    # 前後の空白（特に末尾の空白はWindowsで問題になりやすい）
+    name = name.strip()
+
+    # Unicode正規化（見た目同じの文字を揃える）
+    name = unicodedata.normalize("NFKC", name)
+
+    # 文字種の扱い：ASCIIに寄せたいなら keep_unicode=False
+    if not keep_unicode:
+        name = name.encode("ascii", "ignore").decode("ascii")
+
+    # 制御文字を除去
+    name = "".join(ch for ch in name if unicodedata.category(ch)[0] != "C")
+
+    # パス区切りは絶対に消す（ディレクトリトラバーサル対策にもなる）
+    name = name.replace("/", replacement).replace("\\", replacement)
+
+    # Windowsで禁止の文字を置換/除去: <>:"/\|?*
+    name = re.sub(r'[<>:"/\\|?*]', replacement, name)
+
+    # 例の文字など、一般にファイル名で面倒になりやすい記号を広めに除去したい場合
+    # 必要に応じて増減してください
+    name = re.sub(r"""["'$%]""", "", name)
+
+    # 連続する replacement をまとめる
+    if replacement:
+        rep_esc = re.escape(replacement)
+        name = re.sub(rf"{rep_esc}+", replacement, name)
+
+    # 先頭/末尾の replacement やドット/スペースを整理
+    name = name.strip(" ._")
+
+    # 空になったら保険
+    if not name:
+        name = "untitled"
+
+    # Windows予約語対策（拡張子を除いた部分が予約語なら前に _ を付ける）
+    stem, dot, suffix = name.partition(".")
+    if stem.upper() in _WINDOWS_RESERVED:
+        name = f"_{name}"
+
+    # 長すぎる場合（拡張子はなるべく残す）
+    if len(name) > max_length:
+        p = Path(name)
+        ext = p.suffix
+        base = p.stem
+        cut = max_length - len(ext)
+        name = base[:max(1, cut)] + ext
+
+    name = name.rstrip(" .")
+    return name
 
 # パスワードのハッシュ化と検証
 def hash_password(plain: str) -> str:

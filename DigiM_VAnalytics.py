@@ -6,6 +6,7 @@ from matplotlib import rcParams
 
 import DigiM_Agent as dma
 import DigiM_Execute as dme
+import DigiM_Util as dmu
 
 # エージェントのシンプルな実行
 def genLLMAgentSimple(service_info, user_info, session_id, session_name, agent_file, model_type="LLM", sub_seq=1, query="", import_contents=[], situation={}, overwrite_items={}, add_knowledge=[], prompt_temp_cd="No Template", execution={}, seq_limit="", sub_seq_limit=""):
@@ -41,7 +42,7 @@ def analytics_knowledge(title, reference, analytics_file_path, ak_mode="Default"
         df["similarity_A"] = df["similarity_A"] / df.groupby("rag")["similarity_A"].transform("max")
 
     df['knowledge_utility'] = round(df['similarity_Q'] - df['similarity_A'], 3)
-    file_title = title[:30]
+    file_title = dmu.sanitize_filename(title[:30])
     
     # similarity_Qの統計量を算出
     similarity_Q_stats = df.groupby('rag')['similarity_Q'].agg([
