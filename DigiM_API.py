@@ -49,7 +49,7 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
 
     # 実行
     response = ""
-    for response_service_info, response_user_info, response_chunk in dme.DigiMatsuExecute_Practice(
+    for response_service_info, response_user_info, response_chunk, output_reference in dme.DigiMatsuExecute_Practice(
         service_info,
         user_info,
         session_id,
@@ -67,7 +67,7 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
         session_name = f"(User:{user_info['USER_ID']}){new_session_name}"
         session.chg_session_name(session_name)
 
-    return response_service_info, response_user_info, session_id, session_name, response
+    return response_service_info, response_user_info, session_id, session_name, response, output_reference
 
 @app.post("/run_function")
 async def run_function(data: InputData):
@@ -78,7 +78,7 @@ async def run_function(data: InputData):
     user_info = data.user_info.model_dump()
 
     # exec_function 呼び出し
-    service_info, user_info, session_id, session_name, response = exec_function(
+    service_info, user_info, session_id, session_name, response, output_reference = exec_function(
         service_info,
         user_info,
         data.session_id,
@@ -94,7 +94,8 @@ async def run_function(data: InputData):
         "user_info": user_info,
         "session_id": session_id,
         "session_name": session_name,
-        "response": response
+        "response": response,
+        "output_reference": output_reference
     }
 
 if __name__ == "__main__":

@@ -29,6 +29,7 @@ class SessionLockedError(RuntimeError):
 # 単体実行用の関数
 def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_file, model_type="LLM", sub_seq=1, user_input="", contents=[], situation={}, overwrite_items={}, add_knowledge=[], prompt_temp_cd="", execution={}, seq_limit="", sub_seq_limit=""):
     export_files = []
+    output_reference = {}
     timestamp_begin = str(datetime.now())
     timestamp_log = "[01.実行開始(セッション設定)]"+str(datetime.now())+"<br>"
 
@@ -113,6 +114,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         web_search_log["urls"] = export_urls
         web_search_log["web_context"] = web_context
 
+    output_reference["Web_search"] = web_search_log
+
     user_query += f"\n{web_context}"
 
     # クエリのベクトル化（RAGの検索は「0.ユーザ入力」「1.ユーザー入力＋メモリダイジェスト」の類似している方を取る）
@@ -170,7 +173,9 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         RAG_query_gene_log["llm_response"] = RAG_query_gene_response
         RAG_query_gene_log["prompt_token"] = RAG_query_gene_prompt_tokens
         RAG_query_gene_log["response_token"] = RAG_query_gene_response_tokens
-    
+
+    output_reference["RAG_query_gene_log"] = RAG_query_gene_log
+
     # クエリからメタデータ検索情報の取得
     meta_search_log = {}
     meta_searches = []
@@ -197,6 +202,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         meta_search_log["date"]["prompt_token"] = extract_date_prompt_tokens
         meta_search_log["date"]["response_token"] = extract_date_response_tokens
     
+    output_reference["meta_search"] = meta_search_log
+    
     # RAGコンテキストを取得(追加ナレッジを反映)
     timestamp_log += "[13.RAG開始]"+str(datetime.now())+"<br>"
     if add_knowledge:
@@ -213,7 +220,17 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         query = f'{knowledge_context}{prompt_template}{user_query}{situation_prompt}'
     elif model_type == "IMAGEGEN":
         query = f'{prompt_template}{user_query}{situation_prompt}'
-    
+
+    output_reference["prompt"] = {}
+    output_reference["prompt"]["query"] = query
+    output_reference["prompt"]["user_query"] = user_query
+    output_reference["prompt"]["contents_context"] = contents_context
+    output_reference["prompt"]["web_context"] = web_context
+    output_reference["prompt"]["knowledge_context"] = knowledge_context
+    output_reference["prompt"]["prompt_template"] = prompt_template
+    output_reference["prompt"]["situation_prompt"] = situation_prompt
+    output_reference["prompt"]["memories_selected"] = memories_selected
+
     # LLMの実行
     prompt = ""
     response = ""
@@ -241,7 +258,10 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     response_vec = dmu.embed_text(response.replace("\n", "")[:8000])
     memory_ref = dmc.get_memory_reference(memories_selected, memory_similarity, response_vec, memory_similarity_logic)
     knowledge_ref = dmc.get_knowledge_reference(response_vec, knowledge_selected)
-    
+
+    output_reference["memory_ref"] = memory_ref
+    output_reference["knowledge_ref"] = knowledge_ref
+
     # 入力されたコンテンツの保存
     if contents_save:
         timestamp_log += "[24.コンテンツの保存開始]"+str(datetime.now())+"<br>"
@@ -383,7 +403,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         # ユーザーダイアログを未保存に設定
         session.save_user_dialog_session("UNSAVED")
     
-    yield response_service_info, user_info, "", export_files, knowledge_ref
+    yield response_service_info, user_info, "", export_files, output_reference
 
 
 # プラクティスで実行
@@ -533,15 +553,16 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
 
                 # LLM実行
                 response = ""
-                for response_service_info, response_user_info, response_chunk, export_contents, knowledge_ref in DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_file, model_type, sub_seq, user_input, import_contents, situation, overwrite_items, add_knowledge, prompt_temp_cd, execution, seq_limit, sub_seq_limit):
+                for response_service_info, response_user_info, response_chunk, export_contents, output_reference in DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_file, model_type, sub_seq, user_input, import_contents, situation, overwrite_items, add_knowledge, prompt_temp_cd, execution, seq_limit, sub_seq_limit):
                     response += response_chunk
                     if not last_only:
-                        yield response_service_info, response_user_info, response_chunk
+                        yield response_service_info, response_user_info, response_chunk, output_reference
                     elif last_only and i==last_idx:
-                        yield response_service_info, response_user_info, response_chunk
+                        yield response_service_info, response_user_info, response_chunk, output_reference
                     
                 input = user_input
                 output = response
+                knowledge_ref = output_reference["knowledge_ref"]
 
             elif model_type =="TOOL":           
                 # シーケンスの設定(sub_seq=1ならば発番)
@@ -633,17 +654,17 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                         if exp is not None:
                             export_contents = exp
                         if not last_only:
-                            yield resp_svc, resp_usr, chunk
+                            yield resp_svc, resp_usr, chunk, {}
                         elif last_only and i == last_idx:
-                            yield resp_svc, resp_usr, chunk
+                            yield resp_svc, resp_usr, chunk, {}
                     response_service_info = resp_svc
                     response_user_info = resp_usr
                 else:
                     response_service_info, response_user_info, output, export_contents = tool_result
                     if not last_only:
-                        yield response_service_info, response_user_info, output
+                        yield response_service_info, response_user_info, output, {}
                     elif last_only and i == last_idx:
-                        yield response_service_info, response_user_info, output
+                        yield response_service_info, response_user_info, output, {}
                 timestamp_end = str(datetime.now())
                 
                 # ログデータの保存
@@ -683,9 +704,9 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 session.save_history(str(seq), "response", response_chat_dict, "SUB_SEQ", str(sub_seq))
 
 #                if not last_only:
-#                    yield response_service_info, response_user_info, output
+#                    yield response_service_info, response_user_info, output, {}
 #                elif last_only and i==last_idx:
-#                    yield response_service_info, response_user_info, output
+#                    yield response_service_info, response_user_info, output, {}
             
             # 結果のリストへの格納
             result["SubSEQ"]=sub_seq

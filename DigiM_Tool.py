@@ -407,7 +407,7 @@ def management_analysis(service_info, user_info, session_id, session_name, agent
             execution["WEB_SEARCH"] = False
 
         response = ""
-        for response_service_info, response_user_info, response_chunk in dme.DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name, agent_file, user_input, import_contents, situation, overwrite_items, add_knowledges, execution):
+        for response_service_info, response_user_info, response_chunk, output_reference in dme.DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name, agent_file, user_input, import_contents, situation, overwrite_items, add_knowledges, execution):
             response += response_chunk
         
         Q_no += 1         
@@ -416,58 +416,6 @@ def management_analysis(service_info, user_info, session_id, session_name, agent
     export_contents = []
 
     return response_service_info, response_user_info, response, export_contents
-
-
-## エージェントのシンプルな実行
-#def genLLMAgentSimple(service_info, user_info, session_id, session_name, agent_file, model_type="LLM", sub_seq=1, query="", import_contents=[], situation={}, overwrite_items={}, add_knowledge=[], prompt_temp_cd="No Template", execution={}, seq_limit="", sub_seq_limit=""):
-#    agent = dma.DigiM_Agent(agent_file)
-#    model_name = agent.agent["ENGINE"][model_type]["MODEL"]
-#
-#    # 実行の設定
-#    execution = {}
-#    execution["CONTENTS_SAVE"] = False
-#    execution["MEMORY_SAVE"] = False
-#    execution["STREAM_MODE"] = False
-#    execution["SAVE_DIGEST"] = False
-#
-#    # LLM実行
-#    response = ""
-#    for response_service_info, response_user_info, response_chunk, export_contents, knowledge_ref in dme.DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_file, model_type, sub_seq, query, import_contents, situation=situation, overwrite_items=overwrite_items, add_knowledge=add_knowledge, prompt_temp_cd=prompt_temp_cd, execution=execution, seq_limit=seq_limit, sub_seq_limit=sub_seq_limit):
-#        response += response_chunk
-#    
-#    return response_service_info, response_user_info, response, model_name, 0, 0
-
-
-## 通常LLMの実行
-#def generate_pureLLM(service_info, user_info, agent_file, query, memories_selected=[], prompt_temp_cd="No Template"):
-#    agent = dma.DigiM_Agent(agent_file)
-#
-#    model_type = "LLM"
-#    model_name = agent.agent["ENGINE"][model_type]["MODEL"]
-#    tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
-#    
-#    # 通常LLMに設定
-#    dma.set_normal_agent(agent)
-#    
-#    # エージェントに設定されるプロンプトテンプレートを設定
-#    prompt_template = agent.set_prompt_template(prompt_temp_cd)
-#
-#    # プロンプトの設定
-#    prompt = f'{prompt_template}{query}'
-#
-#    # LLMの実行
-#    response = ""
-#    for prompt, response_chunk, completion in agent.generate_response(model_type, prompt, memories_selected):
-#        if response_chunk:
-#            response += response_chunk
-#    
-#    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
-#    response_tokens = dmu.count_token(tokenizer, model_name, response)
-#    
-#    response_service_info = service_info
-#    response_user_info = user_info
-#    
-#    return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
 
 # テキストの比較
