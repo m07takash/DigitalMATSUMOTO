@@ -50,10 +50,7 @@ def parse_date(d):
         return datetime.min
     
 # ファイル名のサニタイズ
-def sanitize_filename(name: str,
-                      replacement: str = "_",
-                      max_length: int = 255,
-                      keep_unicode: bool = True) -> str:
+def sanitize_filename(name: str, replacement: str = "_", max_length: int = 255, keep_unicode: bool = True) -> str:
     """
     ファイル名として危険/不便な文字を除去 or 置換して返す。
     - パス区切り /, \\ や制御文字などは除去

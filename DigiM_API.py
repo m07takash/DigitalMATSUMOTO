@@ -36,7 +36,7 @@ class InputData(BaseModel):
     execution: Dict[str, Any]
 
 # 実行する関数(session_idにはLINE ID等のユーザーを一意に指定できるキー)
-def exec_function(service_info: dict, user_info: dict, session_id: str, session_name: str, user_input: str, situation: dict, agent_file: str, execution: dict) -> tuple[dict, dict, str, str, str]:
+def exec_function(service_info: dict, user_info: dict, session_id: str, session_name: str, user_input: str, situation: dict, agent_file: str, execution: dict) -> tuple[dict, dict, str, str, Any]:
     # セッションの設定（新規でセッションIDを発番）
     if not session_id: 
         session_id = "API"+ dms.set_new_session_id()
