@@ -1055,7 +1055,7 @@ def main():
             with st.chat_message(web_title):
                 response_placeholder = st.empty()
                 response = ""
-                for response_service_info, response_user_info, response_chunk in dme.DigiMatsuExecute_Practice(st.session_state.web_service, st.session_state.web_user, st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, add_knowledges, execution):
+                for response_service_info, response_user_info, response_chunk, output_reference in dme.DigiMatsuExecute_Practice(st.session_state.web_service, st.session_state.web_user, st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, add_knowledges, execution):
                     response += response_chunk
                     response_placeholder.markdown(response)
                 if not st.session_state.session.session_name or st.session_state.session.session_name == "New Chat":
