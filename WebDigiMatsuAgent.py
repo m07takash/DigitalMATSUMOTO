@@ -788,7 +788,7 @@ def main():
                     prompt_role = v2["prompt"]["role"]
                     if v.get("SETTING", {}).get("user_info", {}).get("USER_ID") is not None:
                         prompt_role = v["SETTING"]["user_info"]["USER_ID"]
-                    with st.chat_message(prompt_role):
+                    with st.chat_message("user"):
                         content_text = "**"+prompt_role+" ("+v2["prompt"]["timestamp"]+"):**\n\n"+v2["prompt"]["query"]["input"]
                         download_data.append({"role": v2["prompt"]["role"], "content": content_text})
 #                        st.markdown(content_text.replace("\n", "<br>"), unsafe_allow_html=True)
@@ -796,7 +796,7 @@ def main():
                         for uploaded_content in v2["prompt"]["query"]["contents"]:
                             download_data.append({"role": v2["prompt"]["role"], "image": st.session_state.session.session_folder_path +"contents/"+ uploaded_content["file_name"]})
                             show_uploaded_files_memory(seq_key, st.session_state.session.session_folder_path +"contents/", uploaded_content["file_name"], uploaded_content["file_type"])
-                    with st.chat_message(v2["response"]["role"]):
+                    with st.chat_message("ai"):
                         content_text = "**"+v2["setting"]["name"]+" ("+v2["response"]["timestamp"]+"):**\n\n"+v2["response"]["text"]
                         download_data.append({"role": v2["response"]["role"], "content": content_text})
 #                        st.markdown(content_text.replace("\n", "<br>").replace("#", ""), unsafe_allow_html=True)
@@ -1050,9 +1050,9 @@ def main():
             execution["WEB_SEARCH"] = st.session_state.web_search
             
             # ユーザー入力の一時表示
-            with st.chat_message(st.session_state.user_id):
+            with st.chat_message("user"):
                 st.markdown(user_input.replace("\n", "<br>"), unsafe_allow_html=True)
-            with st.chat_message(web_title):
+            with st.chat_message("ai"):
                 response_placeholder = st.empty()
                 response = ""
                 for response_service_info, response_user_info, response_chunk, output_reference in dme.DigiMatsuExecute_Practice(st.session_state.web_service, st.session_state.web_user, st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, add_knowledges, execution):
