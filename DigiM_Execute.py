@@ -612,7 +612,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                     else:
                         import_contents = setting["CONTENTS"]
                 
-                # エージェントファイルの設
+                # エージェントファイルの設定
                 agent_file = ""
                 if "AGENT_FILE" in setting:
                     agent_file = setting["AGENT_FILE"] if setting["AGENT_FILE"] != "USER" else in_agent_file
@@ -682,10 +682,10 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 }
                 session.save_history(str(seq), "response", response_chat_dict, "SUB_SEQ", str(sub_seq))
 
-                if not last_only:
-                    yield response_service_info, response_user_info, output
-                elif last_only and i==last_idx:
-                    yield response_service_info, response_user_info, output
+#                if not last_only:
+#                    yield response_service_info, response_user_info, output
+#                elif last_only and i==last_idx:
+#                    yield response_service_info, response_user_info, output
             
             # 結果のリストへの格納
             result["SubSEQ"]=sub_seq
