@@ -21,8 +21,9 @@ def call_function_by_name(service_info, user_info, func_name, *args, **kwargs):
         func = globals()[func_name]
         return func(service_info, user_info, *args, **kwargs)  # 引数を関数に渡す
     else:
-        return "Function not found"
-
+        response = f"Error: Tool function '{func_name}' not found."
+        export_contents = []
+        return service_info, user_info, response, export_contents
 
 # 固定メッセージの回答
 def fixed_message(service_info, user_info, session_id, session_name, agent_file, input, import_contents=[], add_info={}):
