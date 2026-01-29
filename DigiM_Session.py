@@ -434,6 +434,28 @@ class DigiMSession:
                     chat_history_active_omit_dict[key]["1"]["feedback"] = sub_dict[str(max_subseq)]["feedback"]
         return chat_history_active_omit_dict
 
+    # 指定したシーケンスの直前のダイジェストを取得
+    def get_history_digest(self, seq="", sub_seq=""):
+        chat_history_active_dict = self.get_history_active()
+        set_seq = ""
+        set_sub_seq = ""
+        if chat_history_active_dict:
+            chat_history_digest_dict = {}
+            if int(sub_seq) <= 1:
+                set_seq = str(int(seq)-1)
+                if int(set_seq) > 0:
+                    sub_seq_candidates = [k for k, v in chat_history_active_dict[set_seq].items() if isinstance(v, dict) and "digest" in v]
+                    if sub_seq_candidates:
+                        set_sub_seq = max(sub_seq_candidates, key=int)
+                        chat_history_digest_dict = chat_history_active_dict[set_seq][set_sub_seq]["digest"]
+            else:
+                set_seq = seq
+                sub_seq_candidates = [k for k, v in chat_history_active_dict[set_seq].items() if k < sub_seq and isinstance(v, dict) and "digest" in v]
+                if sub_seq_candidates:
+                    set_sub_seq = max(sub_seq_candidates, key=int)
+                    chat_history_digest_dict = chat_history_active_dict[set_seq][set_sub_seq]["digest"]
+        return set_seq, set_sub_seq, chat_history_digest_dict
+
     # 最新のエージェントを取得
     def get_history_max_agent(self):
         chat_history_active_dict = self.get_history_active()
@@ -474,18 +496,22 @@ class DigiMSession:
         if chat_history_active_dict:
             # 最新のダイジェストを取得
             if memory_digest == "Y":
-                max_seq, max_sub_seq, chat_history_max_digest_dict = self.get_history_max_digest()
-                if chat_history_max_digest_dict:
+                chat_history_digest_dict = {}
+                if seq_limit or sub_seq_limit:
+                    max_seq, max_sub_seq, chat_history_digest_dict = self.get_history_digest(seq_limit, sub_seq_limit)
+                else:
+                    max_seq, max_sub_seq, chat_history_digest_dict = self.get_history_max_digest()
+                if chat_history_digest_dict:
                     # トークン制限を超えていなければ、ダイジェストを設定
-                    total_tokens += chat_history_max_digest_dict["token"]
+                    total_tokens += chat_history_digest_dict["token"]
                     if total_tokens <= memory_limit_tokens:
-                        chat_history_max_digest_dict["vec_text"] = []
+                        chat_history_digest_dict["vec_text"] = []
                         similarity_prompt = 0
                         if memory_similarity:
-                            chat_history_max_digest_dict["vec_text"] = self.get_vec_file(max_seq, max_sub_seq, "digest")
-                            similarity_prompt = dmu.calculate_similarity_vec(query_vec, chat_history_max_digest_dict["vec_text"], memory_similarity_logic)
-                        memories_list.append({"seq": max_seq, "sub_seq": max_sub_seq, "type": "digest", "role": chat_history_max_digest_dict["role"], "timestamp": chat_history_max_digest_dict["timestamp"], "token": chat_history_max_digest_dict["token"], "similarity_prompt": similarity_prompt, "text": chat_history_max_digest_dict["text"], "vec_text": chat_history_max_digest_dict["vec_text"]})
-        
+                            chat_history_digest_dict["vec_text"] = self.get_vec_file(max_seq, max_sub_seq, "digest")
+                            similarity_prompt = dmu.calculate_similarity_vec(query_vec, chat_history_digest_dict["vec_text"], memory_similarity_logic)
+                        memories_list.append({"seq": max_seq, "sub_seq": max_sub_seq, "type": "digest", "role": chat_history_digest_dict["role"], "timestamp": chat_history_digest_dict["timestamp"], "token": chat_history_digest_dict["token"], "similarity_prompt": similarity_prompt, "text": chat_history_digest_dict["text"], "vec_text": chat_history_digest_dict["vec_text"]})
+
             # 各履歴を取得
             for k, v in chat_history_active_dict.items():
                 for k2, v2 in v.items():

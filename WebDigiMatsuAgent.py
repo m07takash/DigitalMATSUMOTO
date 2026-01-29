@@ -872,6 +872,7 @@ def main():
 
                                 chat_expander = st.expander("Analytics Results")
                                 with chat_expander:
+                                    ref_timestamp = v2["prompt"]["timestamp"]
                                     analytics_dict = {}
                                     if "analytics" in v2:
                                         analytics_dict = v2["analytics"]
@@ -892,7 +893,7 @@ def main():
                                                 _, _, compare_text, compare_text_model_name, _, _ = dmt.compare_texts(st.session_state.web_service, st.session_state.web_user, exec_agend_id, v2["response"]["text"], st.session_state.compare_agent_id, compare_response)                                    
                                                 if "compare_agents" not in analytics_dict:
                                                     analytics_dict["compare_agents"] = []
-                                                analytics_dict["compare_agents"].append({"compare_agent":{"agent_file": compare_agent_file, "model_name": compare_model_name, "response": compare_response, "diff": compare_diff, "knowledge_rag": compare_knowledge_ref}, "compare_text": {"compare_model_name": compare_text_model_name, "text": compare_text}})
+                                                analytics_dict["compare_agents"].append({"compare_agent":{"timestamp": str(datetime.now()), "agent_file": compare_agent_file, "model_name": compare_model_name, "response": compare_response, "diff": compare_diff, "knowledge_rag": compare_knowledge_ref}, "compare_text": {"compare_model_name": compare_text_model_name, "text": compare_text}})
                                                 st.session_state.session.set_analytics_history(k, k2, analytics_dict)
                                                 st.session_state.sidebar_message = f"比較分析を完了しました({k}_{k2})"
                                                 st.rerun()
@@ -901,11 +902,12 @@ def main():
                                             ak_col1, ak_col2 = st.columns(2)
                                             st.session_state.analytics_knowledge_mode = ak_col2.radio("Analytics Knowledge Mode:", ["Default", "Norm(All)", "Norm(Group)"], index=1, key=f"akmode_{k}_{k2}")
                                             if ak_col1.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}"):
+                                                analytics_agent_file = v2["setting"]["agent_file"]
                                                 title = f"{k}-{k2}-{st.session_state.session.session_name}"
                                                 references = []
                                                 for reference_data in v2["response"]["reference"]["knowledge_rag"]:
                                                     references.append(ast.literal_eval("{"+ reference_data.replace("\n", "").replace("$", "＄") + "}"))
-                                                result = dmva.analytics_knowledge(title, references, st.session_state.session.session_analytics_folder_path, st.session_state.analytics_knowledge_mode)
+                                                result = dmva.analytics_knowledge(analytics_agent_file, ref_timestamp, title, references, st.session_state.session.session_analytics_folder_path, st.session_state.analytics_knowledge_mode)
                                                 analytics_dict["knowledge_utility"] = result
                                                 st.session_state.session.set_analytics_history(k, k2, analytics_dict)
                                                 st.session_state.sidebar_message = f"知識活用性を分析しました({k}_{k2})"
@@ -926,7 +928,9 @@ def main():
                                             )
                                             compare_agent = compare_agents[selected_compare_idx]
                                             compare_agent_info = compare_agent["compare_agent"]
-                                            st.markdown(f"Agent: {compare_agent_info['agent_file']}")
+                                            compare_timestamp = compare_agent_info["timestamp"] if "timestamp" in compare_agent_info else ref_timestamp
+                                            compare_agent_file = compare_agent_info["agent_file"]
+                                            st.markdown(f"Agent: {compare_agent_file}")
                                             st.markdown(f"Model: {compare_agent_info['model_name']}")
                                             st.markdown(f"Diff: {compare_agent_info['diff']}")
                                             if st.session_state.allowed_analytics_knowledge:
@@ -937,9 +941,9 @@ def main():
                                                         if ak_compare_col1.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}_compare{selected_compare_idx}"):
                                                             compare_title = f"{k}-{k2}-{st.session_state.session.session_name}_compare{selected_compare_idx}"
                                                             compare_references = []
-                                                            for compare_reference_data in compare_agent_info["knowledge_rag"]:
+                                                            for compare_reference_data in compare_agent_info["knowledge_rag"]["knowledge_ref"]:
                                                                 compare_references.append(ast.literal_eval("{"+ compare_reference_data.replace("\n", "").replace("$", "＄") + "}"))
-                                                            compare_ref_result = dmva.analytics_knowledge(compare_title, compare_references, st.session_state.session.session_analytics_folder_path, st.session_state.analytics_knowledge_mode_compare)
+                                                            compare_ref_result = dmva.analytics_knowledge(compare_agent_file, compare_timestamp, compare_title, compare_references, st.session_state.session.session_analytics_folder_path, st.session_state.analytics_knowledge_mode_compare)
                                                             analytics_dict["compare_agents"][selected_compare_idx]["compare_agent"]["knowledge_utility"] = compare_ref_result
                                                             st.session_state.session.set_analytics_history(k, k2, analytics_dict)
                                                             st.session_state.sidebar_message = f"知識活用性を分析しました({k}_{k2}_compare{selected_compare_idx})"
@@ -958,12 +962,32 @@ def main():
                                                         st.markdown("**knowledge Utility:**")
                                                         st.markdown(", ".join(f"{k}: {v}" for k, v in compare_similarity_utility_dict.items()))
                                                         if "image_files" in compare_agent_info["knowledge_utility"]:
-                                                            for image_key, image_values in compare_agent_info["knowledge_utility"]["image_files"].items():
-                                                                for image_value in image_values:
-                                                                    st.image(st.session_state.session.session_analytics_folder_path + image_value)
-                                                                    rag_category = os.path.splitext(image_value)[0].split("_")[-1]
-                                                                    for ak_dict in compare_agent_info["knowledge_utility"]["similarity_rank"][rag_category]:
-                                                                        st.markdown(ak_line(ak_dict))
+                                                            image_files = compare_agent_info["knowledge_utility"]["image_files"]
+                                                            ext_for = lambda k: "csv" if "csv" in k else "png"
+                                                            rag_to_files = {
+                                                                rag: {k: next((f for f in v if f.endswith(f"_{rag}.{ext_for(k)}")), None) for k, v in image_files.items()}
+                                                                for rag in sorted({os.path.splitext(f)[0].rsplit("_", 1)[-1] for v in image_files.values() for f in v})
+                                                            }
+                                                            for rag_category, files in rag_to_files.items():
+                                                                st_scatter01, st_scatter02 = st.columns(2)
+                                                                if files.get("scatter_plot_file_ref"):
+                                                                    st_scatter01.image(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_ref"])
+                                                                if files.get("scatter_plot_file_category"):
+                                                                    st_scatter02.image(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_category"])
+                                                                with st.expander(f"Coordinate - {rag_category}"):
+                                                                    rag_rank_df = pd.read_csv(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_csv"])
+                                                                    if 'category_color' in rag_rank_df.columns:
+                                                                        display_items = ["id", "title", "create_date", "PC1", "PC2", "category_color", "category_sum", "category", "db", "value_text"]
+                                                                    else:
+                                                                        display_items = ["id", "title", "create_date", "PC1", "PC2", "value_text"]
+                                                                    rag_rank_df = rag_rank_df[display_items]
+                                                                    st.dataframe(rag_rank_df)
+                                                                if files.get("similarity_plot_file"):
+                                                                    st.image(st.session_state.session.session_analytics_folder_path + files["similarity_plot_file"])
+                                                                for ak_dict in compare_agent_info["knowledge_utility"]["similarity_rank"][rag_category]:
+                                                                    st.markdown(ak_line(ak_dict))
+
+
                                     if st.session_state.allowed_analytics_knowledge:
                                         if "knowledge_utility" in analytics_dict:
                                             chat_expander_analytics = st.expander("Analytics Results - Knowledge Utility")
@@ -972,12 +996,30 @@ def main():
                                                 st.markdown("**knowledge Utility:**")
                                                 st.markdown(", ".join(f"{k}: {v}" for k, v in similarity_utility_dict.items()))
                                                 if "image_files" in analytics_dict["knowledge_utility"]:
-                                                    for image_key, image_values in analytics_dict["knowledge_utility"]["image_files"].items():
-                                                        for image_value in image_values:
-                                                            st.image(st.session_state.session.session_analytics_folder_path + image_value)
-                                                            rag_category = re.search(r'KUtilPlot_(.+?)\.png', image_value).group(1) if re.search(r'KUtilPlot_(.+?)\.png', image_value) else None
-                                                            for ak_dict in analytics_dict["knowledge_utility"]["similarity_rank"][rag_category]:
-                                                                st.markdown(ak_line(ak_dict))
+                                                    image_files = analytics_dict["knowledge_utility"]["image_files"]
+                                                    ext_for = lambda k: "csv" if "csv" in k else "png"
+                                                    rag_to_files = {
+                                                        rag: {k: next((f for f in v if f.endswith(f"_{rag}.{ext_for(k)}")), None) for k, v in image_files.items()}
+                                                        for rag in sorted({os.path.splitext(f)[0].rsplit("_", 1)[-1] for v in image_files.values() for f in v})
+                                                    }
+                                                    for rag_category, files in rag_to_files.items():
+                                                        st_scatter01, st_scatter02 = st.columns(2)
+                                                        if files.get("scatter_plot_file_ref"):
+                                                            st_scatter01.image(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_ref"])
+                                                        if files.get("scatter_plot_file_category"):
+                                                            st_scatter02.image(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_category"])
+                                                        with st.expander(f"Coordinate - {rag_category}"):
+                                                            rag_rank_df = pd.read_csv(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_csv"])
+                                                            if 'category_color' in rag_rank_df.columns:
+                                                                display_items = ["id", "title", "create_date", "PC1", "PC2", "category_color", "category_sum", "category", "db", "value_text"]
+                                                            else:
+                                                                display_items = ["id", "title", "create_date", "PC1", "PC2", "value_text"]
+                                                            rag_rank_df = rag_rank_df[display_items]
+                                                            st.dataframe(rag_rank_df)
+                                                        if files.get("similarity_plot_file"):
+                                                            st.image(st.session_state.session.session_analytics_folder_path + files["similarity_plot_file"])
+                                                        for ak_dict in analytics_dict["knowledge_utility"]["similarity_rank"][rag_category]:
+                                                            st.markdown(ak_line(ak_dict))
 
             # 会話履歴の論理削除設定
             if st.checkbox(f"Delete(seq:{k})", key="del_chat_seq"+k):
