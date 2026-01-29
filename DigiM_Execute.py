@@ -97,9 +97,13 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     if memory_use:
         timestamp_log += "[05.会話ダイジェスト読込開始]"+str(datetime.now())+"<br>"
         if session.chat_history_active_dict:
-            max_seq, max_sub_seq, chat_history_max_digest_dict = session.get_history_max_digest()
-            if chat_history_max_digest_dict:
-                digest_text = "会話履歴のダイジェスト:\n"+chat_history_max_digest_dict["text"]+"\n---\n"
+            chat_history_digest_dict = {}
+            if seq_limit or sub_seq_limit:
+                max_seq, max_sub_seq, chat_history_digest_dict = session.get_history_digest(seq_limit, sub_seq_limit)
+            else:
+                max_seq, max_sub_seq, chat_history_digest_dict = session.get_history_max_digest()
+            if chat_history_digest_dict:
+                digest_text = "会話履歴のダイジェスト:\n"+chat_history_digest_dict["text"]+"\n---\n"
 
     # Web検索を実行
     timestamp_log += "[06.WEB検索を開始]"+str(datetime.now())+"<br>"
