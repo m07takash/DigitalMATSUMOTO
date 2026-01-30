@@ -361,8 +361,12 @@ def initialize_session_states():
         st.session_state.dl_type = "Chats Only"
     if 'analytics_knowledge_mode' not in st.session_state:
         st.session_state.analytics_knowledge_mode = ""
+    if 'analytics_dimension_mode' not in st.session_state:
+        st.session_state.analytics_dimension_mode = {}
     if 'analytics_knowledge_mode_compare' not in st.session_state:
         st.session_state.analytics_knowledge_mode_compare = ""
+    if 'analytics_dimension_mode_compare' not in st.session_state:
+        st.session_state.analytics_dimension_mode_compare = {}
 
 # セッション変数のリフレッシュ
 def refresh_session_states():
@@ -413,7 +417,9 @@ def refresh_session_states():
     st.session_state.book_selected = []
     st.session_state.dl_type = "Chats Only"
     st.session_state.analytics_knowledge_mode = ""
+    st.session_state.analytics_dimension_mode = {}
     st.session_state.analytics_knowledge_mode_compare = ""
+    st.session_state.analytics_dimension_mode_compare = {}
 
 # セッションのリフレッシュ（ヒストリーを更新するために、同一セッションIDで再度Sessionクラスを呼び出すこともある）
 def refresh_session(session_id, session_name, situation, new_session_flg=False):
@@ -899,15 +905,19 @@ def main():
                                                 st.rerun()
                                     if st.session_state.allowed_analytics_knowledge:
                                         if v2["response"]["reference"]["knowledge_rag"]:
-                                            ak_col1, ak_col2 = st.columns(2)
-                                            st.session_state.analytics_knowledge_mode = ak_col2.radio("Analytics Knowledge Mode:", ["Default", "Norm(All)", "Norm(Group)"], index=1, key=f"akmode_{k}_{k2}")
+                                            ak_col1, ak_col2, ak_col3 = st.columns(3)
+                                            st.session_state.analytics_knowledge_mode = ak_col2.radio("Knowledge Utility:", ["Default", "Norm(All)", "Norm(Group)"], index=1, key=f"kumode_{k}_{k2}")
+                                            st.session_state.analytics_dimension_mode["method"] = ak_col3.radio("Dimension Reduction:", ["PCA", "t-SNE"], index=0, key=f"drmode_{k}_{k2}")
+                                            st.session_state.analytics_dimension_mode["params"] = {}
+                                            if st.session_state.analytics_dimension_mode["method"] == "t-SNE":
+                                                st.session_state.analytics_dimension_mode["params"]["perplexity"] = ak_col3.number_input(label="t-SNE Perplexity:", value=40, step=1, format="%d", key=f"tsne_perplexity_{k}_{k2}")
                                             if ak_col1.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}"):
                                                 analytics_agent_file = v2["setting"]["agent_file"]
                                                 title = f"{k}-{k2}-{st.session_state.session.session_name}"
                                                 references = []
                                                 for reference_data in v2["response"]["reference"]["knowledge_rag"]:
                                                     references.append(ast.literal_eval("{"+ reference_data.replace("\n", "").replace("$", "＄") + "}"))
-                                                result = dmva.analytics_knowledge(analytics_agent_file, ref_timestamp, title, references, st.session_state.session.session_analytics_folder_path, st.session_state.analytics_knowledge_mode)
+                                                result = dmva.analytics_knowledge(analytics_agent_file, ref_timestamp, title, references, st.session_state.session.session_analytics_folder_path, st.session_state.analytics_knowledge_mode, st.session_state.analytics_dimension_mode)
                                                 analytics_dict["knowledge_utility"] = result
                                                 st.session_state.session.set_analytics_history(k, k2, analytics_dict)
                                                 st.session_state.sidebar_message = f"知識活用性を分析しました({k}_{k2})"
@@ -936,14 +946,18 @@ def main():
                                             if st.session_state.allowed_analytics_knowledge:
                                                 if "knowledge_rag" in compare_agent_info:
                                                     if compare_agent_info["knowledge_rag"]: #and "knowledge_utility" not in compare_agent_info:
-                                                        ak_compare_col1, ak_compare_col2 = st.columns(2)
+                                                        ak_compare_col1, ak_compare_col2, ak_compare_col3 = st.columns(3)
                                                         st.session_state.analytics_knowledge_mode_compare = ak_compare_col2.radio("Analytics Knowledge Mode:", ["Default", "Norm(All)", "Norm(Group)"], index=1, key=f"akmode_compare_{k}_{k2}")
+                                                        st.session_state.analytics_dimension_mode_compare["method"] = ak_compare_col3.radio("Dimension Reduction:", ["PCA", "t-SNE"], index=0, key=f"drmode_compare_{k}_{k2}")
+                                                        st.session_state.analytics_dimension_mode_compare["params"] = {}
+                                                        if st.session_state.analytics_dimension_mode_compare["method"] == "t-SNE":
+                                                            st.session_state.analytics_dimension_mode_compare["params"]["perplexity"] = ak_compare_col3.number_input(label="t-SNE Perplexity:", value=40, step=1, format="%d", key=f"tsne_perplexity_compare_{k}_{k2}")
                                                         if ak_compare_col1.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}_compare{selected_compare_idx}"):
                                                             compare_title = f"{k}-{k2}-{st.session_state.session.session_name}_compare{selected_compare_idx}"
                                                             compare_references = []
                                                             for compare_reference_data in compare_agent_info["knowledge_rag"]["knowledge_ref"]:
                                                                 compare_references.append(ast.literal_eval("{"+ compare_reference_data.replace("\n", "").replace("$", "＄") + "}"))
-                                                            compare_ref_result = dmva.analytics_knowledge(compare_agent_file, compare_timestamp, compare_title, compare_references, st.session_state.session.session_analytics_folder_path, st.session_state.analytics_knowledge_mode_compare)
+                                                            compare_ref_result = dmva.analytics_knowledge(compare_agent_file, compare_timestamp, compare_title, compare_references, st.session_state.session.session_analytics_folder_path, st.session_state.analytics_knowledge_mode_compare, st.session_state.analytics_dimension_mode_compare)
                                                             analytics_dict["compare_agents"][selected_compare_idx]["compare_agent"]["knowledge_utility"] = compare_ref_result
                                                             st.session_state.session.set_analytics_history(k, k2, analytics_dict)
                                                             st.session_state.sidebar_message = f"知識活用性を分析しました({k}_{k2}_compare{selected_compare_idx})"
@@ -977,9 +991,9 @@ def main():
                                                                 with st.expander(f"Coordinate - {rag_category}"):
                                                                     rag_rank_df = pd.read_csv(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_csv"])
                                                                     if 'category_color' in rag_rank_df.columns:
-                                                                        display_items = ["id", "title", "create_date", "PC1", "PC2", "category_color", "category_sum", "category", "db", "value_text"]
+                                                                        display_items = ["id", "title", "create_date", "X1", "X2", "category_color", "category_sum", "category", "db", "value_text"]
                                                                     else:
-                                                                        display_items = ["id", "title", "create_date", "PC1", "PC2", "value_text"]
+                                                                        display_items = ["id", "title", "create_date", "X1", "X2", "value_text"]
                                                                     rag_rank_df = rag_rank_df[display_items]
                                                                     st.dataframe(rag_rank_df)
                                                                 if files.get("similarity_plot_file"):
@@ -1011,9 +1025,9 @@ def main():
                                                         with st.expander(f"Coordinate - {rag_category}"):
                                                             rag_rank_df = pd.read_csv(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_csv"])
                                                             if 'category_color' in rag_rank_df.columns:
-                                                                display_items = ["id", "title", "create_date", "PC1", "PC2", "category_color", "category_sum", "category", "db", "value_text"]
+                                                                display_items = ["id", "title", "create_date", "X1", "X2", "category_color", "category_sum", "category", "db", "value_text"]
                                                             else:
-                                                                display_items = ["id", "title", "create_date", "PC1", "PC2", "value_text"]
+                                                                display_items = ["id", "title", "create_date", "X1", "X2", "value_text"]
                                                             rag_rank_df = rag_rank_df[display_items]
                                                             st.dataframe(rag_rank_df)
                                                         if files.get("similarity_plot_file"):
