@@ -6,6 +6,7 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
 from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
 import chromadb
 
 import DigiM_Agent as dma
@@ -60,59 +61,86 @@ def create_similarity_plot_file(file_title, analytics_file_path, rag_name, group
     return similarity_plot_file
 
 # PCAを算出してプロットしたファイルを作成
-def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, category_map):
+def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, mode={"method":"PCA", "params":{}}, category_map={}):
     scatter_plot_file_category = ""
     scatter_plot_file_ref = ""
     scatter_plot_file_csv = ""
     
-    df = pd.DataFrame(rag_data_list) 
-    df['vec_value_text_pca'] = df['vector_data_value_text'].apply(np.array)
-    vectors = np.vstack(df['vec_value_text_pca'].to_numpy())
-    pca = PCA(n_components=2)
-    principal_components = pca.fit_transform(vectors)
-    df['PC1'] = principal_components[:, 0]
-    df['PC2'] = principal_components[:, 1]
+    df = pd.DataFrame(rag_data_list)
+    df["vec_value_text"] = df["vector_data_value_text"].apply(np.array)
+    vectors = np.vstack(df["vec_value_text"].to_numpy())
 
-    # リファレンスの散布図
-    scatter_plot_file_ref = f"{file_title}_ScatterRefPlot_{rag_name}.png"
+    method = mode["method"]
+    params = mode["params"]
+    xcol, ycol = "X1", "X2"
+
+    if method == "PCA":
+        model = PCA(n_components=2)
+        emb = model.fit_transform(vectors)
+    elif method == "t-SNE":
+        n = len(df)
+        perplexity = min(params["perplexity"], max(2, n - 1))
+        random_state = 0
+
+        model = TSNE(
+            n_components=2,
+            perplexity=perplexity,
+            init="pca",
+            learning_rate="auto",
+            random_state=random_state,
+        )
+        emb = model.fit_transform(vectors)
+    else:
+        raise ValueError(f"Unknown method: {method} (use 'pca' or 'tsne')")
+
+    df[xcol] = emb[:, 0]
+    df[ycol] = emb[:, 1]
+
+    # --- リファレンス散布図 ---
+    scatter_plot_file_ref = f"{file_title}_ScatterRefPlot({method})_{rag_name}.png"
     scatter_plot_filename_ref = analytics_file_path + scatter_plot_file_ref
+
     plt.figure(figsize=(10, 8))
-    plt.scatter(df['PC1'], df['PC2'], c=df['ref_color'], alpha=0.7)
-    plt.title(f'PCA Analysis(Ref): {rag_name}')
+    plt.scatter(df[xcol], df[ycol], c=df["ref_color"], alpha=0.7)
+    plt.title(f"{method} Analysis(Ref): {rag_name}")
     plt.grid(True)
-    plt.savefig(scatter_plot_filename_ref, dpi=300, bbox_inches='tight')
-    plt.show()
+    plt.savefig(scatter_plot_filename_ref, dpi=300, bbox_inches="tight")
+#    plt.show()
 
     # カテゴリーの散布図
-    if 'category_color' in df.columns:
-        scatter_plot_file_category = f"{file_title}_ScatterCategoryPlot_{rag_name}.png"
+    if "category_color" in df.columns:
+        scatter_plot_file_category = f"{file_title}_ScatterCategoryPlot({method})_{rag_name}.png"
         scatter_plot_filename_category = analytics_file_path + scatter_plot_file_category
+
         plt.figure(figsize=(10, 8))
-        plt.scatter(df['PC1'], df['PC2'], c=df['category_color'], alpha=0.7)
-        plt.title(f'PCA Analysis(Category): {rag_name}')
+        plt.scatter(df[xcol], df[ycol], c=df["category_color"], alpha=0.7)
+        plt.title(f"{method} Analysis(Category): {rag_name}")
         plt.grid(True)
+
         if category_map:
-            category_handles = [plt.Line2D([0], [0], marker='o', color='w', label=key, markersize=10, markerfacecolor=color)
-                                for key, color in category_map.items()]
-            category_handles.append(plt.Line2D([0], [0], marker='o', color='w', label='その他', markersize=10, markerfacecolor='gray'))
-            plt.legend(handles=category_handles, loc='upper left', bbox_to_anchor=(1, 1), title="カテゴリ")
-        plt.savefig(scatter_plot_filename_category, dpi=300, bbox_inches='tight')
-        plt.show()
-    
-    if 'category_color' in df.columns:
-        display_items = ["id", "title", "create_date", "PC1", "PC2", "category_color", "category_sum", "category", "db", "value_text"]
+            category_handles = [plt.Line2D([0], [0], marker="o", color="w", label=key, markersize=10, markerfacecolor=color) for key, color in category_map.items()]
+            category_handles.append(plt.Line2D([0], [0], marker="o", color="w", label="その他", markersize=10, markerfacecolor="gray"))
+            plt.legend(handles=category_handles, loc="upper left", bbox_to_anchor=(1, 1), title="カテゴリ")
+
+        plt.savefig(scatter_plot_filename_category, dpi=300, bbox_inches="tight")
+#        plt.show()
+
+    # 散布図にプロットされるデータ(CSV)
+    if "category_color" in df.columns:
+        display_items = ["id", "title", "create_date", xcol, ycol, "category_color", "category_sum", "category", "db", "value_text"]
     else:
-        display_items = ["id", "title", "create_date", "PC1", "PC2", "value_text"]
-    df_csv = (df.loc[df["ref_color"] != "gray", display_items].sort_values(by=["PC1", "PC2"], ascending=[True, True]))
-    scatter_plot_file_csv = f"{file_title}_ScatterData_{rag_name}.csv"
+        display_items = ["id", "title", "create_date", xcol, ycol, "value_text"]
+    existing_items = [c for c in display_items if c in df.columns]
+    df_csv = (df.loc[df["ref_color"] != "gray", existing_items].sort_values(by=[xcol, ycol], ascending=[True, True]))
+    scatter_plot_file_csv = f"{file_title}_ScatterData({method})_{rag_name}.csv"
     scatter_plot_filename_csv = analytics_file_path + scatter_plot_file_csv
-    df_csv.to_csv(scatter_plot_filename_csv, index=True, encoding='utf-8-sig')
+    df_csv.to_csv(scatter_plot_filename_csv, index=True, encoding="utf-8-sig")
 
     return scatter_plot_file_category, scatter_plot_file_ref, scatter_plot_file_csv
 
 
 # 知識参照度と知識活用度の分析
-def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_file_path, ak_mode="Default"):
+def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_file_path, ak_mode="Default", dim_mode={"method":"PCA", "params":{}}):
 #    end_date_str = datetime.strptime(ref_timestamp, "%Y-%m-%d %H:%M:%S.%f").strftime("%Y-%m-%d")
     end_date_str = dmu.parse_date(ref_timestamp).strftime("%Y-%m-%d")
     df = pd.DataFrame(reference)
@@ -252,7 +280,7 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
                                 rag_data_list.append(v)
                     
                 if rag_data_list:
-                    scatter_plot_category_file, scatter_plot_ref_file, scatter_plot_csv_file = plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, category_map)
+                    scatter_plot_category_file, scatter_plot_ref_file, scatter_plot_csv_file = plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, dim_mode, category_map)
                     if scatter_plot_category_file:
                         scatter_plot_category_files.append(scatter_plot_category_file)
                     if scatter_plot_ref_file:
