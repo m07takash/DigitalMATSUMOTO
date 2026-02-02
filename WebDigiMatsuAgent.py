@@ -1022,14 +1022,15 @@ def main():
                                                             st_scatter01.image(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_ref"])
                                                         if files.get("scatter_plot_file_category"):
                                                             st_scatter02.image(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_category"])
-                                                        with st.expander(f"Coordinate - {rag_category}"):
-                                                            rag_rank_df = pd.read_csv(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_csv"])
-                                                            if 'category_color' in rag_rank_df.columns:
-                                                                display_items = ["id", "title", "create_date", "X1", "X2", "category_color", "category_sum", "category", "db", "value_text"]
-                                                            else:
-                                                                display_items = ["id", "title", "create_date", "X1", "X2", "value_text"]
-                                                            rag_rank_df = rag_rank_df[display_items]
-                                                            st.dataframe(rag_rank_df)
+                                                        if files.get("scatter_plot_file_csv"):
+                                                            with st.expander(f"Coordinate - {rag_category}"):
+                                                                rag_rank_df = pd.read_csv(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_csv"])
+                                                                if 'category_color' in rag_rank_df.columns:
+                                                                    display_items = ["id", "title", "create_date", "X1", "X2", "category_color", "category_sum", "category", "db", "value_text"]
+                                                                else:
+                                                                    display_items = ["id", "title", "create_date", "X1", "X2", "value_text"]
+                                                                rag_rank_df = rag_rank_df[display_items]
+                                                                st.dataframe(rag_rank_df)
                                                         if files.get("similarity_plot_file"):
                                                             st.image(st.session_state.session.session_analytics_folder_path + files["similarity_plot_file"])
                                                         for ak_dict in analytics_dict["knowledge_utility"]["similarity_rank"][rag_category]:
