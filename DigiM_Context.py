@@ -40,7 +40,7 @@ def create_contents_context(agent_data, contents, seq=0, sub_seq=0):
     file_seq = 0
 
     for content in contents:
-        content_context, content_record, image_file = get_text_content(agent_data, content, seq, sub_seq, file_seq) 
+        content_context, content_record, image_file = get_text_content(agent_data, content, seq, sub_seq, file_seq)
         contents_context += content_context
         contents_records.append(content_record)
         if image_file:
@@ -64,7 +64,7 @@ def get_text_content(agent_data, content, seq, sub_seq, file_seq):
 
     # サポートエージェントの設定
     support_agent = agent_data["SUPPORT_AGENT"]
-    
+
     # ファイル形式毎にコンテキストを取得
     if "text" in file_type:
         content_context = "<br>---------<br>ファイル名: "+file_name+"<br><br>"+dmu.read_text_file(content)
@@ -100,7 +100,7 @@ def set_prompt_template(prompt_temp_cd):
 # RAGデータ一覧の取得
 def get_rag_list():
     rag_list = []
-    
+
     #ChromaDBから取得
     db_client = chromadb.PersistentClient(path=rag_folder_db_path)
     collections = db_client.list_collections()
@@ -130,7 +130,7 @@ def select_rag_vector(rag_data_list, rag={}):
             timestamp = current_date
         else:
             timestamp = datetime.strptime(dmu.convert_to_ymd(rag["TIMESTAMP"], "%Y-%m-%d"), "%Y-%m-%d")
-        
+
         # 埋め込み用の日付設定
         timestamp_str = timestamp.strftime(rag["TIMESTAMP_STYLE"])
         days_difference = (current_date - timestamp).days
@@ -146,12 +146,12 @@ def select_rag_vector(rag_data_list, rag={}):
         rag_data["log_format"] = rag["LOG_TEMPLATE"]
 
         rag_all.append(rag_data)
-    
+
     # 類似度でソート
     rag_all_sorted = sorted(rag_all, key=lambda x: x["similarity_prompt"])
-    
+
     # RAGテキストを選択（テキスト上限値まで取得）
-    rag_context += rag["HEADER_TEMPLATE"]    
+    rag_context += rag["HEADER_TEMPLATE"]
     total_char = len(rag["HEADER_TEMPLATE"])
     for rag_data in rag_all_sorted:
         chunk_len = len(rag_data["chunk_context"])
@@ -163,13 +163,12 @@ def select_rag_vector(rag_data_list, rag={}):
 
     return rag_context, rag_selected
 
-
 # RAGからのコンテキスト取得
 def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searches=[], define_code={}):
     rag_final_context = ""
     rag_final_selected = []
 
-    # RAGデータセットごとに処理    
+    # RAGデータセットごとに処理
     for rag in rags:
         rag_data_list = []
         for rag_data in rag["DATA"]:
@@ -184,7 +183,7 @@ def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searche
                         result_limit = 50
                         if collection.count() <= 50:
                             result_limit = collection.count()
-    
+
                         # 絞込条件の追加
                         where_limitation = []
                         if "FILTER" in rag_data: #エージェントのRAG設定に制限条件が含まれる場合
@@ -212,7 +211,7 @@ def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searche
                                 where_limitation_items = []
                                 for condition_item in rag_data["FILTER"]["CONDITION"]["USER_INFO"]["ITEMS"]:
                                     where_limitation_items.append({condition_item: {"$eq": user_id}})
-                                # 条件文の作成                                
+                                # 条件文の作成
                                 if len(where_limitation_items) == 1:
                                     where_limitation_conditions.append(where_limitation_items[0])
                                 else:
@@ -228,7 +227,7 @@ def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searche
                                 for k, v in rag_data["FILTER"]["CONDITION"]["DEFINE_CODE"]["CODES"].items():
                                     define_code_item = define_code[k]
                                     where_limitation_items.append({v: {"$eq": define_code_item}})
-                                # 条件文の作成                                
+                                # 条件文の作成
                                 if len(where_limitation_items) == 1:
                                     where_limitation_conditions.append(where_limitation_items[0])
                                 else:
@@ -272,7 +271,7 @@ def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searche
                                     where_add = query_conditions_add[0]
                                 else:
                                     where_add = {"$or": query_conditions_add}
-                                
+
                                 if where_limitation:
                                     where_limitation_add = where_limitation.copy()
                                     if "$and" in where_add:
@@ -300,7 +299,7 @@ def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searche
                                         v["query_seq"] = query_seq
                                         v["query_mode"] = "(META_SEARCH:"+str(rag_data["META_SEARCH"]["BONUS"])+")"
                                         rag_data_list.append(v)
-                        
+
                         if where_limitation:
                             if len(where_limitation) == 1:
                                 where_clause = where_limitation[0]
@@ -336,10 +335,10 @@ def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searche
             elif rag_data["similarity_prompt"] < filtered_data[rag_data_id]["similarity_prompt"]:
                 filtered_data[rag_data_id] = rag_data
         rag_data_list = list(filtered_data.values())
-        
-        # RAGデータの選択       
+
+        # RAGデータの選択
         if rag["RETRIEVER"] == "Vector":
-            rag_context, rag_selected = select_rag_vector(rag_data_list, rag)    
+            rag_context, rag_selected = select_rag_vector(rag_data_list, rag)
             rag_final_context += rag_context
             rag_final_selected += rag_selected
 
@@ -348,11 +347,10 @@ def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searche
 
     return rag_final_context, rag_final_selected
 
-
 # レスポンスとRAGの類似度評価
 def get_knowledge_reference(response_vec, rag_selected, logic="Cosine"):
     rag_ref = []
-    
+
     # 各チャンクと類似度評価
     for rag_data in rag_selected:
         rag_data["value_text_short"] = rag_data["value_text"][:50] #50文字に絞る
@@ -372,7 +370,7 @@ def get_knowledge_reference(response_vec, rag_selected, logic="Cosine"):
         for item in chunk_item_list:
             chunk_items[item] = rag_data[item]
         rag_data["log"] = rag_data["log_format"].format(**chunk_items)
-        
+
         # 記録用のデータセット
         rag_ref.append(rag_data["log"])
     return rag_ref
@@ -380,21 +378,21 @@ def get_knowledge_reference(response_vec, rag_selected, logic="Cosine"):
 # 会話メモリの参照情報
 def get_memory_reference(memory_selected, memory_similarity=False, response_vec=[], logic="Cosine"):
     memory_ref = []
-        
+
     for memory_data in memory_selected:
         seq = memory_data["seq"]
         sub_seq = memory_data["sub_seq"]
         type = memory_data["type"]
         timestamp = memory_data["timestamp"]
-        text = memory_data["text"] 
-        
+        text = memory_data["text"]
+
         # 画面表示用のログ形式
         memory_ref_log = f"{timestamp}の会話履歴：{seq}_{sub_seq}_{type}「{text[:50]}」<br>"
         if memory_similarity and response_vec:
             similarity_prompt = round(memory_data["similarity_prompt"],3)
             similarity_response = round(dmu.calculate_similarity_vec(response_vec, memory_data["vec_text"], logic),3)
             memory_ref_log = f"{timestamp}の会話履歴：{seq}_{sub_seq}_{type}[質問との類似度：{round(similarity_prompt,3)}、回答との類似度：{round(similarity_response,3)}]{text[:50]}<br>"
-            
+
         # 記録用のデータセット
         memory_ref.append(
             {
@@ -403,14 +401,13 @@ def get_memory_reference(memory_selected, memory_similarity=False, response_vec=
         )
     return memory_ref
 
-
 # RAGのチャンクデータをCSV(utf-8)から生成
-def get_chunk_csv(bucket, file_path, file_name, field_items, title_items, key_text_items, value_text_items, category_items=[]):  
+def get_chunk_csv(bucket, file_path, file_name, field_items, title_items, key_text_items, value_text_items, category_items=[]):
     rag_data = []
 
     if not os.path.exists(file_path + file_name):
         print(f"CSVファイルがありません: {file_name}")
-        return rag_data     
+        return rag_data
 
     with open(file_path + file_name, 'r', encoding='utf-8') as csvfile:
         reader = csv.DictReader(csvfile, fieldnames=field_items)
@@ -427,7 +424,7 @@ def get_chunk_csv(bucket, file_path, file_name, field_items, title_items, key_te
                         target_values = [v.lower() for v in values]
                         if cell_value not in target_values:
                             data_matched = False
-            
+
             # 条件に合致したらチャンクを作成
             if data_matched:
                 rag_chunk = {}
@@ -441,7 +438,7 @@ def get_chunk_csv(bucket, file_path, file_name, field_items, title_items, key_te
                     else:
                         title += title_item
                 rag_chunk["title"] = title
-                
+
                 key_text = ""
                 for key_text_item in key_text_items:
                     if key_text_item in row:
@@ -457,7 +454,7 @@ def get_chunk_csv(bucket, file_path, file_name, field_items, title_items, key_te
                     else:
                         value_text += value_text_item
                 rag_chunk["value_text"] = value_text
-                
+
                 for field_item in field_items:
                     rag_chunk[field_item] = row[field_item]
 
@@ -469,7 +466,7 @@ def get_chunk_csv(bucket, file_path, file_name, field_items, title_items, key_te
                     except ValueError:
                         create_date = datetime.now().strftime("%Y-%m-%d")
                 rag_chunk["create_date"] = create_date
-                
+
                 rag_data.append(rag_chunk)
     return rag_data
 
@@ -525,9 +522,9 @@ def save_rag_chunk_db(rag_id, rag_data):
     response = collection.get(include=["metadatas"])
     if response and "ids" in response:
         existing_ids = response["ids"]
-    cnt_add = 0 
+    cnt_add = 0
     cnt_extent = 0
-    
+
     # RAGデータをcreate_dateで降順に並び替え
     if "create_date" in rag_data[0]:
         rag_data = sorted(rag_data, key=lambda x: x["create_date"], reverse=True)
@@ -553,7 +550,7 @@ def save_rag_chunk_db(rag_id, rag_data):
                 print(f"{rag_chunk['title']}を知識情報DBに追加しました。")
                 cnt_add+=1
             else:
-                existing_data = response["metadatas"][response["ids"].index(chunk_id)] 
+                existing_data = response["metadatas"][response["ids"].index(chunk_id)]
                 if rag_chunk["title"] == existing_data["title"] and rag_chunk["key_text"] == existing_data["key_text"] and rag_chunk["value_text"] == existing_data["value_text"]:
                     print(f"{rag_chunk['title']}は知識情報DBに存在しています。")
                     cnt_extent+=1
@@ -576,16 +573,15 @@ def save_rag_chunk_db(rag_id, rag_data):
 
     return cnt_add, cnt_extent
 
-
 # RAGデータ生成
 def generate_rag():
     # RAGマスターの読込
     rag_mst_dict = dmu.read_json_file(rag_mst_file, mst_folder_path)
 
     # 各RAGデータを生成
-    cnt_add = 0 
+    cnt_add = 0
     cnt_extent = 0
-    
+
     # チャンクデータの取得
     rag_data = []
     for rag_id, rag_setting in rag_mst_dict.items():
@@ -622,7 +618,7 @@ def del_rag_db(ragdb_selected=[]):
         collections_df = pd.read_sql_query(query, conn, params=ragdb_selected)
         segments_df = pd.read_sql_query("SELECT id AS segment_id, collection AS collection_id , type, scope FROM segments WHERE scope = 'VECTOR'", conn)
         merged_df = pd.merge(segments_df, collections_df, on="collection_id", how="inner")
-        
+
         for collection_name in ragdb_selected:
             db_client.delete_collection(name=collection_name)
             target_segments = merged_df[merged_df["name"] == collection_name]["segment_id"].tolist()
@@ -654,9 +650,8 @@ def del_rag_db(ragdb_selected=[]):
                 else:
                     print(f"Not found: {seg_path}")
             print(collection_name + "を削除しました。")
-    
+
     #SQLite3の物理容量を解放
-    conn.execute("VACUUM;")  
+    conn.execute("VACUUM;")
 
     conn.close()
-

@@ -64,7 +64,6 @@ def set_normal_agent(agent):
     dmu.update_dict(agent.agent, overwrite_items)
     agent.set_property(agent.agent)
 
-
 # 通常LLMの実行
 def generate_pureLLM(base_agent, query, memories_selected=[], prompt_temp_cd="No Template"):
     agent = base_agent
@@ -72,10 +71,10 @@ def generate_pureLLM(base_agent, query, memories_selected=[], prompt_temp_cd="No
     model_type = "LLM"
     model_name = agent.agent["ENGINE"][model_type]["MODEL"]
     tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
-    
+
     # 通常LLMに設定
     set_normal_agent(agent)
-    
+
     # エージェントに設定されるプロンプトテンプレートを設定
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
 
@@ -87,19 +86,17 @@ def generate_pureLLM(base_agent, query, memories_selected=[], prompt_temp_cd="No
     for prompt, response_chunk, completion in agent.generate_response(model_type, prompt, memories_selected):
         if response_chunk:
             response += response_chunk
-    
-    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
-    response_tokens = dmu.count_token(tokenizer, model_name, response)
-    
-    return response, model_name, prompt_tokens, response_tokens
 
+    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt)
+    response_tokens = dmu.count_token(tokenizer, model_name, response)
+
+    return response, model_name, prompt_tokens, response_tokens
 
 # 通常LLMの実行(外部呼出)
 def ext_generate_pureLLM(agent_file, query, memories_selected=[], prompt_temp_cd="No Template"):
     base_agent = DigiM_Agent(agent_file)
     response, model_name, prompt_tokens, response_tokens = generate_pureLLM(base_agent, query, memories_selected=[], prompt_temp_cd="No Template")
     return response, model_name, prompt_tokens, response_tokens
-
 
 # Agent
 class DigiM_Agent:
@@ -129,7 +126,7 @@ class DigiM_Agent:
             system_prompt += f"あなたの名前は「{self.name}」です。"
         if self.act:
             system_prompt += f"{self.act}として振る舞ってください。"
-        
+
         # パーソナリティ
         if self.personality:
             if 'SEX' in self.personality:
@@ -146,13 +143,13 @@ class DigiM_Agent:
 
             # 口調
             if 'LANGUAGE' in self.personality:
-                system_prompt += f"\n使用する言語: {self.personality['LANGUAGE']}" if self.personality['LANGUAGE'] else "" 
+                system_prompt += f"\n使用する言語: {self.personality['LANGUAGE']}" if self.personality['LANGUAGE'] else ""
             if 'SPEAKING_STYLE' in self.personality:
                 if self.personality['SPEAKING_STYLE']:
                     prompt_temps_json = dmu.read_json_file(prompt_temp_mst_path)
                     speaking_style = prompt_temps_json['SPEAKING_STYLE'][self.personality['SPEAKING_STYLE']]
                     system_prompt += f"\n口調:{speaking_style}"
-    
+
             # キャラクター設定
             if 'CHARACTER' in self.personality:
                 character = self.personality["CHARACTER"]
@@ -162,17 +159,17 @@ class DigiM_Agent:
                     system_prompt += f"\n\nあなたのキャラクター設定:\n{character}"
 
         return system_prompt
-    
+
     # コンテンツコンテキストの生成
     def set_contents_context(self, seq, sub_seq, contents):
         context, records, image_files = dmc.create_contents_context(self.agent, contents, seq, sub_seq)
         return context, records, image_files
-        
+
     # プロンプトテンプレートの取得
     def set_prompt_template(self, prompt_temp_cd):
         prompt_template = dmc.set_prompt_template(prompt_temp_cd)
         return prompt_template
-    
+
     # ナレッジコンテキスト(RAG)の生成
     def set_knowledge_context(self, query, query_vecs=[], exec_info={}, meta_searches=[]):
         #define_code = self.agent["DEFINE_CODE"] if "DEFINE_CODE" in self.agent else {}

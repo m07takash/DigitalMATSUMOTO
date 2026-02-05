@@ -86,20 +86,23 @@ def save_user_dialog_csv(service_info, user_info, save_session_ids, del_session_
 
         # データの論理削除
         if row.get("session_id") in del_session_ids:
-            records[i]["flg"] = "N"        
+            records[i]["flg"] = "N"
 
     for save_session_id in save_session_ids:
-        if save_session_id not in file_session_id_list:
-            user_dialog_data = get_user_dialog_data(save_session_id)
-            user_dialog_data["flg"] = "Y"
-            user_dialog_data["create_date"] = datetime.fromisoformat(user_dialog_data["create_date"]).strftime("%Y/%m/%d")
-            _, _, user_dialog, _, _, _ = dmt.gene_user_dialog(service_info, user_info, save_session_id, "", "", "")
-            user_dialog_data["dialog"] = user_dialog
-            records.append({k: str(user_dialog_data.get(k, "")).replace('\r\n', '').replace('\r', '').replace('\n', '') for k in fieldnames})
+        try:
+            if save_session_id not in file_session_id_list:
+                user_dialog_data = get_user_dialog_data(save_session_id)
+                user_dialog_data["flg"] = "Y"
+                user_dialog_data["create_date"] = datetime.fromisoformat(user_dialog_data["create_date"]).strftime("%Y/%m/%d")
+                _, _, user_dialog, _, _, _ = dmt.gene_user_dialog(service_info, user_info, save_session_id, "", "", "")
+                user_dialog_data["dialog"] = user_dialog
+                records.append({k: str(user_dialog_data.get(k, "")).replace('\r\n', '').replace('\r', '').replace('\n', '') for k in fieldnames})
 
-            # セッションの状態を保存済みに変更
-            save_session = dms.DigiMSession(save_session_id, user_dialog_data["session_name"])
-            save_session.save_user_dialog_session("SAVED")
+                # セッションの状態を保存済みに変更
+                save_session = dms.DigiMSession(save_session_id, user_dialog_data["session_name"])
+                save_session.save_user_dialog_session("SAVED")
+        except Exception as e:
+            continue
 
     # 全体を書き戻し（上書き保存）
     with open(file_path, mode="w", newline="", encoding="utf-8-sig") as csvfile:
@@ -107,21 +110,20 @@ def save_user_dialog_csv(service_info, user_info, save_session_ids, del_session_
         writer.writeheader()
         writer.writerows(records)
 
-
 # Notionデータベースへの保存
 def save_user_dialog_notion(service_info, user_info, save_session_ids, del_session_ids):
     notion_db_mst_file_path = mst_folder_path + notion_db_mst_file
     notion_db_mst = dmu.read_json_file(notion_db_mst_file_path)
     db_id = notion_db_mst[user_dialog_save_db]
     page_session_id_list = []
-    
+
     # Notionページの取得
     pages = dmn.get_all_pages(db_id)
     for page in pages:
         page_id = page["id"]
         page_session_id = dmn.get_notion_item_by_id(pages, page_id, "セッションID", "rich_text")
         page_session_id_list.append(page_session_id)
-        
+
         # ページの上書き
         if page_session_id in save_session_ids:
             user_dialog_data = get_user_dialog_data(page_session_id)
@@ -136,15 +138,15 @@ def save_user_dialog_notion(service_info, user_info, save_session_ids, del_sessi
                 dmn.update_notion_num(page_id, "sub_seq", user_dialog_data["sub_seq"])
                 _, _, user_dialog, _, _, _ = dmt.gene_user_dialog(service_info, user_info, page_session_id, "", "", "")
                 dmn.update_notion_rich_text_content(page_id, "ダイアログ", user_dialog)
-                
+
                 # セッションの状態を保存済みに変更
                 save_session = dms.DigiMSession(page_session_id, user_dialog_data["session_name"])
                 save_session.save_user_dialog_session("SAVED")
-        
+
         # ページの論理削除
         if page_session_id in del_session_ids:
             dmn.update_notion_chk(page_id, "有効Chk", False)
-    
+
     # ページの追加
     for save_session_id in save_session_ids:
         if save_session_id not in page_session_id_list:
@@ -161,7 +163,7 @@ def save_user_dialog_notion(service_info, user_info, save_session_ids, del_sessi
             dmn.update_notion_num(page_id, "sub_seq", user_dialog_data["sub_seq"])
             _, _, user_dialog, _, _, _ = dmt.gene_user_dialog(service_info, user_info, save_session_id, "", "", "")
             dmn.update_notion_rich_text_content(page_id, "ダイアログ", user_dialog)
-            
+
             # セッションの状態を保存済みに変更
             save_session = dms.DigiMSession(save_session_id, user_dialog_data["session_name"])
             save_session.save_user_dialog_session("SAVED")
@@ -183,6 +185,3 @@ def save_user_dialogs(service_info, user_info):
         save_user_dialog_notion(service_info, user_info, save_session_ids, del_session_ids)
     else:
         save_user_dialog_csv(service_info, user_info, save_session_ids, del_session_ids)
-
-    
-

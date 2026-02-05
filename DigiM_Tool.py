@@ -35,9 +35,8 @@ def fixed_message(service_info, user_info, session_id, session_name, agent_file,
 
     response_service_info = service_info
     response_user_info = user_info
-    
-    return response_service_info, response_user_info, response, export_contents
 
+    return response_service_info, response_user_info, response, export_contents
 
 # セッションの会話履歴の削除
 def forget_history(service_info, user_info, session_id, session_name, agent_file, input, import_contents=[], add_info={}):
@@ -46,15 +45,14 @@ def forget_history(service_info, user_info, session_id, session_name, agent_file
 
     for seq in chat_history_dict.keys():
         session.chg_seq_history(seq, "N")
-        
+
     response = "会話履歴を全て忘れました"
     export_contents = []
 
     response_service_info = service_info
     response_user_info = user_info
-    
-    return response_service_info, response_user_info, response, export_contents
 
+    return response_service_info, response_user_info, response, export_contents
 
 # セッションの会話履歴の回復
 def remember_history(service_info, user_info, session_id, session_name, agent_file, input, import_contents=[], add_info={}):
@@ -63,15 +61,14 @@ def remember_history(service_info, user_info, session_id, session_name, agent_fi
 
     for seq in chat_history_dict.keys():
         session.chg_seq_history(seq, "Y")
-        
+
     response = "会話履歴を全て思い出しました"
     export_contents = []
-    
+
     response_service_info = service_info
     response_user_info = user_info
-    
-    return response_service_info, response_user_info, response, export_contents
 
+    return response_service_info, response_user_info, response, export_contents
 
 # テキストから日付の抽出
 def extract_date(service_info, user_info, session_id, session_name, agent_file, input, import_contents=[], add_info={}):
@@ -112,15 +109,14 @@ def extract_date(service_info, user_info, session_id, session_name, agent_file, 
     for prompt, response_chunk, completion in agent.generate_response(model_type, prompt, memories_selected, stream_mode=False):
         if response_chunk:
             response += response_chunk
-    
+
     prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
     response_tokens = dmu.count_token(tokenizer, model_name, response)
-    
+
     response_service_info = service_info
     response_user_info = user_info
-    
-    return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
+    return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
 # テキストからRAGクエリの生成
 def RAG_query_generator(service_info, user_info, session_id, session_name, agent_file, user_query, import_contents=[], add_info={}):
@@ -160,15 +156,14 @@ def RAG_query_generator(service_info, user_info, session_id, session_name, agent
     for prompt, response_chunk, completion in agent.generate_response(model_type, prompt, memories_selected, stream_mode=False):
         if response_chunk:
             response += response_chunk
-    
-    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
+
+    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt)
     response_tokens = dmu.count_token(tokenizer, model_name, response)
-    
+
     response_service_info = service_info
     response_user_info = user_info
-    
-    return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
+    return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
 # 会話のダイジェスト生成
 def dialog_digest(service_info, user_info, session_id, session_name, agent_file, user_query, import_contents=[], add_info={}):
@@ -205,18 +200,17 @@ def dialog_digest(service_info, user_info, session_id, session_name, agent_file,
     for prompt, response_chunk, completion in agent.generate_response(model_type, query, stream_mode=False):
         if response_chunk:
             response += response_chunk
-    
-    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
+
+    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt)
     response_tokens = dmu.count_token(tokenizer, model_name, response)
-    
+
     # 出力形式
     response = "【これまでの会話のダイジェスト】\n" + response
-    
+
     response_service_info = service_info
     response_user_info = user_info
-    
-    return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
+    return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
 # セッション名の生成
 def gene_session_name(service_info, user_info, session_id, session_name, agent_file, user_query, import_contents=[], add_info={}):
@@ -253,15 +247,14 @@ def gene_session_name(service_info, user_info, session_id, session_name, agent_f
     for prompt, response_chunk, completion in agent.generate_response(model_type, query, stream_mode=False):
         if response_chunk:
             response += response_chunk
-    
-    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
+
+    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt)
     response_tokens = dmu.count_token(tokenizer, model_name, response)
-    
+
     response_service_info = service_info
     response_user_info = user_info
-    
-    return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
+    return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
 # ユーザーダイアログの生成(会話履歴の中におけるユーザーの特徴や意見)
 def gene_user_dialog(service_info, user_info, session_id, session_name, agent_file, user_query, import_contents=[], add_info={}):
@@ -299,15 +292,14 @@ def gene_user_dialog(service_info, user_info, session_id, session_name, agent_fi
     for prompt, response_chunk, completion in agent.generate_response(model_type, query, stream_mode=False):
         if response_chunk:
             response += response_chunk
-    
-    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
+
+    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt)
     response_tokens = dmu.count_token(tokenizer, model_name, response)
-    
+
     response_service_info = service_info
     response_user_info = user_info
-    
-    return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
+    return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
 # WEB検索(PerplexityAI)
 def WebSearch_PerplexityAI(service_info, user_info, session_id, session_name, agent_file, input, import_contents=[], add_info={}):
@@ -353,7 +345,6 @@ def WebSearch_PerplexityAI(service_info, user_info, session_id, session_name, ag
     export_contents = results.json()["search_results"]
 
     return response_service_info, response_user_info, response, export_contents
-
 
 # 経営分析
 def management_analysis(service_info, user_info, session_id, session_name, agent_file, input, import_contents=[], add_info={}):
@@ -410,14 +401,13 @@ def management_analysis(service_info, user_info, session_id, session_name, agent
         response = ""
         for response_service_info, response_user_info, response_chunk, output_reference in dme.DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name, agent_file, user_input, import_contents, situation, overwrite_items, add_knowledges, execution):
             response += response_chunk
-        
-        Q_no += 1         
+
+        Q_no += 1
         time.sleep(3)
-    
+
     export_contents = []
 
     return response_service_info, response_user_info, response, export_contents
-
 
 # テキストの比較
 def compare_texts(service_info, user_info, head1, text1, head2, text2, query_compare=""):
@@ -427,7 +417,7 @@ def compare_texts(service_info, user_info, head1, text1, head2, text2, query_com
     model_type = "LLM"
     model_name = agent.agent["ENGINE"][model_type]["MODEL"]
     tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
-    
+
     # エージェントに設定されるプロンプトテンプレートを設定
     if query_compare == "":
         prompt_temp_cd = "Compare Texts"
@@ -443,16 +433,15 @@ def compare_texts(service_info, user_info, head1, text1, head2, text2, query_com
     for prompt, response_chunk, completion in agent.generate_response(model_type, prompt):
         if response_chunk:
             response += response_chunk
-    
-    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
+
+    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt)
     response_tokens = dmu.count_token(tokenizer, model_name, response)
-    
+
     response_service_info = service_info
     response_user_info = user_info
-    
+
     return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
-    
 # 画像データへの批評の生成
 def art_critics(service_info, user_info, memories_selected=[], image_paths=[], agent_file="agent_52ArtCritic.json"):
     agent = dma.DigiM_Agent(agent_file)
@@ -460,7 +449,7 @@ def art_critics(service_info, user_info, memories_selected=[], image_paths=[], a
     model_type = "LLM"
     model_name = agent.agent["ENGINE"][model_type]["MODEL"]
     tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
-    
+
     # エージェントファイルのDEFAULTに設定しているPRACTICEの1つ目からプロンプトテンプレートを取得する
     practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
     practice = dmu.read_json_file(practice_folder_path+practice_file)
@@ -469,7 +458,7 @@ def art_critics(service_info, user_info, memories_selected=[], image_paths=[], a
     else:
         prompt_temp_cd = "Art Critic"
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
-    
+
     # プロンプトの設定
     prompt = f'{prompt_template}'
 
@@ -478,11 +467,11 @@ def art_critics(service_info, user_info, memories_selected=[], image_paths=[], a
     for prompt, response_chunk, completion in agent.generate_response(model_type, prompt, memories_selected, image_paths):
         if response_chunk:
             response += response_chunk
-    
-    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) 
+
+    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt)
     response_tokens = dmu.count_token(tokenizer, model_name, response)
-    
+
     response_service_info = service_info
     response_user_info = user_info
-    
+
     return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
