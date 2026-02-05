@@ -27,7 +27,7 @@ def get_feedback_data(fb_k, memo, k1, k2, v2, default_category, service_id, user
     fb_data["create_date"] = dmu.safe_parse_timestamp(v2["prompt"]["query"]["situation"]["TIME"])
     fb_data["service_id"] = service_id
     fb_data["user_id"] = user_id
-    fb_data["session_name"] = v2["setting"]["session_name"]    
+    fb_data["session_name"] = v2["setting"]["session_name"]
     fb_data["seq"] = int(k1)
     fb_data["sub_seq"] = int(k2)
     fb_data["query"] = v2["prompt"]["query"]["input"]
@@ -90,7 +90,7 @@ def save_communication_notion(fb_data, save_db):
     notion_db_mst_file_path = mst_folder_path + notion_db_mst_file
     notion_db_mst = dmu.read_json_file(notion_db_mst_file_path)
     db_id = notion_db_mst[save_db]
-    
+
     # Notionページの保存
     response = dmn.create_page(db_id, fb_data["title"])
     page_id = response["id"]
@@ -139,4 +139,3 @@ def create_communication_data(session_id, agent_file):
                                 save_communication_csv(fb_data, save_db)
                             v2["feedback"][fb_k]["flg"]=False
                     session.set_feedback_history(k1, k2, v2["feedback"])
-

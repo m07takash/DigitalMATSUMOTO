@@ -48,7 +48,7 @@ def parse_date(d):
         return datetime.fromisoformat(d)
     except Exception:
         return datetime.min
-    
+
 # ファイル名のサニタイズ
 def sanitize_filename(name: str, replacement: str = "_", max_length: int = 255, keep_unicode: bool = True) -> str:
     """
@@ -140,7 +140,7 @@ class ConvertedLocalFile:
         self.name = os.path.basename(file_path)
         self.size = os.path.getsize(file_path)
         self.type, _ = mimetypes.guess_type(file_path)
-        
+
     def read(self):
         with open(self.file_path, 'rb') as f:
             return f.read()
@@ -282,15 +282,15 @@ def embed_text(text):
     max_tokens = 8192
 
     # 最大トークンで入力を切り取り
-    enc = tiktoken.encoding_for_model(embedding_model)    
+    enc = tiktoken.encoding_for_model(embedding_model)
     tokens = enc.encode(text)
     if len(tokens) > max_tokens:
         tokens = tokens[:max_tokens]
     safe_text = enc.decode(tokens)
-    
+
     # 埋め込みベクトル化
     response = openai_client.embeddings.create(model=embedding_model, input=safe_text)
-    response_vec = response.data[0].embedding    
+    response_vec = response.data[0].embedding
     return response_vec
 
 # 埋め込みベクトルの配列を1つのnpyファイルに保存
@@ -314,7 +314,7 @@ def read_vectext_to_npy(file_path, mmap=False):
 def tokenize_Owakati(text, mode="Default", stop_words=[], grammer=('名詞', '動詞', '形容詞', '副詞')):
     mecab = MeCab.Tagger("-Owakati")
     wakati_text = mecab.parse(text)
-    tokens = wakati_text.split()    
+    tokens = wakati_text.split()
     if mode == "All":
         # stop_wordsの除去
         tokens = [word for word in tokens if word not in stop_words]
@@ -368,8 +368,7 @@ def get_wordcloud(title, dict, folder_path="user/common/analytics/insight/"):
 def count_token(tokenizer, model, text):
     tokens = 0
     if tokenizer == "tiktoken":
-        model = "gpt-4o"
-        encoding = tiktoken.encoding_for_model(model)
+        encoding = tiktoken.get_encoding("cl100k_base")
         tokens = len(encoding.encode(text))
     elif tokenizer == "gemini":
         gemini_client = genai.Client(api_key=gemini_api_key)

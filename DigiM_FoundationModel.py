@@ -49,13 +49,13 @@ def generate_response_T_gpt(query, system_prompt, model, memories=[], image_path
     memory_message = []
     for memory in memories:
         memory_message.append({"role": memory["role"], "content": memory["text"]})
-    
+
     # イメージ画像をプロンプトに設定
     image_message = []
     for image_path in image_paths:
         image_base64 = dmu.encode_image_file(image_path)
         image_message.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}})
-    
+
     # ユーザーのプロンプトを設定
     user_prompt = [{"type": "text", "text": query}] + image_message
     user_message = [{"role": "user", "content": user_prompt}]
@@ -84,7 +84,6 @@ def generate_response_T_gpt(query, system_prompt, model, memories=[], image_path
         response = completion.choices[0].message.content
         yield str(prompt), response, completion
 
-
 # OpenAIのResponses関数の実行
 def generate_response_T_gpt_response(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=False):
     os.environ["OPENAI_API_KEY"] = openai_api_key
@@ -98,7 +97,7 @@ def generate_response_T_gpt_response(query, system_prompt, model, memories=[], i
     memory_message = []
     for memory in memories:
         memory_message.append({"role": memory["role"], "content": memory["text"]})
-    
+
     # イメージ画像をプロンプトに設定
     image_message = []
     for image_path in image_paths:
@@ -112,7 +111,7 @@ def generate_response_T_gpt_response(query, system_prompt, model, memories=[], i
 
     # ツールを設定
     tools = agent_tools["TOOL_LIST"]
-    
+
     # モデルの実行
     completion = openai_client.responses.create(
         model = model["MODEL"],
@@ -123,8 +122,7 @@ def generate_response_T_gpt_response(query, system_prompt, model, memories=[], i
     )
 
     response = completion.output_text
-    yield str(prompt), response, completion
-        
+    yield str(prompt), response, completion 
 
 # OpenAIツールの実行(https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses)
 def generate_response_openai_tool(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
@@ -134,7 +132,7 @@ def generate_response_openai_tool(query, system_prompt, model, memories=[], imag
 
     # システムプロンプトの設定
     system_message = [
-        {"role": "developer", 
+        {"role": "developer",
          "content": [{"type": "input_text", "text": system_prompt}]}
     ]
 
@@ -142,14 +140,14 @@ def generate_response_openai_tool(query, system_prompt, model, memories=[], imag
     memory_message = []
     for memory in memories:
         memory_message.append({"role": memory["role"], "content": memory["text"]})
-    
+
     # イメージ画像をプロンプトに設定
     image_message = []
     for image_path in image_paths:
         image_base64 = dmu.encode_image_file(image_path)
         #image_message.append({"type": "image_url", "image_url": {"url": image_url["image_url"]}})
         image_message.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}})
-    
+
     # ユーザーのプロンプトを設定
     user_prompt = [{"type": "input_text", "text": query}] + image_message
     user_message = [{"role": "user", "content": user_prompt}]
@@ -158,7 +156,7 @@ def generate_response_openai_tool(query, system_prompt, model, memories=[], imag
     # ツールを設定【要検討：いったんデフォルト設定】
     tools = agent_tools["TOOL_LIST"]
     tool_choice = agent_tools["CHOICE"]
-    
+
     # モデルの実行
     completion = openai_client.responses.create(
         model = model["MODEL"],
@@ -170,7 +168,6 @@ def generate_response_openai_tool(query, system_prompt, model, memories=[], imag
 
     response = completion.output_text
     yield str(prompt), response, completion
-
 
 # Geminiの実行
 def generate_response_T_gemini(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
@@ -188,8 +185,8 @@ def generate_response_T_gemini(query, system_prompt, model, memories=[], image_p
         elif memory["role"] == "assistant":
             memory_message.append({"role": "model", "parts":[{"text": memory["text"]}]})
 
-    contents += memory_message    
-    
+    contents += memory_message
+
     # イメージ画像をプロンプトに設定
     images = []
     for image_path in image_paths:
@@ -202,21 +199,21 @@ def generate_response_T_gemini(query, system_prompt, model, memories=[], image_p
             image_type = "image/png"
         if image_type:
             images.append({"inlineData": {"mimeType": image_type, "data": image_data}})
-    
+
     # ユーザーのプロンプトを設定
     user_prompt = [{"text": query}]
-    contents.append({"role": "user", "parts": user_prompt})   
+    contents.append({"role": "user", "parts": user_prompt})
     contents += images
 
     # ツールを設定【修正前】
 ###    tools = agent_tools["TOOL_LIST"]
 ###    tool_choice = agent_tools["CHOICE"]
-    
+
     # モデルの実行（モデル／システムプロンプト）
     response_stream_total = ""
     if stream_mode:
         completion = gemini_client.models.generate_content_stream(
-            model = model["MODEL"], 
+            model = model["MODEL"],
             config = types.GenerateContentConfig(system_instruction=system_instruction),
             contents = contents
             )
@@ -224,17 +221,16 @@ def generate_response_T_gemini(query, system_prompt, model, memories=[], image_p
             response = chunk_completion.text
             response_stream_total += response if response else ""
             yield str(contents), response, chunk_completion
-    
+
     # ストリーミングの結果が取得されない場合、ストリーミングではないモードで再実行
     if not stream_mode or response_stream_total == "":
         completion = gemini_client.models.generate_content(
-            model = model["MODEL"], 
-            config = types.GenerateContentConfig(system_instruction=system_instruction), 
+            model = model["MODEL"],
+            config = types.GenerateContentConfig(system_instruction=system_instruction),
             contents = contents
             )
         response = completion.text
         yield str(contents), response, completion
-
 
 # Claudeの実行
 def generate_response_T_claude(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
@@ -244,13 +240,13 @@ def generate_response_T_claude(query, system_prompt, model, memories=[], image_p
     memory_message = []
     for memory in memories:
         memory_message.append({"role": memory["role"], "content": memory["text"]})
-    
+
     # イメージ画像をプロンプトに設定
     image_message = []
     for image_path in image_paths:
         image_base64 = dmu.encode_image_file(image_path)
         image_message.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_base64}})
-    
+
     # ユーザーのプロンプトを設定
     user_prompt = [{"type": "text", "text": query}] + image_message
     user_message = [{"role": "user", "content": user_prompt}]
@@ -279,7 +275,6 @@ def generate_response_T_claude(query, system_prompt, model, memories=[], image_p
             )
         response = completion.content[0].text
         yield str(prompt), response, completion
-    
 
 # Grokの実行
 def generate_response_T_grok(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
@@ -329,7 +324,6 @@ def generate_response_T_grok(query, system_prompt, model, memories=[], image_pat
         response = completion.content
         yield str(prompt), response, completion
 
-
 # llamaの実行
 def generate_response_T_llama(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
     llama = LlamaAPI(llama_api_key)
@@ -343,21 +337,21 @@ def generate_response_T_llama(query, system_prompt, model, memories=[], image_pa
     memory_message = []
     for memory in memories:
         memory_message.append({"role": memory["role"], "content": memory["text"]})
-    
+
     # イメージ画像をプロンプトに設定
     image_message = []
 #    for image_path in image_paths:
 #        image_base64 = dmu.encode_image_file(image_path)
 #        image_message.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}})
-    
+
     # ユーザーのプロンプトを設定
     prompt = [{"type": "text", "text": query}] + image_message
-    user_message = [{"role": "user", "content": prompt}]    
+    user_message = [{"role": "user", "content": prompt}]
 
     # ツールを設定【要検討：いったんデフォルト設定】
 #    tools = agent_tools["TOOL_LIST"]
 #    tool_choice = agent_tools["CHOICE"]
-    
+
     # モデルの実行
     api_request_json = {
         "model": model["MODEL"],
@@ -370,7 +364,6 @@ def generate_response_T_llama(query, system_prompt, model, memories=[], image_pa
 
     response = completion["choices"][0]["message"]["content"]
     yield query, response, completion
-
 
 # 考察に対する画像生成
 def generate_image_dalle(prompt, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
@@ -388,8 +381,8 @@ def generate_image_dalle(prompt, system_prompt, model, memories=[], image_paths=
     memory_message = []
     for memory in memories:
         memory_message.append({"role": memory["role"], "content": memory["text"]})
-        
-    # プロンプトを文字列に 
+
+    # プロンプトを文字列に
     prompt_str = json.dumps(memory_message + user_message, ensure_ascii=False).replace("\n", "").replace("\\", "")
 
     # 画像生成モデルの実行
