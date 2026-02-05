@@ -168,7 +168,7 @@ def get_pages_done(database_id, chk_dict=None, date_dict=None, category_dict=Non
     has_more = True
     next_cursor = None
     all_results = []
-    
+
     while has_more:
         payload = {}
         if chk_dict is not None or date_dict is not None or category_dict is not None:
@@ -209,7 +209,7 @@ def get_pages_done(database_id, chk_dict=None, date_dict=None, category_dict=Non
                         "select": {
                             "equals": set_category
                         }
-                    })      
+                    })
         if next_cursor:
             payload["start_cursor"] = next_cursor
         response = requests.post(f"https://api.notion.com/v1/databases/{database_id}/query", headers=notion_headers, json=payload)
@@ -308,7 +308,7 @@ def update_notion_date(page_id, date_name, date):
                 }
             }
         }
-    }  
+    }
     response = requests.patch(url, headers=notion_headers, json=data)
     if response.status_code == 200:
         return "Updated successfully"
@@ -324,7 +324,7 @@ def update_notion_url(page_id, property_name, item):
                 "url": item,
             }
         }
-    }  
+    }
     response = requests.patch(url, headers=notion_headers, json=data)
     if response.status_code == 200:
         return "Updated successfully"
@@ -340,7 +340,7 @@ def update_notion_chk(page_id, chk_item, chk=True):
                 "checkbox": chk
             }
         }
-    }  
+    }
     response = requests.patch(url, headers=notion_headers, json=data)
     if response.status_code == 200:
         return "Updated successfully"

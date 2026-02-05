@@ -176,7 +176,6 @@ def set_login_user_to_session(user_id: str, user_info: dict):
     if st.session_state.login_user["Agent"] == "DEFAULT":
         default_agent_data = dmu.read_json_file(cfg.web_default_agent_file, agent_folder_path)
         st.session_state.default_agent = default_agent_data["DISPLAY_NAME"]
-#        st.session_state.display_name = st.session_state.default_agent 
     else:
         default_agent_data = dmu.read_json_file(st.session_state.login_user["Agent"], agent_folder_path)
         st.session_state.default_agent = default_agent_data["DISPLAY_NAME"]
@@ -571,7 +570,7 @@ def main():
             st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, agent_folder_path)
 
         side_col1, side_col2 = st.columns(2)
-        
+
         # 新しいセッションを発番（IDを指定して、新規にセッションリフレッシュ）
         if side_col1.button("New Chat", key="new_chat"):
             session_id = dms.set_new_session_id()
@@ -601,7 +600,7 @@ def main():
                 activate_sessions_str = ", ".join(st.session_state.session_inactive_list_selected)
                 st.session_state.sidebar_message = f"セッションを再表示しました({activate_sessions_str})"
                 st.rerun()
-    
+
         # 知識更新の処理
         if st.session_state.allowed_rag_management:
             rag_expander = st.expander("RAG Management")
@@ -612,7 +611,7 @@ def main():
                     if cfg.user_dialog_auto_save_flg == "Y":
                         dmgu.save_user_dialogs(st.session_state.web_service, st.session_state.web_user)
                     st.session_state.sidebar_message = "RAGの更新が完了しました"
-                
+
                 # RAGの削除処理(未選択は全削除)
                 st.session_state.rag_data_list_selected = st.multiselect("RAG DB", st.session_state.rag_data_list)
                 if st.button("Delete RAG DB", key="delete_rag_db"):
@@ -697,7 +696,7 @@ def main():
             st.session_state.stream_mode = True
         else:
             st.session_state.stream_mode = False
-        
+
         # 会話メモリ利用の設定
         if header_col2.checkbox("Memory Use", value=st.session_state.memory_use):
             st.session_state.memory_use = True
@@ -761,7 +760,7 @@ def main():
         st.session_state.chat_history_visible_dict = st.session_state.session.chat_history_active_dict
     elif option == "SUMMARY":
         st.session_state.chat_history_visible_dict = st.session_state.session.chat_history_active_omit_dict
-    
+
     # 会話履歴の削除（ボタン）
     if header_col4.button("Delete Chat History(Chk)", key="delete_chat_history"):
         if st.session_state.seq_memory:
@@ -774,7 +773,6 @@ def main():
     # シチュエーションの設定
     situation_setting = st.text_input("Situation Setting:", value=st.session_state.situation_setting)
 
-
     # 会話履歴の表示件数の設定
     max_seq = dms.max_seq_dict(st.session_state.chat_history_visible_dict)
     seq_visible_key = 0
@@ -782,7 +780,7 @@ def main():
         seq_visible_key = int(max_seq) - num_seq_visible
     else:
         seq_visible_key = 0
-    
+
     # 会話履歴の表示
     download_data = []
     for k, v in st.session_state.chat_history_visible_dict.items():
@@ -794,7 +792,7 @@ def main():
                     prompt_role = v2["prompt"]["role"]
                     if v.get("SETTING", {}).get("user_info", {}).get("USER_ID") is not None:
                         prompt_role = v["SETTING"]["user_info"]["USER_ID"]
-                    with st.chat_message("user"):
+                    with st.chat_message("human"):
                         content_text = "**"+prompt_role+" ("+v2["prompt"]["timestamp"]+"):**\n\n"+v2["prompt"]["query"]["input"]
                         download_data.append({"role": v2["prompt"]["role"], "content": content_text})
 #                        st.markdown(content_text.replace("\n", "<br>"), unsafe_allow_html=True)
@@ -824,16 +822,16 @@ def main():
                                         if "feedback" in v2:
                                             feedback["name"] = v2.get("feedback", {}).get("name", feedback["name"])
                                         feedback["name"] = st.text_input("Feedback_Name:", key=f"feedback_name{k}_{k2}", value=feedback["name"], label_visibility="collapsed")
-                                                                                        
+
                                         for fb_item in agent_communication["FEEDBACK_ITEM_LIST"]:
                                             feedback[fb_item] = {}
                                             feedback[fb_item]["visible"] = False
                                             feedback[fb_item]["flg"] = False
-                                            feedback[fb_item]["memo"] = ""                           
+                                            feedback[fb_item]["memo"] = ""
                                             if "feedback" in v2:
                                                 feedback[fb_item] = v2.get("feedback", {}).get(fb_item, feedback[fb_item])
                                             feedback[fb_item]["saved_memo"] = feedback[fb_item]["memo"]
-                                    
+
                                             if st.checkbox(f"{fb_item}", key=f"feedback_{fb_item}_{k}_{k2}", value=feedback[fb_item]["visible"]):
                                                 feedback[fb_item]["memo"] = st.text_input("Memo:", key=f"feedback_{fb_item}_memo{k}_{k2}", value=feedback[fb_item]["memo"], label_visibility="collapsed")
                                                 feedback[fb_item]["visible"] = True
@@ -896,7 +894,7 @@ def main():
                                                 vec_compare_response = dmu.embed_text(compare_response)
                                                 compare_diff = dmu.calculate_cosine_distance(vec_response, vec_compare_response)
                                                 exec_agend_id = dma.get_agent_item(v2["setting"]["agent_file"], "DISPLAY_NAME")
-                                                _, _, compare_text, compare_text_model_name, _, _ = dmt.compare_texts(st.session_state.web_service, st.session_state.web_user, exec_agend_id, v2["response"]["text"], st.session_state.compare_agent_id, compare_response)                                    
+                                                _, _, compare_text, compare_text_model_name, _, _ = dmt.compare_texts(st.session_state.web_service, st.session_state.web_user, exec_agend_id, v2["response"]["text"], st.session_state.compare_agent_id, compare_response)
                                                 if "compare_agents" not in analytics_dict:
                                                     analytics_dict["compare_agents"] = []
                                                 analytics_dict["compare_agents"].append({"compare_agent":{"timestamp": str(datetime.now()), "agent_file": compare_agent_file, "model_name": compare_model_name, "response": compare_response, "diff": compare_diff, "knowledge_rag": compare_knowledge_ref}, "compare_text": {"compare_model_name": compare_text_model_name, "text": compare_text}})
@@ -1001,7 +999,6 @@ def main():
                                                                 for ak_dict in compare_agent_info["knowledge_utility"]["similarity_rank"][rag_category]:
                                                                     st.markdown(ak_line(ak_dict))
 
-
                                     if st.session_state.allowed_analytics_knowledge:
                                         if "knowledge_utility" in analytics_dict:
                                             chat_expander_analytics = st.expander("Analytics Results - Knowledge Utility")
@@ -1012,9 +1009,11 @@ def main():
                                                 if "image_files" in analytics_dict["knowledge_utility"]:
                                                     image_files = analytics_dict["knowledge_utility"]["image_files"]
                                                     ext_for = lambda k: "csv" if "csv" in k else "png"
+                                                    rag_categories = sorted(similarity_utility_dict.keys())
                                                     rag_to_files = {
                                                         rag: {k: next((f for f in v if f.endswith(f"_{rag}.{ext_for(k)}")), None) for k, v in image_files.items()}
-                                                        for rag in sorted({os.path.splitext(f)[0].rsplit("_", 1)[-1] for v in image_files.values() for f in v})
+                                                        #for rag in sorted({os.path.splitext(f)[0].rsplit("_", 1)[-1] for v in image_files.values() for f in v})
+                                                        for rag in rag_categories
                                                     }
                                                     for rag_category, files in rag_to_files.items():
                                                         st_scatter01, st_scatter02 = st.columns(2)
@@ -1065,7 +1064,7 @@ def main():
         dl_file_id = st.session_state.session.session_id +"_"+ st.session_state.session.session_name[:20]
         dl_data, dl_file_name, dl_mime = set_dl_file(download_data, st.session_state.dl_type, file_id=dl_file_id)
         footer_col2.download_button(label="Download(.md)", data=dl_data, file_name=dl_file_name, mime=dl_mime)
-    
+
     # ユーザーの問合せ入力
     if st.session_state.session_user_id == st.session_state.user_id:
         if user_input := st.chat_input("Your Message"):
@@ -1105,7 +1104,7 @@ def main():
             execution["META_SEARCH"] = st.session_state.meta_search
             execution["RAG_QUERY_GENE"] = st.session_state.RAG_query_gene
             execution["WEB_SEARCH"] = st.session_state.web_search
-            
+
             # ユーザー入力の一時表示
             with st.chat_message("user"):
                 st.markdown(user_input.replace("\n", "<br>"), unsafe_allow_html=True)

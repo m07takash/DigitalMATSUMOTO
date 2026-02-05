@@ -34,7 +34,7 @@ def genLLMAgentSimple(service_info, user_info, session_id, session_name, agent_f
     response = ""
     for response_service_info, response_user_info, response_chunk, export_contents, knowledge_ref in dme.DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_file, model_type, sub_seq, query, import_contents, situation=situation, overwrite_items=overwrite_items, add_knowledge=add_knowledge, prompt_temp_cd=prompt_temp_cd, execution=execution, seq_limit=seq_limit, sub_seq_limit=sub_seq_limit):
         response += response_chunk
-    
+
     return response_service_info, response_user_info, response, model_name, export_contents, knowledge_ref
 
 # 知識活用性のグラフを作成
@@ -45,14 +45,14 @@ def create_similarity_plot_file(file_title, analytics_file_path, rag_name, group
 
     ax.barh([y - bar_height / 2 for y in y_positions], group['similarity_Q'], height=bar_height, color=group["q_colors"], label='similarity_Q')
     ax.barh([y + bar_height / 2 for y in y_positions], group['similarity_A'], height=bar_height, color='orange', label='similarity_A')
-        
+
     ax.set_xlabel('Similarity Distance', fontsize=12)
     ax.set_ylabel('Title', fontsize=12)
     ax.set_title(f'{rag_name} - Similarity_Q vs Similarity_A (Sorted by Similarity_Q Desc)', fontsize=14)
     ax.set_yticks(y_positions)
     ax.set_yticklabels(group['title'], fontsize=8)
     ax.legend()
-        
+
     similarity_plot_file = f"{file_title}_KUtilPlot_{rag_name}.png"    
     filename = analytics_file_path + similarity_plot_file
     plt.savefig(filename)
@@ -65,7 +65,7 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
     scatter_plot_file_category = ""
     scatter_plot_file_ref = ""
     scatter_plot_file_csv = ""
-    
+
     df = pd.DataFrame(rag_data_list)
     df["vec_value_text"] = df["vector_data_value_text"].apply(np.array)
     vectors = np.vstack(df["vec_value_text"].to_numpy())
@@ -138,7 +138,6 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
 
     return scatter_plot_file_category, scatter_plot_file_ref, scatter_plot_file_csv
 
-
 # 知識参照度と知識活用度の分析
 def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_file_path, ak_mode="Default", dim_mode={"method":"PCA", "params":{}}):
 #    end_date_str = datetime.strptime(ref_timestamp, "%Y-%m-%d %H:%M:%S.%f").strftime("%Y-%m-%d")
@@ -157,7 +156,7 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
 
     df['knowledge_utility'] = round(df['similarity_Q'] - df['similarity_A'], 3)
     file_title = dmu.sanitize_filename(title[:30])
-    
+
     # similarity_Qの統計量を算出
     similarity_Q_stats = df.groupby('rag')['similarity_Q'].agg([
         ('min', 'min'),
@@ -166,8 +165,8 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
         ('max', 'max'),
         ('variance', lambda x: np.var(x, ddof=1))
     ]).reset_index()
-    
-    # similarity_Aの統計量を算出 
+
+    # similarity_Aの統計量を算出
     similarity_A_stats = df.groupby('rag')['similarity_A'].agg([
         ('min', 'min'),
         ('mean', 'mean'),
@@ -175,8 +174,8 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
         ('max', 'max'),
         ('variance', lambda x: np.var(x, ddof=1))
     ]).reset_index()
-    
-    # 知識活用性の統計量を算出 
+
+    # 知識活用性の統計量を算出
     knowledge_utility_stats = df.groupby('rag')['knowledge_utility'].agg([
         ('min', 'min'),
         ('mean', 'mean'),
@@ -187,10 +186,10 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
 
     # RAGごとの知識活用性（Q最小値-A最小値）を算出
     knowledge_utility_stats_dict = dict(zip(similarity_Q_stats['rag'], knowledge_utility_stats['max']))
-    
+
     # 出力用に辞書形式に変換
-    similarity_Q_stats_dict = similarity_Q_stats.to_dict(orient='index') 
-    similarity_A_stats_dict = similarity_A_stats.to_dict(orient='index') 
+    similarity_Q_stats_dict = similarity_Q_stats.to_dict(orient='index')
+    similarity_A_stats_dict = similarity_A_stats.to_dict(orient='index')
     similarity_utility_dict = knowledge_utility_stats_dict
     similarity_rank = (df.sort_values(['rag', 'similarity_Q'], ascending=[True, True]).groupby('rag')[['DB', 'ID', 'title', 'similarity_Q', 'similarity_A','knowledge_utility', 'QUERY_SEQ', 'QUERY_MODE']].apply(lambda x: x.to_dict(orient='records')).to_dict())
 
@@ -260,7 +259,7 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
                         except Exception as e:
                             print(f"[SKIP] ChromaDB collection not found: {rag_data['DATA_NAME']}")
                             continue
-                    
+
                         rag_data_db = collection.get(include=["metadatas", "embeddings"])
                         for i in range(len(rag_data_db["ids"])):
                             v = {}
@@ -278,7 +277,7 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
                                         else:
                                             v["category_color"] = "gray"                        
                                 rag_data_list.append(v)
-                    
+
                 if rag_data_list:
                     scatter_plot_category_file, scatter_plot_ref_file, scatter_plot_csv_file = plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, dim_mode, category_map)
                     if scatter_plot_category_file:
@@ -289,7 +288,7 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
                         scatter_plot_csv_files.append(scatter_plot_csv_file)
 
         similarity_plot_files.append(create_similarity_plot_file(file_title, analytics_file_path, rag_name, group))
-    
+
     result = {
         "similarity_Q_stats": similarity_Q_stats_dict,
         "similarity_A_stats": similarity_A_stats_dict,
@@ -308,7 +307,5 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
             "similarity_plot_file": similarity_plot_files
             }
     }
-    
+
     return result
-
-
