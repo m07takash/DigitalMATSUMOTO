@@ -27,6 +27,14 @@
             "PARAMETER": {},
             "TOKENIZER": "tiktoken",
             "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+        },
+        "IMAGEGEN": {
+            "NAME":"GPT-Image-1",
+            "FUNC_NAME": "generate_image_dalle",
+            "MODEL": "gpt-image-1",
+            "PARAMETER": {"size": "1024x1024", "quality": "high"},
+            "TOKENIZER": "",
+            "MEMORY": {"limit": 3000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
         }
     },
     "HABIT": {
@@ -52,8 +60,6 @@
     },
     "SUPPORT_AGENT": {
         "DIALOG_DIGEST": "agent_51DialogDigest.json",
-        "ART_CRITICS": "agent_52ArtCritic.json",
-        "EXTRACT_DATE": "agent_55ExtractDate.json",
-        "RAG_QUERY_GENERATOR": "agent_56RAGQueryGenerator.json"
+        "ART_CRITICS": "agent_52ArtCritic.json"
     }
 }
