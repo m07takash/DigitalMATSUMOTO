@@ -60,7 +60,7 @@ def create_similarity_plot_file(file_title, analytics_file_path, rag_name, group
 
     return similarity_plot_file
 
-# PCAを算出してプロットしたファイルを作成
+# PCA/TSNEを算出してプロットしたファイルを作成
 def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, mode={"method":"PCA", "params":{}}, category_map={}):
     scatter_plot_file_category = ""
     scatter_plot_file_ref = ""
@@ -74,9 +74,24 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
     params = mode["params"]
     xcol, ycol = "X1", "X2"
 
+    # タイトルに付ける説明率文字列
+    pca_info_text = ""
+
     if method == "PCA":
         model = PCA(n_components=2)
         emb = model.fit_transform(vectors)
+
+        # 第1・第2主成分の説明率と累積説明率
+        pc1_ratio = model.explained_variance_ratio_[0]
+        pc2_ratio = model.explained_variance_ratio_[1]
+        cumulative_ratio = pc1_ratio + pc2_ratio
+
+        pca_info_text = (
+            f"\nPC1: {pc1_ratio:.2%}, "
+            f"PC2: {pc2_ratio:.2%}, "
+            f"PC1+PC2 Coverage: {cumulative_ratio:.2%}"
+        )
+
     elif method == "t-SNE":
         n = len(df)
         perplexity = min(params["perplexity"], max(2, n - 1))
@@ -91,7 +106,7 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
         )
         emb = model.fit_transform(vectors)
     else:
-        raise ValueError(f"Unknown method: {method} (use 'pca' or 'tsne')")
+        raise ValueError(f"Unknown method: {method} (use 'PCA' or 't-SNE')")
 
     df[xcol] = emb[:, 0]
     df[ycol] = emb[:, 1]
@@ -102,10 +117,10 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
 
     plt.figure(figsize=(10, 8))
     plt.scatter(df[xcol], df[ycol], c=df["ref_color"], alpha=0.7)
-    plt.title(f"{method} Analysis(Ref): {rag_name}")
+    plt.title(f"{method} Analysis(Ref): {rag_name}{pca_info_text}")
     plt.grid(True)
     plt.savefig(scatter_plot_filename_ref, dpi=300, bbox_inches="tight")
-#    plt.show()
+    # plt.show()
 
     # カテゴリーの散布図
     if "category_color" in df.columns:
@@ -114,24 +129,31 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
 
         plt.figure(figsize=(10, 8))
         plt.scatter(df[xcol], df[ycol], c=df["category_color"], alpha=0.7)
-        plt.title(f"{method} Analysis(Category): {rag_name}")
+        plt.title(f"{method} Analysis(Category): {rag_name}{pca_info_text}")
         plt.grid(True)
 
         if category_map:
-            category_handles = [plt.Line2D([0], [0], marker="o", color="w", label=key, markersize=10, markerfacecolor=color) for key, color in category_map.items()]
-            category_handles.append(plt.Line2D([0], [0], marker="o", color="w", label="その他", markersize=10, markerfacecolor="gray"))
+            category_handles = [
+                plt.Line2D([0], [0], marker="o", color="w", label=key, markersize=10, markerfacecolor=color)
+                for key, color in category_map.items()
+            ]
+            category_handles.append(
+                plt.Line2D([0], [0], marker="o", color="w", label="その他", markersize=10, markerfacecolor="gray")
+            )
             plt.legend(handles=category_handles, loc="upper left", bbox_to_anchor=(1, 1), title="カテゴリ")
 
         plt.savefig(scatter_plot_filename_category, dpi=300, bbox_inches="tight")
-#        plt.show()
+        # plt.show()
 
     # 散布図にプロットされるデータ(CSV)
     if "category_color" in df.columns:
         display_items = ["id", "title", "create_date", xcol, ycol, "category_color", "category_sum", "category", "db", "value_text"]
     else:
         display_items = ["id", "title", "create_date", xcol, ycol, "value_text"]
+
     existing_items = [c for c in display_items if c in df.columns]
-    df_csv = (df.loc[df["ref_color"] != "gray", existing_items].sort_values(by=[xcol, ycol], ascending=[True, True]))
+    df_csv = df.loc[df["ref_color"] != "gray", existing_items].sort_values(by=[xcol, ycol], ascending=[True, True])
+
     scatter_plot_file_csv = f"{file_title}_ScatterData({method})_{rag_name}.csv"
     scatter_plot_filename_csv = analytics_file_path + scatter_plot_file_csv
     df_csv.to_csv(scatter_plot_filename_csv, index=True, encoding="utf-8-sig")

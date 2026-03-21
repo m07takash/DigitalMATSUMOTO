@@ -95,7 +95,7 @@ def generate_pureLLM(base_agent, query, memories_selected=[], prompt_temp_cd="No
 # 通常LLMの実行(外部呼出)
 def ext_generate_pureLLM(agent_file, query, memories_selected=[], prompt_temp_cd="No Template"):
     base_agent = DigiM_Agent(agent_file)
-    response, model_name, prompt_tokens, response_tokens = generate_pureLLM(base_agent, query, memories_selected=[], prompt_temp_cd="No Template")
+    response, model_name, prompt_tokens, response_tokens = generate_pureLLM(base_agent, query, memories_selected=[], prompt_temp_cd=prompt_temp_cd)
     return response, model_name, prompt_tokens, response_tokens
 
 # Agent

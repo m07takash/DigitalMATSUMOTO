@@ -156,6 +156,42 @@ def extract_list_pattern(text, pattern=r"(\[\s*{.*?}\s*\])"):
             return []
     return []
 
+# 期間リストの絞込
+def merge_periods(periods):
+    converted = [
+        {
+            "start": datetime.strptime(p["start"], "%Y/%m/%d"),
+            "end": datetime.strptime(p["end"], "%Y/%m/%d"),
+        }
+        for p in periods
+    ]
+
+    # startでソート
+    converted.sort(key=lambda x: x["start"])
+    merged = []
+    for p in converted:
+        if not merged:
+            merged.append(p)
+            continue
+        last = merged[-1]
+
+        # 重なり or 隣接している場合はマージ
+        if p["start"] <= last["end"]:
+            last["end"] = max(last["end"], p["end"])
+        else:
+            merged.append(p)
+
+    # datetime
+    result = [
+        {
+            "start": m["start"].strftime("%Y/%m/%d"),
+            "end": m["end"].strftime("%Y/%m/%d"),
+        }
+        for m in merged
+    ]
+
+    return result
+
 # 辞書を再帰的に上書きする関数
 def update_dict(target, source):
     for key, value in source.items():
