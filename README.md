@@ -24,3 +24,58 @@ https://github.com/m07takash/DigitalMATSUMOTO/blob/main/docs/%E3%83%87%E3%82%B8%
 
 インストール＆セットアップ及びエージェントの設定等（ハンズオン資料）
 https://github.com/m07takash/DigitalMATSUMOTO/blob/main/docs/%E3%83%87%E3%82%B8%E3%82%BF%E3%83%ABMATSUMOTO-PG%E3%83%8F%E3%83%B3%E3%82%BA%E3%82%AA%E3%83%B3.pdf
+
+### アーキテクチャ概要
+
+[Streamlit UI / FastAPI / Jupyter Notebook]
+          ↓
+   DigiM_Execute.py        # 実行オーケストレーション
+          ↓
+   DigiM_Agent.py          # エージェント呼出
+   DigiM_Context.py        # コンテキスト生成・RAGクエリ
+   DigiM_Session.py        # セッション・履歴管理
+          ↓
+   DigiM_FoundationModel.py  # LLM抽象化レイヤー
+   DigiM_Tool.py             # ツール(定義された関数)
+          ↓
+[GPT / Gemini / Claude / Grok]
+
+エージェントの設定（人格・使用LLM・知識）は `user/common/agent/*.json` で管理し、
+コンテキストはプロンプトテンプレート（`user/common/mst/prompt_templates.json`）と
+RAG（ChromaDB）を組み合わせて動的に生成します。
+
+
+### 主要モジュール
+
+| モジュール | 役割 |
+|-----------|------|
+| `DigiM_Execute.py` | メイン実行エンジン |
+| `DigiM_Session.py` | セッション・チャット履歴管理 |
+| `DigiM_Context.py` | コンテキスト生成・RAG処理 |
+| `DigiM_FoundationModel.py` | LLM抽象化（マルチLLM対応） |
+| `DigiM_Agent.py` | エージェント設定管理 |
+| `DigiM_Tool.py` | ツール群（分析・履歴操作等） |
+| `DigiM_Util.py` | 共通関数 |
+| `DigiM_Notion.py` | Notion API連携 |
+| `WebDigiMatsuAgent.py` | WebUI画面 |
+| `DigiM_API.py` | FastAPI エンドポイント |
+| `DigiM_VAnalytics.py` | 知識活用分析 |
+| `DigiM_GeneCommunication.py` | ユーザーフィードバック |
+| `DigiM_GeneUserDialog.py` | ユーザー対話の保存 |
+
+### ディレクトリ構造
+
+```
+DigitalMATSUMOTO/
+├── user/
+│   ├── common/
+│   │   ├── agent/          # エージェント設定JSON
+│   │   ├── practice/       # プラクティス設定JSON
+│   │   ├── mst/            # マスターデータ（ユーザー・RAG・プロンプト等）
+│   │   ├── rag/chromadb/   # ベクトルDB（ChromaDB）
+│   │   └── csv/            # RAG用CSVデータ
+│   └── session*/           # セッションデータ（チャット履歴）
+├── setting.yaml            # フォルダパス等のシステム設定
+├── system.env              # APIキー等の環境変数（要作成）
+└── system.env_sample       # 環境変数のテンプレート
+```
