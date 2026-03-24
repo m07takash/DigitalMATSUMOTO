@@ -1,9 +1,12 @@
 import os
-import re
 import json
+import logging
 from datetime import datetime
+from pathlib import Path
 from dotenv import load_dotenv
 import DigiM_Util as dmu
+
+logger = logging.getLogger(__name__)
 
 # setting.yamlからフォルダパスなどを設定
 system_setting_dict = dmu.read_yaml_file("setting.yaml")
@@ -19,8 +22,6 @@ if os.path.exists("system.env"):
     load_dotenv("system.env")
 temp_move_flg = os.getenv("TEMP_MOVE_FLG")
 
-current_date = datetime.now()
-
 # セッションの一覧を獲得
 def get_session_list():
     sessions = []
@@ -28,13 +29,11 @@ def get_session_list():
         try:
             if session_folder_name.startswith(session_folder_prefix):
                 session_folder_path = os.path.join(user_folder_path, session_folder_name)
-                session_status_path = session_folder_path +"/"+ session_status_file_name
+                session_status_path = str(Path(session_folder_path) / session_status_file_name)
                 status_dict = {}
                 status_dict = dmu.read_yaml_file(session_status_path)
                 if "id" not in status_dict:
-                    match = re.match(rf'{session_folder_prefix}(\d+)', session_folder_name)
-                    if match:
-                        status_dict["id"] = match.group(1)
+                    status_dict["id"] = session_folder_name[len(session_folder_prefix):]
                 session_id = status_dict["id"]
                 if "name" not in status_dict:
                     status_dict["name"] = get_session_name(session_id)
@@ -52,7 +51,7 @@ def get_session_list():
                         status_dict["user_id"] = user_id
                 sessions.append(status_dict)
         except Exception as e:
-            print(f"{session_folder_name}でエラーのためスキップしました: {e}")
+            logger.warning(f"{session_folder_name}でエラーのためスキップしました: {e}")
             continue
     return sessions
 
@@ -88,14 +87,14 @@ def get_session_list_inactive_visible(input_service_id, input_user_id, admin_flg
 # セッションIDを元にセッションの辞書データを取得する関数
 def get_session_data(session_id):
     session_key = session_folder_prefix + session_id
-    session_file_path = user_folder_path + session_key + "/" + session_file_name
+    session_file_path = str(Path(user_folder_path) / session_key / session_file_name)
     session_file_dict = dmu.read_json_file(session_file_path)
     return session_file_dict
 
 # セッションIDを元にセッションのステータスデータを取得する関数
 def get_status_data(session_id):
     session_key = session_folder_prefix + session_id
-    session_status_path = user_folder_path + session_key + "/" + session_status_file_name
+    session_status_path = str(Path(user_folder_path) / session_key / session_status_file_name)
     status_dict = dmu.read_yaml_file(session_status_path)
     return status_dict
 
@@ -110,7 +109,7 @@ def max_seq_dict(session_dict):
 # セッション名を取得
 def get_session_name(session_id):
     session_key = session_folder_prefix + session_id
-    session_status_path = user_folder_path + session_key + "/" + session_status_file_name
+    session_status_path = str(Path(user_folder_path) / session_key / session_status_file_name)
     status_dict = {}
     status_dict = dmu.read_yaml_file(session_status_path)
     session_name = ""
@@ -128,7 +127,7 @@ def get_session_name(session_id):
 # 会話履歴のサービス名とユーザー名を取得
 def get_ids(session_id):
     session_key = session_folder_prefix + session_id
-    session_status_path = user_folder_path + session_key + "/" + session_status_file_name
+    session_status_path = str(Path(user_folder_path) / session_key / session_status_file_name)
     status_dict = {}
     status_dict = dmu.read_yaml_file(session_status_path)
     service_id = ""
@@ -156,28 +155,30 @@ def get_ids(session_id):
 # 会話履歴の最終更新日を取得
 def get_last_update_date(session_id):
     session_key = session_folder_prefix + session_id
-    session_status_path = user_folder_path + session_key + "/" + session_status_file_name
+    session_status_path = str(Path(user_folder_path) / session_key / session_status_file_name)
     status_dict = {}
     status_dict = dmu.read_yaml_file(session_status_path)
+    current_date = datetime.now()
     last_update_date = current_date
     if "last_update_date" in status_dict:
         last_update_date = datetime.strptime(status_dict["last_update_date"], "%Y-%m-%d %H:%M:%S.%f")
     else:
         session_file_dict = get_session_data(session_id)
         session_file_active_dict = {k: v for k, v in session_file_dict.items() if v["SETTING"].get("FLG") == "Y"}
-        max_seq = max(session_file_active_dict.keys(), key=int)
-        max_sub_seq = 0
-        sub_seq_candidates = [k for k, v in session_file_active_dict[max_seq].items() if isinstance(v, dict) and "response" in v]
-        if sub_seq_candidates:
-            max_sub_seq = max(sub_seq_candidates, key=int)
-            last_update_date = datetime.strptime(session_file_active_dict[max_seq][max_sub_seq]["response"]["timestamp"], "%Y-%m-%d %H:%M:%S.%f")
+        if session_file_active_dict:
+            max_seq = max(session_file_active_dict.keys(), key=int)
+            max_sub_seq = 0
+            sub_seq_candidates = [k for k, v in session_file_active_dict[max_seq].items() if isinstance(v, dict) and "response" in v]
+            if sub_seq_candidates:
+                max_sub_seq = max(sub_seq_candidates, key=int)
+                last_update_date = datetime.strptime(session_file_active_dict[max_seq][max_sub_seq]["response"]["timestamp"], "%Y-%m-%d %H:%M:%S.%f")
     last_update_date_str = str(last_update_date)
     return last_update_date_str
 
 # エージェントファイルを取得
 def get_agent_file(session_id):
     session_key = session_folder_prefix + session_id
-    session_status_path = user_folder_path + session_key + "/" + session_status_file_name
+    session_status_path = str(Path(user_folder_path) / session_key / session_status_file_name)
     status_dict = {}
     status_dict = dmu.read_yaml_file(session_status_path)
     agent_file = ""
@@ -195,7 +196,7 @@ def get_agent_file(session_id):
 # セッションのアクティブ状態を獲得する
 def get_active_session(session_id):
     session_key = session_folder_prefix + session_id
-    session_status_path = user_folder_path + session_key + "/" + session_status_file_name
+    session_status_path = str(Path(user_folder_path) / session_key / session_status_file_name)
     status_dict = {}
     status_dict = dmu.read_yaml_file(session_status_path)
     if "active" in status_dict:
@@ -207,7 +208,7 @@ def get_active_session(session_id):
 # セッションのユーザーダイアログ保存状態を獲得する
 def get_user_dialog_session(session_id):
     session_key = session_folder_prefix + session_id
-    session_status_path = user_folder_path + session_key + "/" + session_status_file_name
+    session_status_path = str(Path(user_folder_path) / session_key / session_status_file_name)
     status_dict = {}
     status_dict = dmu.read_yaml_file(session_status_path)
     # user_dialogはSAVED/UNSAVED/DISCARD/NONEのいずれか
@@ -220,7 +221,7 @@ def get_user_dialog_session(session_id):
 # シチュエーションを取得
 def get_situation(session_id):
     session_key = session_folder_prefix + session_id
-    session_file_path = user_folder_path + session_key + "/" + session_file_name
+    session_file_path = str(Path(user_folder_path) / session_key / session_file_name)
     session_file_dict = dmu.read_json_file(session_file_path)
     session_file_active_dict = {k: v for k, v in session_file_dict.items() if v["SETTING"].get("FLG") == "Y"}
     situation = {}
@@ -258,12 +259,13 @@ class DigiMSession:
     def __init__(self, session_id="", session_name=""):
         self.session_id = session_id if session_id else set_new_session_id()
         self.session_name = session_name if session_name else get_session_name(self.session_id)
-        self.session_folder_path = user_folder_path + session_folder_prefix + self.session_id +"/"
-        self.session_vec_folder_path = user_folder_path + session_folder_prefix + self.session_id +"/vecs/"
-        self.session_file_path = self.session_folder_path + session_file_name
-        self.session_status_path = self.session_folder_path + session_status_file_name
-        self.session_contents_folder_path = self.session_folder_path + session_contents_folder
-        self.session_analytics_folder_path = self.session_folder_path + session_analytics_folder
+        _session_base = Path(user_folder_path) / (session_folder_prefix + self.session_id)
+        self.session_folder_path = str(_session_base) + "/"
+        self.session_vec_folder_path = str(_session_base / "vecs") + "/"
+        self.session_file_path = str(_session_base / session_file_name)
+        self.session_status_path = str(_session_base / session_status_file_name)
+        self.session_contents_folder_path = str(_session_base / session_contents_folder)
+        self.session_analytics_folder_path = str(_session_base / session_analytics_folder)
         self.set_history()
 
     # ヒストリーの再読込
@@ -479,7 +481,7 @@ class DigiMSession:
 
         # ベクトルデータを.npy形式で保存
         vec_file_name = seq+"-"+sub_seq+"_"+mode+".npy"
-        dmu.save_vectext_to_npy(vec_text, self.session_vec_folder_path+vec_file_name)
+        dmu.save_vectext_to_npy(vec_text, str(Path(self.session_vec_folder_path) / vec_file_name))
 
         return vec_file_name
 
@@ -487,7 +489,7 @@ class DigiMSession:
     def get_vec_file(self, seq, sub_seq="1", mode="query"):
         vec_file_name = seq+"-"+sub_seq+"_"+mode+".npy"
         vec_text=[]
-        vec_text = dmu.read_vectext_to_npy(self.session_vec_folder_path+vec_file_name)
+        vec_text = dmu.read_vectext_to_npy(str(Path(self.session_vec_folder_path) / vec_file_name))
         return vec_text
 
     # セッションIDを設定する
@@ -553,6 +555,30 @@ class DigiMSession:
         status_dict = {"user_dialog": user_dialog_status}
         dmu.save_yaml_file(status_dict, self.session_status_path)
 
+    # 会話履歴を一括保存する (B-5)
+    # sub_seq_data: {sub_seq_str: {key: dict, ...}, ...}
+    # seq_setting_data: {key: dict, ...}  ← SETTING レベルに保存
+    def save_history_batch(self, seq, sub_seq_data=None, seq_setting_data=None):
+        chat_history_dict = {}
+        if not os.path.exists(self.session_folder_path):
+            os.makedirs(self.session_folder_path, exist_ok=True)
+        if os.path.exists(self.session_file_path):
+            chat_history_dict = dmu.read_json_file(self.session_file_path)
+        if seq not in chat_history_dict:
+            chat_history_dict[seq] = {}
+            chat_history_dict[seq]["SETTING"] = {"FLG": "Y"}
+        if seq_setting_data:
+            for key, data in seq_setting_data.items():
+                chat_history_dict[seq]["SETTING"][key] = data
+        if sub_seq_data:
+            for sub_seq, entries in sub_seq_data.items():
+                if sub_seq not in chat_history_dict[seq]:
+                    chat_history_dict[seq][sub_seq] = {}
+                for key, data in entries.items():
+                    chat_history_dict[seq][sub_seq][key] = data
+        with open(self.session_file_path, 'w', encoding='utf-8') as f:
+            json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
+
     # 会話履歴を保存する
     def save_history(self, seq, chat_dict_key, chat_dict, level="SEQ", sub_seq="1"):
         chat_history_dict = {}
@@ -601,7 +627,8 @@ class DigiMSession:
         seq = 0
         if os.path.exists(self.session_file_path):
             chat_history_dict = dmu.read_json_file(session_file_name, self.session_folder_path)
-            seq = max(int(key) for key in chat_history_dict.keys())
+            if chat_history_dict:
+                seq = max(int(key) for key in chat_history_dict.keys())
         return seq
 
     # 会話履歴のシーケンスのステータスを変更する
@@ -711,7 +738,7 @@ class DigiMSession:
     # コンテンツファイルを保存する
     def save_contents_file(self, from_file_path, content_file_name):
         to_folder_path = self.session_contents_folder_path
-        to_file_path = to_folder_path + content_file_name
+        to_file_path = str(Path(to_folder_path) / content_file_name)
         # コンテンツフォルダがなければ作成
         if not os.path.exists(to_folder_path):
             os.makedirs(to_folder_path, exist_ok=True)

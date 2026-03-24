@@ -2,11 +2,14 @@ from notion_client import Client
 from dateutil.parser import parse
 from collections import defaultdict
 import requests
+import logging
 from pathlib import Path
 from dotenv import load_dotenv
 
 import os
 import json
+
+logger = logging.getLogger(__name__)
 import calendar
 import datetime
 from datetime import datetime, timedelta
@@ -130,7 +133,7 @@ def get_all_page_ids(database_id):
         response_json = response.json()
 
         if response.status_code != 200:
-            print(f"Error fetching page IDs. Response: {response_json}")
+            logger.error(f"Error fetching page IDs. Response: {response_json}")
             return []
 
         all_results.extend(response_json["results"])
@@ -154,7 +157,7 @@ def get_all_pages(database_id):
         response_json = response.json()
 
         if response.status_code != 200:
-            print(f"Error fetching page IDs. Response: {response_json}")
+            logger.error(f"Error fetching page IDs. Response: {response_json}")
             return []
 
         all_results.extend(response_json["results"])
@@ -215,7 +218,7 @@ def get_pages_done(database_id, chk_dict=None, date_dict=None, category_dict=Non
         response = requests.post(f"https://api.notion.com/v1/databases/{database_id}/query", headers=notion_headers, json=payload)
         response_json = response.json()
         if response.status_code != 200:
-            print(f"Error fetching page IDs. Response: {response_json}")
+            logger.error(f"Error fetching page IDs. Response: {response_json}")
             return []
         all_results.extend(response_json["results"])
         has_more = response_json.get("has_more", False)
@@ -363,7 +366,7 @@ def update_notion_block(page_id, text):
         }
     response = requests.patch(url, headers=notion_headers, json=data)
     if response.status_code != 200:
-        print(f"Failed to update. Reason: {response.text}")
+        logger.error(f"Failed to update. Reason: {response.text}")
 
 # Notionページへのデータ上書き（ブロック）
 def update_notion_block_bold(page_id, text):
@@ -381,7 +384,7 @@ def update_notion_block_bold(page_id, text):
         }
     response = requests.patch(url, headers=notion_headers, json=data)
     if response.status_code != 200:
-        print(f"Failed to update. Reason: {response.text}")
+        logger.error(f"Failed to update. Reason: {response.text}")
 
 # NotionページIDを指定してアーカイブ
 def archive_page(page_id):
@@ -390,7 +393,7 @@ def archive_page(page_id):
     }
     response = requests.patch(f"https://api.notion.com/v1/pages/{page_id}", headers=notion_headers, json=update_payload)
     if response.status_code != 200:
-        print(f"Error archiving page {page_id}. Response: {response.json()}")
+        logger.error(f"Error archiving page {page_id}. Response: {response.json()}")
 
 # Notionページ追加処理
 def create_page(db_id, page_title, title_item="名前"):
@@ -404,7 +407,7 @@ def create_page(db_id, page_title, title_item="名前"):
             entry_title = get_title_by_id(pages, page["id"], title_item)
             if entry_title == page_title:
                 archive_page(page["id"])
-                print(entry_title+"をアーカイブしました")
+                logger.info(entry_title+"をアーカイブしました")
 
     # エントリ詳細を追加
     page_content.append({
@@ -435,8 +438,8 @@ def create_page(db_id, page_title, title_item="名前"):
         }
     response = requests.post("https://api.notion.com/v1/pages", headers=notion_headers, json=payload)
     response_json = response.json()
-    print(page_title+"を作成しました")
+    logger.info(page_title+"を作成しました")
 
     if response.status_code != 200:
-        print(f"エラーが発生しました。 {page_title}: {response_json}")
+        logger.error(f"エラーが発生しました。 {page_title}: {response_json}")
     return response_json

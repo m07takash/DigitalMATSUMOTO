@@ -15,7 +15,7 @@
     "Name": "Normal Man",
     "PW": "password",
     "Group": "User",
-    "Agent": "agent_13DefaultGemini.json",
+    "Agent": "agent_11DefaultGPT.json",
     "Allowed": {
       "RAG Management": true,
       "Exec Setting": true,
