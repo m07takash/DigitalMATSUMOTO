@@ -1109,11 +1109,16 @@ def main():
             with st.chat_message("user"):
                 st.markdown(user_input.replace("\n", "<br>"), unsafe_allow_html=True)
             with st.chat_message("ai"):
+                status_placeholder = st.empty()
                 response_placeholder = st.empty()
                 response = ""
                 for response_service_info, response_user_info, response_chunk, output_reference in dme.DigiMatsuExecute_Practice(st.session_state.web_service, st.session_state.web_user, st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, add_knowledges, execution):
-                    response += response_chunk
-                    response_placeholder.markdown(response)
+                    if response_chunk and isinstance(response_chunk, str) and response_chunk.startswith("[STATUS]"):
+                        status_placeholder.markdown(f"⏳ {response_chunk[len('[STATUS]'):]}")
+                    elif response_chunk:
+                        status_placeholder.empty()
+                        response += response_chunk
+                        response_placeholder.markdown(response)
                 if not st.session_state.session.session_name or st.session_state.session.session_name == "New Chat":
                     _, _, new_session_name, _, _, _ = dmt.gene_session_name(st.session_state.web_service, st.session_state.web_user, st.session_state.session.session_id, st.session_state.session.session_name, "", user_input)
                     st.session_state.session.chg_session_name(new_session_name)

@@ -1,6 +1,7 @@
 import os
 import csv
 from datetime import datetime
+from pathlib import Path
 from dotenv import load_dotenv
 
 import DigiM_Agent as dma
@@ -87,7 +88,7 @@ def save_communication_csv(fb_data, save_db):
 
 # Notionデータベースへの保存
 def save_communication_notion(fb_data, save_db):
-    notion_db_mst_file_path = mst_folder_path + notion_db_mst_file
+    notion_db_mst_file_path = str(Path(mst_folder_path) / notion_db_mst_file)
     notion_db_mst = dmu.read_json_file(notion_db_mst_file_path)
     db_id = notion_db_mst[save_db]
 

@@ -3,6 +3,8 @@ import shutil
 import csv
 import json
 import ast
+import logging
+import threading
 import pandas as pd
 import sqlite3
 import chromadb
@@ -10,9 +12,13 @@ from chromadb.errors import NotFoundError
 import re
 import mimetypes
 from datetime import datetime
+from pathlib import Path
 from dotenv import load_dotenv
+from concurrent.futures import ThreadPoolExecutor
 
 import DigiM_Util as dmu
+
+logger = logging.getLogger(__name__)
 import DigiM_Tool as dmt
 import DigiM_Notion as dmn
 
@@ -25,12 +31,21 @@ rag_folder_db_path = system_setting_dict["RAG_FOLDER_DB"]
 if os.path.exists("system.env"):
     load_dotenv("system.env")
 prompt_template_mst_file = os.getenv("PROMPT_TEMPLATE_MST_FILE")
-prompt_temp_mst_path = mst_folder_path + prompt_template_mst_file
+prompt_temp_mst_path = str(Path(mst_folder_path) / prompt_template_mst_file)
 rag_mst_file = os.getenv("RAG_MST_FILE")
 notion_db_mst_file = os.getenv("NOTION_MST_FILE")
 
-# 現在日付
-current_date = datetime.now()
+# B-1: ChromaDB クライアントのシングルトン（スレッドセーフ）
+_chroma_client = None
+_chroma_client_lock = threading.Lock()
+
+def get_chroma_client():
+    global _chroma_client
+    if _chroma_client is None:
+        with _chroma_client_lock:
+            if _chroma_client is None:  # ダブルチェックロッキング
+                _chroma_client = chromadb.PersistentClient(path=rag_folder_db_path)
+    return _chroma_client
 
 # 添付したコンテンツからコンテキストを取得
 def create_contents_context(agent_data, contents, seq=0, sub_seq=0):
@@ -89,7 +104,7 @@ def get_text_content(agent_data, content, seq, sub_seq, file_seq):
 
 # プロンプトテンプレートの取得
 def set_prompt_template(prompt_temp_cd):
-    prompt_temp_mst_path = mst_folder_path + prompt_template_mst_file
+    prompt_temp_mst_path = str(Path(mst_folder_path) / prompt_template_mst_file)
     prompt_temps_json = dmu.read_json_file(prompt_temp_mst_path)
     prompt_temp = prompt_temps_json["PROMPT_TEMPLATE"][prompt_temp_cd]
     prompt_template = ""
@@ -102,7 +117,7 @@ def get_rag_list():
     rag_list = []
 
     #ChromaDBから取得
-    db_client = chromadb.PersistentClient(path=rag_folder_db_path)
+    db_client = get_chroma_client()
     collections = db_client.list_collections()
     rag_list += [col.name for col in collections]
 
@@ -117,6 +132,9 @@ def select_rag_vector(rag_data_list, rag={}):
     rag_all = []
     rag_selected = []
     rag_context = ""
+
+    # 現在日付
+    current_date = datetime.now()
 
     # RAGテキストの選択
     for rag_data in rag_data_list:
@@ -163,6 +181,128 @@ def select_rag_vector(rag_data_list, rag={}):
 
     return rag_context, rag_selected
 
+# C-2: FILTERから where_limitation を構築（query_vec に依存しないため事前計算）
+def _build_where_limitation(rag_data, exec_info, define_code={}):
+    where_limitation = []
+    if "FILTER" not in rag_data:
+        return where_limitation
+    where_limitation_conditions = []
+    cond = rag_data["FILTER"]["CONDITION"]
+
+    if "SERVICE_INFO" in cond:
+        items = [{c: {"$eq": exec_info["SERVICE_INFO"]["SERVICE_ID"]}} for c in cond["SERVICE_INFO"]["ITEMS"]]
+        where_limitation_conditions.append(
+            items[0] if len(items) == 1 else
+            {"$and" if cond["SERVICE_INFO"]["PATTERN"] == "and" else "$or": items})
+
+    if "USER_INFO" in cond:
+        items = [{c: {"$eq": exec_info["USER_INFO"]["USER_ID"]}} for c in cond["USER_INFO"]["ITEMS"]]
+        where_limitation_conditions.append(
+            items[0] if len(items) == 1 else
+            {"$and" if cond["USER_INFO"]["PATTERN"] == "and" else "$or": items})
+
+    if "DEFINE_CODE" in cond:
+        items = [{v: {"$eq": define_code[k]}} for k, v in cond["DEFINE_CODE"]["CODES"].items()]
+        where_limitation_conditions.append(
+            items[0] if len(items) == 1 else
+            {"$and" if cond["DEFINE_CODE"]["PATTERN"] == "and" else "$or": items})
+
+    if len(where_limitation_conditions) == 1:
+        where_limitation.append(where_limitation_conditions[0])
+    elif len(where_limitation_conditions) > 1:
+        op = "$and" if rag_data["FILTER"]["PATTERN"] == "and" else "$or"
+        where_limitation.append({op: where_limitation_conditions})
+    return where_limitation
+
+
+# C-2: 1つの query_vec に対する ChromaDB クエリ（並列実行単位）
+def _query_collection_single(collection, query_vec, result_limit, where_limitation, rag_data, meta_searches, query_seq):
+    results = []
+
+    # META_SEARCH クエリ（日付条件+類似度ボーナス）
+    if "META_SEARCH" in rag_data:
+        query_conditions_add = []
+        for meta_search in meta_searches:
+            if "DATE" in meta_search and "DATE" in rag_data["META_SEARCH"]["CONDITION"]:
+                for date_range in meta_search["DATE"]:
+                    try:
+                        start_date = datetime.strptime(date_range["start"], '%Y/%m/%d').timestamp()
+                        end_date = datetime.strptime(date_range["end"], '%Y/%m/%d').timestamp()
+                        query_conditions_add.append({"$and": [
+                            {"create_date_ts": {"$gte": start_date}},
+                            {"create_date_ts": {"$lte": end_date}}
+                        ]})
+                    except Exception as e:
+                        logger.warning("Exception: %s", e)
+                        continue
+        if query_conditions_add:
+            where_add = query_conditions_add[0] if len(query_conditions_add) == 1 else {"$or": query_conditions_add}
+            if where_limitation:
+                wl = where_limitation.copy()
+                wl.extend(where_add["$and"]) if "$and" in where_add else wl.append(where_add)
+                where_clause = wl[0] if len(wl) == 1 else {"$and": wl}
+            else:
+                where_clause = where_add
+            rag_data_db = collection.query(
+                query_embeddings=[query_vec], n_results=result_limit,
+                include=["metadatas", "embeddings", "distances"], where=where_clause)
+            for i in range(len(rag_data_db["ids"])):
+                for j in range(len(rag_data_db["ids"][i])):
+                    v = {"id": rag_data_db["ids"][i][j]}
+                    v |= rag_data_db["metadatas"][i][j]
+                    v["vector_data_value_text"] = ast.literal_eval(v["vector_data_value_text"])
+                    v["vector_data_key_text"] = rag_data_db["embeddings"][i][j].tolist()
+                    v["similarity_prompt"] = round(rag_data_db["distances"][i][j], 3) * rag_data["META_SEARCH"]["BONUS"]
+                    v["similarity_prompt_original"] = round(rag_data_db["distances"][i][j], 3)
+                    v["query_seq"] = query_seq
+                    v["query_mode"] = "(META_SEARCH:" + str(rag_data["META_SEARCH"]["BONUS"]) + ")"
+                    results.append(v)
+
+    # 通常クエリ
+    if where_limitation:
+        where_clause = where_limitation[0] if len(where_limitation) == 1 else {"$and": where_limitation}
+        rag_data_db = collection.query(
+            query_embeddings=[query_vec], n_results=result_limit,
+            include=["metadatas", "embeddings", "distances"], where=where_clause)
+    else:
+        rag_data_db = collection.query(
+            query_embeddings=[query_vec], n_results=result_limit,
+            include=["metadatas", "embeddings", "distances"])
+    for i in range(len(rag_data_db["ids"])):
+        for j in range(len(rag_data_db["ids"][i])):
+            v = {"id": rag_data_db["ids"][i][j]}
+            v |= rag_data_db["metadatas"][i][j]
+            v["vector_data_value_text"] = ast.literal_eval(v["vector_data_value_text"])
+            v["vector_data_key_text"] = rag_data_db["embeddings"][i][j].tolist()
+            v["similarity_prompt"] = round(rag_data_db["distances"][i][j], 3)
+            v["similarity_prompt_original"] = round(rag_data_db["distances"][i][j], 3)
+            v["query_seq"] = query_seq
+            v["query_mode"] = "NORMAL"
+            results.append(v)
+    return results
+
+
+# C-2拡張: 1コレクション分の全query_vecsクエリをまとめて実行するヘルパー
+def _process_rag_data(rag_data, query_vecs, exec_info, define_code, meta_searches):
+    results = []
+    try:
+        collection = get_chroma_client().get_collection(rag_data["DATA_NAME"])
+        result_limit = min(50, collection.count())
+        where_limitation = _build_where_limitation(rag_data, exec_info, define_code)
+        with ThreadPoolExecutor(max_workers=len(query_vecs)) as executor:
+            futures = [
+                executor.submit(
+                    _query_collection_single,
+                    collection, qv, result_limit, where_limitation,
+                    rag_data, meta_searches, qi)
+                for qi, qv in enumerate(query_vecs)
+            ]
+            for future in futures:
+                results.extend(future.result())
+    except NotFoundError:
+        logger.warning(f"{rag_data['DATA_NAME']} は存在しないためスキップしました。")
+    return results
+
 # RAGからのコンテキスト取得
 def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searches=[], define_code={}):
     rag_final_context = ""
@@ -170,161 +310,17 @@ def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searche
 
     # RAGデータセットごとに処理
     for rag in rags:
+        # DBタイプのrag_dataを並列処理（C-2拡張: コレクション単位でも並列化）
+        db_rag_data_list = [rd for rd in rag["DATA"] if rd["DATA_TYPE"] == "DB"]
         rag_data_list = []
-        for rag_data in rag["DATA"]:
-            query_seq = 0
-            if rag_data["DATA_TYPE"] == "DB":
-                for query_vec in query_vecs:
-                    db_client = chromadb.PersistentClient(path=rag_folder_db_path)
-                    try:
-                        collection = db_client.get_collection(rag_data["DATA_NAME"])
-    
-                        #DBから取得するチャンクの上限を設定
-                        result_limit = 50
-                        if collection.count() <= 50:
-                            result_limit = collection.count()
-
-                        # 絞込条件の追加
-                        where_limitation = []
-                        if "FILTER" in rag_data: #エージェントのRAG設定に制限条件が含まれる場合
-                            where_limitation_conditions =[]
-
-                            # サービスIDで絞込
-                            if "SERVICE_INFO" in rag_data["FILTER"]["CONDITION"]:
-                                service_id = exec_info["SERVICE_INFO"]["SERVICE_ID"]
-                                where_limitation_items = []
-                                for condition_item in rag_data["FILTER"]["CONDITION"]["SERVICE_INFO"]["ITEMS"]:
-                                    where_limitation_items.append({condition_item: {"$eq": service_id}})
-                                # 条件文の作成
-                                if len(where_limitation_items) == 1:
-                                    where_limitation_conditions.append(where_limitation_items[0])
-                                else:
-                                    if rag_data["FILTER"]["CONDITION"]["SERVICE_INFO"]["PATTERN"] == "and":
-                                        op = "$and"
-                                    else:
-                                        op = "$or"
-                                    where_limitation_conditions.append({op: where_limitation_items})
-
-                            # ユーザーIDで絞込
-                            if "USER_INFO" in rag_data["FILTER"]["CONDITION"]:
-                                user_id = exec_info["USER_INFO"]["USER_ID"]
-                                where_limitation_items = []
-                                for condition_item in rag_data["FILTER"]["CONDITION"]["USER_INFO"]["ITEMS"]:
-                                    where_limitation_items.append({condition_item: {"$eq": user_id}})
-                                # 条件文の作成
-                                if len(where_limitation_items) == 1:
-                                    where_limitation_conditions.append(where_limitation_items[0])
-                                else:
-                                    if rag_data["FILTER"]["CONDITION"]["USER_INFO"]["PATTERN"] == "and":
-                                        op = "$and"
-                                    else:
-                                        op = "$or"
-                                    where_limitation_conditions.append({op: where_limitation_items})
-
-                            # ユーザーIDで絞込
-                            if "DEFINE_CODE" in rag_data["FILTER"]["CONDITION"]:
-                                where_limitation_items = []
-                                for k, v in rag_data["FILTER"]["CONDITION"]["DEFINE_CODE"]["CODES"].items():
-                                    define_code_item = define_code[k]
-                                    where_limitation_items.append({v: {"$eq": define_code_item}})
-                                # 条件文の作成
-                                if len(where_limitation_items) == 1:
-                                    where_limitation_conditions.append(where_limitation_items[0])
-                                else:
-                                    if rag_data["FILTER"]["CONDITION"]["DEFINE_CODE"]["PATTERN"] == "and":
-                                        op = "$and"
-                                    else:
-                                        op = "$or"
-                                    where_limitation_conditions.append({op: where_limitation_items})
-
-                            # 条件文の作成
-                            if len(where_limitation_conditions) == 1:
-                                where_limitation.append(where_limitation_conditions[0])
-                            else:
-                                if rag_data["FILTER"]["PATTERN"] == "and":
-                                    op = "$and"
-                                else:
-                                    op = "$or"
-                                where_limitation.append({op: where_limitation_conditions})
-
-                        # メタデータ検索の追加
-                        if "META_SEARCH" in rag_data: #エージェントのRAG設定にメタ検索が含まれる場合
-                            query_conditions_add = []
-                            for meta_search in meta_searches:
-                                if "DATE" in meta_search and "DATE" in rag_data["META_SEARCH"]["CONDITION"]:
-                                    for date_range in meta_search["DATE"]:
-                                        try:
-                                            start_date = datetime.strptime(date_range["start"], '%Y/%m/%d').timestamp()
-                                            end_date = datetime.strptime(date_range["end"], '%Y/%m/%d').timestamp()
-                                            query_conditions_add.append({
-                                                "$and": [
-                                                    {"create_date_ts": {"$gte": start_date}},
-                                                    {"create_date_ts": {"$lte": end_date}}
-                                                ]
-                                            })
-                                        except Exception as e:
-                                            print("Exception:", e)
-                                            continue
-
-                            if query_conditions_add:
-                                if len(query_conditions_add) == 1:
-                                    where_add = query_conditions_add[0]
-                                else:
-                                    where_add = {"$or": query_conditions_add}
-
-                                if where_limitation:
-                                    where_limitation_add = where_limitation.copy()
-                                    if "$and" in where_add:
-                                        where_limitation_add.extend(where_add["$and"])
-                                    else:
-                                        where_limitation_add.append(where_add)
-
-                                    if len(where_limitation_add) == 1:
-                                        where_clause = where_limitation_add[0]
-                                    else:
-                                        where_clause = {"$and": where_limitation_add}
-                                else:
-                                    where_clause = where_add
-
-                                rag_data_db = collection.query(query_embeddings=[query_vec], n_results=result_limit, include=["metadatas", "embeddings", "distances"], where=where_clause)
-                                for i in range(len(rag_data_db["ids"])):
-                                    for j in range(len(rag_data_db["ids"][i])):
-                                        v = {}
-                                        v["id"] = rag_data_db["ids"][i][j]
-                                        v |= rag_data_db["metadatas"][i][j]
-                                        v["vector_data_value_text"] = ast.literal_eval(v["vector_data_value_text"])
-                                        v["vector_data_key_text"] = rag_data_db["embeddings"][i][j].tolist()
-                                        v["similarity_prompt"] = round(rag_data_db["distances"][i][j],3)*rag_data["META_SEARCH"]["BONUS"]
-                                        v["similarity_prompt_original"] = round(rag_data_db["distances"][i][j],3)
-                                        v["query_seq"] = query_seq
-                                        v["query_mode"] = "(META_SEARCH:"+str(rag_data["META_SEARCH"]["BONUS"])+")"
-                                        rag_data_list.append(v)
-
-                        if where_limitation:
-                            if len(where_limitation) == 1:
-                                where_clause = where_limitation[0]
-                            else:
-                                where_clause = {"$and": where_limitation}
-                            rag_data_db = collection.query(query_embeddings=[query_vec], n_results=result_limit, include=["metadatas", "embeddings", "distances"], where=where_clause)
-                        else:
-                            rag_data_db = collection.query(query_embeddings=[query_vec], n_results=result_limit, include=["metadatas", "embeddings", "distances"])
-
-                        for i in range(len(rag_data_db["ids"])):
-                            for j in range(len(rag_data_db["ids"][i])):
-                                v = {}
-                                v["id"] = rag_data_db["ids"][i][j]
-                                v |= rag_data_db["metadatas"][i][j]
-                                v["vector_data_value_text"] = ast.literal_eval(v["vector_data_value_text"])
-                                v["vector_data_key_text"] = rag_data_db["embeddings"][i][j].tolist()
-                                v["similarity_prompt"] = round(rag_data_db["distances"][i][j],3)
-                                v["similarity_prompt_original"] = round(rag_data_db["distances"][i][j],3)
-                                v["query_seq"] = query_seq
-                                v["query_mode"] = "NORMAL"
-                                rag_data_list.append(v)
-                        query_seq+=1
-
-                    except NotFoundError:
-                        print(f"{rag_data['DATA_NAME']} は存在しないためスキップしました。")
+        if db_rag_data_list:
+            with ThreadPoolExecutor(max_workers=len(db_rag_data_list)) as executor:
+                futures = [
+                    executor.submit(_process_rag_data, rd, query_vecs, exec_info, define_code, meta_searches)
+                    for rd in db_rag_data_list
+                ]
+                for future in futures:
+                    rag_data_list.extend(future.result())
 
         # rag_data_listでidが重複するものは「質問との類似度」が近いものに重複削除
         filtered_data = {}
@@ -405,11 +401,12 @@ def get_memory_reference(memory_selected, memory_similarity=False, response_vec=
 def get_chunk_csv(bucket, file_path, file_name, field_items, title_items, key_text_items, value_text_items, category_items=[]):
     rag_data = []
 
-    if not os.path.exists(file_path + file_name):
-        print(f"CSVファイルがありません: {file_name}")
+    csv_path = Path(file_path) / file_name
+    if not csv_path.exists():
+        logger.warning(f"CSVファイルがありません: {file_name}")
         return rag_data
 
-    with open(file_path + file_name, 'r', encoding='utf-8') as csvfile:
+    with open(csv_path, 'r', encoding='utf-8') as csvfile:
         reader = csv.DictReader(csvfile, fieldnames=field_items)
         next(reader, None)
 
@@ -475,7 +472,7 @@ def get_chunk_notion(bucket, db_name, item_dict, chk_dict=None, date_dict=None, 
     rag_data = []
     
     # Notion_DBのIDを取得
-    notion_db_mst_file_path = mst_folder_path + notion_db_mst_file
+    notion_db_mst_file_path = str(Path(mst_folder_path) / notion_db_mst_file)
     notion_db_mst = dmu.read_json_file(notion_db_mst_file_path)
     db_id = notion_db_mst[db_name]
 
@@ -516,7 +513,7 @@ def get_chunk_notion(bucket, db_name, item_dict, chk_dict=None, date_dict=None, 
 
 # RAGチャンクデータの編集(ChromaDB)
 def save_rag_chunk_db(rag_id, rag_data):
-    db_client = chromadb.PersistentClient(path=rag_folder_db_path)
+    db_client = get_chroma_client()
     collection = db_client.get_or_create_collection(name=rag_id, metadata={"hnsw:space": "cosine"})
     existing_ids = []
     response = collection.get(include=["metadatas"])
@@ -547,12 +544,12 @@ def save_rag_chunk_db(rag_id, rag_data):
                     embeddings=[vec_key_text],
                     metadatas=rag_chunk
                 )
-                print(f"{rag_chunk['title']}を知識情報DBに追加しました。")
+                logger.info(f"{rag_chunk['title']}を知識情報DBに追加しました。")
                 cnt_add+=1
             else:
                 existing_data = response["metadatas"][response["ids"].index(chunk_id)]
                 if rag_chunk["title"] == existing_data["title"] and rag_chunk["key_text"] == existing_data["key_text"] and rag_chunk["value_text"] == existing_data["value_text"]:
-                    print(f"{rag_chunk['title']}は知識情報DBに存在しています。")
+                    logger.info(f"{rag_chunk['title']}は知識情報DBに存在しています。")
                     cnt_extent+=1
                 else:
                     vec_key_text = dmu.embed_text(rag_chunk["key_text"].replace("\n", ""))
@@ -568,7 +565,7 @@ def save_rag_chunk_db(rag_id, rag_data):
                         embeddings=[vec_key_text],
                         metadatas=rag_chunk
                     )
-                    print(f"{rag_chunk['title']}を知識情報DBで更新しました。")
+                    logger.info(f"{rag_chunk['title']}を知識情報DBで更新しました。")
                     cnt_add+=1
 
     return cnt_add, cnt_extent
@@ -595,18 +592,18 @@ def generate_rag():
                 else:
                     rag_data = get_chunk_csv(rag_setting["bucket"], rag_setting["file_path"], rag_setting["file_name"], rag_setting["field_items"], rag_setting["title"], rag_setting["key_text"], rag_setting["value_text"], rag_setting["category_items"])
             else:
-                print("正しいモードが設定されていません。")
+                logger.warning("正しいモードが設定されていません。")
 
             if rag_data:
                 # ChromaDBでの保存
                 if rag_setting["data_type"] == "chromadb":
                     cnt_add, cnt_extent = save_rag_chunk_db(rag_id, rag_data)
                     cnt_total = cnt_add + cnt_extent
-                    print(f"{rag_id}のDB書き込みが完了しました。追加件数:{cnt_add}, トータル件数:{cnt_total}")
+                    logger.info(f"{rag_id}のDB書き込みが完了しました。追加件数:{cnt_add}, トータル件数:{cnt_total}")
 
 # RAGデータベース（Collection）の削除
 def del_rag_db(ragdb_selected=[]):
-    db_client = chromadb.PersistentClient(path=rag_folder_db_path)
+    db_client = get_chroma_client()
 
     #SQLite3に接続
     conn = sqlite3.connect(rag_folder_db_path+'chroma.sqlite3')
@@ -623,13 +620,13 @@ def del_rag_db(ragdb_selected=[]):
             db_client.delete_collection(name=collection_name)
             target_segments = merged_df[merged_df["name"] == collection_name]["segment_id"].tolist()
             for segment_id in target_segments:
-                seg_path = rag_folder_db_path+segment_id
-                if os.path.exists(seg_path):
+                seg_path = Path(rag_folder_db_path) / segment_id
+                if seg_path.exists():
                     shutil.rmtree(seg_path)
-                    print(f"Deleted: {seg_path}")
+                    logger.info(f"Deleted: {seg_path}")
                 else:
-                    print(f"Not found: {seg_path}")
-            print(collection_name + "を削除しました。")
+                    logger.warning(f"Not found: {seg_path}")
+            logger.info(f"{collection_name}を削除しました。")
     else:
         # 削除対象のデータフレームを取得
         query = "SELECT id AS collection_id, name FROM collections"
@@ -643,15 +640,18 @@ def del_rag_db(ragdb_selected=[]):
             db_client.delete_collection(name=collection_name)
             target_segments = merged_df[merged_df["name"] == collection_name]["segment_id"].tolist()
             for segment_id in target_segments:
-                seg_path = rag_folder_db_path+segment_id
-                if os.path.exists(seg_path):
+                seg_path = Path(rag_folder_db_path) / segment_id
+                if seg_path.exists():
                     shutil.rmtree(seg_path)
-                    print(f"Deleted: {seg_path}")
+                    logger.info(f"Deleted: {seg_path}")
                 else:
-                    print(f"Not found: {seg_path}")
-            print(collection_name + "を削除しました。")
+                    logger.warning(f"Not found: {seg_path}")
+            logger.info(f"{collection_name}を削除しました。")
 
     #SQLite3の物理容量を解放
     conn.execute("VACUUM;")
-
     conn.close()
+
+    # シングルトンをリセット（削除後は再接続が必要）
+    global _chroma_client
+    _chroma_client = None

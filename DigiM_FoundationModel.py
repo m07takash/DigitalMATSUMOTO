@@ -24,7 +24,7 @@ openai_api_key = os.getenv("OPENAI_API_KEY")
 anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
 gemini_api_key = os.getenv("GEMINI_API_KEY")
 llama_api_key = os.getenv("LLAMA_API_KEY")
-xai_api_key = os.getenv("XAU_API_KEY")
+xai_api_key = os.getenv("XAI_API_KEY")
 
 # 文字列から関数名を取得
 def call_function_by_name(func_name, *args, **kwargs):
@@ -209,6 +209,14 @@ def generate_response_T_gemini(query, system_prompt, model, memories=[], image_p
 ###    tools = agent_tools["TOOL_LIST"]
 ###    tool_choice = agent_tools["CHOICE"]
 
+    # thought_signatureなど非テキストパーツを除いてテキストのみ抽出するヘルパー
+    def _extract_text(candidate_response):
+        try:
+            parts = candidate_response.candidates[0].content.parts
+            return "".join(p.text for p in parts if hasattr(p, "text") and p.text)
+        except Exception:
+            return ""
+
     # モデルの実行（モデル／システムプロンプト）
     response_stream_total = ""
     if stream_mode:
@@ -218,7 +226,7 @@ def generate_response_T_gemini(query, system_prompt, model, memories=[], image_p
             contents = contents
             )
         for chunk_completion in completion:
-            response = chunk_completion.text
+            response = _extract_text(chunk_completion)
             response_stream_total += response if response else ""
             yield str(contents), response, chunk_completion
 
@@ -229,7 +237,7 @@ def generate_response_T_gemini(query, system_prompt, model, memories=[], image_p
             config = types.GenerateContentConfig(system_instruction=system_instruction),
             contents = contents
             )
-        response = completion.text
+        response = _extract_text(completion)
         yield str(contents), response, completion
 
 # Claudeの実行

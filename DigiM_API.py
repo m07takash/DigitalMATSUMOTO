@@ -1,7 +1,9 @@
 import os
+import uuid
+import threading
 from typing import Dict, Any, Optional
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 import uvicorn
 
@@ -16,6 +18,10 @@ api_port = os.getenv("API_PORT")
 api_default_session_name = os.getenv("API_DEFAULT_SESSION_NAME")
 
 app = FastAPI()
+
+# ジョブ管理（インメモリ）
+_jobs: Dict[str, dict] = {}
+_jobs_lock = threading.Lock()
 
 class ServiceInfo(BaseModel):
     SERVICE_ID: str
@@ -40,8 +46,6 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
     # セッションの設定（新規でセッションIDを発番）
     if not session_id:
         session_id = "API"+ dms.set_new_session_id()
-#    if not session_name:
-#        session_name = f"(User:{user_info['USER_ID']}){api_default_session_name}"
 
     # 実行の設定
     if not execution or "LAST_ONLY" not in execution:
@@ -49,7 +53,6 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
 
     # 実行
     response_chunks = []
-    # This loop populates response_chunks
     for response_service_info, response_user_info, response_chunk, output_reference in dme.DigiMatsuExecute_Practice(
         service_info,
         user_info,
@@ -60,15 +63,13 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
         in_situation=situation,
         in_execution=execution
     ):
-        # log.info(f"Received response_chunk. Type: {type(response_chunk)}, Value: {response_chunk}")
-        response_chunks.append(response_chunk)
+        # [STATUS]プレフィックスの中間ログは除外し、実レスポンスのみ収集
+        if response_chunk and not str(response_chunk).startswith("[STATUS]"):
+            response_chunks.append(response_chunk)
 
-    # After the loop, process the collected chunks to form the final response
     if len(response_chunks) == 1 and not isinstance(response_chunks[0], str):
-        # Handle single, non-string responses (like a list for JSON)
         response = response_chunks[0]
     else:
-        # Handle streaming text or other cases by concatenating all chunks
         response = "".join(map(str, response_chunks))
 
     if not session_name:
@@ -79,59 +80,74 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
 
     return response_service_info, response_user_info, session_id, session_name, response, output_reference
 
+# バックグラウンドでジョブを実行してジョブストアに結果を書き込む
+def _run_job(job_id: str, service_info: dict, user_info: dict, session_id: str, session_name: str,
+             user_input: str, situation: dict, agent_file: str, execution: dict):
+    try:
+        response_service_info, response_user_info, session_id, session_name, response, output_reference = exec_function(
+            service_info, user_info, session_id, session_name, user_input, situation, agent_file, execution
+        )
+        result = {
+            "service_info": response_service_info,
+            "user_info": response_user_info,
+            "session_id": session_id,
+            "session_name": session_name,
+            "response": response,
+            "output_reference": output_reference
+        }
+        if response_service_info.get("SERVICE_DATA", {}).get("_temp_response_keywords"):
+            result["metadata"] = {"keywords": response_service_info["SERVICE_DATA"].pop("_temp_response_keywords")}
+        with _jobs_lock:
+            _jobs[job_id] = {"status": "done", "result": result}
+    except Exception as e:
+        with _jobs_lock:
+            _jobs[job_id] = {"status": "error", "error": str(e)}
+
 @app.post("/run_function")
-async def run_function(data: InputData):
+async def run_function(data: InputData, background_tasks: BackgroundTasks):
     agent_file = data.agent_file or api_agent_file
 
     # Pydantic → dict に変換
     service_info = data.service_info.model_dump()
     user_info = data.user_info.model_dump()
 
-    # exec_function 呼び出し
-    service_info, user_info, session_id, session_name, response, output_reference = exec_function(
-        service_info,
-        user_info,
-        data.session_id,
-        data.session_name,
-        data.user_input,
-        data.situation,
-        agent_file,
-        data.execution
+    # ジョブIDを発行して即時返却
+    job_id = str(uuid.uuid4())
+    with _jobs_lock:
+        _jobs[job_id] = {"status": "processing", "result": None}
+
+    background_tasks.add_task(
+        _run_job, job_id,
+        service_info, user_info,
+        data.session_id or "", data.session_name or "",
+        data.user_input, data.situation, agent_file, data.execution
     )
 
-    response_data = {
-        "service_info": service_info,
-        "user_info": user_info,
-        "session_id": session_id,
-        "session_name": session_name,
-        "response": response,
-        "output_reference": output_reference
-    }
+    return {"job_id": job_id, "status": "processing"}
 
-    # If the tool added keywords for the response, process them
-    if service_info.get("SERVICE_DATA", {}).get("_temp_response_keywords"):
-        keywords = service_info["SERVICE_DATA"]["_temp_response_keywords"]
-
-        # Add keywords under a 'metadata' top-level key for extensibility
-        response_data["metadata"] = {"keywords": keywords}
-
-        # Clean up by removing the temporary key from service_info
-        del service_info["SERVICE_DATA"]["_temp_response_keywords"]
-
-    return response_data
+@app.get("/result/{job_id}")
+async def get_result(job_id: str):
+    with _jobs_lock:
+        job = _jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job_id not found")
+    if job["status"] == "processing":
+        return {"status": "processing"}
+    if job["status"] == "error":
+        raise HTTPException(status_code=500, detail=job["error"])
+    # 完了済みはジョブストアから削除して返す
+    with _jobs_lock:
+        _jobs.pop(job_id, None)
+    return {"status": "done", **job["result"]}
 
 @app.get("/agents", tags=["Agent"])
 async def get_agent_list():
-    """
-    Retrieves a list of available agent JSON files.
-    """
+    import glob as _glob
     agent_path = "/work/user/common/agent"
     if not os.path.isdir(agent_path):
-        log.warning(f"Agent directory not found at {agent_path}, returning empty list.")
         return {"agents": []}
-
-    agent_files = [os.path.basename(f) for f in glob.glob(f"{agent_path}/*.json")]
+    agent_files = [os.path.basename(f) for f in _glob.glob(f"{agent_path}/*.json")]
     return {"agents": agent_files}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=api_port)
+    uvicorn.run(app, host="0.0.0.0", port=int(api_port))

@@ -1,6 +1,7 @@
 import os
 import csv
 from datetime import datetime
+from pathlib import Path
 from dotenv import load_dotenv
 
 import DigiM_Session as dms
@@ -112,7 +113,7 @@ def save_user_dialog_csv(service_info, user_info, save_session_ids, del_session_
 
 # Notionデータベースへの保存
 def save_user_dialog_notion(service_info, user_info, save_session_ids, del_session_ids):
-    notion_db_mst_file_path = mst_folder_path + notion_db_mst_file
+    notion_db_mst_file_path = str(Path(mst_folder_path) / notion_db_mst_file)
     notion_db_mst = dmu.read_json_file(notion_db_mst_file_path)
     db_id = notion_db_mst[user_dialog_save_db]
     page_session_id_list = []

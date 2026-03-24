@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 import DigiM_Util as dmu
 import DigiM_FoundationModel as dmfm
@@ -14,7 +15,7 @@ agent_folder_path = system_setting_dict["AGENT_FOLDER"]
 if os.path.exists("system.env"):
     load_dotenv("system.env")
 prompt_template_mst_file = os.getenv("PROMPT_TEMPLATE_MST_FILE")
-prompt_temp_mst_path = mst_folder_path + prompt_template_mst_file
+prompt_temp_mst_path = str(Path(mst_folder_path) / prompt_template_mst_file)
 
 # エージェント一覧の取得
 def get_all_agents():
@@ -43,7 +44,7 @@ def get_display_agents(group_cd="All"):
 
 # LLMエージェントのプロパティを設定
 def get_agent_item(agent_file, item):
-    agent_data = dmu.read_json_file(agent_folder_path+agent_file)
+    agent_data = dmu.read_json_file(str(Path(agent_folder_path) / agent_file))
     item_value = agent_data[item]
     return item_value
 
@@ -101,7 +102,7 @@ def ext_generate_pureLLM(agent_file, query, memories_selected=[], prompt_temp_cd
 # Agent
 class DigiM_Agent:
     def __init__(self, agent_file):
-        agent_data = dmu.read_json_file(agent_folder_path+agent_file)
+        agent_data = dmu.read_json_file(str(Path(agent_folder_path) / agent_file))
         self.set_property(agent_data)
 
     # エージェントのプロパティの設定

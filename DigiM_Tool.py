@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 import re
 import time
@@ -90,7 +91,7 @@ def extract_date(service_info, user_info, session_id, session_name, agent_file, 
 
     # エージェントファイルのDEFAULTに設定しているPRACTICEの1つ目からプロンプトテンプレートを取得する
     practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
-    practice = dmu.read_json_file(practice_folder_path+practice_file)
+    practice = dmu.read_json_file(str(Path(practice_folder_path) / practice_file))
     if practice["CHAINS"][0]["TYPE"] == "LLM":
         prompt_temp_cd = practice["CHAINS"][0]["SETTING"]["PROMPT_TEMPLATE"]
     else:
@@ -138,7 +139,7 @@ def RAG_query_generator(service_info, user_info, session_id, session_name, agent
 
     # エージェントファイルのDEFAULTに設定しているPRACTICEの1つ目からプロンプトテンプレートを取得する
     practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
-    practice = dmu.read_json_file(practice_folder_path+practice_file)
+    practice = dmu.read_json_file(str(Path(practice_folder_path) / practice_file))
     if practice["CHAINS"][0]["TYPE"] == "LLM":
         prompt_temp_cd = practice["CHAINS"][0]["SETTING"]["PROMPT_TEMPLATE"]
     else:
@@ -181,7 +182,7 @@ def dialog_digest(service_info, user_info, session_id, session_name, agent_file,
 
     # エージェントファイルのDEFAULTに設定しているPRACTICEの1つ目からプロンプトテンプレートを取得する
     practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
-    practice = dmu.read_json_file(practice_folder_path+practice_file)
+    practice = dmu.read_json_file(str(Path(practice_folder_path) / practice_file))
     if practice["CHAINS"][0]["TYPE"] == "LLM":
         prompt_temp_cd = practice["CHAINS"][0]["SETTING"]["PROMPT_TEMPLATE"]
     else:
@@ -228,7 +229,7 @@ def gene_session_name(service_info, user_info, session_id, session_name, agent_f
 
     # エージェントファイルのDEFAULTに設定しているPRACTICEの1つ目からプロンプトテンプレートを取得する
     practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
-    practice = dmu.read_json_file(practice_folder_path+practice_file)
+    practice = dmu.read_json_file(str(Path(practice_folder_path) / practice_file))
     if practice["CHAINS"][0]["TYPE"] == "LLM":
         prompt_temp_cd = practice["CHAINS"][0]["SETTING"]["PROMPT_TEMPLATE"]
     else:
@@ -273,7 +274,7 @@ def gene_user_dialog(service_info, user_info, session_id, session_name, agent_fi
 
     # エージェントファイルのDEFAULTに設定しているPRACTICEの1つ目からプロンプトテンプレートを取得する
     practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
-    practice = dmu.read_json_file(practice_folder_path+practice_file)
+    practice = dmu.read_json_file(str(Path(practice_folder_path) / practice_file))
     if practice["CHAINS"][0]["TYPE"] == "LLM":
         prompt_temp_cd = practice["CHAINS"][0]["SETTING"]["PROMPT_TEMPLATE"]
     else:
@@ -385,7 +386,7 @@ def management_analysis(service_info, user_info, session_id, session_name, agent
     session.save_status("UNLOCKED")
 
     # テストファイルを読み込んでループ
-    test_file_path = test_folder_path + test_file
+    test_file_path = str(Path(test_folder_path) / test_file)
     test_sheet = pd.read_excel(test_file_path, sheet_name=test_sheet_name)
     Q_no = 0
     for index, row in test_sheet.iterrows():
@@ -452,7 +453,7 @@ def art_critics(service_info, user_info, memories_selected=[], image_paths=[], a
 
     # エージェントファイルのDEFAULTに設定しているPRACTICEの1つ目からプロンプトテンプレートを取得する
     practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
-    practice = dmu.read_json_file(practice_folder_path+practice_file)
+    practice = dmu.read_json_file(str(Path(practice_folder_path) / practice_file))
     if practice["CHAINS"][0]["TYPE"] == "LLM":
         prompt_temp_cd = practice["CHAINS"][0]["SETTING"]["PROMPT_TEMPLATE"]
     else:

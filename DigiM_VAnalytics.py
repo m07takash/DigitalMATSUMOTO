@@ -1,5 +1,6 @@
 import os
 import ast
+import logging
 import pandas as pd
 import numpy as np
 from datetime import datetime
@@ -8,10 +9,13 @@ from matplotlib import rcParams
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 import chromadb
+from pathlib import Path
 
 import DigiM_Agent as dma
 import DigiM_Execute as dme
 import DigiM_Util as dmu
+
+logger = logging.getLogger(__name__)
 
 # setting.yamlからフォルダパスなどを設定
 system_setting_dict = dmu.read_yaml_file("setting.yaml")
@@ -54,7 +58,7 @@ def create_similarity_plot_file(file_title, analytics_file_path, rag_name, group
     ax.legend()
 
     similarity_plot_file = f"{file_title}_KUtilPlot_{rag_name}.png"    
-    filename = analytics_file_path + similarity_plot_file
+    filename = str(Path(analytics_file_path) / similarity_plot_file)
     plt.savefig(filename)
     plt.close(fig)
 
@@ -113,7 +117,7 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
 
     # --- リファレンス散布図 ---
     scatter_plot_file_ref = f"{file_title}_ScatterRefPlot({method})_{rag_name}.png"
-    scatter_plot_filename_ref = analytics_file_path + scatter_plot_file_ref
+    scatter_plot_filename_ref = str(Path(analytics_file_path) / scatter_plot_file_ref)
 
     plt.figure(figsize=(10, 8))
     plt.scatter(df[xcol], df[ycol], c=df["ref_color"], alpha=0.7)
@@ -125,7 +129,7 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
     # カテゴリーの散布図
     if "category_color" in df.columns:
         scatter_plot_file_category = f"{file_title}_ScatterCategoryPlot({method})_{rag_name}.png"
-        scatter_plot_filename_category = analytics_file_path + scatter_plot_file_category
+        scatter_plot_filename_category = str(Path(analytics_file_path) / scatter_plot_file_category)
 
         plt.figure(figsize=(10, 8))
         plt.scatter(df[xcol], df[ycol], c=df["category_color"], alpha=0.7)
@@ -155,7 +159,7 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
     df_csv = df.loc[df["ref_color"] != "gray", existing_items].sort_values(by=[xcol, ycol], ascending=[True, True])
 
     scatter_plot_file_csv = f"{file_title}_ScatterData({method})_{rag_name}.csv"
-    scatter_plot_filename_csv = analytics_file_path + scatter_plot_file_csv
+    scatter_plot_filename_csv = str(Path(analytics_file_path) / scatter_plot_file_csv)
     df_csv.to_csv(scatter_plot_filename_csv, index=True, encoding="utf-8-sig")
 
     return scatter_plot_file_category, scatter_plot_file_ref, scatter_plot_file_csv
@@ -225,13 +229,13 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
     similarity_utility_file = f"{file_title}_KUtilStats(A-Q).txt"
     similarity_rank_file = f"{file_title}_KUtilRanking.txt"
 
-    with open(analytics_file_path+similarity_Q_stats_file, "w", encoding="utf-8") as file:
+    with open(Path(analytics_file_path) / similarity_Q_stats_file, "w", encoding="utf-8") as file:
         file.write(str(similarity_Q_stats_dict))
-    with open(analytics_file_path+similarity_A_stats_file, "w", encoding="utf-8") as file:
+    with open(Path(analytics_file_path) / similarity_A_stats_file, "w", encoding="utf-8") as file:
         file.write(str(similarity_A_stats_dict))
-    with open(analytics_file_path+similarity_utility_file, "w", encoding="utf-8") as file:
+    with open(Path(analytics_file_path) / similarity_utility_file, "w", encoding="utf-8") as file:
         file.write(str(similarity_utility_dict))
-    with open(analytics_file_path+similarity_rank_file, "w", encoding="utf-8") as file:
+    with open(Path(analytics_file_path) / similarity_rank_file, "w", encoding="utf-8") as file:
         file.write(str(similarity_rank))
 
     # Sort data by similarity_Q in descending order within each rag
@@ -279,7 +283,7 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
                         try:
                             collection = db_client.get_collection(rag_data["DATA_NAME"])
                         except Exception as e:
-                            print(f"[SKIP] ChromaDB collection not found: {rag_data['DATA_NAME']}")
+                            logger.warning(f"[SKIP] ChromaDB collection not found: {rag_data['DATA_NAME']}")
                             continue
 
                         rag_data_db = collection.get(include=["metadatas", "embeddings"])

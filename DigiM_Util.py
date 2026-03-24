@@ -1,4 +1,5 @@
 import os
+import logging
 import pytz
 import re
 import numpy as np
@@ -33,6 +34,14 @@ timezone = os.getenv("TIMEZONE")
 openai_api_key = os.getenv("OPENAI_API_KEY")
 gemini_api_key = os.getenv("GEMINI_API_KEY")
 embedding_model = os.getenv("EMBEDDING_MODEL")
+
+# ロギングの初期設定（アプリケーション起動時に一度呼び出す）
+def setup_logging(level=logging.INFO):
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
 
 #タイムスタンプ文字列を時刻に変換
 def safe_parse_timestamp(timestamp_str):
@@ -328,6 +337,21 @@ def embed_text(text):
     response = openai_client.embeddings.create(model=embedding_model, input=safe_text)
     response_vec = response.data[0].embedding
     return response_vec
+
+# C-3: 複数テキストを1回のAPI呼び出しでベクトル化（バッチ処理）
+def embed_texts_batch(texts):
+    openai.api_key = openai_api_key
+    openai_client = OpenAI()
+    max_tokens = 8192
+    enc = tiktoken.encoding_for_model(embedding_model)
+    safe_texts = []
+    for text in texts:
+        tokens = enc.encode(text)
+        if len(tokens) > max_tokens:
+            tokens = tokens[:max_tokens]
+        safe_texts.append(enc.decode(tokens))
+    response = openai_client.embeddings.create(model=embedding_model, input=safe_texts)
+    return [item.embedding for item in sorted(response.data, key=lambda x: x.index)]
 
 # 埋め込みベクトルの配列を1つのnpyファイルに保存
 def save_vectext_to_npy(vec_text, file_path, dtype="float32"):
