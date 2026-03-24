@@ -284,6 +284,12 @@ def initialize_session_states():
         st.session_state.web_user["USER_ID"] = st.session_state.user_id
     if 'sidebar_message' not in st.session_state:
         st.session_state.sidebar_message = ""
+    if 'is_processing' not in st.session_state:
+        st.session_state.is_processing = False
+    if 'pending_input' not in st.session_state:
+        st.session_state.pending_input = ""
+    if '_fragment_was_locked' not in st.session_state:
+        st.session_state._fragment_was_locked = False
     if 'display_name' not in st.session_state:
         st.session_state.display_name = st.session_state.default_agent
     if 'agents' not in st.session_state:
@@ -296,10 +302,18 @@ def initialize_session_states():
         st.session_state.agent_id = st.session_state.agents[st.session_state.agent_list_index]["AGENT"]
     if 'compare_agent_id' not in st.session_state:
         st.session_state.compare_agent_id = st.session_state.agents[st.session_state.agent_list_index]["AGENT"]
+    if 'compare_engine_name' not in st.session_state:
+        st.session_state.compare_engine_name = ""
+    if 'compare_imagegen_engine_name' not in st.session_state:
+        st.session_state.compare_imagegen_engine_name = ""
     if 'agent_file' not in st.session_state:
         st.session_state.agent_file = st.session_state.agents[st.session_state.agent_list_index]["FILE"]
     if 'agent_data' not in st.session_state:
         st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, agent_folder_path)
+    if 'engine_name' not in st.session_state:
+        st.session_state.engine_name = st.session_state.agent_data.get("ENGINE", {}).get("LLM", {}).get("DEFAULT", "")
+    if 'imagegen_engine_name' not in st.session_state:
+        st.session_state.imagegen_engine_name = st.session_state.agent_data.get("ENGINE", {}).get("IMAGEGEN", {}).get("DEFAULT", "")
     if 'rag_data_list' not in st.session_state:
         st.session_state.rag_data_list = dmc.get_rag_list()
     if 'rag_data_list_selected' not in st.session_state:
@@ -568,6 +582,20 @@ def main():
             st.session_state.agent_id = agent_id_selected
             st.session_state.agent_file = next((a2["FILE"] for a2 in st.session_state.agents if a2["AGENT"] == st.session_state.agent_id), None)
             st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, agent_folder_path)
+            st.session_state.engine_name = st.session_state.agent_data.get("ENGINE", {}).get("LLM", {}).get("DEFAULT", "")
+            st.session_state.imagegen_engine_name = st.session_state.agent_data.get("ENGINE", {}).get("IMAGEGEN", {}).get("DEFAULT", "")
+
+        # LLMエンジン選択
+        _engine_list = dma.get_engine_list(st.session_state.agent_data, model_type="LLM")
+        if _engine_list:
+            _engine_index = _engine_list.index(st.session_state.engine_name) if st.session_state.engine_name in _engine_list else 0
+            st.session_state.engine_name = st.selectbox("Select Engine(LLM):", _engine_list, index=_engine_index)
+
+        # IMAGEGENエンジン選択
+        _imagegen_engine_list = dma.get_engine_list(st.session_state.agent_data, model_type="IMAGEGEN")
+        if _imagegen_engine_list:
+            _imagegen_index = _imagegen_engine_list.index(st.session_state.imagegen_engine_name) if st.session_state.imagegen_engine_name in _imagegen_engine_list else 0
+            st.session_state.imagegen_engine_name = st.selectbox("Select Engine(IMAGEGEN):", _imagegen_engine_list, index=_imagegen_index)
 
         side_col1, side_col2 = st.columns(2)
 
@@ -870,7 +898,7 @@ def main():
                                         similarity_utility_dict = v2["analytics"]["knowledge_utility"]["similarity_utility"]
                                         download_data.append({"role": "analytics", "content": "**knowledge Utility:**"})
                                         if "image_files" in v2["analytics"]["knowledge_utility"]:
-                                            for image_key, image_values in v2["analytics"]["knowledge_utility"]["image_files"].items():
+                                            for _, image_values in v2["analytics"]["knowledge_utility"]["image_files"].items():
                                                 for image_value in image_values:
                                                     download_data.append({"role": "analytics", "image": st.session_state.session.session_analytics_folder_path + image_value})
 
@@ -883,13 +911,32 @@ def main():
                                     if "LLM" == v2["setting"]["type"]:
                                         if st.session_state.allowed_analytics_compare:
                                             if compare_agent_id_selected := st.selectbox("Select Compare Agent:", st.session_state.agent_list, index=st.session_state.agent_list_index, key=f"conpareAgent_list{k}_{k2}"):
-                                                st.session_state.compare_agent_id = compare_agent_id_selected
-                                            compare_col1, compare_col2 = st.columns(2)
+                                                if compare_agent_id_selected != st.session_state.compare_agent_id:
+                                                    st.session_state.compare_agent_id = compare_agent_id_selected
+                                                    st.session_state.compare_engine_name = ""
+#                                                    st.session_state.compare_imagegen_engine_name = ""
+                                            _compare_agent_file_tmp = next((a2["FILE"] for a2 in st.session_state.agents if a2["AGENT"] == st.session_state.compare_agent_id), None)
+                                            _compare_agent_data_tmp = dmu.read_json_file(_compare_agent_file_tmp, agent_folder_path) if _compare_agent_file_tmp else {}
+                                            _cmp_llm_list = dma.get_engine_list(_compare_agent_data_tmp, model_type="LLM")
+                                            if _cmp_llm_list:
+                                                _cmp_llm_idx = _cmp_llm_list.index(st.session_state.compare_engine_name) if st.session_state.compare_engine_name in _cmp_llm_list else 0
+                                                st.session_state.compare_engine_name = st.selectbox("Compare Engine(LLM):", _cmp_llm_list, index=_cmp_llm_idx, key=f"cmpEngine_llm{k}_{k2}")
+#                                            _cmp_imagegen_list = dma.get_engine_list(_compare_agent_data_tmp, model_type="IMAGEGEN")
+#                                            if _cmp_imagegen_list:
+#                                                _cmp_img_idx = _cmp_imagegen_list.index(st.session_state.compare_imagegen_engine_name) if st.session_state.compare_imagegen_engine_name in _cmp_imagegen_list else 0
+#                                                st.session_state.compare_imagegen_engine_name = st.selectbox("Compare Engine(IMAGEGEN):", _cmp_imagegen_list, index=_cmp_img_idx, key=f"cmpEngine_img{k}_{k2}")
+                                            compare_col1, _ = st.columns(2)
                                             if compare_col1.button("Analytics Results - Compare Agents", key=f"conpareAgent_btn{k}_{k2}"):
                                                 compare_seq = k
                                                 compare_sub_seq = str(int(k2)-1)
                                                 compare_agent_file = next((a2["FILE"] for a2 in st.session_state.agents if a2["AGENT"] == st.session_state.compare_agent_id), None)
-                                                _, _, compare_response, compare_model_name, compare_export_contents, compare_knowledge_ref = dmva.genLLMAgentSimple(st.session_state.web_service, st.session_state.web_user, v2["setting"]["session_id"], v2["setting"]["session_name"], compare_agent_file, model_type="LLM", sub_seq=1, query=v2["prompt"]["query"]["input"], import_contents=[], situation=v2["prompt"]["query"]["situation"], prompt_temp_cd=v2["prompt"]["prompt_template"]["setting"], seq_limit=compare_seq, sub_seq_limit=compare_sub_seq)
+                                                compare_agent_data = dmu.read_json_file(compare_agent_file, agent_folder_path) if compare_agent_file else {}
+                                                compare_overwrite_items = {}
+                                                if st.session_state.compare_engine_name and st.session_state.compare_engine_name in compare_agent_data.get("ENGINE", {}).get("LLM", {}):
+                                                    compare_overwrite_items.setdefault("ENGINE", {})["LLM"] = compare_agent_data["ENGINE"]["LLM"][st.session_state.compare_engine_name]
+                                                if st.session_state.compare_imagegen_engine_name and st.session_state.compare_imagegen_engine_name in compare_agent_data.get("ENGINE", {}).get("IMAGEGEN", {}):
+                                                    compare_overwrite_items.setdefault("ENGINE", {})["IMAGEGEN"] = compare_agent_data["ENGINE"]["IMAGEGEN"][st.session_state.compare_imagegen_engine_name]
+                                                _, _, compare_response, compare_model_name, _, compare_knowledge_ref = dmva.genLLMAgentSimple(st.session_state.web_service, st.session_state.web_user, v2["setting"]["session_id"], v2["setting"]["session_name"], compare_agent_file, model_type="LLM", sub_seq=1, query=v2["prompt"]["query"]["input"], import_contents=[], situation=v2["prompt"]["query"]["situation"], overwrite_items=compare_overwrite_items, prompt_temp_cd=v2["prompt"]["prompt_template"]["setting"], seq_limit=compare_seq, sub_seq_limit=compare_sub_seq)
                                                 vec_response = dmu.embed_text(v2["response"]["text"])
                                                 vec_compare_response = dmu.embed_text(compare_response)
                                                 compare_diff = dmu.calculate_cosine_distance(vec_response, vec_compare_response)
@@ -1067,7 +1114,30 @@ def main():
 
     # ユーザーの問合せ入力
     if st.session_state.session_user_id == st.session_state.user_id:
-        if user_input := st.chat_input("Your Message"):
+
+        # フラグメント: ロック状態の監視とチャット入力（3秒ごとにこの部分だけ再描画）
+        @st.fragment(run_every=3)
+        def _chat_input_fragment():
+            is_locked = st.session_state.session.get_status() == "LOCKED"
+            _chat_disabled = is_locked or st.session_state.is_processing
+            if is_locked:
+                st.info("🔒 セッションがロックされています。少々お待ちください。")
+            elif st.session_state.get("_fragment_was_locked"):
+                # ロック解除を検知 → フルページ再描画してチャット入力を有効に戻す
+                st.session_state._fragment_was_locked = False
+                st.rerun()
+            st.session_state._fragment_was_locked = is_locked
+
+            if raw_input := st.chat_input("Your Message", disabled=_chat_disabled):
+                st.session_state.pending_input = raw_input
+                st.session_state.is_processing = True
+                st.rerun()  # フルページ再描画で LLM 処理を開始
+
+        _chat_input_fragment()
+
+        if st.session_state.is_processing and st.session_state.pending_input:
+            user_input = st.session_state.pending_input
+            st.session_state.pending_input = ""
             # 添付ファイルの設定
             uploaded_contents = []
             if st.session_state.uploaded_files:
@@ -1079,6 +1149,12 @@ def main():
 
             # オーバーライト項目の設定
             overwrite_items = {}
+            # エンジン切り替え（LLM）
+            if st.session_state.engine_name and st.session_state.engine_name in st.session_state.agent_data.get("ENGINE", {}).get("LLM", {}):
+                overwrite_items.setdefault("ENGINE", {})["LLM"] = st.session_state.agent_data["ENGINE"]["LLM"][st.session_state.engine_name]
+            # エンジン切り替え（IMAGEGEN）
+            if st.session_state.imagegen_engine_name and st.session_state.imagegen_engine_name in st.session_state.agent_data.get("ENGINE", {}).get("IMAGEGEN", {}):
+                overwrite_items.setdefault("ENGINE", {})["IMAGEGEN"] = st.session_state.agent_data["ENGINE"]["IMAGEGEN"][st.session_state.imagegen_engine_name]
 
             # 知識の追加
             add_knowledges = []
@@ -1112,7 +1188,7 @@ def main():
                 status_placeholder = st.empty()
                 response_placeholder = st.empty()
                 response = ""
-                for response_service_info, response_user_info, response_chunk, output_reference in dme.DigiMatsuExecute_Practice(st.session_state.web_service, st.session_state.web_user, st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, add_knowledges, execution):
+                for _, _, response_chunk, _ in dme.DigiMatsuExecute_Practice(st.session_state.web_service, st.session_state.web_user, st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, add_knowledges, execution):
                     if response_chunk and isinstance(response_chunk, str) and response_chunk.startswith("[STATUS]"):
                         status_placeholder.markdown(f"⏳ {response_chunk[len('[STATUS]'):]}")
                     elif response_chunk:
@@ -1123,6 +1199,7 @@ def main():
                     _, _, new_session_name, _, _, _ = dmt.gene_session_name(st.session_state.web_service, st.session_state.web_user, st.session_state.session.session_id, st.session_state.session.session_name, "", user_input)
                     st.session_state.session.chg_session_name(new_session_name)
                 st.session_state.sidebar_message = ""
+                st.session_state.is_processing = False
                 refresh_session_list(st.session_state.service_id, st.session_state.user_id, st.session_state.user_admin_flg)
                 st.rerun()
 

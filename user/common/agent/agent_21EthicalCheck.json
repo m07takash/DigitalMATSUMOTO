@@ -21,17 +21,30 @@
     },
     "ENGINE": {
         "LLM": {
-            "NAME":"GPT-4.1-mini",
-            "FUNC_NAME": "generate_response_T_gpt",
-            "MODEL": "gpt-4.1-mini-2025-04-14",
-            "PARAMETER": {"temperature": 0.3},
-            "TOKENIZER": "tiktoken",
-            "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            "DEFAULT": "GPT-4.1-mini",
+            "GPT-4.1-mini": {
+                "NAME": "GPT-4.1-mini",
+                "FUNC_NAME": "generate_response_T_gpt",
+                "MODEL": "gpt-4.1-mini-2025-04-14",
+                "PARAMETER": {
+                    "temperature": 0.3
+                },
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {
+                    "limit": 8000,
+                    "role": "both",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "Y"
+                }
+            }
         }
     },
     "HABIT": {
         "DEFAULT": {
-            "MAGIC_WORDS": [""],
+            "MAGIC_WORDS": [
+                ""
+            ],
             "PRACTICE": "practice_04Ethical_Check.json",
             "ADD_KNOWLEDGE": []
         }
@@ -39,7 +52,12 @@
     "KNOWLEDGE": [],
     "SKILL": {
         "TOOL_LIST": [
-            {"type": "function", "function": {"name": "default_tool"}}
+            {
+                "type": "function",
+                "function": {
+                    "name": "default_tool"
+                }
+            }
         ],
         "CHOICE": "none"
     },
@@ -48,7 +66,10 @@
         "SAVE_MODE": "CSV",
         "SAVE_DB": "Communication",
         "DEFAULT_CATEGORY": "Feedback",
-        "FEEDBACK_ITEM_LIST":["memo", "comment"]
+        "FEEDBACK_ITEM_LIST": [
+            "memo",
+            "comment"
+        ]
     },
     "SUPPORT_AGENT": {}
 }

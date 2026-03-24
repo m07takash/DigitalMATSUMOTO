@@ -401,7 +401,8 @@ def management_analysis(service_info, user_info, session_id, session_name, agent
 
         response = ""
         for response_service_info, response_user_info, response_chunk, output_reference in dme.DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name, agent_file, user_input, import_contents, situation, overwrite_items, add_knowledges, execution):
-            response += response_chunk
+            if response_chunk and not str(response_chunk).startswith("[STATUS]"):
+                response += response_chunk
 
         Q_no += 1
         time.sleep(3)

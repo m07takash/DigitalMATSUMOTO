@@ -10,12 +10,16 @@ import uvicorn
 import DigiM_Session as dms
 import DigiM_Execute as dme
 import DigiM_Tool as dmt
+import DigiM_Util as dmu
 
 # system.envファイルをロードして環境変数を設定
 load_dotenv("system.env")
 api_agent_file = os.getenv("API_AGENT_FILE")
 api_port = os.getenv("API_PORT")
 api_default_session_name = os.getenv("API_DEFAULT_SESSION_NAME")
+
+import DigiM_Agent as _dma
+dme_agent_folder = _dma.agent_folder_path
 
 app = FastAPI()
 
@@ -39,10 +43,11 @@ class InputData(BaseModel):
     user_input: str
     situation: Dict[str, Any]
     agent_file: Optional[str] = None
+    engine: Optional[str] = None
     execution: Dict[str, Any]
 
 # 実行する関数(session_idにはLINE ID等のユーザーを一意に指定できるキー)
-def exec_function(service_info: dict, user_info: dict, session_id: str, session_name: str, user_input: str, situation: dict, agent_file: str, execution: dict) -> tuple[dict, dict, str, str, Any]:
+def exec_function(service_info: dict, user_info: dict, session_id: str, session_name: str, user_input: str, situation: dict, agent_file: str, engine: str, execution: dict) -> tuple[dict, dict, str, str, Any]:
     # セッションの設定（新規でセッションIDを発番）
     if not session_id:
         session_id = "API"+ dms.set_new_session_id()
@@ -50,6 +55,13 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
     # 実行の設定
     if not execution or "LAST_ONLY" not in execution:
         execution["LAST_ONLY"] = True
+
+    # エンジン切り替え（ENGINE.LLM に指定エンジン名がある場合）
+    overwrite_items = {}
+    if engine:
+        agent_data = dmu.read_json_file(agent_file, dme_agent_folder)
+        if engine in agent_data.get("ENGINE", {}).get("LLM", {}):
+            overwrite_items["ENGINE"] = {"LLM": agent_data["ENGINE"]["LLM"][engine]}
 
     # 実行
     response_chunks = []
@@ -61,6 +73,7 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
         agent_file,
         user_input,
         in_situation=situation,
+        in_overwrite_items=overwrite_items,
         in_execution=execution
     ):
         # [STATUS]プレフィックスの中間ログは除外し、実レスポンスのみ収集
@@ -82,10 +95,10 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
 
 # バックグラウンドでジョブを実行してジョブストアに結果を書き込む
 def _run_job(job_id: str, service_info: dict, user_info: dict, session_id: str, session_name: str,
-             user_input: str, situation: dict, agent_file: str, execution: dict):
+             user_input: str, situation: dict, agent_file: str, engine: str, execution: dict):
     try:
         response_service_info, response_user_info, session_id, session_name, response, output_reference = exec_function(
-            service_info, user_info, session_id, session_name, user_input, situation, agent_file, execution
+            service_info, user_info, session_id, session_name, user_input, situation, agent_file, engine, execution
         )
         result = {
             "service_info": response_service_info,
@@ -120,7 +133,7 @@ async def run_function(data: InputData, background_tasks: BackgroundTasks):
         _run_job, job_id,
         service_info, user_info,
         data.session_id or "", data.session_name or "",
-        data.user_input, data.situation, agent_file, data.execution
+        data.user_input, data.situation, agent_file, data.engine or "", data.execution
     )
 
     return {"job_id": job_id, "status": "processing"}

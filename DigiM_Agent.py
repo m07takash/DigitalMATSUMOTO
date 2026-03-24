@@ -42,6 +42,11 @@ def get_display_agents(group_cd="All"):
                     agents.append({"AGENT": agent_data["DISPLAY_NAME"], "FILE": agent_file})
     return agents
 
+# エージェントが持つエンジン一覧を取得（LLM配下のモデル名リスト、rawなJSONデータを渡す）
+def get_engine_list(agent_data, model_type="LLM"):
+    engine_config = agent_data.get("ENGINE", {}).get(model_type, {})
+    return [k for k in engine_config if k != "DEFAULT" and isinstance(engine_config.get(k), dict)]
+
 # LLMエージェントのプロパティを設定
 def get_agent_item(agent_file, item):
     agent_data = dmu.read_json_file(str(Path(agent_folder_path) / agent_file))
@@ -108,6 +113,24 @@ class DigiM_Agent:
     # エージェントのプロパティの設定
     def set_property(self, agent_data):
         self.agent = agent_data
+        # ENGINEのネスト構造を解決: ENGINE.LLM.DEFAULT="GPT" → ENGINE.LLM = GPTのフラット設定（クリーン）
+        # 名前付きモデル設定はself._engine_named_configsに別持ち（chat_memory.jsonを汚染しない）
+        self._engine_named_configs = {}
+        for model_type in list(self.agent.get("ENGINE", {}).keys()):
+            config = self.agent["ENGINE"][model_type]
+            if not isinstance(config, dict):
+                continue
+            # FUNC_NAMEが直接ある場合はすでにフラット設定済み（二重解決を防ぐ）
+            if "FUNC_NAME" in config:
+                continue
+            named_configs = {k: v for k, v in config.items() if k != "DEFAULT" and isinstance(v, dict)}
+            if not named_configs:
+                continue
+            # DEFAULT指定があればそのモデル、なければ先頭モデルをデフォルトに
+            default_name = config.get("DEFAULT") if isinstance(config.get("DEFAULT"), str) else next(iter(named_configs))
+            if default_name in named_configs:
+                self.agent["ENGINE"][model_type] = dict(named_configs[default_name])
+                self._engine_named_configs[model_type] = named_configs
         self.name = self.agent['NAME']
         self.act = self.agent['ACT']
         self.personality = self.agent['PERSONALITY']

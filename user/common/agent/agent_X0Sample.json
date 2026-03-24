@@ -1,7 +1,9 @@
 {
     "DISPLAY": true,
     "DISPLAY_NAME": "デジタルツイン(サンプル)",
-    "GROUP": ["User"],
+    "GROUP": [
+        "User"
+    ],
     "NAME": "デジタルコンサル",
     "ACT": "コンサルティングファームのパートナー",
     "PERSONALITY": {
@@ -22,54 +24,193 @@
     },
     "ENGINE": {
         "LLM": {
-            "NAME":"GPT-5.1",
-            "FUNC_NAME": "generate_response_T_gpt",
-            "MODEL": "gpt-5.1",
-            "PARAMETER": {},
-            "TOKENIZER": "tiktoken",
-            "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            "DEFAULT": "GPT-5.1",
+            "GPT-5.1": {
+                "NAME": "GPT-5.1",
+                "FUNC_NAME": "generate_response_T_gpt",
+                "MODEL": "gpt-5.1",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 10000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "GPT-5.4": {
+                "NAME": "GPT-5.4",
+                "FUNC_NAME": "generate_response_T_gpt",
+                "MODEL": "gpt-5.4",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 10000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "Gemini-2.5": {
+                "NAME": "Gemini-2.5",
+                "FUNC_NAME": "generate_response_T_gemini",
+                "MODEL": "gemini-2.5-pro",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "Gemini-3.1": {
+                "NAME": "Gemini-3.1",
+                "FUNC_NAME": "generate_response_T_gemini",
+                "MODEL": "gemini-3.1-pro-preview",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "Claude-4.5": {
+                "NAME": "Claude-Sonnet-4.5",
+                "FUNC_NAME": "generate_response_T_claude",
+                "MODEL": "claude-sonnet-4-5",
+                "PARAMETER": {"max_tokens": 64000},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "Claude-4.6": {
+                "NAME": "Claude-Sonnet-4.6",
+                "FUNC_NAME": "generate_response_T_claude",
+                "MODEL": "claude-sonnet-4-6",
+                "PARAMETER": {"max_tokens": 64000},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "Grok-4": {
+                "NAME": "Grok-4",
+                "FUNC_NAME": "generate_response_T_grok",
+                "MODEL": "grok-4",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "GPT-5-mini": {
+                "NAME": "GPT-5-mini",
+                "FUNC_NAME": "generate_response_T_gpt",
+                "MODEL": "gpt-5-mini-2025-08-07",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "GPT-5-nano": {
+                "NAME": "GPT-5-nano",
+                "FUNC_NAME": "generate_response_T_gpt",
+                "MODEL": "gpt-5-nano-2025-08-07",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "Gemini-2.5-Flash": {
+                "NAME": "Gemini-2.5-Flash",
+                "FUNC_NAME": "generate_response_T_gemini",
+                "MODEL": "gemini-2.5-flash",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "Gemini-2.5-Flash-Lite": {
+                "NAME": "Gemini-2.5-Flash-Lite",
+                "FUNC_NAME": "generate_response_T_gemini",
+                "MODEL": "gemini-2.5-flash-lite",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "Claude-Haiku-4.5": {
+                "NAME": "Claude-Haiku-4.5",
+                "FUNC_NAME": "generate_response_T_claude",
+                "MODEL": "claude-haiku-4-5",
+                "PARAMETER": {"max_tokens": 20000},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "Grok-4-Fast-Non-Reasoning": {
+                "NAME": "Grok-4-Fast-Non-Reasoning",
+                "FUNC_NAME": "generate_response_T_grok",
+                "MODEL": "grok-4-fast-non-reasoning",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "Grok-4-Fast-Reasoning": {
+                "NAME": "Grok-4-Fast-Reasoning",
+                "FUNC_NAME": "generate_response_T_grok",
+                "MODEL": "grok-4-fast-reasoning",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            }
         },
         "IMAGEGEN": {
-            "NAME":"GPT-Image-1",
-            "FUNC_NAME": "generate_image_dalle",
-            "MODEL": "gpt-image-1",
-            "PARAMETER": {"size": "1024x1024", "quality": "high"},
-            "TOKENIZER": "",
-            "MEMORY": {"limit": 3000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            "DEFAULT": "GPT-Image",
+            "GPT-Image": {
+                "NAME": "GPT-Image-1",
+                "FUNC_NAME": "generate_image_dalle",
+                "MODEL": "gpt-image-1",
+                "PARAMETER": {"size": "1024x1024", "quality": "high"},
+                "TOKENIZER": "",
+                "MEMORY": {"limit": 3000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "nano-banana-2": {
+                "NAME": "nano-banana-2",
+                "FUNC_NAME": "generate_image_gemini",
+                "MODEL": "gemini-3.1-flash-image-preview",
+                "PARAMETER": {"aspect_ratio": "1:1"},
+                "TOKENIZER": "",
+                "MEMORY": {"limit": 3000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            }
         }
     },
     "HABIT": {
         "DEFAULT": {
-            "MAGIC_WORDS": [""],
+            "MAGIC_WORDS": [
+                ""
+            ],
             "PRACTICE": "practice_00Default.json",
             "ADD_KNOWLEDGE": []
         },
         "Chat": {
-            "MAGIC_WORDS": ["簡潔に回答して", "簡潔に答えて"],
+            "MAGIC_WORDS": [
+                "簡潔に回答して",
+                "簡潔に答えて"
+            ],
             "PRACTICE": "practice_01Chat.json",
             "ADD_KNOWLEDGE": []
         },
         "FORGET_HISTORY": {
-            "MAGIC_WORDS": ["までの会話を忘れて", "会話履歴を削除して"],
+            "MAGIC_WORDS": [
+                "までの会話を忘れて",
+                "会話履歴を削除して"
+            ],
             "PRACTICE": "practice_02ForgetHistory.json"
         },
         "REMEMBER_HISTORY": {
-            "MAGIC_WORDS": ["までの会話を思い出して", "会話履歴を回復して"],
+            "MAGIC_WORDS": [
+                "までの会話を思い出して",
+                "会話履歴を回復して"
+            ],
             "PRACTICE": "practice_03RememberHistory.json"
         },
         "ETHICAL_CHECK": {
-            "MAGIC_WORDS": ["エシカルチェックしてください。"],
+            "MAGIC_WORDS": [
+                "エシカルチェックしてください。"
+            ],
             "PRACTICE": "practice_04Ethical_Check.json",
             "ADD_KNOWLEDGE": []
         },
         "SENRYU_SENSEI": {
-            "MAGIC_WORDS": ["川柳を詠んでください。","川柳を作成してください。"],
+            "MAGIC_WORDS": [
+                "川柳を詠んでください。",
+                "川柳を作成してください。"
+            ],
             "PRACTICE": "practice_05Senryu.json",
             "ADD_KNOWLEDGE": [
                 {
                     "RAG_NAME": "Quote",
                     "RETRIEVER": "Vector",
-                    "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"Sample01_Quote"}],
+                    "DATA": [
+                        {
+                            "DATA_TYPE": "DB",
+                            "DATA_NAME": "Sample01_Quote"
+                        }
+                    ],
                     "TIMESTAMP": "CURRENT_DATE",
                     "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
                     "HEADER_TEMPLATE": "【参考】好きな著名人による名言\n",
@@ -81,17 +222,24 @@
             ]
         },
         "IMAGE_GEN": {
-            "MAGIC_WORDS": ["画像を生成してください。", "画像を作成してください。"],
+            "MAGIC_WORDS": [
+                "画像を生成してください。",
+                "画像を作成してください。"
+            ],
             "PRACTICE": "practice_06Image_Gen.json",
             "ADD_KNOWLEDGE": []
         },
         "REPEAT_RESPONSE": {
-            "MAGIC_WORDS": ["オウム返ししてください。"],
+            "MAGIC_WORDS": [
+                "オウム返ししてください。"
+            ],
             "PRACTICE": "practice_07Fixed_Message.json",
             "ADD_KNOWLEDGE": []
         },
         "MANAGEMENT_ANALYSIS": {
-            "MAGIC_WORDS": ["経営分析してください。"],
+            "MAGIC_WORDS": [
+                "経営分析してください。"
+            ],
             "PRACTICE": "practice_21ManagementAnalysis.json",
             "ADD_KNOWLEDGE": []
         }
@@ -100,7 +248,60 @@
         {
             "RAG_NAME": "Experience",
             "RETRIEVER": "Vector",
-            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"Sample02_Memo", "META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}},{"DATA_TYPE":"DB", "DATA_NAME":"Sample03_Feedback","META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5},"FILTER":{"PATTERN":"and", "CONDITION":{"DEFINE_CODE":{"PATTERN":"and", "CODES":{"EMP_CODE":"emp_code"}}}}},{"DATA_TYPE":"DB", "DATA_NAME":"Communication_Memo", "META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}, "FILTER":{"PATTERN":"and", "CONDITION":{"USER_INFO":{"PATTERN":"and", "ITEMS":["user_id"]}}}}],
+            "DATA": [
+                {
+                    "DATA_TYPE": "DB",
+                    "DATA_NAME": "Sample02_Memo",
+                    "META_SEARCH": {
+                        "CONDITION": [
+                            "DATE"
+                        ],
+                        "BONUS": 0.5
+                    }
+                },
+                {
+                    "DATA_TYPE": "DB",
+                    "DATA_NAME": "Sample03_Feedback",
+                    "META_SEARCH": {
+                        "CONDITION": [
+                            "DATE"
+                        ],
+                        "BONUS": 0.5
+                    },
+                    "FILTER": {
+                        "PATTERN": "and",
+                        "CONDITION": {
+                            "DEFINE_CODE": {
+                                "PATTERN": "and",
+                                "CODES": {
+                                    "EMP_CODE": "emp_code"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "DATA_TYPE": "DB",
+                    "DATA_NAME": "Communication_Memo",
+                    "META_SEARCH": {
+                        "CONDITION": [
+                            "DATE"
+                        ],
+                        "BONUS": 0.5
+                    },
+                    "FILTER": {
+                        "PATTERN": "and",
+                        "CONDITION": {
+                            "USER_INFO": {
+                                "PATTERN": "and",
+                                "ITEMS": [
+                                    "user_id"
+                                ]
+                            }
+                        }
+                    }
+                }
+            ],
             "TIMESTAMP": "CREATE_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
             "HEADER_TEMPLATE": "以下はこれまであなたが学んできたことです。\n",
@@ -112,7 +313,35 @@
         {
             "RAG_NAME": "Comment",
             "RETRIEVER": "Vector",
-            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"Communication_Comment", "META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}, "FILTER":{"PATTERN":"and", "CONDITION":{"SERVICE_INFO":{"PATTERN":"and", "ITEMS":["service_id"]}, "USER_INFO":{"PATTERN":"and", "ITEMS":["user_id"]}}}}],
+            "DATA": [
+                {
+                    "DATA_TYPE": "DB",
+                    "DATA_NAME": "Communication_Comment",
+                    "META_SEARCH": {
+                        "CONDITION": [
+                            "DATE"
+                        ],
+                        "BONUS": 0.5
+                    },
+                    "FILTER": {
+                        "PATTERN": "and",
+                        "CONDITION": {
+                            "SERVICE_INFO": {
+                                "PATTERN": "and",
+                                "ITEMS": [
+                                    "service_id"
+                                ]
+                            },
+                            "USER_INFO": {
+                                "PATTERN": "and",
+                                "ITEMS": [
+                                    "user_id"
+                                ]
+                            }
+                        }
+                    }
+                }
+            ],
             "TIMESTAMP": "CREATE_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
             "HEADER_TEMPLATE": "以下はこれまでの人間との会話で貰ったコメントです。\n",
@@ -124,7 +353,29 @@
         {
             "RAG_NAME": "User_Dialog",
             "RETRIEVER": "Vector",
-            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"User_Dialog", "META_SEARCH":{"CONDITION":["DATE"], "BONUS": 0.5}, "FILTER":{"PATTERN":"and", "CONDITION":{"USER_INFO":{"PATTERN":"and", "ITEMS":["user_id"]}}}}],
+            "DATA": [
+                {
+                    "DATA_TYPE": "DB",
+                    "DATA_NAME": "User_Dialog",
+                    "META_SEARCH": {
+                        "CONDITION": [
+                            "DATE"
+                        ],
+                        "BONUS": 0.5
+                    },
+                    "FILTER": {
+                        "PATTERN": "and",
+                        "CONDITION": {
+                            "USER_INFO": {
+                                "PATTERN": "and",
+                                "ITEMS": [
+                                    "user_id"
+                                ]
+                            }
+                        }
+                    }
+                }
+            ],
             "TIMESTAMP": "CURRENT_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
             "HEADER_TEMPLATE": "以下はあなたの対話相手が過去に行った発言です。どんな人物なのかを推定する上で参考にしてください。\n",
@@ -136,11 +387,16 @@
     ],
     "SKILL": {
         "TOOL_LIST": [
-            {"type": "function", "function": {"name": "default_tool"}}
+            {
+                "type": "function",
+                "function": {
+                    "name": "default_tool"
+                }
+            }
         ],
         "CHOICE": "none"
     },
-    "DEFINE_CODE":{
+    "DEFINE_CODE": {
         "COMPANY_CODE": "",
         "DEPT_CODE": "",
         "EMP_CODE": "emp001"
@@ -150,7 +406,10 @@
         "SAVE_MODE": "CSV",
         "SAVE_DB": "Sample00_Communication",
         "DEFAULT_CATEGORY": "Feedback",
-        "FEEDBACK_ITEM_LIST":["memo", "comment"]
+        "FEEDBACK_ITEM_LIST": [
+            "memo",
+            "comment"
+        ]
     },
     "SUPPORT_AGENT": {
         "DIALOG_DIGEST": "agent_51DialogDigest.json",
@@ -158,11 +417,16 @@
         "EXTRACT_DATE": "agent_55ExtractDate.json",
         "RAG_QUERY_GENERATOR": "agent_56RAGQueryGenerator.json"
     },
-    "BOOK":[
+    "BOOK": [
         {
             "RAG_NAME": "Quote",
             "RETRIEVER": "Vector",
-            "DATA": [{"DATA_TYPE":"DB", "DATA_NAME":"Sample01_Quote"}],
+            "DATA": [
+                {
+                    "DATA_TYPE": "DB",
+                    "DATA_NAME": "Sample01_Quote"
+                }
+            ],
             "TIMESTAMP": "CURRENT_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
             "HEADER_TEMPLATE": "以下はあなたが気に入っている著名人による名言です。\n",
