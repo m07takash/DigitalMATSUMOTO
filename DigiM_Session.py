@@ -1,8 +1,19 @@
 import os
 import json
 import logging
+import threading
 from datetime import datetime
 from pathlib import Path
+
+# セッションファイル単位の書き込みロック（Race Condition防止）
+_session_file_locks: dict = {}
+_session_file_locks_meta = threading.Lock()
+
+def _get_file_lock(file_path: str) -> threading.Lock:
+    with _session_file_locks_meta:
+        if file_path not in _session_file_locks:
+            _session_file_locks[file_path] = threading.Lock()
+        return _session_file_locks[file_path]
 from dotenv import load_dotenv
 import DigiM_Util as dmu
 
@@ -264,8 +275,8 @@ class DigiMSession:
         self.session_vec_folder_path = str(_session_base / "vecs") + "/"
         self.session_file_path = str(_session_base / session_file_name)
         self.session_status_path = str(_session_base / session_status_file_name)
-        self.session_contents_folder_path = str(_session_base / session_contents_folder)
-        self.session_analytics_folder_path = str(_session_base / session_analytics_folder)
+        self.session_contents_folder_path = str(_session_base / session_contents_folder) + "/"
+        self.session_analytics_folder_path = str(_session_base / session_analytics_folder) + "/"
         self.set_history()
 
     # ヒストリーの再読込
@@ -559,25 +570,26 @@ class DigiMSession:
     # sub_seq_data: {sub_seq_str: {key: dict, ...}, ...}
     # seq_setting_data: {key: dict, ...}  ← SETTING レベルに保存
     def save_history_batch(self, seq, sub_seq_data=None, seq_setting_data=None):
-        chat_history_dict = {}
-        if not os.path.exists(self.session_folder_path):
-            os.makedirs(self.session_folder_path, exist_ok=True)
-        if os.path.exists(self.session_file_path):
-            chat_history_dict = dmu.read_json_file(self.session_file_path)
-        if seq not in chat_history_dict:
-            chat_history_dict[seq] = {}
-            chat_history_dict[seq]["SETTING"] = {"FLG": "Y"}
-        if seq_setting_data:
-            for key, data in seq_setting_data.items():
-                chat_history_dict[seq]["SETTING"][key] = data
-        if sub_seq_data:
-            for sub_seq, entries in sub_seq_data.items():
-                if sub_seq not in chat_history_dict[seq]:
-                    chat_history_dict[seq][sub_seq] = {}
-                for key, data in entries.items():
-                    chat_history_dict[seq][sub_seq][key] = data
-        with open(self.session_file_path, 'w', encoding='utf-8') as f:
-            json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
+        with _get_file_lock(self.session_file_path):
+            chat_history_dict = {}
+            if not os.path.exists(self.session_folder_path):
+                os.makedirs(self.session_folder_path, exist_ok=True)
+            if os.path.exists(self.session_file_path):
+                chat_history_dict = dmu.read_json_file(self.session_file_path)
+            if seq not in chat_history_dict:
+                chat_history_dict[seq] = {}
+                chat_history_dict[seq]["SETTING"] = {"FLG": "Y"}
+            if seq_setting_data:
+                for key, data in seq_setting_data.items():
+                    chat_history_dict[seq]["SETTING"][key] = data
+            if sub_seq_data:
+                for sub_seq, entries in sub_seq_data.items():
+                    if sub_seq not in chat_history_dict[seq]:
+                        chat_history_dict[seq][sub_seq] = {}
+                    for key, data in entries.items():
+                        chat_history_dict[seq][sub_seq][key] = data
+            with open(self.session_file_path, 'w', encoding='utf-8') as f:
+                json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
 
     # 会話履歴を保存する
     def save_history(self, seq, chat_dict_key, chat_dict, level="SEQ", sub_seq="1"):

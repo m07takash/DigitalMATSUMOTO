@@ -6,17 +6,30 @@
     "PERSONALITY": {},
     "ENGINE": {
         "LLM": {
-            "NAME":"GPT-4o",
-            "FUNC_NAME": "generate_response_openai_tool",
-            "MODEL": "gpt-4o",
-            "PARAMETER": {"temperature": 0.5},
-            "TOKENIZER": "tiktoken",
-            "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            "DEFAULT": "GPT-4o",
+            "GPT-4o": {
+                "NAME": "GPT-4o",
+                "FUNC_NAME": "generate_response_openai_tool",
+                "MODEL": "gpt-4o",
+                "PARAMETER": {
+                    "temperature": 0.5
+                },
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {
+                    "limit": 8000,
+                    "role": "both",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "Y"
+                }
+            }
         }
     },
     "HABIT": {
         "DEFAULT": {
-            "MAGIC_WORDS": [""],
+            "MAGIC_WORDS": [
+                ""
+            ],
             "PRACTICE": "practice_09WebSearch.json",
             "ADD_KNOWLEDGE": []
         }
@@ -24,7 +37,9 @@
     "KNOWLEDGE": [],
     "SKILL": {
         "TOOL_LIST": [
-            {"type": "web_search_preview"}
+            {
+                "type": "web_search_preview"
+            }
         ],
         "CHOICE": "none"
     },
@@ -33,7 +48,10 @@
         "SAVE_MODE": "CSV",
         "SAVE_DB": "Communication",
         "DEFAULT_CATEGORY": "Feedback",
-        "FEEDBACK_ITEM_LIST":["memo", "comment"]
+        "FEEDBACK_ITEM_LIST": [
+            "memo",
+            "comment"
+        ]
     },
     "SUPPORT_AGENT": {}
 }

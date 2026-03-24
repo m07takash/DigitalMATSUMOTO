@@ -21,25 +21,48 @@
     },
     "ENGINE": {
         "LLM": {
-            "NAME":"GPT-5-mini",
-            "FUNC_NAME": "generate_response_T_gpt",
-            "MODEL": "gpt-5-mini-2025-08-07",
-            "PARAMETER": {},
-            "TOKENIZER": "tiktoken",
-            "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            "DEFAULT": "GPT-5-mini",
+            "GPT-5-mini": {
+                "NAME": "GPT-5-mini",
+                "FUNC_NAME": "generate_response_T_gpt",
+                "MODEL": "gpt-5-mini-2025-08-07",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {
+                    "limit": 8000,
+                    "role": "both",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "Y"
+                }
+            }
         },
         "IMAGEGEN": {
-            "NAME":"GPT-Image-1",
-            "FUNC_NAME": "generate_image_dalle",
-            "MODEL": "gpt-image-1",
-            "PARAMETER": {"size": "1024x1024", "quality": "high"},
-            "TOKENIZER": "",
-            "MEMORY": {"limit": 3000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            "DEFAULT": "GPT-Image-1",
+            "GPT-Image-1": {
+                "NAME": "GPT-Image-1",
+                "FUNC_NAME": "generate_image_dalle",
+                "MODEL": "gpt-image-1",
+                "PARAMETER": {
+                    "size": "1024x1024",
+                    "quality": "high"
+                },
+                "TOKENIZER": "",
+                "MEMORY": {
+                    "limit": 3000,
+                    "role": "both",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "Y"
+                }
+            }
         }
     },
     "HABIT": {
         "DEFAULT": {
-            "MAGIC_WORDS": [""],
+            "MAGIC_WORDS": [
+                ""
+            ],
             "PRACTICE": "practice_01Chat.json",
             "ADD_KNOWLEDGE": []
         }
@@ -47,7 +70,12 @@
     "KNOWLEDGE": [],
     "SKILL": {
         "TOOL_LIST": [
-            {"type": "function", "function": {"name": "default_tool"}}
+            {
+                "type": "function",
+                "function": {
+                    "name": "default_tool"
+                }
+            }
         ],
         "CHOICE": "none"
     },
@@ -56,7 +84,10 @@
         "SAVE_MODE": "CSV",
         "SAVE_DB": "Communication",
         "DEFAULT_CATEGORY": "Feedback",
-        "FEEDBACK_ITEM_LIST":["memo", "comment"]
+        "FEEDBACK_ITEM_LIST": [
+            "memo",
+            "comment"
+        ]
     },
     "SUPPORT_AGENT": {
         "DIALOG_DIGEST": "agent_51DialogDigest.json",

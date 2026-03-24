@@ -373,6 +373,59 @@ def generate_response_T_llama(query, system_prompt, model, memories=[], image_pa
     response = completion["choices"][0]["message"]["content"]
     yield query, response, completion
 
+# Geminiによる画像生成（nano banana 2等）
+def generate_image_gemini(prompt, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
+    gemini_client = genai.Client(api_key=gemini_api_key)
+
+    # メモリをプロンプトに設定
+    memory_message = []
+    for memory in memories:
+        if memory["role"] == "user":
+            memory_message.append({"role": "user", "parts": [{"text": memory["text"]}]})
+        elif memory["role"] == "assistant":
+            memory_message.append({"role": "model", "parts": [{"text": memory["text"]}]})
+
+    # ユーザーのプロンプトを設定
+    contents = memory_message + [{"role": "user", "parts": [{"text": prompt}]}]
+
+    # 画像生成パラメータ（ImageConfigはaspect_ratioのみ対応）
+    aspect_ratio = model.get("PARAMETER", {}).get("aspect_ratio")
+
+    completion = gemini_client.models.generate_content(
+        model=model["MODEL"],
+        contents=contents,
+        config=types.GenerateContentConfig(
+            response_modalities=["TEXT", "IMAGE"],
+            **({"image_config": types.ImageConfig(aspect_ratio=aspect_ratio)} if aspect_ratio else {})
+        )
+    )
+
+    # TEMPフォルダに保存
+    img_files = []
+    response_text = "画像を生成しました。"
+    num = 0
+    for part in completion.parts:
+        if hasattr(part, "text") and part.text:
+            response_text = part.text
+        else:
+            img = part.as_image() if hasattr(part, "as_image") else None
+            if img is None and hasattr(part, "inline_data") and part.inline_data:
+                img_bytes = base64.b64decode(part.inline_data.data)
+                img_file = temp_folder_path + f"{num}_gemini_image.jpg"
+                with open(img_file, "wb") as f:
+                    f.write(img_bytes)
+                img_files.append(img_file)
+                num += 1
+            elif img is not None:
+                img_file = temp_folder_path + f"{num}_gemini_image.png"
+                img.save(img_file)
+                img_files.append(img_file)
+                num += 1
+
+    completion_result = img_files if img_files else completion
+    yield str(contents), response_text, completion_result
+
+
 # 考察に対する画像生成
 def generate_image_dalle(prompt, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
     os.environ["OPENAI_API_KEY"] = openai_api_key

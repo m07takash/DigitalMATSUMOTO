@@ -1,4 +1,5 @@
 import os
+import threading
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
@@ -101,6 +102,40 @@ def _build_meta_searches(service_info, user_info, session_id, session_name, supp
     log = {"date": {"agent_file": agent_file, "model": model_name, "condition_list": date_list,
                     "llm_response": response, "prompt_token": prompt_tokens, "response_token": response_tokens}}
     return [{"DATE": date_list}], log
+
+# ダイジェスト生成・保存・アンロックをバックグラウンドで実行
+def _run_digest_background(session, service_info, user_info, session_id, session_name,
+                            support_agent, query_vec, model_name, tokenizer,
+                            memory_limit_tokens, memory_role, memory_priority,
+                            memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit,
+                            seq, sub_seq, cfg):
+    try:
+        dialog_digest_agent_file = support_agent.get("DIALOG_DIGEST", "")
+        add_info = {}
+        session.set_history()
+        add_info["Memories_Selected"] = session.get_memory(
+            query_vec, model_name, tokenizer, memory_limit_tokens,
+            memory_role, memory_priority, cfg["memory_similarity"],
+            memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
+        _, _, digest_response, digest_model_name, _, digest_response_tokens = dmt.dialog_digest(
+            service_info, user_info, session_id, session_name, dialog_digest_agent_file, "", [], add_info)
+        timestamp_digest = str(datetime.now())
+        digest_vec_file = ""
+        if cfg["memory_similarity"]:
+            digest_vec = dmu.embed_text(digest_response.replace("\n", ""))
+            digest_vec_file = session.save_vec_file(str(seq), str(sub_seq), "digest", digest_vec)
+        digest_chat_dict = {
+            "agent_file": dialog_digest_agent_file, "model": digest_model_name,
+            "role": "assistant", "timestamp": timestamp_digest,
+            "token": digest_response_tokens, "text": digest_response,
+            "vec_file": digest_vec_file
+        }
+        session.save_history_batch(str(seq), {str(sub_seq): {"digest": digest_chat_dict}})
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"バックグラウンドダイジェスト生成に失敗しました: {e}")
+    finally:
+        session.save_status("UNLOCKED")
 
 # 単体実行用の関数
 def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_file, model_type="LLM",
@@ -206,10 +241,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     timestamp_log += "[09-10.RAG検索用クエリ生成/メタデータ検索(並列)]" + str(datetime.now()) + "<br>"
     need_intent = cfg["RAG_query_gene"] and "RAG_QUERY_GENERATOR" in support_agent
     need_meta = cfg["meta_search"] and "EXTRACT_DATE" in support_agent
-    if need_intent:
-        yield service_info, user_info, "[STATUS]意図検索を開始", [], []
-    if need_meta:
-        yield service_info, user_info, "[STATUS]メタデータ検索を開始", [], []
+    if need_intent or need_meta:
+        yield service_info, user_info, "[STATUS]RAG検索クエリの作成を開始", [], []
     with ThreadPoolExecutor(max_workers=2) as executor:
         future_intent = executor.submit(
             _build_intent_queries, service_info, user_info, session_id, session_name,
@@ -338,34 +371,9 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                                "file_name": img_file_name, "file_type": "image/jpeg"}
                 export_files.append(str(Path(session.session_folder_path) / "contents" / img_file_name))
 
-        # ダイジェストの生成
-        digest_chat_dict = {}
-        if cfg["save_digest"]:
-            timestamp_log += "[18.メモリダイジェストの作成開始]" + str(datetime.now()) + "<br>"
-            dialog_digest_agent_file = support_agent.get("DIALOG_DIGEST", "")
-            add_info = {}
-            session.set_history()
-            add_info["Memories_Selected"] = session.get_memory(
-                query_vec, model_name, tokenizer, memory_limit_tokens,
-                memory_role, memory_priority, cfg["memory_similarity"],
-                memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
-            _, _, digest_response, digest_model_name, _, digest_response_tokens = dmt.dialog_digest(
-                service_info, user_info, session_id, session_name, dialog_digest_agent_file, "", [], add_info)
-            timestamp_digest = str(datetime.now())
-            digest_vec_file = ""
-            if cfg["memory_similarity"]:
-                digest_vec = dmu.embed_text(digest_response.replace("\n", ""))
-                digest_vec_file = session.save_vec_file(str(seq), str(sub_seq), "digest", digest_vec)
-            digest_chat_dict = {
-                "agent_file": dialog_digest_agent_file, "model": digest_model_name,
-                "role": "assistant", "timestamp": timestamp_digest,
-                "token": digest_response_tokens, "text": digest_response,
-                "vec_file": digest_vec_file
-            }
-
         timestamp_log += "[完了]" + str(datetime.now()) + "<br>"
 
-        # B-5: 一括書き込み（6回→1回）
+        # B-5: 一括書き込み（ダイジェストはバックグラウンドで別途追記）
         sub_seq_data = {
             str(sub_seq): {
                 "setting": setting_chat_dict,
@@ -376,10 +384,22 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         }
         if model_type == "IMAGEGEN" and img_dict:
             sub_seq_data[str(sub_seq)]["image"] = img_dict
-        if cfg["save_digest"] and digest_chat_dict:
-            sub_seq_data[str(sub_seq)]["digest"] = digest_chat_dict
         session.save_history_batch(str(seq), sub_seq_data)
         session.save_user_dialog_session("UNSAVED")
+
+        # ダイジェスト生成をバックグラウンドで起動（完了後にセッションをUNLOCK）
+        if cfg["save_digest"]:
+            timestamp_log += "[18.メモリダイジェストの作成をバックグラウンドで開始]" + str(datetime.now()) + "<br>"
+            threading.Thread(
+                target=_run_digest_background,
+                args=(session, service_info, user_info, session_id, session_name,
+                      support_agent, query_vec, model_name, tokenizer,
+                      memory_limit_tokens, memory_role, memory_priority,
+                      memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit,
+                      seq, sub_seq, cfg),
+                daemon=True
+            ).start()
+            output_reference["_digest_bg_started"] = True
 
     yield response_service_info, user_info, "", export_files, output_reference
 
@@ -395,6 +415,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
     results = []
     response_service_info = service_info
     response_user_info = user_info
+    _digest_bg_started = False  # バックグラウンドダイジェストが起動された場合はこちらでUNLOCKしない
 
     # セッションのロック
     if session.get_status() == "LOCKED":
@@ -427,7 +448,13 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
             if model_type in ["LLM", "IMAGEGEN"]:
                 setting = chain["SETTING"]
                 agent_file = setting["AGENT_FILE"] if setting["AGENT_FILE"] != "USER" else in_agent_file
-                overwrite_items = setting["OVERWRITE_ITEMS"] if setting["OVERWRITE_ITEMS"] != "USER" else in_overwrite_items
+                if setting["OVERWRITE_ITEMS"] == "USER":
+                    overwrite_items = in_overwrite_items
+                else:
+                    # in_overwrite_items（エンジン選択等）をベースにpractice設定をマージ（practice優先）
+                    overwrite_items = dict(in_overwrite_items)
+                    if setting["OVERWRITE_ITEMS"]:
+                        dmu.update_dict(overwrite_items, setting["OVERWRITE_ITEMS"])
                 add_knowledge = []
                 for ak in setting["ADD_KNOWLEDGE"]:
                     if "USER" in setting["ADD_KNOWLEDGE"]:
@@ -478,6 +505,8 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                         yield response_service_info, response_user_info, response_chunk, output_reference
                     if response_chunk and not response_chunk.startswith("[STATUS]"):
                         response += response_chunk
+                if output_reference.get("_digest_bg_started", False):
+                    _digest_bg_started = True
 
                 input = user_input
                 output = response
@@ -586,4 +615,6 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
         raise e
 
     finally:
-        session.save_status("UNLOCKED")
+        # バックグラウンドダイジェストが起動済みの場合はそちらでUNLOCKされる
+        if not _digest_bg_started:
+            session.save_status("UNLOCKED")
