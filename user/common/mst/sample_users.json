@@ -17,13 +17,14 @@
     "Group": "User",
     "Agent": "agent_11DefaultGPT.json",
     "Allowed": {
+      "Session Archive": true,
       "RAG Management": true,
       "Exec Setting": true,
       "RAG Setting": true,
       "Feedback": true,
       "Details": true,
       "Analytics Knowledge": true,
-      "Analytics Compare": false,
+      "Analytics Compare": true,
       "WEB Search": true,
       "Book": true,
       "Download Md": true
@@ -35,6 +36,7 @@
     "Group": "User",
     "Agent": "agent_22SenryuSensei.json",
     "Allowed": {
+      "Session Archive": false,
       "RAG Management": false,
       "Exec Setting": false,
       "RAG Setting": false,

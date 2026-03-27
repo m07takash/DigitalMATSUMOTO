@@ -20,6 +20,7 @@ import DigiM_Tool as dmt
 import DigiM_GeneCommunication as dmgc
 import DigiM_GeneUserDialog as dmgu
 import DigiM_VAnalytics as dmva
+import DigiM_DB_Export as dmdbe
 
 @dataclass(frozen=True)
 class AppConfig:
@@ -94,7 +95,6 @@ if 'user_admin_flg' not in st.session_state:
     st.session_state.user_admin_flg = "Y"
 if 'group_cd' not in st.session_state:
     st.session_state.group_cd = "All"
-
 if 'allowed_rag_management' not in st.session_state:
     st.session_state.allowed_rag_management = True
 if 'allowed_exec_setting' not in st.session_state:
@@ -115,6 +115,18 @@ if 'allowed_book' not in st.session_state:
     st.session_state.allowed_book = True
 if 'allowed_download_md' not in st.session_state:
     st.session_state.allowed_download_md = True
+if 'allowed_session_archive' not in st.session_state:
+    st.session_state.allowed_session_archive = True
+if 'last_archive_zip' not in st.session_state:
+    st.session_state.last_archive_zip = None
+
+# DB接続情報が設定されているか確認
+_db_configured = all([
+    os.getenv("POSTGRES_HOST"),
+    os.getenv("POSTGRES_DB"),
+    os.getenv("POSTGRES_USER"),
+    os.getenv("POSTGRES_PASSWORD"),
+])
 
 # 時刻の設定
 tz = pytz.timezone(cfg.timezone)
@@ -273,6 +285,7 @@ def user_allowed_parameter(allowded_dict):
     st.session_state.allowed_web_search = allowded_dict.get("WEB Search", True)
     st.session_state.allowed_book = allowded_dict.get("Book", True)
     st.session_state.allowed_download_md = allowded_dict.get("Download Md", True)
+    st.session_state.allowed_session_archive = allowded_dict.get("Session Archive", True)
 
 # セッションステートの初期宣言
 def initialize_session_states():
@@ -628,6 +641,59 @@ def main():
                 activate_sessions_str = ", ".join(st.session_state.session_inactive_list_selected)
                 st.session_state.sidebar_message = f"セッションを再表示しました({activate_sessions_str})"
                 st.rerun()
+
+            # DB Export / Archive（Session Archiveが許可されたユーザーのみ表示）
+            if st.session_state.allowed_session_archive:
+                st.markdown("---")
+
+                # DB Exportボタン（接続情報が設定されている場合のみ表示）
+                if _db_configured:
+                    if st.button("Export to DB", key="db_export"):
+                        with st.spinner("DBへエクスポート中..."):
+                            try:
+                                dmdbe.main()
+                                st.session_state.sidebar_message = "DBエクスポートが完了しました"
+                            except Exception as e:
+                                st.session_state.sidebar_message = f"DBエクスポートでエラーが発生しました: {e}"
+                        with st.spinner("ベクトル化中..."):
+                            try:
+                                dmdbe.vectorize_dialogs()
+                            except Exception as e:
+                                st.session_state.sidebar_message += f" / ベクトル化でエラーが発生しました: {e}"
+                        st.rerun()
+
+                # Archiveボタン
+                if st.button("Archive Old Sessions", key="archive_sessions"):
+                    with st.spinner("アーカイブ中..."):
+                        try:
+                            result = dms.archive_old_sessions()
+                            archived_count = len(result["archived"])
+                            st.session_state.sidebar_message = f"アーカイブ完了: {archived_count}件を圧縮しました"
+                            st.session_state.last_archive_zip = result["zip_path"]
+                        except Exception as e:
+                            st.session_state.sidebar_message = f"アーカイブでエラーが発生しました: {e}"
+                            st.session_state.last_archive_zip = None
+                    st.rerun()
+
+                # アーカイブZipのダウンロード（常時表示）
+                _archive_dir = dms.archive_folder
+                _zip_files = sorted(
+                    [f for f in os.listdir(_archive_dir) if f.endswith(".zip")],
+                    reverse=True,
+                ) if os.path.exists(_archive_dir) else []
+                if _zip_files:
+                    _selected_zip = st.selectbox("Archive ZIP", _zip_files, key="selected_archive_zip")
+                    _selected_zip_path = os.path.join(_archive_dir, _selected_zip)
+                    with open(_selected_zip_path, "rb") as f:
+                        st.download_button(
+                            label="Download ZIP",
+                            data=f,
+                            file_name=_selected_zip,
+                            mime="application/zip",
+                            key="download_archive_zip",
+                        )
+                else:
+                    st.caption("アーカイブZIPはありません")
 
         # 知識更新の処理
         if st.session_state.allowed_rag_management:
