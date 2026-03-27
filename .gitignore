@@ -206,6 +206,7 @@ test/*
 !test/Sample*.xlsx
 !test/Tool*.xlsx
 backup/
+*.zip
 
 # nohup
 nohup.out
