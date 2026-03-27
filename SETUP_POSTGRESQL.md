@@ -1,0 +1,289 @@
+# PostgreSQL セットアップ手順（Docker環境）
+
+Docker がインストールされているだけの環境で、DigitalMATSUMOTO の分析用DBをゼロから構築する手順です。
+
+---
+
+## 1. PostgreSQL コンテナの起動
+
+### 1-1. docker-compose.yml の作成（推奨）
+
+プロジェクトルートに `docker-compose.yml` を作成します。
+
+```yaml
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: digim-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: digimatsuadmin
+      POSTGRES_PASSWORD: <your_password>
+      POSTGRES_DB: digim_analytics
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:
+```
+
+> `pgvector/pgvector:pg16` イメージは `pgvector` 拡張が最初から含まれています。
+> ベクトル検索が不要な場合は `postgres:16` で代替可能です。
+
+### 1-2. コンテナ起動
+
+```bash
+docker compose up -d
+```
+
+### 1-3. 起動確認
+
+```bash
+docker compose ps
+# または
+docker ps | grep digim-postgres
+```
+
+---
+
+## 2. データベースへの接続
+
+### 2-1. コンテナ内から psql で接続
+
+```bash
+docker exec -it digim-postgres psql -U digimatsuadmin -d digim_analytics
+```
+
+### 2-2. ホストから psql で接続（psql がインストール済みの場合）
+
+```bash
+psql "host=localhost port=5432 dbname=digim_analytics user=digimatsuadmin"
+```
+
+---
+
+## 3. 拡張機能の有効化
+
+`pgvector/pgvector` イメージを使用した場合、以下を実行します。
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+```
+
+> `postgres:16` イメージを使用した場合は拡張が含まれないため、省略するかカラム定義から `vector` 型を外してください。
+
+---
+
+## 4. テーブルの作成
+
+psql に接続した状態で以下を実行します。
+
+### 4-1. digim_sessions
+
+```sql
+CREATE TABLE digim_sessions (
+    session_id        VARCHAR(64)  NOT NULL,
+    session_name      VARCHAR(255),
+    user_id           VARCHAR(128),
+    service_id        VARCHAR(64),
+    agent_file        VARCHAR(255),
+    active            CHAR(1),
+    status            VARCHAR(32),
+    user_dialog       VARCHAR(32),
+    last_update_date  TIMESTAMP,
+    created_date      TIMESTAMP,
+    CONSTRAINT digim_sessions_pkey PRIMARY KEY (session_id)
+);
+```
+
+### 4-2. digim_dialogs
+
+```sql
+CREATE TABLE digim_dialogs (
+    id                        BIGSERIAL    NOT NULL,
+    session_id                VARCHAR(64),
+    seq                       INTEGER,
+    sub_seq                   INTEGER,
+    flg                       CHAR(1),
+    practice_name             VARCHAR(128),
+    model_type                VARCHAR(32),
+    agent_file                VARCHAR(255),
+    agent_name                VARCHAR(255),
+    model_name                VARCHAR(128),
+    prompt_template           VARCHAR(128),
+    situation_time            TIMESTAMP,
+    user_input                TEXT,
+    query_text                TEXT,
+    response_text             TEXT,
+    digest_text               TEXT,
+    prompt_timestamp          TIMESTAMP,
+    response_timestamp        TIMESTAMP,
+    response_duration_sec     DOUBLE PRECISION,
+    prompt_tokens_total       INTEGER,
+    query_tokens              INTEGER,
+    response_tokens           INTEGER,
+    digest_tokens             INTEGER,
+    digest_model              VARCHAR(128),
+    rag_query_used            BOOLEAN,
+    rag_query_model           VARCHAR(128),
+    rag_query_prompt_tokens   INTEGER,
+    rag_query_response_tokens INTEGER,
+    meta_search_date_used     BOOLEAN,
+    meta_search_date_result   VARCHAR(255),
+    web_search_used           BOOLEAN,
+    knowledge_ref_count       INTEGER,
+    memory_ref_count          INTEGER,
+    query_vec                 vector(3072),
+    response_vec              vector(3072),
+    CONSTRAINT digim_dialogs_pkey PRIMARY KEY (id),
+    CONSTRAINT digim_dialogs_session_id_seq_sub_seq_key UNIQUE (session_id, seq, sub_seq),
+    CONSTRAINT digim_dialogs_session_id_fkey FOREIGN KEY (session_id)
+        REFERENCES digim_sessions (session_id)
+);
+```
+
+> `vector(3072)` は `text-embedding-3-large` に対応した次元数です。ベクトル検索が不要な場合は該当行を削除してください。
+
+### 4-3. digim_references
+
+```sql
+CREATE TABLE digim_references (
+    id                  BIGSERIAL NOT NULL,
+    dialog_id           BIGINT,
+    session_id          VARCHAR(64),
+    seq                 INTEGER,
+    sub_seq             INTEGER,
+    rag_name            VARCHAR(128),
+    db_name             VARCHAR(128),
+    query_seq           VARCHAR(64),
+    query_mode          VARCHAR(64),
+    chunk_id            VARCHAR(255),
+    chunk_timestamp     TIMESTAMP,
+    category            VARCHAR(128),
+    similarity_prompt   DOUBLE PRECISION,
+    similarity_response DOUBLE PRECISION,
+    title               VARCHAR(255),
+    text_short          TEXT,
+    CONSTRAINT digim_references_pkey PRIMARY KEY (id),
+    CONSTRAINT digim_references_dialog_id_fkey FOREIGN KEY (dialog_id)
+        REFERENCES digim_dialogs (id)
+);
+```
+
+### 4-4. インデックスの作成
+
+```sql
+-- digim_dialogs
+CREATE INDEX digim_dialogs_session_id_idx       ON digim_dialogs (session_id);
+CREATE INDEX digim_dialogs_model_name_idx       ON digim_dialogs (model_name);
+CREATE INDEX digim_dialogs_prompt_timestamp_idx ON digim_dialogs (prompt_timestamp);
+
+-- digim_references
+CREATE INDEX digim_references_dialog_id_idx        ON digim_references (dialog_id);
+CREATE INDEX digim_references_rag_name_db_name_idx ON digim_references (rag_name, db_name);
+```
+
+---
+
+## 5. system.env の設定
+
+`system.env_sample` をコピーして `system.env` を作成し、接続情報を記載します。
+
+```env
+# PostgreSQL接続情報
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+POSTGRES_DB=digim_analytics
+POSTGRES_USER=digimatsuadmin
+POSTGRES_PASSWORD=<your_password>
+
+# Azure OpenAI（ベクトル化に使用）
+AZURE_OPENAI_ENDPOINT=https://xxxx.openai.azure.com/
+AZURE_OPENAI_API_KEY=<your_api_key>
+AZURE_OPENAI_EMBED_MODEL=text-embedding-3-large
+```
+
+> DigitalMATSUMOTO 自体も Docker コンテナ上で動作している場合、`POSTGRES_HOST` は `localhost` ではなく Docker ネットワーク上のサービス名（例: `postgres`）を指定してください。
+> `system.env` は `.gitignore` に含めてリポジトリにコミットしないこと。
+
+---
+
+## 6. 接続確認
+
+```bash
+python3 -c "
+import psycopg2, os
+from dotenv import load_dotenv
+load_dotenv('system.env')
+conn = psycopg2.connect(
+    host=os.getenv('POSTGRES_HOST'),
+    port=int(os.getenv('POSTGRES_PORT', 5432)),
+    dbname=os.getenv('POSTGRES_DB'),
+    user=os.getenv('POSTGRES_USER'),
+    password=os.getenv('POSTGRES_PASSWORD'),
+)
+print('接続OK:', conn.server_version)
+conn.close()
+"
+```
+
+> Azure と異なり `sslmode='require'` は不要です（ローカル接続のためデフォルトで無効）。
+
+---
+
+## 7. 初回データ投入
+
+### 7-1. セッションデータのエクスポート
+
+```bash
+python3 DigiM_DB_Export.py
+```
+
+または WebUI の **Sessions → Export to DB** ボタンから実行できます。
+
+### 7-2. 既存データの一括ベクトル化
+
+エクスポート後、未ベクトル化レコードを一括処理します。
+
+```bash
+python3 -c "import DigiM_DB_Export as dmdbe; dmdbe.vectorize_dialogs()"
+```
+
+> Docker環境ではazure_ai拡張が使えないため、Pythonからベクトル化します。
+> 以降の新規データはWebUIの **Export to DB** ボタン実行時に自動でベクトル化されます。
+
+---
+
+## コンテナの管理
+
+```bash
+# 停止
+docker compose stop
+
+# 停止 + コンテナ削除（データは保持）
+docker compose down
+
+# 停止 + コンテナ・ボリューム削除（データも消える）
+docker compose down -v
+
+# ログ確認
+docker compose logs postgres
+```
+
+---
+
+## テーブル構成の概要
+
+```
+digim_sessions  (1)
+    └── digim_dialogs  (N)  ← session_id で紐付け
+            └── digim_references  (N)  ← dialog_id で紐付け
+```
+
+| テーブル | 説明 |
+|---------|------|
+| `digim_sessions` | セッション単位のメタ情報（名前・ユーザー・エージェント等） |
+| `digim_dialogs` | 会話の各ターン（入力・応答・トークン数・RAG利用状況等） |
+| `digim_references` | 各ターンで参照されたRAGナレッジチャンクの詳細 |

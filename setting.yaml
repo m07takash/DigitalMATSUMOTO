@@ -4,6 +4,8 @@ SESSION_FILE_NAME: "chat_memory.json"
 SESSION_STATUS_FILE_NAME: "status.yaml"
 SESSION_CONTENTS_FOLDER: "contents/"
 SESSION_ANALYTICS_FOLDER: "analytics/"
+ARCHIVE_FOLDER: "user/archive/"
+ARCHIVE_DAYS: 30
 AGENT_FOLDER: "user/common/agent/"
 CHARACTER_FOLDER: "user/common/agent/character/"
 PRACTICE_FOLDER: "user/common/practice/"

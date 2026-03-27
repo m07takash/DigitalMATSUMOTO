@@ -209,3 +209,6 @@ backup/
 
 # nohup
 nohup.out
+
+# Claude
+.claude

@@ -3,7 +3,10 @@ import json
 import logging
 import threading
 from datetime import datetime
+from datetime import timezone
 from pathlib import Path
+import zipfile
+import shutil
 
 # セッションファイル単位の書き込みロック（Race Condition防止）
 _session_file_locks: dict = {}
@@ -14,6 +17,7 @@ def _get_file_lock(file_path: str) -> threading.Lock:
         if file_path not in _session_file_locks:
             _session_file_locks[file_path] = threading.Lock()
         return _session_file_locks[file_path]
+
 from dotenv import load_dotenv
 import DigiM_Util as dmu
 
@@ -27,11 +31,16 @@ session_file_name = system_setting_dict["SESSION_FILE_NAME"]
 session_status_file_name = system_setting_dict["SESSION_STATUS_FILE_NAME"]
 session_contents_folder = system_setting_dict["SESSION_CONTENTS_FOLDER"]
 session_analytics_folder = system_setting_dict["SESSION_ANALYTICS_FOLDER"]
+archive_folder = system_setting_dict["ARCHIVE_FOLDER"]
+archive_days = int(system_setting_dict.get("ARCHIVE_DAYS", 30))
 
 # system.envファイルをロードして環境変数を設定
 if os.path.exists("system.env"):
     load_dotenv("system.env")
 temp_move_flg = os.getenv("TEMP_MOVE_FLG")
+
+DB_EXPORT_DONE = "DONE"
+DB_EXPORT_UNDO = "UNDO"
 
 # セッションの一覧を獲得
 def get_session_list():
@@ -244,6 +253,88 @@ def get_situation(session_id):
         situation = session_file_active_dict[max_seq][max_sub_seq]["prompt"]["query"]["situation"]
 
     return situation
+
+# DB ExportのステータスとlastSeqを取得
+def get_db_export_info(session_id):
+    status_dict = get_status_data(session_id)
+    info = status_dict.get("db_export")
+    if not isinstance(info, dict):
+        return "", 0
+    return info.get("status", ""), int(info.get("last_seq", 0))
+
+# DB ExportステータスをDONEに更新
+def save_db_export_done(session_id, last_seq: int):
+    session_key = session_folder_prefix + session_id
+    session_status_path = str(Path(user_folder_path) / session_key / session_status_file_name)
+    dmu.save_yaml_file({"db_export": {"status": DB_EXPORT_DONE, "last_seq": last_seq}}, session_status_path)
+
+# DB ExportステータスをUNDOに更新
+def save_db_export_undo(session_id, last_seq: int):
+    session_key = session_folder_prefix + session_id
+    session_status_path = str(Path(user_folder_path) / session_key / session_status_file_name)
+    dmu.save_yaml_file({"db_export": {"status": DB_EXPORT_UNDO, "last_seq": last_seq}}, session_status_path)
+
+# 30日以上更新がないセッションフォルダをZipに圧縮して削除
+def archive_old_sessions(days: int = None) -> dict:
+    """
+    最終更新日から days 日以上経過しているセッションフォルダを
+    1つの ZIP ファイルにまとめて圧縮し、元のフォルダを削除する。
+
+    ZIP の保存先: archive_folder / sessions_archive_YYYYMMDD_HHMMSS.zip
+    戻り値: {"zip_path": str, "archived": [folder_name,...], "skipped": [folder_name,...]}
+    """
+    now = datetime.now(tz=timezone.utc)
+    threshold_days = days if days is not None else archive_days
+    archived = []
+    skipped = []
+
+    # 圧縮対象フォルダを収集
+    target_folders = []
+    for entry in os.scandir(user_folder_path):
+        if not entry.is_dir():
+            continue
+        if not entry.name.startswith(session_folder_prefix):
+            continue
+        try:
+            mtime = datetime.fromtimestamp(entry.stat().st_mtime, tz=timezone.utc)
+            elapsed_days = (now - mtime).days
+            if elapsed_days >= threshold_days:
+                target_folders.append((entry.name, entry.path))
+            else:
+                skipped.append(entry.name)
+        except Exception as e:
+            logger.warning(f"[archive] {entry.name} のmtime取得に失敗しました: {e}")
+            skipped.append(entry.name)
+
+    if not target_folders:
+        logger.info(f"[archive] {threshold_days}日以上更新のないセッションはありませんでした。")
+        return {"zip_path": None, "archived": [], "skipped": skipped}
+
+    # ZIP ファイルパスを決定
+    archive_dir = Path(archive_folder)
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    zip_name = "sessions_archive_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".zip"
+    zip_path = str(archive_dir / zip_name)
+
+    # 圧縮
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        for folder_name, folder_path in target_folders:
+            for file_path in Path(folder_path).rglob("*"):
+                if file_path.is_file():
+                    arcname = Path(folder_name) / file_path.relative_to(folder_path)
+                    zf.write(file_path, arcname)
+
+    # フォルダ削除
+    for folder_name, folder_path in target_folders:
+        try:
+            shutil.rmtree(folder_path)
+            archived.append(folder_name)
+            logger.info(f"[archive] {folder_name} を削除しました。")
+        except Exception as e:
+            logger.error(f"[archive] {folder_name} の削除に失敗しました: {e}")
+
+    logger.info(f"[archive] 完了 — ZIP: {zip_path} / 圧縮={len(archived)}件 / スキップ={len(skipped)}件")
+    return {"zip_path": zip_path, "archived": archived, "skipped": skipped}
 
 # 新しいセッションIDを発番する【数値のシーケンスだけ】
 def set_new_session_id():
@@ -566,6 +657,22 @@ class DigiMSession:
         status_dict = {"user_dialog": user_dialog_status}
         dmu.save_yaml_file(status_dict, self.session_status_path)
 
+    # DB ExportのステータスとlastSeqを取得
+    def get_db_export_info(self):
+        status_dict = dmu.read_yaml_file(self.session_status_path)
+        info = status_dict.get("db_export")
+        if not isinstance(info, dict):
+            return "", 0
+        return info.get("status", ""), int(info.get("last_seq", 0))
+
+    # DB ExportステータスをDONEに更新
+    def save_db_export_done(self, last_seq: int):
+        dmu.save_yaml_file({"db_export": {"status": DB_EXPORT_DONE, "last_seq": last_seq}}, self.session_status_path)
+
+    # DB ExportステータスをUNDOに更新
+    def save_db_export_undo(self, last_seq: int):
+        dmu.save_yaml_file({"db_export": {"status": DB_EXPORT_UNDO, "last_seq": last_seq}}, self.session_status_path)
+
     # 会話履歴を一括保存する (B-5)
     # sub_seq_data: {sub_seq_str: {key: dict, ...}, ...}
     # seq_setting_data: {key: dict, ...}  ← SETTING レベルに保存
@@ -590,6 +697,10 @@ class DigiMSession:
                         chat_history_dict[seq][sub_seq][key] = data
             with open(self.session_file_path, 'w', encoding='utf-8') as f:
                 json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
+            # 新しい会話が保存されたらDB ExportをUNDOにリセット
+            export_status, last_exported_seq = self.get_db_export_info()
+            if export_status == DB_EXPORT_DONE:
+                self.save_db_export_undo(last_exported_seq)
 
     # 会話履歴を保存する
     def save_history(self, seq, chat_dict_key, chat_dict, level="SEQ", sub_seq="1"):
@@ -620,6 +731,10 @@ class DigiMSession:
         # 会話履歴を保存
         with open(self.session_file_path, 'w', encoding='utf-8') as f:
             json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
+        # 新しい会話が保存されたらDB ExportをUNDOにリセット
+        export_status, last_exported_seq = self.get_db_export_info()
+        if export_status == DB_EXPORT_DONE:
+            self.save_db_export_undo(last_exported_seq)
 
     # セッション名を変更する
     def chg_session_name(self, new_session_name):
