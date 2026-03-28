@@ -515,58 +515,82 @@ def get_chunk_notion(bucket, db_name, item_dict, chk_dict=None, date_dict=None, 
 def save_rag_chunk_db(rag_id, rag_data):
     db_client = get_chroma_client()
     collection = db_client.get_or_create_collection(name=rag_id, metadata={"hnsw:space": "cosine"})
-    existing_ids = []
     response = collection.get(include=["metadatas"])
+    existing_map = {}
     if response and "ids" in response:
-        existing_ids = response["ids"]
+        for i, cid in enumerate(response["ids"]):
+            existing_map[cid] = response["metadatas"][i]
     cnt_add = 0
     cnt_extent = 0
 
     # RAGデータをcreate_dateで降順に並び替え
-    if "create_date" in rag_data[0]:
+    if rag_data and "create_date" in rag_data[0]:
         rag_data = sorted(rag_data, key=lambda x: x["create_date"], reverse=True)
 
-    # 対象ドキュメントのベクトルデータを作成
+    # 変更内容でチャンクを仕分け
+    chunks_need_embed = []  # 新規 or title/key_text/value_text 変更 → ベクトル化必要
+    chunks_meta_only  = []  # その他フィールドのみ変更 → メタデータ上書きのみ
+
+    skip_keys_for_compare = {"id", "title", "key_text", "value_text", "vector_data_value_text"}
+
     for rag_chunk in rag_data:
         rag_chunk["create_date_ts"] = datetime.strptime(rag_chunk["create_date"], "%Y-%m-%d").timestamp()
-        if rag_chunk["value_text"]:
-            chunk_id = rag_chunk["id"]
-            if chunk_id not in existing_ids:
-                vec_key_text = dmu.embed_text(rag_chunk["key_text"].replace("\n", ""))
-                vec_value_text = dmu.embed_text(rag_chunk["value_text"].replace("\n", ""))
-                for key in ["id"]:
-                    if key in rag_chunk:
-                        del rag_chunk[key]
-                rag_chunk["vector_data_value_text"] = str(vec_value_text)
-                # DBコレクションに追加
-                collection.add(
-                    ids=[chunk_id],
-                    embeddings=[vec_key_text],
-                    metadatas=rag_chunk
-                )
-                logger.info(f"{rag_chunk['title']}を知識情報DBに追加しました。")
-                cnt_add+=1
+        if not rag_chunk.get("value_text"):
+            continue
+
+        chunk_id = rag_chunk["id"]
+        if chunk_id not in existing_map:
+            chunks_need_embed.append(rag_chunk)
+        else:
+            existing = existing_map[chunk_id]
+            text_changed = (
+                rag_chunk["title"]      != existing.get("title") or
+                rag_chunk["key_text"]   != existing.get("key_text") or
+                rag_chunk["value_text"] != existing.get("value_text")
+            )
+            if text_changed:
+                chunks_need_embed.append(rag_chunk)
             else:
-                existing_data = response["metadatas"][response["ids"].index(chunk_id)]
-                if rag_chunk["title"] == existing_data["title"] and rag_chunk["key_text"] == existing_data["key_text"] and rag_chunk["value_text"] == existing_data["value_text"]:
-                    logger.info(f"{rag_chunk['title']}は知識情報DBに存在しています。")
-                    cnt_extent+=1
+                meta_changed = any(
+                    str(rag_chunk.get(k)) != str(existing.get(k))
+                    for k in rag_chunk
+                    if k not in skip_keys_for_compare
+                )
+                if meta_changed:
+                    chunks_meta_only.append(rag_chunk)
                 else:
-                    vec_key_text = dmu.embed_text(rag_chunk["key_text"].replace("\n", ""))
-                    vec_value_text = dmu.embed_text(rag_chunk["value_text"].replace("\n", ""))
-                    for key in ["id"]:
-                        if key in rag_chunk:
-                            del rag_chunk[key]
-                    rag_chunk["vector_data_value_text"] = str(vec_value_text)
-                    # DBコレクションに追加（重複しているので一度削除して更新）
-                    collection.delete(ids=[chunk_id])
-                    collection.add(
-                        ids=[chunk_id],
-                        embeddings=[vec_key_text],
-                        metadatas=rag_chunk
-                    )
-                    logger.info(f"{rag_chunk['title']}を知識情報DBで更新しました。")
-                    cnt_add+=1
+                    logger.info(f"{rag_chunk['title']}は知識情報DBに存在しています（変更なし）。")
+                    cnt_extent += 1
+
+    # ベクトル化が必要なチャンクを一括APIコールで処理（key_text + value_text をまとめて送信）
+    if chunks_need_embed:
+        key_texts = [c["key_text"].replace("\n", "") for c in chunks_need_embed]
+        val_texts = [c["value_text"].replace("\n", "") for c in chunks_need_embed]
+        all_vecs  = dmu.embed_texts_batch(key_texts + val_texts)
+        n = len(chunks_need_embed)
+        key_vecs = all_vecs[:n]
+        val_vecs = all_vecs[n:]
+
+        for i, rag_chunk in enumerate(chunks_need_embed):
+            chunk_id = rag_chunk["id"]
+            del rag_chunk["id"]
+            rag_chunk["vector_data_value_text"] = str(val_vecs[i])
+            if chunk_id in existing_map:
+                collection.delete(ids=[chunk_id])
+                logger.info(f"{rag_chunk['title']}を知識情報DBで更新しました。")
+            else:
+                logger.info(f"{rag_chunk['title']}を知識情報DBに追加しました。")
+            collection.add(ids=[chunk_id], embeddings=[key_vecs[i]], metadatas=rag_chunk)
+            cnt_add += 1
+
+    # メタデータのみ変更のチャンクをベクトル化なしで上書き
+    for rag_chunk in chunks_meta_only:
+        chunk_id = rag_chunk["id"]
+        del rag_chunk["id"]
+        rag_chunk["vector_data_value_text"] = existing_map[chunk_id].get("vector_data_value_text", "")
+        collection.update(ids=[chunk_id], metadatas=rag_chunk)
+        logger.info(f"{rag_chunk['title']}のメタデータを知識情報DBで更新しました（ベクトル化なし）。")
+        cnt_add += 1
 
     return cnt_add, cnt_extent
 
