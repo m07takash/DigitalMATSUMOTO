@@ -58,6 +58,40 @@ def parse_date(d):
     except Exception:
         return datetime.min
 
+# LOG_TEMPLATE形式の文字列をdictに安全にパース
+def parse_log_template(ref_str: str) -> dict:
+    """LOG_TEMPLATE形式の文字列（'key': value, ...）をdictに変換。
+    テキスト内にシングルクォートやダブルクォート、特殊文字が含まれていてもパース可能。"""
+    import re
+    s = str(ref_str).replace("\n", "").replace("$", "＄")
+    try:
+        return ast.literal_eval("{" + s + "}")
+    except Exception:
+        pass
+    # フォールバック: 既知のキー名で分割してパース
+    result = {}
+    # 'key': パターンの位置を全て検出
+    key_pattern = re.compile(r"'(\w+)'\s*:\s*")
+    matches = list(key_pattern.finditer(s))
+    for i, m in enumerate(matches):
+        key = m.group(1)
+        val_start = m.end()
+        val_end = matches[i + 1].start() if i + 1 < len(matches) else len(s)
+        raw_val = s[val_start:val_end].strip().rstrip(",").strip()
+        # クォートを除去
+        if (raw_val.startswith("'") and raw_val.endswith("'")) or \
+           (raw_val.startswith('"') and raw_val.endswith('"')):
+            raw_val = raw_val[1:-1]
+        # 数値変換を試みる
+        try:
+            result[key] = int(raw_val)
+        except (ValueError, TypeError):
+            try:
+                result[key] = float(raw_val)
+            except (ValueError, TypeError):
+                result[key] = raw_val
+    return result
+
 # ファイル名のサニタイズ
 def sanitize_filename(name: str, replacement: str = "_", max_length: int = 255, keep_unicode: bool = True) -> str:
     """
@@ -318,39 +352,40 @@ def convert_to_ymd(date_str, date_format='%Y-%m-%d'):
     except ValueError:
         return "Invalid date format"
 
+# Embeddingクライアント・トークナイザのシングルトン
+_embed_client = None
+_embed_enc = None
+
+def _get_embed_client():
+    global _embed_client, _embed_enc
+    if _embed_client is None:
+        _embed_client = OpenAI(api_key=openai_api_key)
+    if _embed_enc is None:
+        _embed_enc = tiktoken.encoding_for_model(embedding_model)
+    return _embed_client, _embed_enc
+
 # テキストを埋め込みベクトルに変換（OpenAIのEmbeddingモデル）
 def embed_text(text):
-    openai.api_key = openai_api_key
-    openai_client = OpenAI()
-
-    # 埋め込みベクトル化モデルの最大コンテキストウィンドウを設定
+    client, enc = _get_embed_client()
     max_tokens = 8192
-
-    # 最大トークンで入力を切り取り
-    enc = tiktoken.encoding_for_model(embedding_model)
     tokens = enc.encode(text)
     if len(tokens) > max_tokens:
         tokens = tokens[:max_tokens]
     safe_text = enc.decode(tokens)
-
-    # 埋め込みベクトル化
-    response = openai_client.embeddings.create(model=embedding_model, input=safe_text)
-    response_vec = response.data[0].embedding
-    return response_vec
+    response = client.embeddings.create(model=embedding_model, input=safe_text)
+    return response.data[0].embedding
 
 # C-3: 複数テキストを1回のAPI呼び出しでベクトル化（バッチ処理）
 def embed_texts_batch(texts):
-    openai.api_key = openai_api_key
-    openai_client = OpenAI()
+    client, enc = _get_embed_client()
     max_tokens = 8192
-    enc = tiktoken.encoding_for_model(embedding_model)
     safe_texts = []
     for text in texts:
         tokens = enc.encode(text)
         if len(tokens) > max_tokens:
             tokens = tokens[:max_tokens]
         safe_texts.append(enc.decode(tokens))
-    response = openai_client.embeddings.create(model=embedding_model, input=safe_texts)
+    response = client.embeddings.create(model=embedding_model, input=safe_texts)
     return [item.embedding for item in sorted(response.data, key=lambda x: x.index)]
 
 # 埋め込みベクトルの配列を1つのnpyファイルに保存

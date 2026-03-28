@@ -1,4 +1,5 @@
 import os
+import copy
 from pathlib import Path
 from dotenv import load_dotenv
 import DigiM_Util as dmu
@@ -17,12 +18,26 @@ if os.path.exists("system.env"):
 prompt_template_mst_file = os.getenv("PROMPT_TEMPLATE_MST_FILE")
 prompt_temp_mst_path = str(Path(mst_folder_path) / prompt_template_mst_file)
 
+# エージェントJSONのキャッシュ（ファイルパス→データ）
+_agent_cache = {}
+
+def _read_agent_json(agent_file):
+    """エージェントJSONをキャッシュ付きで読み込む（deep copyで返却し、呼び出し側の変更がキャッシュを汚染しないようにする）"""
+    path = str(Path(agent_folder_path) / agent_file)
+    mtime = os.path.getmtime(path) if os.path.exists(path) else 0
+    cached = _agent_cache.get(agent_file)
+    if cached and cached[0] == mtime:
+        return copy.deepcopy(cached[1])
+    data = dmu.read_json_file(agent_file, agent_folder_path)
+    _agent_cache[agent_file] = (mtime, data)
+    return copy.deepcopy(data)
+
 # エージェント一覧の取得
 def get_all_agents():
     agent_files = dmu.get_files(agent_folder_path, ".json")
     agents = []
     for agent_file in agent_files:
-        agent_data = dmu.read_json_file(agent_file, agent_folder_path)
+        agent_data = _read_agent_json(agent_file)
         agents.append({"AGENT": agent_data["NAME"], "FILE": agent_file})
     return agents
 
@@ -31,7 +46,7 @@ def get_display_agents(group_cd="All"):
     agent_files = dmu.get_files(agent_folder_path, ".json")
     agents = []
     for agent_file in agent_files:
-        agent_data = dmu.read_json_file(agent_file, agent_folder_path)
+        agent_data = _read_agent_json(agent_file)
         if agent_data["DISPLAY"]:
             if "GROUP" not in agent_data:
                 agents.append({"AGENT": agent_data["DISPLAY_NAME"], "FILE": agent_file})
@@ -49,9 +64,8 @@ def get_engine_list(agent_data, model_type="LLM"):
 
 # LLMエージェントのプロパティを設定
 def get_agent_item(agent_file, item):
-    agent_data = dmu.read_json_file(str(Path(agent_folder_path) / agent_file))
-    item_value = agent_data[item]
-    return item_value
+    agent_data = _read_agent_json(agent_file)
+    return agent_data[item]
 
 # LLMエージェントのプロパティを設定
 def set_normal_agent(agent):
@@ -107,7 +121,7 @@ def ext_generate_pureLLM(agent_file, query, memories_selected=[], prompt_temp_cd
 # Agent
 class DigiM_Agent:
     def __init__(self, agent_file):
-        agent_data = dmu.read_json_file(str(Path(agent_folder_path) / agent_file))
+        agent_data = _read_agent_json(agent_file)
         self.set_property(agent_data)
 
     # エージェントのプロパティの設定

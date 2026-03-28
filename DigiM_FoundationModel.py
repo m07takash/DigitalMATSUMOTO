@@ -26,6 +26,30 @@ gemini_api_key = os.getenv("GEMINI_API_KEY")
 llama_api_key = os.getenv("LLAMA_API_KEY")
 xai_api_key = os.getenv("XAI_API_KEY")
 
+# LLMクライアントのシングルトン
+_clients = {}
+
+def _get_openai_client(timeout=None):
+    key = f"openai_{timeout}"
+    if key not in _clients:
+        _clients[key] = OpenAI(api_key=openai_api_key, timeout=timeout)
+    return _clients[key]
+
+def _get_gemini_client():
+    if "gemini" not in _clients:
+        _clients["gemini"] = genai.Client(api_key=gemini_api_key)
+    return _clients["gemini"]
+
+def _get_anthropic_client():
+    if "anthropic" not in _clients:
+        _clients["anthropic"] = anthropic.Anthropic(api_key=anthropic_api_key)
+    return _clients["anthropic"]
+
+def _get_llama_client():
+    if "llama" not in _clients:
+        _clients["llama"] = LlamaAPI(llama_api_key)
+    return _clients["llama"]
+
 # 文字列から関数名を取得
 def call_function_by_name(func_name, *args, **kwargs):
     if func_name in globals():
@@ -36,9 +60,7 @@ def call_function_by_name(func_name, *args, **kwargs):
 
 # GPTの実行
 def generate_response_T_gpt(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
-    os.environ["OPENAI_API_KEY"] = openai_api_key
-    openai.api_key = openai_api_key
-    openai_client = OpenAI()
+    openai_client = _get_openai_client()
 
     # システムプロンプトの設定
     system_message = [
@@ -86,9 +108,7 @@ def generate_response_T_gpt(query, system_prompt, model, memories=[], image_path
 
 # OpenAIのResponses関数の実行
 def generate_response_T_gpt_response(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=False):
-    os.environ["OPENAI_API_KEY"] = openai_api_key
-    openai.api_key = openai_api_key
-    openai_client = OpenAI(timeout=600) #タイムアウトを設定(10min)
+    openai_client = _get_openai_client(timeout=600)
 
     # システムプロンプトではなくインストラクションを設定
     instructions = system_prompt
@@ -126,9 +146,7 @@ def generate_response_T_gpt_response(query, system_prompt, model, memories=[], i
 
 # OpenAIツールの実行(https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses)
 def generate_response_openai_tool(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
-    os.environ["OPENAI_API_KEY"] = openai_api_key
-    openai.api_key = openai_api_key
-    openai_client = OpenAI()
+    openai_client = _get_openai_client()
 
     # システムプロンプトの設定
     system_message = [
@@ -171,7 +189,7 @@ def generate_response_openai_tool(query, system_prompt, model, memories=[], imag
 
 # Geminiの実行
 def generate_response_T_gemini(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
-    gemini_client = genai.Client(api_key=gemini_api_key)
+    gemini_client = _get_gemini_client()
     contents=[]
 
     # システムプロンプトの設定
@@ -242,7 +260,7 @@ def generate_response_T_gemini(query, system_prompt, model, memories=[], image_p
 
 # Claudeの実行
 def generate_response_T_claude(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
-    claude_client = anthropic.Anthropic(api_key=anthropic_api_key)
+    claude_client = _get_anthropic_client()
 
     # メモリをプロンプトに設定
     memory_message = []
@@ -334,7 +352,7 @@ def generate_response_T_grok(query, system_prompt, model, memories=[], image_pat
 
 # llamaの実行
 def generate_response_T_llama(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
-    llama = LlamaAPI(llama_api_key)
+    llama = _get_llama_client()
 
     # システムプロンプトの設定
     system_message = [
@@ -375,7 +393,7 @@ def generate_response_T_llama(query, system_prompt, model, memories=[], image_pa
 
 # Geminiによる画像生成（nano banana 2等）
 def generate_image_gemini(prompt, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
-    gemini_client = genai.Client(api_key=gemini_api_key)
+    gemini_client = _get_gemini_client()
 
     # メモリをプロンプトに設定
     memory_message = []
@@ -428,9 +446,7 @@ def generate_image_gemini(prompt, system_prompt, model, memories=[], image_paths
 
 # 考察に対する画像生成
 def generate_image_dalle(prompt, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
-    os.environ["OPENAI_API_KEY"] = openai_api_key
-    openai.api_key = openai_api_key
-    openai_client = OpenAI()
+    openai_client = _get_openai_client()
 
     # システムプロンプトの設定
     system_message = [{"role": "system", "content": system_prompt}]

@@ -347,6 +347,86 @@ def WebSearch_PerplexityAI(service_info, user_info, session_id, session_name, ag
 
     return response_service_info, response_user_info, response, export_contents
 
+# WEB検索(OpenAI Web Search)
+def WebSearch_OpenAI(service_info, user_info, session_id, session_name, agent_file, input, import_contents=[], add_info={}):
+    from openai import OpenAI
+    if os.path.exists("system.env"):
+        load_dotenv("system.env")
+    api_key = os.getenv("OPENAI_API_KEY")
+
+    system_setting_dict = dmu.read_yaml_file("setting.yaml")
+    system_prompt = system_setting_dict.get("OPENAI_SEARCH_SYSTEM_PROMPT", "Be precise and concise.")
+    user_prompt = system_setting_dict.get("OPENAI_SEARCH_USER_PROMPT", "以下の入力に基づいて、関連する情報を提供してください。")
+    model = system_setting_dict.get("OPENAI_SEARCH_MODEL", "gpt-4.1-mini")
+
+    client = OpenAI(api_key=api_key)
+    response = client.responses.create(
+        model=model,
+        tools=[{"type": "web_search_preview"}],
+        input=user_prompt + "\n" + input,
+        instructions=system_prompt,
+    )
+
+    # レスポンスからテキストとURLを抽出
+    response_text = ""
+    export_urls = []
+    for item in response.output:
+        if item.type == "message":
+            for content in item.content:
+                if hasattr(content, "text"):
+                    response_text += content.text
+                    # アノテーションからURLを抽出
+                    if hasattr(content, "annotations"):
+                        for ann in content.annotations:
+                            if hasattr(ann, "url"):
+                                export_urls.append({"url": ann.url, "title": getattr(ann, "title", "")})
+
+    return service_info, user_info, response_text, export_urls
+
+# WEB検索(Google Grounding Search)
+def WebSearch_Google(service_info, user_info, session_id, session_name, agent_file, input, import_contents=[], add_info={}):
+    from google import genai
+    from google.genai import types
+    if os.path.exists("system.env"):
+        load_dotenv("system.env")
+    api_key = os.getenv("GEMINI_API_KEY")
+
+    system_setting_dict = dmu.read_yaml_file("setting.yaml")
+    user_prompt = system_setting_dict.get("GOOGLE_SEARCH_USER_PROMPT", "以下の入力に基づいて、関連する情報を提供してください。")
+    model = system_setting_dict.get("GOOGLE_SEARCH_MODEL", "gemini-2.5-flash-preview-05-20")
+
+    client = genai.Client(api_key=api_key)
+    response = client.models.generate_content(
+        model=model,
+        contents=user_prompt + "\n" + input,
+        config=types.GenerateContentConfig(
+            tools=[types.Tool(google_search=types.GoogleSearch())],
+        ),
+    )
+
+    # レスポンスからテキストとURLを抽出
+    response_text = response.text if response.text else ""
+    export_urls = []
+    if response.candidates and response.candidates[0].grounding_metadata:
+        gm = response.candidates[0].grounding_metadata
+        if gm.grounding_chunks:
+            for chunk in gm.grounding_chunks:
+                if hasattr(chunk, "web") and chunk.web:
+                    export_urls.append({"url": chunk.web.uri, "title": chunk.web.title or ""})
+
+    return service_info, user_info, response_text, export_urls
+
+# WEB検索のディスパッチ（エンジン名に応じて関数を切り替え）
+WEB_SEARCH_ENGINES = {
+    "Perplexity": WebSearch_PerplexityAI,
+    "OpenAI": WebSearch_OpenAI,
+    "Google": WebSearch_Google,
+}
+
+def WebSearch(service_info, user_info, session_id, session_name, agent_file, input, import_contents=[], add_info={}, engine="Perplexity"):
+    func = WEB_SEARCH_ENGINES.get(engine, WebSearch_PerplexityAI)
+    return func(service_info, user_info, session_id, session_name, agent_file, input, import_contents, add_info)
+
 # 経営分析
 def management_analysis(service_info, user_info, session_id, session_name, agent_file, input, import_contents=[], add_info={}):
     try:
