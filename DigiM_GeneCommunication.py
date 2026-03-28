@@ -1,5 +1,6 @@
 import os
 import csv
+import logging
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
@@ -8,6 +9,8 @@ import DigiM_Agent as dma
 import DigiM_Session as dms
 import DigiM_Util as dmu
 import DigiM_Notion as dmn
+
+logger = logging.getLogger(__name__)
 
 # setting.yamlからフォルダパスなどを設定
 system_setting_dict = dmu.read_yaml_file("setting.yaml")
@@ -19,12 +22,29 @@ if os.path.exists("system.env"):
     load_dotenv("system.env")
 notion_db_mst_file = os.getenv("NOTION_MST_FILE")
 
+# デフォルトのFIELD_MAP（後方互換用）
+# name: CSV列名, notion_name: Notionプロパティ名（省略時はnameを使用）
+DEFAULT_FIELD_MAP = [
+    {"key": "title",        "name": "title",        "notion_name": "title",         "type": "title"},
+    {"key": "RAG_Category", "name": "RAG_Category", "notion_name": "RAGカテゴリ",   "type": "category"},
+    {"key": "category",     "name": "category",     "notion_name": "カテゴリ",       "type": "category"},
+    {"key": "create_date",  "name": "create_date",  "notion_name": "タイムスタンプ", "type": "date"},
+    {"key": "memo",         "name": "memo",         "notion_name": "メモ",           "type": "text"},
+    {"key": "service_id",   "name": "service_id",   "notion_name": "サービスID",     "type": "text"},
+    {"key": "user_id",      "name": "user_id",      "notion_name": "ユーザーID",     "type": "text"},
+    {"key": "session_name", "name": "session_name", "notion_name": "セッション",     "type": "text"},
+    {"key": "seq",          "name": "seq",           "notion_name": "seq",           "type": "number"},
+    {"key": "sub_seq",      "name": "sub_seq",       "notion_name": "sub_seq",       "type": "number"},
+    {"key": "query",        "name": "query",         "notion_name": "クエリ",        "type": "text"},
+    {"key": "response",     "name": "response",      "notion_name": "レスポンス",    "type": "text"},
+]
+
 # フィードバックデータの定義
-def get_feedback_data(fb_k, memo, k1, k2, v2, default_category, service_id, user_id):
+def get_feedback_data(fb_k, memo, category, k1, k2, v2, service_id, user_id):
     fb_data = {}
-    fb_data["title"] = v2["feedback"]["name"]+"-"+fb_k+"("+v2["prompt"]["query"]["situation"]["TIME"]+")"
+    fb_data["title"] = v2["setting"]["session_name"][:20]+"-"+memo[:20]
     fb_data["RAG_Category"] = fb_k
-    fb_data["category"] = default_category
+    fb_data["category"] = category
     fb_data["create_date"] = dmu.safe_parse_timestamp(v2["prompt"]["query"]["situation"]["TIME"])
     fb_data["service_id"] = service_id
     fb_data["user_id"] = user_id
@@ -40,24 +60,20 @@ def get_feedback_data(fb_k, memo, k1, k2, v2, default_category, service_id, user
     return fb_data
 
 # CSVファイルへの保存
-def save_communication_csv(fb_data, save_db):
-    fieldnames = [
-        "title",
-        "RAG_Category",
-        "category",
-        "create_date",
-        "memo",
-        "service_id",
-        "user_id",
-        "session_name",
-        "seq",
-        "sub_seq",
-        "query",
-        "response"
-    ]
+def save_communication_csv(fb_data, save_db, field_map):
+    fieldnames = [f["name"] for f in field_map]
+    date_keys = {f["key"] for f in field_map if f["type"] == "date"}
 
-    # 日付型を変換
-    fb_data["create_date"] = datetime.fromisoformat(fb_data["create_date"]).strftime("%Y/%m/%d")
+    # 内部キー → 出力列名のマッピングで行データを構築
+    row_data = {}
+    for f in field_map:
+        val = fb_data.get(f["key"], f.get("default", ""))
+        if f["key"] in date_keys and val:
+            try:
+                val = datetime.fromisoformat(str(val)).strftime("%Y/%m/%d")
+            except Exception:
+                pass
+        row_data[f["name"]] = str(val).replace('\r\n', '').replace('\r', '').replace('\n', '')
 
     # ファイル名を設定
     file_path = rag_data_csv_path + save_db + ".csv"
@@ -69,16 +85,19 @@ def save_communication_csv(fb_data, save_db):
             reader = csv.DictReader(csvfile)
             records = list(reader)
 
+    # title列名を取得（FIELD_MAPでtype="title"の列名）
+    title_col = next((f["name"] for f in field_map if f["type"] == "title"), fieldnames[0])
+
     # Titleが一致する行があれば上書き、なければ追加
     updated = False
     for i, row in enumerate(records):
-        if row.get("title") == fb_data.get("title"):
-            records[i] = {k: str(fb_data.get(k, "")).replace('\r\n', '').replace('\r', '').replace('\n', '') for k in fieldnames}
+        if row.get(title_col) == row_data.get(title_col):
+            records[i] = row_data
             updated = True
             break
 
     if not updated:
-        records.append({k: str(fb_data.get(k, "")).replace('\r\n', '').replace('\r', '').replace('\n', '') for k in fieldnames})
+        records.append(row_data)
 
     # 全体を書き戻し（上書き保存）
     with open(file_path, mode="w", newline="", encoding="utf-8-sig") as csvfile:
@@ -87,27 +106,38 @@ def save_communication_csv(fb_data, save_db):
         writer.writerows(records)
 
 # Notionデータベースへの保存
-def save_communication_notion(fb_data, save_db):
+def save_communication_notion(fb_data, save_db, field_map):
     notion_db_mst_file_path = str(Path(mst_folder_path) / notion_db_mst_file)
     notion_db_mst = dmu.read_json_file(notion_db_mst_file_path)
+    if save_db not in notion_db_mst:
+        logger.error(f"Notionマスターに '{save_db}' が見つかりません。登録済みキー: {list(notion_db_mst.keys())}")
+        return
     db_id = notion_db_mst[save_db]
 
-    # Notionページの保存
-    response = dmn.create_page(db_id, fb_data["title"])
+    # titleフィールドを取得してNotionページを作成
+    title_field = next((f for f in field_map if f["type"] == "title"), None)
+    title_val = fb_data.get(title_field["key"], "") if title_field else fb_data.get("title", "")
+    response = dmn.create_page(db_id, title_val)
     page_id = response["id"]
-    dmn.update_notion_select(page_id, "RAGカテゴリ", fb_data["RAG_Category"])
-    dmn.update_notion_select(page_id, "カテゴリ", fb_data["category"])
-    dmn.update_notion_date(page_id, "タイムスタンプ", fb_data["create_date"])
-    dmn.update_notion_rich_text_content(page_id, "コンテキスト", fb_data["memo"])
-    dmn.update_notion_rich_text_content(page_id, "サービスID", fb_data["service_id"])
-    dmn.update_notion_rich_text_content(page_id, "ユーザーID", fb_data["user_id"])
-    dmn.update_notion_rich_text_content(page_id, "セッション", fb_data["session_name"])
-    dmn.update_notion_num(page_id, "seq", fb_data["seq"])
-    dmn.update_notion_num(page_id, "sub_seq", fb_data["sub_seq"])
-    dmn.update_notion_rich_text_content(page_id, "クエリ", fb_data["query"])
-    dmn.update_notion_rich_text_content(page_id, "レスポンス", fb_data["response"])
-    dmn.update_notion_rich_text_content(page_id, "メモ", fb_data["memo"])
-    dmn.update_notion_chk(page_id, "確定Chk", True)
+
+    # FIELD_MAPに基づいて型別にNotionプロパティを更新
+    for f in field_map:
+        if f["type"] == "title":
+            continue
+        val = fb_data.get(f["key"], f.get("default", ""))
+        prop_name = f.get("notion_name", f["name"])
+        field_type = f["type"]
+
+        if field_type == "text":
+            dmn.update_notion_rich_text_content(page_id, prop_name, str(val))
+        elif field_type == "number":
+            dmn.update_notion_num(page_id, prop_name, val)
+        elif field_type == "date":
+            dmn.update_notion_date(page_id, prop_name, val)
+        elif field_type == "category":
+            dmn.update_notion_select(page_id, prop_name, str(val))
+        elif field_type == "checkbox":
+            dmn.update_notion_chk(page_id, prop_name, bool(val))
 
 # フィードバックデータの保存
 def create_communication_data(session_id, agent_file):
@@ -116,6 +146,7 @@ def create_communication_data(session_id, agent_file):
     save_mode = agent.communication["SAVE_MODE"]
     save_db = agent.communication["SAVE_DB"]
     default_category = agent.communication["DEFAULT_CATEGORY"]
+    field_map = agent.communication.get("FIELD_MAP", DEFAULT_FIELD_MAP)
 
     service_id = ""
     user_id = ""
@@ -133,10 +164,11 @@ def create_communication_data(session_id, agent_file):
                 if "feedback" in v2.keys():
                     for fb_k, fb_v in v2["feedback"].items():
                         if fb_k != "name" and fb_v["flg"]:
-                            fb_data = get_feedback_data(fb_k, fb_v["memo"], k1, k2, v2, default_category, service_id, user_id)
+                            category = fb_v.get("category", default_category)
+                            fb_data = get_feedback_data(fb_k, fb_v["memo"], category, k1, k2, v2, service_id, user_id)
                             if save_mode == "Notion":
-                                save_communication_notion(fb_data, save_db)
+                                save_communication_notion(fb_data, save_db, field_map)
                             else:
-                                save_communication_csv(fb_data, save_db)
+                                save_communication_csv(fb_data, save_db, field_map)
                             v2["feedback"][fb_k]["flg"]=False
                     session.set_feedback_history(k1, k2, v2["feedback"])

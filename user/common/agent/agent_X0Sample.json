@@ -405,10 +405,24 @@
         "ACTIVE": "Y",
         "SAVE_MODE": "CSV",
         "SAVE_DB": "Sample00_Communication",
-        "DEFAULT_CATEGORY": "Feedback",
+        "DEFAULT_CATEGORY": "未設定",
         "FEEDBACK_ITEM_LIST": [
             "memo",
             "comment"
+        ],
+        "FIELD_MAP": [
+            {"key": "title",        "name": "title",        "type": "title"},
+            {"key": "RAG_Category", "name": "RAG_Category", "type": "category"},
+            {"key": "category",     "name": "category",     "type": "category"},
+            {"key": "create_date",  "name": "create_date",  "type": "date"},
+            {"key": "memo",         "name": "memo",         "type": "text"},
+            {"key": "service_id",   "name": "service_id",   "type": "text"},
+            {"key": "user_id",      "name": "user_id",      "type": "text"},
+            {"key": "session_name", "name": "session_name", "type": "text"},
+            {"key": "seq",          "name": "seq",          "type": "number"},
+            {"key": "sub_seq",      "name": "sub_seq",      "type": "number"},
+            {"key": "query",        "name": "query",        "type": "text"},
+            {"key": "response",     "name": "response",     "type": "text"}
         ]
     },
     "SUPPORT_AGENT": {

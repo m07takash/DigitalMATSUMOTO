@@ -598,18 +598,6 @@ def main():
             st.session_state.engine_name = st.session_state.agent_data.get("ENGINE", {}).get("LLM", {}).get("DEFAULT", "")
             st.session_state.imagegen_engine_name = st.session_state.agent_data.get("ENGINE", {}).get("IMAGEGEN", {}).get("DEFAULT", "")
 
-        # LLMエンジン選択
-        _engine_list = dma.get_engine_list(st.session_state.agent_data, model_type="LLM")
-        if _engine_list:
-            _engine_index = _engine_list.index(st.session_state.engine_name) if st.session_state.engine_name in _engine_list else 0
-            st.session_state.engine_name = st.selectbox("Select Engine(LLM):", _engine_list, index=_engine_index)
-
-        # IMAGEGENエンジン選択
-        _imagegen_engine_list = dma.get_engine_list(st.session_state.agent_data, model_type="IMAGEGEN")
-        if _imagegen_engine_list:
-            _imagegen_index = _imagegen_engine_list.index(st.session_state.imagegen_engine_name) if st.session_state.imagegen_engine_name in _imagegen_engine_list else 0
-            st.session_state.imagegen_engine_name = st.selectbox("Select Engine(IMAGEGEN):", _imagegen_engine_list, index=_imagegen_index)
-
         side_col1, side_col2 = st.columns(2)
 
         # 新しいセッションを発番（IDを指定して、新規にセッションリフレッシュ）
@@ -625,6 +613,21 @@ def main():
         # 会話履歴の更新
         if side_col2.button("Refresh List", key="refresh_session_list"):
             refresh_session_list(st.session_state.service_id, st.session_state.user_id, st.session_state.user_admin_flg)
+
+        # エージェントのエンジンを選択
+        engines_expander = st.expander("Engines")
+        with engines_expander:
+            # LLMエンジン選択
+            _engine_list = dma.get_engine_list(st.session_state.agent_data, model_type="LLM")
+            if _engine_list:
+                _engine_index = _engine_list.index(st.session_state.engine_name) if st.session_state.engine_name in _engine_list else 0
+                st.session_state.engine_name = st.selectbox("Select Engine(LLM):", _engine_list, index=_engine_index)
+
+            # IMAGEGENエンジン選択
+            _imagegen_engine_list = dma.get_engine_list(st.session_state.agent_data, model_type="IMAGEGEN")
+            if _imagegen_engine_list:
+                _imagegen_index = _imagegen_engine_list.index(st.session_state.imagegen_engine_name) if st.session_state.imagegen_engine_name in _imagegen_engine_list else 0
+                st.session_state.imagegen_engine_name = st.selectbox("Select Engine(IMAGEGEN):", _imagegen_engine_list, index=_imagegen_index)
 
         # セッションの管理
         sessions_expander = st.expander("Sessions")
@@ -910,24 +913,29 @@ def main():
                                 agent_communication = v2["setting"]["communication"]
 
                                 if agent_communication["ACTIVE"] == "Y":
+                                    # カテゴリ選択肢を取得
+                                    _cat_map = dmu.read_json_file("category_map.json", mst_folder_path)
+                                    _cat_options = list(_cat_map.get("Category", {}).keys()) if _cat_map else ["未設定"]
+                                    _default_cat = agent_communication.get("DEFAULT_CATEGORY") or _cat_options[0]
+
                                     with st.chat_message("Feedback"):
                                         feedback = {}
-                                        feedback["name"] = "Chunk Title"
-                                        if "feedback" in v2:
-                                            feedback["name"] = v2.get("feedback", {}).get("name", feedback["name"])
-                                        feedback["name"] = st.text_input("Feedback_Name:", key=f"feedback_name{k}_{k2}", value=feedback["name"], label_visibility="collapsed")
+                                        feedback["name"] = "Feedback"
 
                                         for fb_item in agent_communication["FEEDBACK_ITEM_LIST"]:
                                             feedback[fb_item] = {}
                                             feedback[fb_item]["visible"] = False
                                             feedback[fb_item]["flg"] = False
                                             feedback[fb_item]["memo"] = ""
+                                            feedback[fb_item]["category"] = _default_cat
                                             if "feedback" in v2:
                                                 feedback[fb_item] = v2.get("feedback", {}).get(fb_item, feedback[fb_item])
                                             feedback[fb_item]["saved_memo"] = feedback[fb_item]["memo"]
 
                                             if st.checkbox(f"{fb_item}", key=f"feedback_{fb_item}_{k}_{k2}", value=feedback[fb_item]["visible"]):
                                                 feedback[fb_item]["memo"] = st.text_input("Memo:", key=f"feedback_{fb_item}_memo{k}_{k2}", value=feedback[fb_item]["memo"], label_visibility="collapsed")
+                                                _cat_idx = _cat_options.index(feedback[fb_item].get("category", _default_cat)) if feedback[fb_item].get("category", _default_cat) in _cat_options else 0
+                                                feedback[fb_item]["category"] = st.selectbox("Category:", _cat_options, index=_cat_idx, key=f"feedback_{fb_item}_cat{k}_{k2}", label_visibility="collapsed")
                                                 feedback[fb_item]["visible"] = True
                                             else:
                                                 feedback[fb_item]["memo"] = ""

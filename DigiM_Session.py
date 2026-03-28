@@ -740,14 +740,18 @@ class DigiMSession:
     def chg_session_name(self, new_session_name):
         self.session_name = new_session_name
         self.save_session_name()
-#        if os.path.exists(self.session_file_path):
-#            session_file_dict = dmu.read_json_file(self.session_file_path)
-#            session_file_active_dict = {k: v for k, v in session_file_dict.items() if v["SETTING"].get("FLG") == "Y"}
-#            max_seq = max_seq_dict(session_file_active_dict)
-#            max_sub_seq = max_seq_dict(session_file_active_dict[max_seq])
-#            session_file_dict[max_seq][max_sub_seq]["setting"]["session_name"] = new_session_name
-#        with open(self.session_file_path, 'w', encoding='utf-8') as f:
-#            json.dump(session_file_dict, f, ensure_ascii=False, indent=4)
+        if os.path.exists(self.session_file_path):
+            session_file_dict = dmu.read_json_file(self.session_file_path)
+            for seq_key, seq_val in session_file_dict.items():
+                if not isinstance(seq_val, dict):
+                    continue
+                for sub_key, sub_val in seq_val.items():
+                    if sub_key == "SETTING" or not isinstance(sub_val, dict):
+                        continue
+                    if "setting" in sub_val and isinstance(sub_val["setting"], dict):
+                        sub_val["setting"]["session_name"] = new_session_name
+            with open(self.session_file_path, 'w', encoding='utf-8') as f:
+                json.dump(session_file_dict, f, ensure_ascii=False, indent=4)
 
     # 会話履歴のシーケンスを取得する
     def get_seq_history(self):
