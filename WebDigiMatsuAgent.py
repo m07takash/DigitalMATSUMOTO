@@ -345,6 +345,8 @@ def initialize_session_states():
         st.session_state.session_user_id = st.session_state.user_id
     if 'time_setting' not in st.session_state:
         st.session_state.time_setting = now_time.strftime("%Y/%m/%d %H:%M:%S")
+    if 'time_mode' not in st.session_state:
+        st.session_state.time_mode = "Real Date"
     if 'situation_setting' not in st.session_state:
         st.session_state.situation_setting = ""
     if 'seq_memory' not in st.session_state:
@@ -421,7 +423,8 @@ def refresh_session_states():
         st.session_state.session_service_id = st.session_state.service_id
     if st.session_state.session_user_id == "":
         st.session_state.session_user_id = st.session_state.user_id
-    st.session_state.time_setting = now_time.strftime("%Y/%m/%d %H:%M:%S")
+    if st.session_state.time_mode == "Real Date":
+        st.session_state.time_setting = now_time.strftime("%Y/%m/%d %H:%M:%S")
     st.session_state.situation_setting = ""
     st.session_state.seq_memory = []
     st.session_state.stream_mode = True
@@ -465,6 +468,7 @@ def refresh_session(session_id, session_name, situation, new_session_flg=False):
         else:
             st.session_state.display_name = st.session_state.default_agent
     st.session_state.time_setting = situation["TIME"]
+    st.session_state.time_mode = "Custom Date" if situation["TIME"] else "No Date"
     st.session_state.situation_setting = situation["SITUATION"]
     st.session_state.seq_memory = []
     st.session_state.sidebar_message = ""
@@ -775,14 +779,20 @@ def main():
 
     # 時刻の設定
     header_col1.markdown("Time Setting:")
-    selected_time_setting = now_time.strftime("%Y/%m/%d %H:%M:%S")
-    if header_col1.checkbox("Real Date:", value=True):
+    _time_modes = ["Real Date", "Custom Date", "No Date"]
+    _time_mode_idx = _time_modes.index(st.session_state.time_mode) if st.session_state.time_mode in _time_modes else 0
+    time_mode = header_col1.radio("Time Mode:", _time_modes, index=_time_mode_idx, label_visibility="collapsed", horizontal=True)
+    st.session_state.time_mode = time_mode
+    if time_mode == "Real Date":
         selected_time_setting = now_time.strftime("%Y/%m/%d %H:%M:%S")
+    elif time_mode == "No Date":
+        selected_time_setting = ""
     else:
-        selected_date = header_col1.date_input("Situation Date", value=datetime.strptime(st.session_state.time_setting, "%Y/%m/%d %H:%M:%S").date())
-        selected_time = header_col1.time_input("Situation Time", value=datetime.strptime(st.session_state.time_setting, "%Y/%m/%d %H:%M:%S").time())
-        selected_time_setting = tz.localize(datetime.combine(selected_date, selected_time)).strftime('%Y/%m/%d %H:%M:%S')
+        if "custom_time_input" not in st.session_state:
+            st.session_state.custom_time_input = now_time.strftime("%Y/%m/%d %H:%M:%S")
+        selected_time_setting = header_col1.text_input("Situation Date:", key="custom_time_input", placeholder="例: 2026/03/28 14:00:00, BC500年, 西暦3000年")
     time_setting = str(selected_time_setting)
+    st.session_state.time_setting = time_setting
 
     # 実行の設定
     if st.session_state.allowed_exec_setting:
@@ -1035,7 +1045,7 @@ def main():
                                                 title = f"{k}-{k2}-{st.session_state.session.session_name}"
                                                 references = []
                                                 for reference_data in v2["response"]["reference"]["knowledge_rag"]:
-                                                    references.append(ast.literal_eval("{"+ reference_data.replace("\n", "").replace("$", "＄") + "}"))
+                                                    references.append(dmu.parse_log_template(reference_data))
                                                 result = dmva.analytics_knowledge(analytics_agent_file, ref_timestamp, title, references, st.session_state.session.session_analytics_folder_path, st.session_state.analytics_knowledge_mode, st.session_state.analytics_dimension_mode)
                                                 analytics_dict["knowledge_utility"] = result
                                                 st.session_state.session.set_analytics_history(k, k2, analytics_dict)
@@ -1075,7 +1085,7 @@ def main():
                                                             compare_title = f"{k}-{k2}-{st.session_state.session.session_name}_compare{selected_compare_idx}"
                                                             compare_references = []
                                                             for compare_reference_data in compare_agent_info["knowledge_rag"]["knowledge_ref"]:
-                                                                compare_references.append(ast.literal_eval("{"+ compare_reference_data.replace("\n", "").replace("$", "＄") + "}"))
+                                                                compare_references.append(dmu.parse_log_template(compare_reference_data))
                                                             compare_ref_result = dmva.analytics_knowledge(compare_agent_file, compare_timestamp, compare_title, compare_references, st.session_state.session.session_analytics_folder_path, st.session_state.analytics_knowledge_mode_compare, st.session_state.analytics_dimension_mode_compare)
                                                             analytics_dict["compare_agents"][selected_compare_idx]["compare_agent"]["knowledge_utility"] = compare_ref_result
                                                             st.session_state.session.set_analytics_history(k, k2, analytics_dict)
@@ -1168,8 +1178,13 @@ def main():
 
         # WEB検索の設定
         if st.session_state.allowed_web_search:
-            if st.checkbox("WEB Search", value=st.session_state.web_search):
+            _ws_col1, _ws_col2 = st.columns([1, 2])
+            if _ws_col1.checkbox("WEB Search", value=st.session_state.web_search):
                 st.session_state.web_search = True
+                _ws_default = dmu.read_yaml_file("setting.yaml").get("WEB_SEARCH_DEFAULT", "Perplexity")
+                _ws_engines = list(dmt.WEB_SEARCH_ENGINES.keys())
+                _ws_idx = _ws_engines.index(_ws_default) if _ws_default in _ws_engines else 0
+                st.session_state.web_search_engine = _ws_col2.selectbox("Engine:", _ws_engines, index=_ws_idx, label_visibility="collapsed")
             else:
                 st.session_state.web_search = False
 
@@ -1254,6 +1269,7 @@ def main():
             execution["META_SEARCH"] = st.session_state.meta_search
             execution["RAG_QUERY_GENE"] = st.session_state.RAG_query_gene
             execution["WEB_SEARCH"] = st.session_state.web_search
+            execution["WEB_SEARCH_ENGINE"] = st.session_state.get("web_search_engine", "")
 
             # ユーザー入力の一時表示
             with st.chat_message("user"):

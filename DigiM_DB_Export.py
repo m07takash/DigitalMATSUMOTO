@@ -79,10 +79,8 @@ def _parse_duration(timestamp_log: str) -> float | None:
 
 def _parse_knowledge_ref(ref_str: str) -> dict:
     """LOG_TEMPLATE形式の文字列をdictに変換"""
-    try:
-        return ast.literal_eval("{" + str(ref_str) + "}")
-    except Exception:
-        return {}
+    from DigiM_Util import parse_log_template
+    return parse_log_template(ref_str)
 
 def _get_prompt_template(prompt: dict) -> str:
     """prompt.prompt_template から設定名を取得"""

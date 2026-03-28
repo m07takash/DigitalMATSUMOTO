@@ -24,14 +24,18 @@ rag_folder_db_path = system_setting_dict["RAG_FOLDER_DB"]
 
 # エージェントのシンプルな実行
 def genLLMAgentSimple(service_info, user_info, session_id, session_name, agent_file, model_type="LLM", sub_seq=1, query="", import_contents=[], situation={}, overwrite_items={}, add_knowledge=[], prompt_temp_cd="No Template", execution={}, seq_limit="", sub_seq_limit=""):
+    # overwrite適用後のmodel_nameを取得
     agent = dma.DigiM_Agent(agent_file)
+    if overwrite_items:
+        dmu.update_dict(agent.agent, overwrite_items)
+        agent.set_property(agent.agent)
     model_name = agent.agent["ENGINE"][model_type]["MODEL"]
 
     # 実行の設定
     execution = {}
     execution["CONTENTS_SAVE"] = False
     execution["MEMORY_SAVE"] = False
-    execution["STREAM_MODE"] = False
+    execution["STREAM_MODE"] = True
     execution["SAVE_DIGEST"] = False
 
     # LLM実行
@@ -120,22 +124,22 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
     scatter_plot_file_ref = f"{file_title}_ScatterRefPlot({method})_{rag_name}.png"
     scatter_plot_filename_ref = str(Path(analytics_file_path) / scatter_plot_file_ref)
 
-    plt.figure(figsize=(10, 8))
-    plt.scatter(df[xcol], df[ycol], c=df["ref_color"], alpha=0.7)
-    plt.title(f"{method} Analysis(Ref): {rag_name}{pca_info_text}")
-    plt.grid(True)
-    plt.savefig(scatter_plot_filename_ref, dpi=300, bbox_inches="tight")
-    # plt.show()
+    fig_ref, ax_ref = plt.subplots(figsize=(10, 8))
+    ax_ref.scatter(df[xcol], df[ycol], c=df["ref_color"], alpha=0.7)
+    ax_ref.set_title(f"{method} Analysis(Ref): {rag_name}{pca_info_text}")
+    ax_ref.grid(True)
+    fig_ref.savefig(scatter_plot_filename_ref, dpi=300, bbox_inches="tight")
+    plt.close(fig_ref)
 
     # カテゴリーの散布図
     if "category_color" in df.columns:
         scatter_plot_file_category = f"{file_title}_ScatterCategoryPlot({method})_{rag_name}.png"
         scatter_plot_filename_category = str(Path(analytics_file_path) / scatter_plot_file_category)
 
-        plt.figure(figsize=(10, 8))
-        plt.scatter(df[xcol], df[ycol], c=df["category_color"], alpha=0.7)
-        plt.title(f"{method} Analysis(Category): {rag_name}{pca_info_text}")
-        plt.grid(True)
+        fig_cat, ax_cat = plt.subplots(figsize=(10, 8))
+        ax_cat.scatter(df[xcol], df[ycol], c=df["category_color"], alpha=0.7)
+        ax_cat.set_title(f"{method} Analysis(Category): {rag_name}{pca_info_text}")
+        ax_cat.grid(True)
 
         if category_map:
             category_handles = [
@@ -145,10 +149,10 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
             category_handles.append(
                 plt.Line2D([0], [0], marker="o", color="w", label="その他", markersize=10, markerfacecolor="gray")
             )
-            plt.legend(handles=category_handles, loc="upper left", bbox_to_anchor=(1, 1), title="カテゴリ")
+            ax_cat.legend(handles=category_handles, loc="upper left", bbox_to_anchor=(1, 1), title="カテゴリ")
 
-        plt.savefig(scatter_plot_filename_category, dpi=300, bbox_inches="tight")
-        # plt.show()
+        fig_cat.savefig(scatter_plot_filename_category, dpi=300, bbox_inches="tight")
+        plt.close(fig_cat)
 
     # 散布図にプロットされるデータ(CSV)
     if "category_color" in df.columns:
@@ -184,6 +188,10 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
     df['knowledge_utility'] = round(df['similarity_Q'] - df['similarity_A'], 3)
     file_title = dmu.sanitize_filename(title[:30])
 
+    # エージェントのKNOWLEDGE→BOOKの定義順を取得
+    agent = dma.DigiM_Agent(agent_file)
+    rag_order = [k.get("NAME", "") for k in agent.knowledge] + [b.get("RAG_NAME", "") for b in agent.book]
+
     # similarity_Qの統計量を算出
     similarity_Q_stats = df.groupby('rag')['similarity_Q'].agg([
         ('min', 'min'),
@@ -214,11 +222,30 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
     # RAGごとの知識活用性（Q最小値-A最小値）を算出
     knowledge_utility_stats_dict = dict(zip(similarity_Q_stats['rag'], knowledge_utility_stats['max']))
 
-    # 出力用に辞書形式に変換
-    similarity_Q_stats_dict = similarity_Q_stats.to_dict(orient='index')
-    similarity_A_stats_dict = similarity_A_stats.to_dict(orient='index')
-    similarity_utility_dict = knowledge_utility_stats_dict
-    similarity_rank = (df.sort_values(['rag', 'similarity_Q'], ascending=[True, True]).groupby('rag')[['DB', 'ID', 'title', 'similarity_Q', 'similarity_A','knowledge_utility', 'QUERY_SEQ', 'QUERY_MODE']].apply(lambda x: x.to_dict(orient='records')).to_dict())
+    # 出力用に辞書形式に変換（エージェントのKNOWLEDGE定義順で並べ替え）
+    def _order_dict_by_rag(d):
+        """辞書をrag_orderの順序で並べ替える"""
+        ordered = {}
+        for rn in rag_order:
+            # キーが直接rag名の場合（similarity_rank, utility等）
+            if rn in d:
+                ordered[rn] = d[rn]
+            else:
+                # キーがint indexで値にragフィールドがある場合（stats系）
+                for k, v in d.items():
+                    if isinstance(v, dict) and v.get('rag') == rn and k not in ordered.values():
+                        ordered[k] = v
+                        break
+        for k, v in d.items():
+            if k not in ordered:
+                ordered[k] = v
+        return ordered
+
+    similarity_Q_stats_dict = _order_dict_by_rag(similarity_Q_stats.to_dict(orient='index'))
+    similarity_A_stats_dict = _order_dict_by_rag(similarity_A_stats.to_dict(orient='index'))
+    similarity_utility_dict = _order_dict_by_rag(knowledge_utility_stats_dict)
+    similarity_rank_raw = (df.sort_values(['rag', 'similarity_Q'], ascending=[True, True]).groupby('rag')[['DB', 'ID', 'title', 'similarity_Q', 'similarity_A','knowledge_utility', 'QUERY_SEQ', 'QUERY_MODE']].apply(lambda x: x.to_dict(orient='records')).to_dict())
+    similarity_rank = _order_dict_by_rag(similarity_rank_raw)
 
     # フォルダがなければ作成
     if not os.path.exists(analytics_file_path):
@@ -257,62 +284,68 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
     if "CategoryColor" in category_map_json:
         category_map = category_map_json["CategoryColor"]
 
-    # KnowledgeのRAGデータ毎に処理
-    agent = dma.DigiM_Agent(agent_file)
-    for rag_name, group in sorted_plot_data.groupby('rag'):
-        color_map = {
-            "1": ("blue", "lightskyblue"),
-            "2": ("navy", "cornflowerblue"),
-            "default": ("deepskyblue", "powderblue")
-        }
+    # KnowledgeのRAGデータ毎に処理（エージェントのKNOWLEDGE→BOOKの定義順で出力）
+    db_client = chromadb.PersistentClient(path=rag_folder_db_path)
+    knowledge_map = {k.get("RAG_NAME"): k for k in agent.knowledge}
+    color_map = {
+        "1": ("blue", "lightskyblue"),
+        "2": ("navy", "cornflowerblue"),
+        "default": ("deepskyblue", "powderblue"),
+    }
+    cat_category = category_map_json.get("Category", {})
+    cat_color = category_map_json.get("CategoryColor", {})
 
+    grouped = dict(list(sorted_plot_data.groupby('rag')))
+    ordered_groups = [(name, grouped[name]) for name in rag_order if name in grouped]
+    ordered_groups += [(name, grp) for name, grp in grouped.items() if name not in rag_order]
+    for rag_name, group in ordered_groups:
         group["q_colors"] = [
-            (
-                color_map.get(seq, color_map["default"])[0]
-                if mode == "NORMAL"
-                else color_map.get(seq, color_map["default"])[1]
-            )
+            color_map.get(seq, color_map["default"])[0 if mode == "NORMAL" else 1]
             for seq, mode in zip(group["QUERY_SEQ"], group["QUERY_MODE"])
         ]
 
-        for knowledge in agent.knowledge:
-            if knowledge.get("RAG_NAME") == rag_name:
-                rag_data_list = []
-                for rag_data in knowledge["DATA"]:
-                    if rag_data["DATA_TYPE"] == "DB":
-                        db_client = chromadb.PersistentClient(path=rag_folder_db_path)
-                        try:
-                            collection = db_client.get_collection(rag_data["DATA_NAME"])
-                        except Exception as e:
-                            logger.warning(f"[SKIP] ChromaDB collection not found: {rag_data['DATA_NAME']}")
-                            continue
+        knowledge = knowledge_map.get(rag_name)
+        if knowledge:
+            # ID→色のルックアップテーブルを事前構築（O(n*m) → O(n+m)）
+            id_color_map = dict(zip(group["ID"], group["q_colors"]))
 
-                        rag_data_db = collection.get(include=["metadatas", "embeddings"])
-                        for i in range(len(rag_data_db["ids"])):
-                            v = {}
-                            v["id"] = rag_data_db["ids"][i]
-                            v |= rag_data_db["metadatas"][i]
-                            v["vector_data_value_text"] = ast.literal_eval(v["vector_data_value_text"])
-                            v["vector_data_key_text"] = rag_data_db["embeddings"][i].tolist()
-                            v["ref_color"] = (group.loc[group["ID"] == v["id"], "q_colors"].iloc[0] if (group["ID"] == v["id"]).any() else "gray")
-                            if v["create_date"][:10] <= end_date_str[:10]:
-                                if 'category' in v:
-                                    if category_map_json:
-                                        v["category_sum"] = category_map_json["Category"].get(v["category"], "その他")
-                                        if v["category_sum"] in category_map_json["CategoryColor"]:
-                                            v["category_color"] = category_map_json["CategoryColor"][v["category_sum"]]
-                                        else:
-                                            v["category_color"] = "gray"                        
-                                rag_data_list.append(v)
+            rag_data_list = []
+            for rag_data in knowledge["DATA"]:
+                if rag_data["DATA_TYPE"] != "DB":
+                    continue
+                try:
+                    collection = db_client.get_collection(rag_data["DATA_NAME"])
+                except Exception as e:
+                    logger.warning(f"[SKIP] ChromaDB collection not found: {rag_data['DATA_NAME']}")
+                    continue
 
-                if rag_data_list:
-                    scatter_plot_category_file, scatter_plot_ref_file, scatter_plot_csv_file = plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, dim_mode, category_map)
-                    if scatter_plot_category_file:
-                        scatter_plot_category_files.append(scatter_plot_category_file)
-                    if scatter_plot_ref_file:
-                        scatter_plot_ref_files.append(scatter_plot_ref_file)
-                    if scatter_plot_csv_file:
-                        scatter_plot_csv_files.append(scatter_plot_csv_file)
+                rag_data_db = collection.get(include=["metadatas", "embeddings"])
+                ids = rag_data_db["ids"]
+                metas = rag_data_db["metadatas"]
+                embeddings = rag_data_db["embeddings"]
+
+                for i in range(len(ids)):
+                    meta = metas[i]
+                    if meta.get("create_date", "")[:10] > end_date_str[:10]:
+                        continue
+                    v = {"id": ids[i]}
+                    v |= meta
+                    v["vector_data_value_text"] = ast.literal_eval(v["vector_data_value_text"])
+                    v["vector_data_key_text"] = embeddings[i].tolist()
+                    v["ref_color"] = id_color_map.get(ids[i], "gray")
+                    if "category" in v and cat_category:
+                        v["category_sum"] = cat_category.get(v["category"], "その他")
+                        v["category_color"] = cat_color.get(v["category_sum"], "gray")
+                    rag_data_list.append(v)
+
+            if rag_data_list:
+                scatter_plot_category_file, scatter_plot_ref_file, scatter_plot_csv_file = plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, dim_mode, category_map)
+                if scatter_plot_category_file:
+                    scatter_plot_category_files.append(scatter_plot_category_file)
+                if scatter_plot_ref_file:
+                    scatter_plot_ref_files.append(scatter_plot_ref_file)
+                if scatter_plot_csv_file:
+                    scatter_plot_csv_files.append(scatter_plot_csv_file)
 
         similarity_plot_files.append(create_similarity_plot_file(file_title, analytics_file_path, rag_name, group))
 

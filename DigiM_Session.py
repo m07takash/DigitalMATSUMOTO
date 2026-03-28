@@ -594,6 +594,12 @@ class DigiMSession:
         vec_text = dmu.read_vectext_to_npy(str(Path(self.session_vec_folder_path) / vec_file_name))
         return vec_text
 
+    # セッションメタデータを一括保存する（1回のYAML読み書きで完了）
+    def save_session_metadata(self, **kwargs):
+        if not os.path.exists(self.session_folder_path):
+            os.makedirs(self.session_folder_path, exist_ok=True)
+        dmu.save_yaml_file(kwargs, self.session_status_path)
+
     # セッションIDを設定する
     def save_session_id(self):
         if not os.path.exists(self.session_folder_path):

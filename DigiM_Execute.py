@@ -42,6 +42,7 @@ def _parse_execution_settings(execution):
         "meta_search":       execution.get("META_SEARCH", True),
         "RAG_query_gene":    execution.get("RAG_QUERY_GENE", True),
         "web_search":        execution.get("WEB_SEARCH", False),
+        "web_search_engine": execution.get("WEB_SEARCH_ENGINE", ""),
     }
 
 # B-3: USER_INPUT解決の共通関数
@@ -79,13 +80,15 @@ def _build_intent_queries(service_info, user_info, session_id, session_name, sup
     """RAG検索用クエリ(意図)を生成し、追加クエリ・ベクトル・ログを返す"""
     if not (RAG_query_gene and "RAG_QUERY_GENERATOR" in support_agent):
         return [], [], {}
+    t_start = datetime.now()
     add_info = {"Memories_Selected": memories_selected, "Situation": situation_prompt, "QueryVecs": [query_vec]}
     agent_file = support_agent["RAG_QUERY_GENERATOR"]
     _, _, response, model_name, prompt_tokens, response_tokens = dmt.RAG_query_generator(
         service_info, user_info, session_id, session_name, agent_file, user_query, [], add_info)
     vec = dmu.embed_text(response.replace("\n", ""))
+    duration = round((datetime.now() - t_start).total_seconds(), 2)
     log = {"agent_file": agent_file, "model": model_name, "llm_response": response,
-           "prompt_token": prompt_tokens, "response_token": response_tokens}
+           "prompt_token": prompt_tokens, "response_token": response_tokens, "duration_sec": duration}
     return [response], [vec], log
 
 # B-4: メタデータ検索フェーズ（C-1での並列化フック）
@@ -94,13 +97,16 @@ def _build_meta_searches(service_info, user_info, session_id, session_name, supp
     """クエリからメタデータ検索情報を取得する"""
     if not (meta_search and "EXTRACT_DATE" in support_agent):
         return [], {}
+    t_start = datetime.now()
     add_info = {"Memories_Selected": memories_selected, "Situation": situation_prompt, "QueryVecs": [query_vec]}
     agent_file = support_agent["EXTRACT_DATE"]
     _, _, response, model_name, prompt_tokens, response_tokens = dmt.extract_date(
         service_info, user_info, session_id, session_name, agent_file, user_query, [], add_info)
     date_list = dmu.merge_periods(dmu.extract_list_pattern(response))
+    duration = round((datetime.now() - t_start).total_seconds(), 2)
     log = {"date": {"agent_file": agent_file, "model": model_name, "condition_list": date_list,
-                    "llm_response": response, "prompt_token": prompt_tokens, "response_token": response_tokens}}
+                    "llm_response": response, "prompt_token": prompt_tokens, "response_token": response_tokens,
+                    "duration_sec": duration}}
     return [{"DATE": date_list}], log
 
 # ダイジェスト生成・保存・アンロックをバックグラウンドで実行
@@ -180,8 +186,21 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     situation_prompt = ""
     if situation:
         situation_setting = situation.get("SITUATION", "") + "\n" if "SITUATION" in situation else ""
-        time_setting = situation.get("TIME", str(datetime.now(pytz.timezone(timezone_setting)).strftime('%Y/%m/%d %H:%M:%S')))
-        situation_prompt = f"\n【状況】\n{situation_setting}現在は「{time_setting}」です。"
+        time_setting = situation.get("TIME", "")
+        if time_setting:
+            # 標準的な日時フォーマット以外（架空の日時設定）の場合は強い指示を付加
+            is_standard = False
+            try:
+                datetime.strptime(time_setting, "%Y/%m/%d %H:%M:%S")
+                is_standard = True
+            except (ValueError, TypeError):
+                pass
+            if is_standard:
+                situation_prompt = f"\n【状況】\n{situation_setting}現在は「{time_setting}」です。"
+            else:
+                situation_prompt = f"\n【重要な状況設定】\n{situation_setting}この会話では、現在の日時は「{time_setting}」として設定されています。会話履歴やシステム上の実際の日時に関わらず、必ずこの設定に従ってください。実際の日時には一切言及しないでください。"
+        elif situation_setting.strip():
+            situation_prompt = f"\n【状況】\n{situation_setting}"
 
     # 会話のダイジェストを取得
     if cfg["memory_use"]:
@@ -203,8 +222,9 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         search_text = user_query
         if digest_text or situation_prompt:
             search_text = "検索して欲しい内容:\n" + user_query + "\n\n[参考]これまでの会話:\n" + digest_text + "\n\n[参考]今の状況:\n" + situation_prompt
-        _, _, web_result_text, export_urls = dmt.WebSearch_PerplexityAI(
-            service_info, user_info, session_id, session_name, agent_file, search_text, [], {})
+        web_engine = cfg["web_search_engine"] or dmu.read_yaml_file("setting.yaml").get("WEB_SEARCH_DEFAULT", "Perplexity")
+        _, _, web_result_text, export_urls = dmt.WebSearch(
+            service_info, user_info, session_id, session_name, agent_file, search_text, [], {}, engine=web_engine)
         web_context = "[参考]関連するWEBの検索結果:\n" + web_result_text
         web_search_log = {"urls": export_urls, "web_context": web_context}
     output_reference["Web_search"] = web_search_log
@@ -252,6 +272,9 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             support_agent, user_query, memories_selected, situation_prompt, query_vec, cfg["meta_search"])
         intent_queries, intent_vecs, RAG_query_gene_log = future_intent.result()
         meta_searches, meta_search_log = future_meta.result()
+    intent_dur = RAG_query_gene_log.get("duration_sec", "-") if RAG_query_gene_log else "-"
+    meta_dur = meta_search_log.get("date", {}).get("duration_sec", "-") if meta_search_log else "-"
+    timestamp_log += f"[09.RAG検索用クエリ生成完了({intent_dur}s)][10.メタデータ検索完了({meta_dur}s)]" + str(datetime.now()) + "<br>"
     queries += intent_queries
     query_vecs += intent_vecs
     output_reference["RAG_query_gene_log"] = RAG_query_gene_log
@@ -601,14 +624,16 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
             "practice": practice
         })
 
-        # セッションステータスの更新
-        session.save_session_id()
-        session.save_session_name()
-        session.save_service_id(service_info["SERVICE_ID"])
-        session.save_user_id(user_info["USER_ID"])
-        session.save_agent_file(in_agent_file)
-        session.save_last_update_date(str(datetime.now()))
-        session.save_active_session("Y")
+        # セッションステータスの一括更新（7回→1回のYAML読み書き）
+        session.save_session_metadata(
+            id=session.session_id,
+            name=session.session_name,
+            service_id=service_info["SERVICE_ID"],
+            user_id=user_info["USER_ID"],
+            agent=in_agent_file,
+            last_update_date=str(datetime.now()),
+            active="Y",
+        )
 
     except Exception as e:
         session.save_status("UNLOCKED")
