@@ -1,23 +1,49 @@
 # JupyterLabをポート8891で起動（トークンなし、パスワードなしなのでサーバー上での実行はオススメしません！）
 jupyter lab --ip=0.0.0.0 --port=8891 --allow-root --no-browser --NotebookApp.token=''
 
-# ターミナルで実行して8893ポートで利用
-streamlit run WebDigiMatsuAgent.py --server.address 0.0.0.0 --server.port 8893
+# ターミナルで実行して8501ポートで利用
+streamlit run WebDigiMatsuAgent.py --server.address 0.0.0.0 --server.port 8501
 
 # FastAPIを8899ポートで起動
 uvicorn DigiM_API:app --host 0.0.0.0 --port 8899
 gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8899 DigiM_API:app --timeout 600 --graceful-timeout 600 --keep-alive 5 --capture-output --log-level debug
 
-# APIの実行コマンド(curl)
-curl -X POST http://localhost:8899/run_function \
+# ヘルスチェック
+curl -s http://localhost:8899/health
+
+# エージェント一覧
+curl -s http://localhost:8899/agents | python3 -m json.tool --no-ensure-ascii
+
+# メッセージ送信
+curl -s -X POST http://localhost:8899/run \
   -H "Content-Type: application/json" \
   -d '{
-    "service_info": {"SERVICE_ID":"Curl", "SERVICE_DATA":{}},
-    "user_info": {"USER_ID":"CUI_TEST", "USER_DATA":{}},
-    "session_id": "",
-    "session_name": "",
+    "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
+    "user_info": {"USER_ID": "TestUser", "USER_DATA": {}},
+    "session_id": "API_TEST_001",
     "user_input": "こんにちは",
-    "situation": {},
-    "agent_file": "",
-    "execution": {}
-}'
+    "agent_file": "agent_X0Sample.json"
+  }' | python3 -m json.tool --no-ensure-ascii
+
+# セッション一覧
+curl -s "http://localhost:8899/sessions?user_id=TestUser" | python3 -m json.tool --no-ensure-ascii
+
+# セッション履歴
+curl -s http://localhost:8899/sessions/API_TEST_001 | python3 -m json.tool --no-ensure-ascii
+
+# フィードバック設定の確認
+curl -s http://localhost:8899/agents/agent_X0Sample.json/feedback | python3 -m json.tool --no-ensure-ascii
+
+# フィードバック送信
+curl -s -X POST http://localhost:8899/feedback \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "API_TEST_001",
+    "agent_file": "agent_X0Sample.json",
+    "seq": "1",
+    "sub_seq": "1",
+    "feedbacks": {
+      "name": "Feedback",
+      "memo": {"visible": true, "flg": true, "memo": "参考になった", "category": "AI"}
+    }
+  }' | python3 -m json.tool --no-ensure-ascii

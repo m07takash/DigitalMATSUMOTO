@@ -223,10 +223,20 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         if digest_text or situation_prompt:
             search_text = "検索して欲しい内容:\n" + user_query + "\n\n[参考]これまでの会話:\n" + digest_text + "\n\n[参考]今の状況:\n" + situation_prompt
         web_engine = cfg["web_search_engine"] or dmu.read_yaml_file("setting.yaml").get("WEB_SEARCH_DEFAULT", "Perplexity")
+        _setting = dmu.read_yaml_file("setting.yaml")
+        _web_model_map = {
+            "Perplexity": _setting.get("PERPLEXITY_MODEL", "sonar"),
+            "OpenAI": _setting.get("OPENAI_SEARCH_MODEL", "gpt-4.1-mini"),
+            "Google": _setting.get("GOOGLE_SEARCH_MODEL", "gemini-2.5-flash"),
+        }
+        web_model = _web_model_map.get(web_engine, "")
+        t_web_start = datetime.now()
         _, _, web_result_text, export_urls = dmt.WebSearch(
             service_info, user_info, session_id, session_name, agent_file, search_text, [], {}, engine=web_engine)
+        web_duration = round((datetime.now() - t_web_start).total_seconds(), 2)
         web_context = "[参考]関連するWEBの検索結果:\n" + web_result_text
-        web_search_log = {"urls": export_urls, "web_context": web_context}
+        web_search_log = {"engine": web_engine, "model": web_model, "duration_sec": web_duration, "urls": export_urls, "web_context": web_context}
+        timestamp_log += f"[06.WEB検索完了({web_engine}/{web_model}, {web_duration}s)]" + str(datetime.now()) + "<br>"
     output_reference["Web_search"] = web_search_log
     user_query += f"\n{web_context}"
 

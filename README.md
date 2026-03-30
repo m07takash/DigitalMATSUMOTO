@@ -116,7 +116,7 @@ docker build -t digimatsumoto .
 ```bash
 docker run -d --name digimatsumoto \
   -p 8501:8501 \
-  -p 8900:8900 \
+  -p 8899:8899 \
   -v $(pwd):/app/DigitalMATSUMOTO \
   digimatsumoto \
   bash -c "cd /app/DigitalMATSUMOTO && streamlit run WebDigiMatsuAgent.py --server.port 8501"
@@ -125,7 +125,7 @@ docker run -d --name digimatsumoto \
 | ポート | 用途 |
 |-------|------|
 | 8501 | Streamlit WebUI |
-| 8900 | FastAPI エンドポイント |
+| 8899 | FastAPI エンドポイント |
 
 ※ポート番号は必要に応じて変更してください。
 
@@ -737,3 +737,154 @@ streamlit run WebDigiMatsuAgent.py --server.port 8501
 # API（FastAPI）
 python DigiM_API.py
 ```
+
+---
+
+## API リファレンス
+
+FastAPI を起動すると、REST API 経由でエージェントを実行できます。LINE・Slack 等の外部サービスからの呼び出しにも対応しています。
+
+### エンドポイント一覧
+
+| メソッド | パス | 説明 |
+|---------|------|------|
+| `POST` | `/run` | メッセージを送信してエージェントの応答を取得（同期） |
+| `GET` | `/agents` | 利用可能なエージェント一覧を取得 |
+| `GET` | `/agents/{agent_file}/feedback` | エージェントのフィードバック設定を取得 |
+| `POST` | `/feedback` | フィードバックを送信（CSV/Notionに保存） |
+| `GET` | `/sessions` | セッション一覧を取得 |
+| `GET` | `/sessions/{session_id}` | セッションの会話履歴を取得 |
+| `GET` | `/health` | ヘルスチェック |
+
+### POST /run — メッセージ送信
+
+1回の HTTP リクエストで LLM 実行が完結し、応答を直接返します。同一 `session_id` を指定すれば会話が継続されます。
+
+同じセッションが実行中（LOCKED）の場合は最大60秒待機し、解除後に実行されます。タイムアウト時は `429` を返します。
+
+**リクエスト:**
+
+```json
+{
+  "service_info": {"SERVICE_ID": "サービス名", "SERVICE_DATA": {}},
+  "user_info": {"USER_ID": "ユーザーID", "USER_DATA": {}},
+  "session_id": "セッションID（省略時は自動発番）",
+  "session_name": "セッション名（省略時は自動生成）",
+  "user_input": "メッセージ本文",
+  "situation": {"TIME": "", "SITUATION": ""},
+  "agent_file": "エージェントファイル名（省略時はsystem.envのAPI_AGENT_FILE）",
+  "engine": "エンジン名（省略時はエージェントのDEFAULT）",
+  "execution": {}
+}
+```
+
+| パラメータ | 必須 | 説明 |
+|-----------|------|------|
+| `service_info` | ○ | サービス識別情報（`SERVICE_ID` でサービスを区別） |
+| `user_info` | ○ | ユーザー識別情報（`USER_ID` でユーザーを区別） |
+| `session_id` | | セッションID。LINE連携なら LINE ユーザーID を指定すると会話が継続される |
+| `user_input` | ○ | ユーザーの入力メッセージ |
+| `agent_file` | | 使用するエージェント（例: `agent_X0Sample.json`） |
+| `engine` | | LLMエンジン名（例: `Gemini-2.5-Flash`）。エージェントの ENGINE.LLM に定義されている名前を指定 |
+| `situation` | | 日時・状況設定。`TIME` を空にすると日時なしで実行 |
+| `execution` | | 実行オプション（`WEB_SEARCH`, `META_SEARCH` 等） |
+
+**レスポンス:**
+
+```json
+{
+  "session_id": "API_TEST_001",
+  "session_name": "(User:TestUser)AIについての質問",
+  "response": "エージェントの応答テキスト"
+}
+```
+
+### 実行例
+
+```bash
+# ヘルスチェック
+curl -s http://localhost:8899/health
+
+# エージェント一覧
+curl -s http://localhost:8899/agents | python3 -m json.tool --no-ensure-ascii
+
+# メッセージ送信（新規セッション）
+curl -s -X POST http://localhost:8899/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
+    "user_info": {"USER_ID": "TestUser", "USER_DATA": {}},
+    "session_id": "API_TEST_001",
+    "user_input": "こんにちは、自己紹介してください。",
+    "agent_file": "agent_X0Sample.json"
+  }' | python3 -m json.tool --no-ensure-ascii
+
+# 同じセッションで会話を継続
+curl -s -X POST http://localhost:8899/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
+    "user_info": {"USER_ID": "TestUser", "USER_DATA": {}},
+    "session_id": "API_TEST_001",
+    "user_input": "AIの未来について教えて",
+    "agent_file": "agent_X0Sample.json"
+  }' | python3 -m json.tool --no-ensure-ascii
+
+# エンジンを指定して実行
+curl -s -X POST http://localhost:8899/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
+    "user_info": {"USER_ID": "TestUser", "USER_DATA": {}},
+    "session_id": "API_TEST_002",
+    "user_input": "量子コンピュータについて教えて",
+    "agent_file": "agent_X0Sample.json",
+    "engine": "Gemini-2.5-Flash"
+  }' | python3 -m json.tool --no-ensure-ascii
+
+# セッション一覧（ユーザーで絞り込み）
+curl -s "http://localhost:8899/sessions?user_id=TestUser" | python3 -m json.tool --no-ensure-ascii
+
+# セッション履歴
+curl -s http://localhost:8899/sessions/API_TEST_001 | python3 -m json.tool --no-ensure-ascii
+
+# フィードバック設定の確認（エージェントが受け付けるフィードバック項目・カテゴリ一覧）
+curl -s http://localhost:8899/agents/agent_X0Sample.json/feedback | python3 -m json.tool --no-ensure-ascii
+
+# フィードバック送信（seq=1, sub_seq=1 の会話に対してフィードバック）
+curl -s -X POST http://localhost:8899/feedback \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "API_TEST_001",
+    "agent_file": "agent_X0Sample.json",
+    "seq": "1",
+    "sub_seq": "1",
+    "feedbacks": {
+      "name": "Feedback",
+      "memo": {"visible": true, "flg": true, "memo": "参考になった", "category": "AI"}
+    }
+  }' | python3 -m json.tool --no-ensure-ascii
+```
+
+> HTTPS 環境では `http://localhost:8899` を `https://your-domain.com/api` に読み替えてください。LLM 実行は 10〜30 秒かかるため、タイムアウトに注意してください。
+
+### LINE 連携での利用例
+
+LINE Messaging API のWebhookからの呼び出しイメージです。
+
+```python
+# LINE Webhook → FastAPI 呼び出し例
+import requests
+
+def handle_line_message(line_user_id, message_text):
+    response = requests.post("https://your-domain.com/api/run", json={
+        "service_info": {"SERVICE_ID": "LINE", "SERVICE_DATA": {}},
+        "user_info": {"USER_ID": line_user_id, "USER_DATA": {}},
+        "session_id": line_user_id,  # LINE ユーザーIDをセッションIDに
+        "user_input": message_text,
+        "agent_file": "agent_X0Sample.json"
+    }, timeout=120)
+    return response.json()["response"]
+```
+
+`session_id` に LINE ユーザーID を指定することで、同一ユーザーとの会話が自動的に継続されます。

@@ -213,6 +213,20 @@ def get_agent_file(session_id):
             agent_file = session_file_active_dict[max_seq]["1"]["setting"]["agent_file"]
     return agent_file
 
+# セッションの最後に実行されたエンジン名を取得
+def get_last_engine_name(session_id):
+    session_file_dict = get_session_data(session_id)
+    if not session_file_dict:
+        return ""
+    session_file_active_dict = {k: v for k, v in session_file_dict.items() if isinstance(v, dict) and v.get("SETTING", {}).get("FLG") == "Y"}
+    if not session_file_active_dict:
+        return ""
+    max_seq = max_seq_dict(session_file_active_dict)
+    max_sub_seq = max_seq_dict(session_file_active_dict[max_seq])
+    setting = session_file_active_dict[max_seq][max_sub_seq].get("setting", {})
+    engine = setting.get("engine", {})
+    return engine.get("NAME", engine.get("MODEL", ""))
+
 # セッションのアクティブ状態を獲得する
 def get_active_session(session_id):
     session_key = session_folder_prefix + session_id
@@ -832,21 +846,27 @@ class DigiMSession:
 
             chat_detail_info += "\n【RAG検索用クエリ】\n"
             if chat_history_dict_seq["prompt"]["RAG_query_genetor"]:
-                chat_detail_info += "エージェント："+chat_history_dict_seq["prompt"]["RAG_query_genetor"]["agent_file"]+"\n"
-                chat_detail_info += "実行モデル："+chat_history_dict_seq["prompt"]["RAG_query_genetor"]["model"]+"\n"
-                chat_detail_info += "入力トークン数："+str(chat_history_dict_seq["prompt"]["RAG_query_genetor"]["prompt_token"])+"\n"
-                chat_detail_info += "出力トークン数："+str(chat_history_dict_seq["prompt"]["RAG_query_genetor"]["response_token"])+"\n"
-                chat_detail_info += chat_history_dict_seq["prompt"]["RAG_query_genetor"]["llm_response"]+"\n"
+                rag_qg = chat_history_dict_seq["prompt"]["RAG_query_genetor"]
+                chat_detail_info += "エージェント："+rag_qg["agent_file"]+"\n"
+                chat_detail_info += "実行モデル："+rag_qg["model"]+"\n"
+                if "duration_sec" in rag_qg:
+                    chat_detail_info += "実行時間："+str(rag_qg["duration_sec"])+"秒\n"
+                chat_detail_info += "入力トークン数："+str(rag_qg["prompt_token"])+"\n"
+                chat_detail_info += "出力トークン数："+str(rag_qg["response_token"])+"\n"
+                chat_detail_info += rag_qg["llm_response"]+"\n"
 
             chat_detail_info += "\n【メタ検索】\n"
             if chat_history_dict_seq["prompt"]["meta_search"]:
+                meta_date = chat_history_dict_seq["prompt"]["meta_search"]["date"]
                 chat_detail_info += "[日付検索]\n"
-                chat_detail_info += "エージェント："+chat_history_dict_seq["prompt"]["meta_search"]["date"]["agent_file"]+"\n"
-                chat_detail_info += "実行モデル："+chat_history_dict_seq["prompt"]["meta_search"]["date"]["model"]+"\n"
-                chat_detail_info += "入力トークン数："+str(chat_history_dict_seq["prompt"]["meta_search"]["date"]["prompt_token"])+"\n"
-                chat_detail_info += "出力トークン数："+str(chat_history_dict_seq["prompt"]["meta_search"]["date"]["response_token"])+"\n"
-                chat_detail_info += "検索条件："+str(chat_history_dict_seq["prompt"]["meta_search"]["date"]["condition_list"])+"\n"
-                chat_detail_info += chat_history_dict_seq["prompt"]["meta_search"]["date"]["llm_response"]+"\n"
+                chat_detail_info += "エージェント："+meta_date["agent_file"]+"\n"
+                chat_detail_info += "実行モデル："+meta_date["model"]+"\n"
+                if "duration_sec" in meta_date:
+                    chat_detail_info += "実行時間："+str(meta_date["duration_sec"])+"秒\n"
+                chat_detail_info += "入力トークン数："+str(meta_date["prompt_token"])+"\n"
+                chat_detail_info += "出力トークン数："+str(meta_date["response_token"])+"\n"
+                chat_detail_info += "検索条件："+str(meta_date["condition_list"])+"\n"
+                chat_detail_info += meta_date["llm_response"]+"\n"
 
             chat_detail_info += "\n【RAGコンテキスト】\n["
             for rag_set_dict in chat_history_dict_seq["response"]["reference"]["knowledge_rag"]:
@@ -858,10 +878,16 @@ class DigiMSession:
             for content_dict in chat_history_dict_seq["prompt"]["query"]["contents"]:
                 chat_detail_info += content_dict["context"]+"\n"
 
-            chat_detail_info += "\n【WEB検索結果】"
+            chat_detail_info += "\n【WEB検索結果】\n"
             if "web_search" in chat_history_dict_seq["prompt"]:
                 web_dict = chat_history_dict_seq["prompt"]["web_search"]
                 if web_dict:
+                    if "engine" in web_dict:
+                        chat_detail_info += "検索エンジン："+web_dict["engine"]+"\n"
+                    if "model" in web_dict:
+                        chat_detail_info += "実行モデル："+web_dict["model"]+"\n"
+                    if "duration_sec" in web_dict:
+                        chat_detail_info += "実行時間："+str(web_dict["duration_sec"])+"秒\n"
                     chat_detail_info += web_dict["web_context"]+"\n"
                     chat_detail_info += "参考URL：\n"
                     for url in web_dict["urls"]:

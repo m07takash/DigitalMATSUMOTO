@@ -486,10 +486,18 @@ def get_chunk_notion(bucket, db_name, item_dict, chk_dict=None, date_dict=None, 
             page_items = {}
             page_items.update({'id': page_id})
             page_items.update({'bucket': bucket})
+            skip_page = False
             for key, value in item_dict.items():
                 if isinstance(value, dict):
                     for k, v in value.items():
-                        page_items[key] = dmn.get_notion_item_by_id(pages, page_id, k, v)
+                        item_val = dmn.get_notion_item_by_id(pages, page_id, k, v)
+                        if item_val is None:
+                            logger.warning(f"[SKIP] Notionページ {page_id} のプロパティ「{k}」({v}型) が未設定のためスキップします")
+                            skip_page = True
+                            break
+                        page_items[key] = item_val
+                    if skip_page:
+                        break
                 elif isinstance(value, list):
                     page_item_text = ""
                     for item in value:
@@ -498,12 +506,15 @@ def get_chunk_notion(bucket, db_name, item_dict, chk_dict=None, date_dict=None, 
                             page_item_text += "\n"
                         if isinstance(item, dict):
                             for k, v in item.items():
-                                page_item_text += dmn.get_notion_item_by_id(pages, page_id, k, v)
+                                page_item_text += dmn.get_notion_item_by_id(pages, page_id, k, v) or ""
                         else:
                             page_item_text += item
                     page_items[key] = page_item_text
                 else:
                     page_items[key] = value
+
+            if skip_page:
+                continue
 
             if "create_date" not in page_items:
                 page_items["create_date"] = datetime.now().strftime("%Y-%m-%d")
