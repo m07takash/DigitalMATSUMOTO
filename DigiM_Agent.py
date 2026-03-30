@@ -24,7 +24,9 @@ _agent_cache = {}
 def _read_agent_json(agent_file):
     """エージェントJSONをキャッシュ付きで読み込む（deep copyで返却し、呼び出し側の変更がキャッシュを汚染しないようにする）"""
     path = str(Path(agent_folder_path) / agent_file)
-    mtime = os.path.getmtime(path) if os.path.exists(path) else 0
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"エージェントファイルが見つかりません: {path}")
+    mtime = os.path.getmtime(path)
     cached = _agent_cache.get(agent_file)
     if cached and cached[0] == mtime:
         return copy.deepcopy(cached[1])

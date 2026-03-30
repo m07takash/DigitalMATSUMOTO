@@ -54,7 +54,8 @@ WORKDIR /app/DigitalMATSUMOTO
 
 # ポートを解放
 EXPOSE 8501
-EXPOSE 8900
+EXPOSE 8891
+EXPOSE 8899
 
 # ボリュームを設定
 VOLUME /work

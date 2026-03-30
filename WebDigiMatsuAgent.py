@@ -346,7 +346,7 @@ def initialize_session_states():
     if 'time_setting' not in st.session_state:
         st.session_state.time_setting = now_time.strftime("%Y/%m/%d %H:%M:%S")
     if 'time_mode' not in st.session_state:
-        st.session_state.time_mode = "Real Date"
+        st.session_state.time_mode = "No Date"
     if 'situation_setting' not in st.session_state:
         st.session_state.situation_setting = ""
     if 'seq_memory' not in st.session_state:
@@ -465,10 +465,18 @@ def refresh_session(session_id, session_name, situation, new_session_flg=False):
         session_agent_file = dms.get_agent_file(st.session_state.session.session_id)
         if os.path.exists(agent_folder_path + session_agent_file):
             st.session_state.display_name = dma.get_agent_item(session_agent_file, "DISPLAY_NAME")
+            # セッションの最後に使用されたエンジン名を復元
+            last_engine = dms.get_last_engine_name(st.session_state.session.session_id)
+            agent_data = dmu.read_json_file(session_agent_file, agent_folder_path)
+            engine_list = dma.get_engine_list(agent_data, "LLM")
+            if last_engine and last_engine in engine_list:
+                st.session_state.engine_name = last_engine
+            else:
+                st.session_state.engine_name = agent_data.get("ENGINE", {}).get("LLM", {}).get("DEFAULT", "")
         else:
             st.session_state.display_name = st.session_state.default_agent
-    st.session_state.time_setting = situation["TIME"]
-    st.session_state.time_mode = "Custom Date" if situation["TIME"] else "No Date"
+    st.session_state.time_setting = situation.get("TIME", "")
+    st.session_state.time_mode = "Custom Date" if situation.get("TIME") else "No Date"
     st.session_state.situation_setting = situation["SITUATION"]
     st.session_state.seq_memory = []
     st.session_state.sidebar_message = ""
@@ -609,7 +617,7 @@ def main():
             session_id = dms.set_new_session_id()
             session_name = "New Chat"
             situation = {}
-            situation["TIME"] = now_time.strftime("%Y/%m/%d %H:%M:%S")
+            situation["TIME"] = ""
             situation["SITUATION"] = ""
             refresh_session_states()
             refresh_session(session_id, session_name, situation, True)
@@ -788,9 +796,18 @@ def main():
     elif time_mode == "No Date":
         selected_time_setting = ""
     else:
-        if "custom_time_input" not in st.session_state:
-            st.session_state.custom_time_input = now_time.strftime("%Y/%m/%d %H:%M:%S")
-        selected_time_setting = header_col1.text_input("Situation Date:", key="custom_time_input", placeholder="例: 2026/03/28 14:00:00, BC500年, 西暦3000年")
+        from datetime import date as _date
+        _cd_tab1, _cd_tab2 = header_col1.tabs(["Calendar", "Free Text"])
+        with _cd_tab1:
+            _cd_date = st.date_input("Date:", value=now_time.date(), min_value=_date(1, 1, 1), max_value=_date(9999, 12, 31), key="custom_date_cal")
+            _cd_time = st.time_input("Time:", value=now_time.time(), key="custom_time_cal")
+            selected_time_setting = datetime.combine(_cd_date, _cd_time).strftime("%Y/%m/%d %H:%M:%S")
+        with _cd_tab2:
+            if "custom_time_input" not in st.session_state:
+                st.session_state.custom_time_input = ""
+            selected_time_setting = st.text_input("Situation Date:", key="custom_time_input", placeholder="例: BC500年, 天保3年 江戸, 西暦30000年")
+            if not selected_time_setting:
+                selected_time_setting = datetime.combine(_cd_date, _cd_time).strftime("%Y/%m/%d %H:%M:%S")
     time_setting = str(selected_time_setting)
     st.session_state.time_setting = time_setting
 
@@ -1204,25 +1221,21 @@ def main():
     # ユーザーの問合せ入力
     if st.session_state.session_user_id == st.session_state.user_id:
 
-        # フラグメント: ロック状態の監視とチャット入力（3秒ごとにこの部分だけ再描画）
-        @st.fragment(run_every=3)
-        def _chat_input_fragment():
-            is_locked = st.session_state.session.get_status() == "LOCKED"
-            _chat_disabled = is_locked or st.session_state.is_processing
-            if is_locked:
+        # チャット入力（ロック中のみポーリングで監視）
+        is_locked = st.session_state.session.get_status() == "LOCKED"
+        if is_locked:
+            @st.fragment(run_every=3)
+            def _lock_monitor():
+                if st.session_state.session.get_status() != "LOCKED":
+                    st.rerun()
                 st.info("🔒 セッションがロックされています。少々お待ちください。")
-            elif st.session_state.get("_fragment_was_locked"):
-                # ロック解除を検知 → フルページ再描画してチャット入力を有効に戻す
-                st.session_state._fragment_was_locked = False
-                st.rerun()
-            st.session_state._fragment_was_locked = is_locked
+            _lock_monitor()
 
-            if raw_input := st.chat_input("Your Message", disabled=_chat_disabled):
-                st.session_state.pending_input = raw_input
-                st.session_state.is_processing = True
-                st.rerun()  # フルページ再描画で LLM 処理を開始
-
-        _chat_input_fragment()
+        _chat_disabled = is_locked or st.session_state.is_processing
+        if raw_input := st.chat_input("Your Message", disabled=_chat_disabled):
+            st.session_state.pending_input = raw_input
+            st.session_state.is_processing = True
+            st.rerun()
 
         if st.session_state.is_processing and st.session_state.pending_input:
             user_input = st.session_state.pending_input
@@ -1278,19 +1291,23 @@ def main():
                 status_placeholder = st.empty()
                 response_placeholder = st.empty()
                 response = ""
-                for _, _, response_chunk, _ in dme.DigiMatsuExecute_Practice(st.session_state.web_service, st.session_state.web_user, st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, add_knowledges, execution):
-                    if response_chunk and isinstance(response_chunk, str) and response_chunk.startswith("[STATUS]"):
-                        status_placeholder.markdown(f"⏳ {response_chunk[len('[STATUS]'):]}")
-                    elif response_chunk:
-                        status_placeholder.empty()
-                        response += response_chunk
-                        response_placeholder.markdown(response)
-                if not st.session_state.session.session_name or st.session_state.session.session_name == "New Chat":
-                    _, _, new_session_name, _, _, _ = dmt.gene_session_name(st.session_state.web_service, st.session_state.web_user, st.session_state.session.session_id, st.session_state.session.session_name, "", user_input)
-                    st.session_state.session.chg_session_name(new_session_name)
-                st.session_state.sidebar_message = ""
-                st.session_state.is_processing = False
-                refresh_session_list(st.session_state.service_id, st.session_state.user_id, st.session_state.user_admin_flg)
+                try:
+                    for _, _, response_chunk, _ in dme.DigiMatsuExecute_Practice(st.session_state.web_service, st.session_state.web_user, st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, add_knowledges, execution):
+                        if response_chunk and isinstance(response_chunk, str) and response_chunk.startswith("[STATUS]"):
+                            status_placeholder.markdown(f"⏳ {response_chunk[len('[STATUS]'):]}")
+                        elif response_chunk:
+                            status_placeholder.empty()
+                            response += response_chunk
+                            response_placeholder.markdown(response)
+                    if not st.session_state.session.session_name or st.session_state.session.session_name == "New Chat":
+                        _, _, new_session_name, _, _, _ = dmt.gene_session_name(st.session_state.web_service, st.session_state.web_user, st.session_state.session.session_id, st.session_state.session.session_name, "", user_input)
+                        st.session_state.session.chg_session_name(new_session_name)
+                except Exception as e:
+                    st.error(f"実行中にエラーが発生しました: {e}")
+                finally:
+                    st.session_state.sidebar_message = ""
+                    st.session_state.is_processing = False
+                    refresh_session_list(st.session_state.service_id, st.session_state.user_id, st.session_state.user_admin_flg)
                 st.rerun()
 
 if __name__ == "__main__":

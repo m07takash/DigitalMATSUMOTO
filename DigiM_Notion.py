@@ -83,7 +83,8 @@ def get_chk_by_id(pages, page_id, item):
 def get_select_by_id(pages, page_id, item):
     for page in pages:
         if page['id'] == page_id:
-            return page['properties'][item]['select']['name']
+            sel = page['properties'][item].get('select')
+            return sel['name'] if sel else None
 
 # ページIDを指定してURLを取得
 def get_url_by_id(pages, page_id, item):
