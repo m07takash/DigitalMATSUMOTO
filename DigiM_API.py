@@ -39,6 +39,17 @@ class InputData(BaseModel):
     situation: Dict[str, Any] = {"TIME": "", "SITUATION": ""}
     agent_file: Optional[str] = None
     engine: Optional[str] = None
+    # Exec Setting（API用デフォルト）
+    stream_mode: Optional[bool] = None
+    save_digest: Optional[bool] = None
+    memory_use: Optional[bool] = None
+    magic_word_use: Optional[bool] = None
+    meta_search: Optional[bool] = None
+    rag_query_gene: Optional[bool] = None
+    web_search: Optional[bool] = None
+    web_search_engine: Optional[str] = None
+    private_mode: Optional[bool] = None
+    # その他の実行設定（上記以外を直接渡す場合）
     execution: Dict[str, Any] = {}
 
 LOCK_WAIT_MAX = 60   # ロック待機の最大秒数
@@ -113,12 +124,44 @@ async def run(data: InputData):
     service_info = data.service_info.model_dump()
     user_info = data.user_info.model_dump()
 
+    # API用デフォルト設定（明示的に指定されたフラグで上書き）
+    execution = {
+        "STREAM_MODE": True,
+        "SAVE_DIGEST": True,
+        "MEMORY_USE": True,
+        "MEMORY_SAVE": True,
+        "MEMORY_SIMILARITY": False,
+        "MAGIC_WORD_USE": False,
+        "META_SEARCH": True,
+        "RAG_QUERY_GENE": True,
+        "WEB_SEARCH": False,
+        "WEB_SEARCH_ENGINE": "OpenAI",
+        "PRIVATE_MODE": False,
+    }
+    # execution dictで渡された値を上書き
+    execution.update(data.execution)
+    # 明示的フィールドで指定された値を上書き（最優先）
+    _flag_map = {
+        "STREAM_MODE": data.stream_mode,
+        "SAVE_DIGEST": data.save_digest,
+        "MEMORY_USE": data.memory_use,
+        "MAGIC_WORD_USE": data.magic_word_use,
+        "META_SEARCH": data.meta_search,
+        "RAG_QUERY_GENE": data.rag_query_gene,
+        "WEB_SEARCH": data.web_search,
+        "WEB_SEARCH_ENGINE": data.web_search_engine,
+        "PRIVATE_MODE": data.private_mode,
+    }
+    for key, val in _flag_map.items():
+        if val is not None:
+            execution[key] = val
+
     try:
         result = exec_function(
             service_info, user_info,
             data.session_id or "", data.session_name or "",
             data.user_input, data.situation, agent_file,
-            data.engine or "", data.execution
+            data.engine or "", execution
         )
         return result
     except Exception as e:
@@ -153,6 +196,44 @@ async def get_session_history(session_id: str):
 async def get_agent_list():
     agents = dma.get_display_agents()
     return {"agents": agents}
+
+# エージェントの選択可能なエンジン一覧
+@app.get("/agents/{agent_file}/engines")
+async def get_engine_list(agent_file: str):
+    try:
+        agent_data = dmu.read_json_file(agent_file, dma.agent_folder_path)
+    except Exception:
+        raise HTTPException(status_code=404, detail=f"Agent file not found: {agent_file}")
+    llm_engines = dma.get_engine_list(agent_data, "LLM")
+    imagegen_engines = dma.get_engine_list(agent_data, "IMAGEGEN")
+    default_llm = agent_data.get("ENGINE", {}).get("LLM", {}).get("DEFAULT", "")
+    default_imagegen = agent_data.get("ENGINE", {}).get("IMAGEGEN", {}).get("DEFAULT", "")
+    return {
+        "agent_file": agent_file,
+        "LLM": {"default": default_llm, "engines": llm_engines},
+        "IMAGEGEN": {"default": default_imagegen, "engines": imagegen_engines},
+    }
+
+# Web検索エンジン一覧
+@app.get("/web_search_engines")
+async def get_web_search_engines():
+    import DigiM_Tool as dmt
+    _setting = dmu.read_yaml_file("setting.yaml")
+    default_engine = _setting.get("WEB_SEARCH_DEFAULT", "Perplexity")
+    engines = []
+    for name in dmt.WEB_SEARCH_ENGINES.keys():
+        engine_info = {"name": name}
+        if name == "Perplexity":
+            engine_info["model"] = _setting.get("PERPLEXITY_MODEL", "sonar")
+        elif name == "OpenAI":
+            engine_info["model"] = _setting.get("OPENAI_SEARCH_MODEL", "gpt-4.1-mini")
+        elif name == "Google":
+            engine_info["model"] = _setting.get("GOOGLE_SEARCH_MODEL", "gemini-2.5-flash")
+        engines.append(engine_info)
+    return {
+        "default": default_engine,
+        "engines": engines,
+    }
 
 # エージェントのフィードバック設定を取得
 @app.get("/agents/{agent_file}/feedback")

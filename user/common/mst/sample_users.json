@@ -27,7 +27,9 @@
       "Analytics Compare": true,
       "WEB Search": true,
       "Book": true,
-      "Download Md": true
+      "Download Md": true,
+      "Web API": true,
+      "Support Eval": true
     }
   },
   "USER0003": {
@@ -46,7 +48,9 @@
       "Analytics Compare": false,
       "WEB Search": false,
       "Book": false,
-      "Download Md": false
+      "Download Md": false,
+      "Web API": false,
+      "Support Eval": false
     }
   }
 }

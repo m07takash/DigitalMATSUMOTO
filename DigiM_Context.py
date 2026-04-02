@@ -283,12 +283,15 @@ def _query_collection_single(collection, query_vec, result_limit, where_limitati
 
 
 # C-2拡張: 1コレクション分の全query_vecsクエリをまとめて実行するヘルパー
-def _process_rag_data(rag_data, query_vecs, exec_info, define_code, meta_searches):
+def _process_rag_data(rag_data, query_vecs, exec_info, define_code, meta_searches, private_mode=False):
     results = []
     try:
         collection = get_chroma_client().get_collection(rag_data["DATA_NAME"])
         result_limit = min(50, collection.count())
         where_limitation = _build_where_limitation(rag_data, exec_info, define_code)
+        # Private Modeの場合、private=Trueのデータを除外
+        if private_mode:
+            where_limitation.append({"private": {"$ne": True}})
         with ThreadPoolExecutor(max_workers=len(query_vecs)) as executor:
             futures = [
                 executor.submit(
@@ -304,7 +307,7 @@ def _process_rag_data(rag_data, query_vecs, exec_info, define_code, meta_searche
     return results
 
 # RAGからのコンテキスト取得
-def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searches=[], define_code={}):
+def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searches=[], define_code={}, private_mode=False):
     rag_final_context = ""
     rag_final_selected = []
 
@@ -316,7 +319,7 @@ def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searche
         if db_rag_data_list:
             with ThreadPoolExecutor(max_workers=len(db_rag_data_list)) as executor:
                 futures = [
-                    executor.submit(_process_rag_data, rd, query_vecs, exec_info, define_code, meta_searches)
+                    executor.submit(_process_rag_data, rd, query_vecs, exec_info, define_code, meta_searches, private_mode)
                     for rd in db_rag_data_list
                 ]
                 for future in futures:
@@ -546,6 +549,8 @@ def save_rag_chunk_db(rag_id, rag_data):
 
     for rag_chunk in rag_data:
         rag_chunk["create_date_ts"] = datetime.strptime(rag_chunk["create_date"], "%Y-%m-%d").timestamp()
+        if "private" not in rag_chunk:
+            rag_chunk["private"] = False
         if not rag_chunk.get("value_text"):
             continue
 
@@ -604,6 +609,32 @@ def save_rag_chunk_db(rag_id, rag_data):
         cnt_add += 1
 
     return cnt_add, cnt_extent
+
+# 既存RAGデータにprivateフラグを一括付与（マイグレーション用）
+def migrate_add_private_flag():
+    db_client = get_chroma_client()
+    collections = db_client.list_collections()
+    total = 0
+    for col in collections:
+        col_name = col.name if hasattr(col, 'name') else str(col)
+        collection = db_client.get_collection(col_name)
+        response = collection.get(include=["metadatas"])
+        if not response or not response["ids"]:
+            continue
+        ids_to_update = []
+        metas_to_update = []
+        for i, cid in enumerate(response["ids"]):
+            meta = response["metadatas"][i]
+            if "private" not in meta:
+                meta["private"] = False
+                ids_to_update.append(cid)
+                metas_to_update.append(meta)
+        if ids_to_update:
+            collection.update(ids=ids_to_update, metadatas=metas_to_update)
+            total += len(ids_to_update)
+            logger.info(f"{col_name}: {len(ids_to_update)}件にprivate=Falseを付与")
+    logger.info(f"マイグレーション完了: 合計{total}件")
+    return total
 
 # RAGデータ生成
 def generate_rag():

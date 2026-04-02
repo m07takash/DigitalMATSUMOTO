@@ -612,63 +612,76 @@ class DigiMSession:
     def save_session_metadata(self, **kwargs):
         if not os.path.exists(self.session_folder_path):
             os.makedirs(self.session_folder_path, exist_ok=True)
-        dmu.save_yaml_file(kwargs, self.session_status_path)
+        status_dict = dmu.read_yaml_file(self.session_status_path)
+        if not status_dict:
+            status_dict = {}
+        status_dict.update(kwargs)
+        # メタデータ更新時にエラー情報をクリア
+        status_dict["error"] = ""
+        dmu.save_yaml_file(status_dict, self.session_status_path)
+
+    def _update_status_yaml(self, updates):
+        """status.yamlの既存データを保持しつつ指定キーを更新する"""
+        if not os.path.exists(self.session_folder_path):
+            os.makedirs(self.session_folder_path, exist_ok=True)
+        status_dict = dmu.read_yaml_file(self.session_status_path)
+        if not status_dict:
+            status_dict = {}
+        status_dict.update(updates)
+        dmu.save_yaml_file(status_dict, self.session_status_path)
 
     # セッションIDを設定する
     def save_session_id(self):
-        if not os.path.exists(self.session_folder_path):
-            os.makedirs(self.session_folder_path, exist_ok=True)
-        status_dict = {"id": self.session_id}
-        dmu.save_yaml_file(status_dict, self.session_status_path)
+        self._update_status_yaml({"id": self.session_id})
 
     # セッション名を設定する
     def save_session_name(self):
-        if not os.path.exists(self.session_folder_path):
-            os.makedirs(self.session_folder_path, exist_ok=True)
-        status_dict = {"name": self.session_name}
-        dmu.save_yaml_file(status_dict, self.session_status_path)
+        self._update_status_yaml({"name": self.session_name})
 
     # セッションのサービスIDを保存する
     def save_service_id(self, service_id):
-        if not os.path.exists(self.session_folder_path):
-            os.makedirs(self.session_folder_path, exist_ok=True)
-        status_dict = {"service_id": service_id}
-        dmu.save_yaml_file(status_dict, self.session_status_path)
+        self._update_status_yaml({"service_id": service_id})
 
     # セッションのユーザーIDを保存する
     def save_user_id(self, user_id):
-        if not os.path.exists(self.session_folder_path):
-            os.makedirs(self.session_folder_path, exist_ok=True)
-        status_dict = {"user_id": user_id}
-        dmu.save_yaml_file(status_dict, self.session_status_path)
+        self._update_status_yaml({"user_id": user_id})
 
     # セッションのサービスIDを保存する
     def save_agent_file(self, agent_file):
-        if not os.path.exists(self.session_folder_path):
-            os.makedirs(self.session_folder_path, exist_ok=True)
-        status_dict = {"agent": agent_file}
-        dmu.save_yaml_file(status_dict, self.session_status_path)
+        self._update_status_yaml({"agent": agent_file})
 
     # セッションの最終更新日を保存する
     def save_last_update_date(self, last_update_date):
-        if not os.path.exists(self.session_folder_path):
-            os.makedirs(self.session_folder_path, exist_ok=True)
-        status_dict = {"last_update_date": last_update_date}
-        dmu.save_yaml_file(status_dict, self.session_status_path)
+        self._update_status_yaml({"last_update_date": last_update_date})
 
     # セッションのステータスを保存する
-    def save_status(self, status):
+    def save_status(self, status, error=""):
         if not os.path.exists(self.session_folder_path):
             os.makedirs(self.session_folder_path, exist_ok=True)
-        status_dict = {"status": status}
+        status_dict = {"status": status, "message": "", "response": "", "error": error}
         dmu.save_yaml_file(status_dict, self.session_status_path)
+
+    def get_status_error(self):
+        status_dict = dmu.read_yaml_file(self.session_status_path)
+        return status_dict.get("error", "")
+
+    def save_status_message(self, message, response=""):
+        status_dict = {"status": "LOCKED", "message": message}
+        if response:
+            status_dict["response"] = response
+        dmu.save_yaml_file(status_dict, self.session_status_path)
+
+    def get_status_message(self):
+        status_dict = dmu.read_yaml_file(self.session_status_path)
+        return status_dict.get("message", "")
+
+    def get_status_response(self):
+        status_dict = dmu.read_yaml_file(self.session_status_path)
+        return status_dict.get("response", "")
 
     # セッションのアクティブ状態を更新する
     def save_active_session(self, active_flg):
-        if not os.path.exists(self.session_folder_path):
-            os.makedirs(self.session_folder_path, exist_ok=True)
-        status_dict = {"active": active_flg}
-        dmu.save_yaml_file(status_dict, self.session_status_path)
+        self._update_status_yaml({"active": active_flg})
 
     # セッションのユーザーダイアログ保存状態を更新する
     def save_user_dialog_session(self, user_dialog_status):
@@ -800,11 +813,16 @@ class DigiMSession:
 
     # 会話履歴に分析結果を保存する
     def set_analytics_history(self, seq, sub_seq, analytics={}):
+        import logging
+        _logger = logging.getLogger(__name__)
         if os.path.exists(self.session_file_path):
             chat_history_dict = dmu.read_json_file(session_file_name, self.session_folder_path)
             chat_history_dict[seq][sub_seq]["analytics"] = analytics
-        with open(self.session_file_path, 'w', encoding='utf-8') as f:
-            json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
+            with open(self.session_file_path, 'w', encoding='utf-8') as f:
+                json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
+            _logger.info(f"set_analytics_history: seq={seq}, sub_seq={sub_seq} written to {self.session_file_path}")
+        else:
+            _logger.warning(f"set_analytics_history: file not found {self.session_file_path}")
 
     # 会話履歴の詳細情報を取得する
     def get_detail_info(self, seq, sub_seq="1"):

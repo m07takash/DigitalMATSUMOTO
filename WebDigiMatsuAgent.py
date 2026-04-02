@@ -21,6 +21,7 @@ import DigiM_GeneCommunication as dmgc
 import DigiM_GeneUserDialog as dmgu
 import DigiM_VAnalytics as dmva
 import DigiM_DB_Export as dmdbe
+import DigiM_SupportEval as dmse
 
 @dataclass(frozen=True)
 class AppConfig:
@@ -117,8 +118,18 @@ if 'allowed_download_md' not in st.session_state:
     st.session_state.allowed_download_md = True
 if 'allowed_session_archive' not in st.session_state:
     st.session_state.allowed_session_archive = True
+if 'allowed_web_api' not in st.session_state:
+    st.session_state.allowed_web_api = True
+if 'allowed_support_eval' not in st.session_state:
+    st.session_state.allowed_support_eval = True
+if 'eval_results_excel' not in st.session_state:
+    st.session_state.eval_results_excel = None
+if 'eval_summary' not in st.session_state:
+    st.session_state.eval_summary = None
 if 'last_archive_zip' not in st.session_state:
     st.session_state.last_archive_zip = None
+if '_bg_task' not in st.session_state:
+    st.session_state._bg_task = None
 
 # DB接続情報が設定されているか確認
 _db_configured = all([
@@ -286,6 +297,56 @@ def user_allowed_parameter(allowded_dict):
     st.session_state.allowed_book = allowded_dict.get("Book", True)
     st.session_state.allowed_download_md = allowded_dict.get("Download Md", True)
     st.session_state.allowed_session_archive = allowded_dict.get("Session Archive", True)
+    st.session_state.allowed_web_api = allowded_dict.get("Web API", True)
+    st.session_state.allowed_support_eval = allowded_dict.get("Support Eval", True)
+
+# バックグラウンドタスク実行ヘルパー
+import threading as _threading
+
+import json as _json
+_BG_TASK_FILE = "/tmp/digim_bg_task_{}.json"
+
+def _bg_task_path():
+    sid = st.session_state.get("user_id", "default")
+    return _BG_TASK_FILE.format(sid)
+
+def _read_bg_task_status():
+    try:
+        with open(_bg_task_path(), "r") as f:
+            return _json.load(f)
+    except (FileNotFoundError, _json.JSONDecodeError):
+        return {}
+
+def _write_bg_task_status_to(path, data):
+    with open(path, "w") as f:
+        _json.dump(data, f)
+
+def _clear_bg_task_status():
+    import os as _os
+    try:
+        _os.remove(_bg_task_path())
+    except FileNotFoundError:
+        pass
+
+def _run_bg_task(task_type, message, func, *args, **kwargs):
+    """バックグラウンドでタスクを実行し、完了時にファイルフラグを立てる"""
+    st.session_state._bg_task = {"type": task_type, "message": message}
+    _task_file = _bg_task_path()
+    _write_bg_task_status_to(_task_file, {"status": "running", "message": message, "error": ""})
+
+    def _worker():
+        import logging as _logging
+        _log = _logging.getLogger("bg_task")
+        try:
+            _log.info(f"[BG_TASK] start: {task_type} - {message}")
+            func(*args, **kwargs)
+            _log.info(f"[BG_TASK] done: {task_type}")
+            _write_bg_task_status_to(_task_file, {"status": "done", "message": message, "error": ""})
+        except Exception as e:
+            _log.error(f"[BG_TASK] error: {task_type} - {e}", exc_info=True)
+            _write_bg_task_status_to(_task_file, {"status": "done", "message": message, "error": str(e)})
+
+    _threading.Thread(target=_worker, daemon=True).start()
 
 # セッションステートの初期宣言
 def initialize_session_states():
@@ -303,6 +364,8 @@ def initialize_session_states():
         st.session_state.pending_input = ""
     if '_fragment_was_locked' not in st.session_state:
         st.session_state._fragment_was_locked = False
+    if '_bg_user_input' not in st.session_state:
+        st.session_state._bg_user_input = ""
     if 'display_name' not in st.session_state:
         st.session_state.display_name = st.session_state.default_agent
     if 'agents' not in st.session_state:
@@ -363,6 +426,8 @@ def initialize_session_states():
         st.session_state.memory_save = True
     if 'memory_similarity' not in st.session_state:
         st.session_state.memory_similarity = False
+    if 'private_mode' not in st.session_state:
+        st.session_state.private_mode = False
     if 'meta_search' not in st.session_state:
         st.session_state.meta_search = True
     if 'RAG_query_gene' not in st.session_state:
@@ -452,6 +517,8 @@ def refresh_session_states():
 
 # セッションのリフレッシュ（ヒストリーを更新するために、同一セッションIDで再度Sessionクラスを呼び出すこともある）
 def refresh_session(session_id, session_name, situation, new_session_flg=False):
+    st.session_state._bg_user_input = ""
+    st.session_state.is_processing = False
     st.session_state.session = dms.DigiMSession(session_id, session_name)
 #    st.session_state.session_service_id, st.session_state.session_user_id = dms.get_history_ids(dms.get_session_data(session_id))
     st.session_state.session_service_id, st.session_state.session_user_id = dms.get_ids(session_id)
@@ -715,11 +782,13 @@ def main():
             rag_expander = st.expander("RAG Management")
             with rag_expander:
                 # RAGの更新処理
-                if st.button("Update RAG Data", key="update_rag"):
-                    dmc.generate_rag()
-                    if cfg.user_dialog_auto_save_flg == "Y":
-                        dmgu.save_user_dialogs(st.session_state.web_service, st.session_state.web_user)
-                    st.session_state.sidebar_message = "RAGの更新が完了しました"
+                if st.button("Update RAG Data", key="update_rag", disabled=bool(st.session_state._bg_task)):
+                    def _rag_update():
+                        dmc.generate_rag()
+                        if cfg.user_dialog_auto_save_flg == "Y":
+                            dmgu.save_user_dialogs(st.session_state.web_service, st.session_state.web_user)
+                    _run_bg_task("rag", "RAGデータを更新中", _rag_update)
+                    st.rerun()
 
                 # RAGの削除処理(未選択は全削除)
                 st.session_state.rag_data_list_selected = st.multiselect("RAG DB", st.session_state.rag_data_list)
@@ -733,6 +802,145 @@ def main():
                     if st.button("Save User Dialog", key="save_user_dialog"):
                         dmgu.save_user_dialogs(st.session_state.web_service, st.session_state.web_user)
                         st.session_state.sidebar_message = "ユーザーダイアログを保存しました"
+
+        # Web API管理
+        if st.session_state.allowed_web_api:
+            api_expander = st.expander("Web API")
+            with api_expander:
+                import subprocess
+                # FastAPIプロセスの状態確認
+                _api_check = subprocess.run(
+                    ["pgrep", "-f", "uvicorn DigiM_API:app"],
+                    capture_output=True, text=True
+                )
+                _api_running = _api_check.returncode == 0
+
+                if _api_running:
+                    st.success("FastAPI: Running (port 8899)")
+                    if st.button("Stop API Server", key="stop_api"):
+                        subprocess.run(["pkill", "-f", "uvicorn DigiM_API:app"])
+                        st.session_state.sidebar_message = "FastAPIを停止しました"
+                        st.rerun()
+                else:
+                    st.warning("FastAPI: Stopped")
+                    if st.button("Start API Server", key="start_api"):
+                        subprocess.Popen(
+                            ["uvicorn", "DigiM_API:app", "--host", "0.0.0.0", "--port", "8899"],
+                            stdout=open("/var/log/digim_api.log", "a"),
+                            stderr=subprocess.STDOUT,
+                            start_new_session=True
+                        )
+                        import time
+                        time.sleep(2)
+                        st.session_state.sidebar_message = "FastAPIを起動しました"
+                        st.rerun()
+
+                # ヘルスチェック
+                if _api_running:
+                    if st.button("Health Check", key="api_health"):
+                        try:
+                            import urllib.request
+                            with urllib.request.urlopen("http://localhost:8899/health", timeout=5) as resp:
+                                _health = resp.read().decode()
+                            st.code(_health)
+                        except Exception as e:
+                            st.error(f"Health Check Failed: {e}")
+
+        # サポートエージェント評価
+        if st.session_state.allowed_support_eval:
+            eval_expander = st.expander("Support Eval")
+            with eval_expander:
+                # 現在のエージェントのサポートエージェント情報を取得
+                _agent_file = st.session_state.get("agent_file", "")
+                _eval_targets = {}
+                if _agent_file:
+                    try:
+                        _eval_targets = dmse.get_support_targets(_agent_file)
+                    except Exception:
+                        pass
+
+                if not _eval_targets:
+                    st.info("サポートエージェント未設定")
+                else:
+                    # 評価対象の選択
+                    _target_options = {v["label"]: k for k, v in _eval_targets.items()}
+                    _target_options["両方"] = "both"
+                    _selected_label = st.selectbox("対象", list(_target_options.keys()), key="eval_target_select")
+                    _selected_target = _target_options[_selected_label]
+
+                    # エンジン一覧の取得（選択対象に応じて）
+                    _all_engines = []
+                    for k, v in _eval_targets.items():
+                        if _selected_target in ("both", k):
+                            _all_engines.extend(v["engines"])
+                    _all_engines = list(dict.fromkeys(_all_engines))
+                    _selected_engines = st.multiselect("エンジン", _all_engines, default=_all_engines, key="eval_engines")
+
+                    # 質問数
+                    _num_questions = st.number_input("質問数", min_value=1, max_value=20, value=3, key="eval_num_q")
+
+                    # 質問入力（テキストエリア）
+                    _default_questions = "AIガバナンスについてどう思う？\n最近読んだ本で面白かったのは？\n自己紹介してください"
+                    _questions_text = st.text_area("質問（改行区切り）", value=_default_questions,
+                                                   height=80, key="eval_questions")
+                    _questions = [q.strip() for q in _questions_text.strip().split("\n") if q.strip()][:_num_questions]
+
+                    # 実行
+                    if st.button("評価実行", key="run_support_eval"):
+                        if not _selected_engines:
+                            st.warning("エンジンを選択してください")
+                        elif not _questions:
+                            st.warning("質問を入力してください")
+                        else:
+                            _progress = st.progress(0, text="準備中...")
+                            def _update_progress(ratio, text):
+                                _progress.progress(ratio, text=text)
+                            try:
+                                _results, _summary, _excel = dmse.run_eval_for_ui(
+                                    _agent_file, _selected_target, _selected_engines,
+                                    _questions, progress_callback=_update_progress
+                                )
+                                st.session_state.eval_results_excel = _excel
+                                st.session_state.eval_summary = _summary
+                                _progress.progress(1.0, text="完了")
+                            except Exception as e:
+                                st.error(f"評価エラー: {e}")
+                                _progress.empty()
+
+                    # 結果サマリー表示
+                    if st.session_state.eval_summary:
+                        st.dataframe(pd.DataFrame(st.session_state.eval_summary), hide_index=True)
+
+                    # Excelダウンロード
+                    if st.session_state.eval_results_excel:
+                        st.download_button(
+                            label="結果Excel",
+                            data=st.session_state.eval_results_excel,
+                            file_name=f"support_eval_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key="download_eval_excel"
+                        )
+
+        # バックグラウンドタスクモニター
+        if st.session_state._bg_task:
+            _task_status = _read_bg_task_status()
+            if _task_status.get("status") == "done":
+                if _task_status.get("error"):
+                    st.error(f"エラー: {_task_status['error']}")
+                else:
+                    st.session_state.sidebar_message = f"{_task_status.get('message', '')}が完了しました"
+                st.session_state._bg_task = None
+                _clear_bg_task_status()
+                st.rerun()
+            else:
+                @st.fragment(run_every=2)
+                def _task_monitor():
+                    _ts = _read_bg_task_status()
+                    if _ts.get("status") == "done":
+                        st.session_state._bg_task_refresh = True
+                        st.rerun(scope="app")
+                    st.info(f"⏳ {_ts.get('message', '実行中...')}")
+                _task_monitor()
 
         st.write(st.session_state.sidebar_message)
 
@@ -815,6 +1023,12 @@ def main():
     if st.session_state.allowed_exec_setting:
         header_col2.markdown("Exec Setting:")
 
+        # Private Modeの設定
+        if header_col2.checkbox("Private Mode", value=st.session_state.private_mode):
+            st.session_state.private_mode = True
+        else:
+            st.session_state.private_mode = False
+
         # ストリーミングの設定
         if header_col2.checkbox("Streaming Mode", value=st.session_state.stream_mode):
             st.session_state.stream_mode = True
@@ -850,6 +1064,7 @@ def main():
     #        st.session_state.memory_similarity = True
     #    else:
     #        st.session_state.memory_similarity = False
+
 
     # 実行の設定
     if st.session_state.allowed_rag_setting:
@@ -1027,27 +1242,44 @@ def main():
 #                                                _cmp_img_idx = _cmp_imagegen_list.index(st.session_state.compare_imagegen_engine_name) if st.session_state.compare_imagegen_engine_name in _cmp_imagegen_list else 0
 #                                                st.session_state.compare_imagegen_engine_name = st.selectbox("Compare Engine(IMAGEGEN):", _cmp_imagegen_list, index=_cmp_img_idx, key=f"cmpEngine_img{k}_{k2}")
                                             compare_col1, _ = st.columns(2)
-                                            if compare_col1.button("Analytics Results - Compare Agents", key=f"conpareAgent_btn{k}_{k2}"):
-                                                compare_seq = k
-                                                compare_sub_seq = str(int(k2)-1)
-                                                compare_agent_file = next((a2["FILE"] for a2 in st.session_state.agents if a2["AGENT"] == st.session_state.compare_agent_id), None)
-                                                compare_agent_data = dmu.read_json_file(compare_agent_file, agent_folder_path) if compare_agent_file else {}
-                                                compare_overwrite_items = {}
-                                                if st.session_state.compare_engine_name and st.session_state.compare_engine_name in compare_agent_data.get("ENGINE", {}).get("LLM", {}):
-                                                    compare_overwrite_items.setdefault("ENGINE", {})["LLM"] = compare_agent_data["ENGINE"]["LLM"][st.session_state.compare_engine_name]
-                                                if st.session_state.compare_imagegen_engine_name and st.session_state.compare_imagegen_engine_name in compare_agent_data.get("ENGINE", {}).get("IMAGEGEN", {}):
-                                                    compare_overwrite_items.setdefault("ENGINE", {})["IMAGEGEN"] = compare_agent_data["ENGINE"]["IMAGEGEN"][st.session_state.compare_imagegen_engine_name]
-                                                _, _, compare_response, compare_model_name, _, compare_knowledge_ref = dmva.genLLMAgentSimple(st.session_state.web_service, st.session_state.web_user, v2["setting"]["session_id"], v2["setting"]["session_name"], compare_agent_file, model_type="LLM", sub_seq=1, query=v2["prompt"]["query"]["input"], import_contents=[], situation=v2["prompt"]["query"]["situation"], overwrite_items=compare_overwrite_items, prompt_temp_cd=v2["prompt"]["prompt_template"]["setting"], seq_limit=compare_seq, sub_seq_limit=compare_sub_seq)
-                                                vec_response = dmu.embed_text(v2["response"]["text"])
-                                                vec_compare_response = dmu.embed_text(compare_response)
-                                                compare_diff = dmu.calculate_cosine_distance(vec_response, vec_compare_response)
-                                                exec_agend_id = dma.get_agent_item(v2["setting"]["agent_file"], "DISPLAY_NAME")
-                                                _, _, compare_text, compare_text_model_name, _, _ = dmt.compare_texts(st.session_state.web_service, st.session_state.web_user, exec_agend_id, v2["response"]["text"], st.session_state.compare_agent_id, compare_response)
-                                                if "compare_agents" not in analytics_dict:
-                                                    analytics_dict["compare_agents"] = []
-                                                analytics_dict["compare_agents"].append({"compare_agent":{"timestamp": str(datetime.now()), "agent_file": compare_agent_file, "model_name": compare_model_name, "response": compare_response, "diff": compare_diff, "knowledge_rag": compare_knowledge_ref}, "compare_text": {"compare_model_name": compare_text_model_name, "text": compare_text}})
-                                                st.session_state.session.set_analytics_history(k, k2, analytics_dict)
-                                                st.session_state.sidebar_message = f"比較分析を完了しました({k}_{k2})"
+                                            if compare_col1.button("Analytics Results - Compare Agents", key=f"conpareAgent_btn{k}_{k2}", disabled=bool(st.session_state._bg_task)):
+                                                _cmp_seq = k
+                                                _cmp_sub_seq = str(int(k2)-1)
+                                                _cmp_agent_file = next((a2["FILE"] for a2 in st.session_state.agents if a2["AGENT"] == st.session_state.compare_agent_id), None)
+                                                _cmp_agent_data = dmu.read_json_file(_cmp_agent_file, agent_folder_path) if _cmp_agent_file else {}
+                                                _cmp_overwrite = {}
+                                                if st.session_state.compare_engine_name and st.session_state.compare_engine_name in _cmp_agent_data.get("ENGINE", {}).get("LLM", {}):
+                                                    _cmp_overwrite.setdefault("ENGINE", {})["LLM"] = _cmp_agent_data["ENGINE"]["LLM"][st.session_state.compare_engine_name]
+                                                if st.session_state.compare_imagegen_engine_name and st.session_state.compare_imagegen_engine_name in _cmp_agent_data.get("ENGINE", {}).get("IMAGEGEN", {}):
+                                                    _cmp_overwrite.setdefault("ENGINE", {})["IMAGEGEN"] = _cmp_agent_data["ENGINE"]["IMAGEGEN"][st.session_state.compare_imagegen_engine_name]
+                                                _cmp_v2 = v2
+                                                _cmp_svc = dict(st.session_state.web_service)
+                                                _cmp_usr = dict(st.session_state.web_user)
+                                                _cmp_agent_id = st.session_state.compare_agent_id
+                                                _cmp_analytics_dict = analytics_dict
+                                                _cmp_k, _cmp_k2 = k, k2
+                                                _cmp_session = st.session_state.session
+                                                def _run_compare():
+                                                    _, _, cmp_resp, cmp_model, _, cmp_know_ref = dmva.genLLMAgentSimple(
+                                                        _cmp_svc, _cmp_usr, _cmp_v2["setting"]["session_id"], _cmp_v2["setting"]["session_name"],
+                                                        _cmp_agent_file, model_type="LLM", sub_seq=1, query=_cmp_v2["prompt"]["query"]["input"],
+                                                        import_contents=[], situation=_cmp_v2["prompt"]["query"]["situation"],
+                                                        overwrite_items=_cmp_overwrite, prompt_temp_cd=_cmp_v2["prompt"]["prompt_template"]["setting"],
+                                                        seq_limit=_cmp_seq, sub_seq_limit=_cmp_sub_seq)
+                                                    vec_resp = dmu.embed_text(_cmp_v2["response"]["text"])
+                                                    vec_cmp = dmu.embed_text(cmp_resp)
+                                                    cmp_diff = dmu.calculate_cosine_distance(vec_resp, vec_cmp)
+                                                    exec_agent_name = dma.get_agent_item(_cmp_v2["setting"]["agent_file"], "DISPLAY_NAME")
+                                                    _, _, cmp_text, cmp_text_model, _, _ = dmt.compare_texts(
+                                                        _cmp_svc, _cmp_usr, exec_agent_name, _cmp_v2["response"]["text"], _cmp_agent_id, cmp_resp)
+                                                    if "compare_agents" not in _cmp_analytics_dict:
+                                                        _cmp_analytics_dict["compare_agents"] = []
+                                                    _cmp_analytics_dict["compare_agents"].append({
+                                                        "compare_agent": {"timestamp": str(datetime.now()), "agent_file": _cmp_agent_file, "model_name": cmp_model,
+                                                                          "response": cmp_resp, "diff": cmp_diff, "knowledge_rag": cmp_know_ref},
+                                                        "compare_text": {"compare_model_name": cmp_text_model, "text": cmp_text}})
+                                                    _cmp_session.set_analytics_history(_cmp_k, _cmp_k2, _cmp_analytics_dict)
+                                                _run_bg_task("compare", f"比較分析を実行中({_cmp_k}_{_cmp_k2})", _run_compare)
                                                 st.rerun()
                                     if st.session_state.allowed_analytics_knowledge:
                                         if v2["response"]["reference"]["knowledge_rag"]:
@@ -1057,16 +1289,21 @@ def main():
                                             st.session_state.analytics_dimension_mode["params"] = {}
                                             if st.session_state.analytics_dimension_mode["method"] == "t-SNE":
                                                 st.session_state.analytics_dimension_mode["params"]["perplexity"] = ak_col3.number_input(label="t-SNE Perplexity:", value=40, step=1, format="%d", key=f"tsne_perplexity_{k}_{k2}")
-                                            if ak_col1.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}"):
-                                                analytics_agent_file = v2["setting"]["agent_file"]
-                                                title = f"{k}-{k2}-{st.session_state.session.session_name}"
-                                                references = []
-                                                for reference_data in v2["response"]["reference"]["knowledge_rag"]:
-                                                    references.append(dmu.parse_log_template(reference_data))
-                                                result = dmva.analytics_knowledge(analytics_agent_file, ref_timestamp, title, references, st.session_state.session.session_analytics_folder_path, st.session_state.analytics_knowledge_mode, st.session_state.analytics_dimension_mode)
-                                                analytics_dict["knowledge_utility"] = result
-                                                st.session_state.session.set_analytics_history(k, k2, analytics_dict)
-                                                st.session_state.sidebar_message = f"知識活用性を分析しました({k}_{k2})"
+                                            if ak_col1.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}", disabled=bool(st.session_state._bg_task)):
+                                                _ak_agent_file = v2["setting"]["agent_file"]
+                                                _ak_title = f"{k}-{k2}-{st.session_state.session.session_name}"
+                                                _ak_refs = [dmu.parse_log_template(rd) for rd in v2["response"]["reference"]["knowledge_rag"]]
+                                                _ak_folder = st.session_state.session.session_analytics_folder_path
+                                                _ak_mode = st.session_state.analytics_knowledge_mode
+                                                _ak_dim = dict(st.session_state.analytics_dimension_mode)
+                                                _ak_k, _ak_k2 = k, k2
+                                                _ak_analytics_dict = analytics_dict
+                                                _ak_session = st.session_state.session
+                                                def _run_ak():
+                                                    result = dmva.analytics_knowledge(_ak_agent_file, ref_timestamp, _ak_title, _ak_refs, _ak_folder, _ak_mode, _ak_dim)
+                                                    _ak_analytics_dict["knowledge_utility"] = result
+                                                    _ak_session.set_analytics_history(_ak_k, _ak_k2, _ak_analytics_dict)
+                                                _run_bg_task("knowledge", f"知識活用性を分析中({_ak_k}_{_ak_k2})", _run_ak)
                                                 st.rerun()
                                     if "compare_agents" in analytics_dict:
                                         chat_expander_compare = st.expander("Analytics Results - Compare Agents")
@@ -1098,15 +1335,23 @@ def main():
                                                         st.session_state.analytics_dimension_mode_compare["params"] = {}
                                                         if st.session_state.analytics_dimension_mode_compare["method"] == "t-SNE":
                                                             st.session_state.analytics_dimension_mode_compare["params"]["perplexity"] = ak_compare_col3.number_input(label="t-SNE Perplexity:", value=40, step=1, format="%d", key=f"tsne_perplexity_compare_{k}_{k2}")
-                                                        if ak_compare_col1.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}_compare{selected_compare_idx}"):
-                                                            compare_title = f"{k}-{k2}-{st.session_state.session.session_name}_compare{selected_compare_idx}"
-                                                            compare_references = []
-                                                            for compare_reference_data in compare_agent_info["knowledge_rag"]["knowledge_ref"]:
-                                                                compare_references.append(dmu.parse_log_template(compare_reference_data))
-                                                            compare_ref_result = dmva.analytics_knowledge(compare_agent_file, compare_timestamp, compare_title, compare_references, st.session_state.session.session_analytics_folder_path, st.session_state.analytics_knowledge_mode_compare, st.session_state.analytics_dimension_mode_compare)
-                                                            analytics_dict["compare_agents"][selected_compare_idx]["compare_agent"]["knowledge_utility"] = compare_ref_result
-                                                            st.session_state.session.set_analytics_history(k, k2, analytics_dict)
-                                                            st.session_state.sidebar_message = f"知識活用性を分析しました({k}_{k2}_compare{selected_compare_idx})"
+                                                        if ak_compare_col1.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}_compare{selected_compare_idx}", disabled=bool(st.session_state._bg_task)):
+                                                            _cak_title = f"{k}-{k2}-{st.session_state.session.session_name}_compare{selected_compare_idx}"
+                                                            _cak_refs = [dmu.parse_log_template(rd) for rd in compare_agent_info["knowledge_rag"]["knowledge_ref"]]
+                                                            _cak_agent_file = compare_agent_file
+                                                            _cak_timestamp = compare_timestamp
+                                                            _cak_folder = st.session_state.session.session_analytics_folder_path
+                                                            _cak_mode = st.session_state.analytics_knowledge_mode_compare
+                                                            _cak_dim = dict(st.session_state.analytics_dimension_mode_compare)
+                                                            _cak_idx = selected_compare_idx
+                                                            _cak_analytics_dict = analytics_dict
+                                                            _cak_k, _cak_k2 = k, k2
+                                                            _cak_session = st.session_state.session
+                                                            def _run_cak():
+                                                                result = dmva.analytics_knowledge(_cak_agent_file, _cak_timestamp, _cak_title, _cak_refs, _cak_folder, _cak_mode, _cak_dim)
+                                                                _cak_analytics_dict["compare_agents"][_cak_idx]["compare_agent"]["knowledge_utility"] = result
+                                                                _cak_session.set_analytics_history(_cak_k, _cak_k2, _cak_analytics_dict)
+                                                            _run_bg_task("knowledge", f"知識活用性を分析中({_cak_k}_{_cak_k2}_compare{_cak_idx})", _run_cak)
                                                             st.rerun()
                                             st.markdown("")
                                             st.markdown(compare_agent_info["response"].replace("\n", "<br>"), unsafe_allow_html=True)
@@ -1221,15 +1466,38 @@ def main():
     # ユーザーの問合せ入力
     if st.session_state.session_user_id == st.session_state.user_id:
 
-        # チャット入力（ロック中のみポーリングで監視）
-        is_locked = st.session_state.session.get_status() == "LOCKED"
+        # チャット入力（ロック中 or バックグラウンド実行中はポーリングで監視）
+        _status_locked = st.session_state.session.get_status() == "LOCKED"
+        _bg_running = bool(st.session_state._bg_user_input)
+        is_locked = _status_locked or _bg_running
         if is_locked:
-            @st.fragment(run_every=3)
+            # 実行中のユーザー入力を表示
+            if st.session_state._bg_user_input:
+                with st.chat_message("user"):
+                    st.markdown(st.session_state._bg_user_input.replace("\n", "<br>"), unsafe_allow_html=True)
+            @st.fragment(run_every=2)
             def _lock_monitor():
-                if st.session_state.session.get_status() != "LOCKED":
-                    st.rerun()
-                st.info("🔒 セッションがロックされています。少々お待ちください。")
-            _lock_monitor()
+                _still_locked = st.session_state.session.get_status() == "LOCKED"
+                if not _still_locked:
+                    # バックグラウンド完了: クリーンアップしてフルリロード
+                    st.session_state._bg_user_input = ""
+                    st.session_state.is_processing = False
+                    refresh_session_list(st.session_state.service_id, st.session_state.user_id, st.session_state.user_admin_flg)
+                    st.rerun(scope="app")
+                _partial = st.session_state.session.get_status_response()
+                if _partial:
+                    st.markdown(_partial)
+                _msg = st.session_state.session.get_status_message()
+                st.info(f"⏳ {_msg}" if _msg else "⏳ 実行中です...")
+            with st.chat_message("ai"):
+                _lock_monitor()
+
+        # バックグラウンド実行のエラー表示（status.yamlから読み取り、即クリア）
+        if not is_locked:
+            _bg_error = st.session_state.session.get_status_error()
+            if _bg_error:
+                st.session_state.session.save_status("UNLOCKED")
+                st.error(f"実行中にエラーが発生しました: {_bg_error}")
 
         _chat_disabled = is_locked or st.session_state.is_processing
         if raw_input := st.chat_input("Your Message", disabled=_chat_disabled):
@@ -1283,32 +1551,65 @@ def main():
             execution["RAG_QUERY_GENE"] = st.session_state.RAG_query_gene
             execution["WEB_SEARCH"] = st.session_state.web_search
             execution["WEB_SEARCH_ENGINE"] = st.session_state.get("web_search_engine", "")
+            execution["PRIVATE_MODE"] = st.session_state.private_mode
 
-            # ユーザー入力の一時表示
-            with st.chat_message("user"):
-                st.markdown(user_input.replace("\n", "<br>"), unsafe_allow_html=True)
-            with st.chat_message("ai"):
-                status_placeholder = st.empty()
-                response_placeholder = st.empty()
-                response = ""
+            # バックグラウンドで実行開始（事前ロック）
+            import threading
+            st.session_state.session.save_status("LOCKED")
+            execution["_PRE_LOCKED"] = True
+            _bg_params = {
+                "service_info": dict(st.session_state.web_service),
+                "user_info": dict(st.session_state.web_user),
+                "session_id": st.session_state.session.session_id,
+                "session_name": st.session_state.session.session_name,
+                "agent_file": st.session_state.agent_file,
+                "user_input": user_input,
+                "uploaded_contents": uploaded_contents,
+                "situation": situation,
+                "overwrite_items": overwrite_items,
+                "add_knowledges": add_knowledges,
+                "execution": execution,
+            }
+            st.session_state._bg_user_input = user_input
+
+            def _run_bg(params):
+                _exec_error = ""
                 try:
-                    for _, _, response_chunk, _ in dme.DigiMatsuExecute_Practice(st.session_state.web_service, st.session_state.web_user, st.session_state.session.session_id, st.session_state.session.session_name, st.session_state.agent_file, user_input, uploaded_contents, situation, overwrite_items, add_knowledges, execution):
-                        if response_chunk and isinstance(response_chunk, str) and response_chunk.startswith("[STATUS]"):
-                            status_placeholder.markdown(f"⏳ {response_chunk[len('[STATUS]'):]}")
-                        elif response_chunk:
-                            status_placeholder.empty()
-                            response += response_chunk
-                            response_placeholder.markdown(response)
-                    if not st.session_state.session.session_name or st.session_state.session.session_name == "New Chat":
-                        _, _, new_session_name, _, _, _ = dmt.gene_session_name(st.session_state.web_service, st.session_state.web_user, st.session_state.session.session_id, st.session_state.session.session_name, "", user_input)
-                        st.session_state.session.chg_session_name(new_session_name)
+                    for _ in dme.DigiMatsuExecute_Practice(
+                        params["service_info"], params["user_info"],
+                        params["session_id"], params["session_name"],
+                        params["agent_file"], params["user_input"],
+                        params["uploaded_contents"], params["situation"],
+                        params["overwrite_items"], params["add_knowledges"],
+                        params["execution"]
+                    ):
+                        pass  # チャンクを消費（結果はchat_memory.jsonに保存される）
                 except Exception as e:
-                    st.error(f"実行中にエラーが発生しました: {e}")
-                finally:
-                    st.session_state.sidebar_message = ""
-                    st.session_state.is_processing = False
-                    refresh_session_list(st.session_state.service_id, st.session_state.user_id, st.session_state.user_admin_flg)
-                st.rerun()
+                    _exec_error = str(e)
+                # セッション名の自動生成（エラー時もスキップしない）
+                try:
+                    _session = dms.DigiMSession(params["session_id"], params["session_name"])
+                    if not _session.session_name or _session.session_name == "New Chat":
+                        _, _, new_name, _, _, _ = dmt.gene_session_name(
+                            params["service_info"], params["user_info"],
+                            params["session_id"], _session.session_name, "", params["user_input"])
+                        _session.chg_session_name(new_name)
+                except Exception:
+                    pass
+                # エラーがあった場合のみステータスに記録（UNLOCKはDigiMatsuExecute_Practice内で処理済み）
+                if _exec_error:
+                    _session = dms.DigiMSession(params["session_id"])
+                    # ダイジェストスレッドが動いている可能性があるので、UNLOCK完了を待ってからエラーを記録
+                    import time as _time
+                    for _ in range(30):
+                        if _session.get_status() != "LOCKED":
+                            break
+                        _time.sleep(1)
+                    _session.save_status("UNLOCKED", error=_exec_error)
+
+            thread = threading.Thread(target=_run_bg, args=(_bg_params,), daemon=True)
+            thread.start()
+            st.rerun()
 
 if __name__ == "__main__":
     main()
