@@ -92,6 +92,15 @@ def parse_log_template(ref_str: str) -> dict:
                 result[key] = raw_val
     return result
 
+# テキストのサニタイズ（JSON/XML禁則文字・制御文字を除去）
+def sanitize_text(text: str) -> str:
+    """LLM応答テキストからJSON/XMLで問題になる制御文字を除去する。
+    サロゲートペア（絵文字等）は保持する。"""
+    if not isinstance(text, str):
+        return str(text) if text is not None else ""
+    # NUL文字と制御文字（タブ・改行・CRは保持）を除去
+    return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+
 # ファイル名のサニタイズ
 def sanitize_filename(name: str, replacement: str = "_", max_length: int = 255, keep_unicode: bool = True) -> str:
     """

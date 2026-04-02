@@ -4,14 +4,18 @@ import logging
 import pandas as pd
 import numpy as np
 from datetime import datetime
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 import chromadb
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 
 import DigiM_Agent as dma
+import DigiM_Context as dmc
 import DigiM_Execute as dme
 import DigiM_Util as dmu
 
@@ -76,8 +80,7 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
     scatter_plot_file_csv = ""
 
     df = pd.DataFrame(rag_data_list)
-    df["vec_value_text"] = df["vector_data_value_text"].apply(np.array)
-    vectors = np.vstack(df["vec_value_text"].to_numpy())
+    vectors = np.array(df["vector_data_value_text"].tolist(), dtype=np.float32)
 
     method = mode["method"]
     params = mode["params"]
@@ -128,7 +131,7 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
     ax_ref.scatter(df[xcol], df[ycol], c=df["ref_color"], alpha=0.7)
     ax_ref.set_title(f"{method} Analysis(Ref): {rag_name}{pca_info_text}")
     ax_ref.grid(True)
-    fig_ref.savefig(scatter_plot_filename_ref, dpi=300, bbox_inches="tight")
+    fig_ref.savefig(scatter_plot_filename_ref, dpi=150, bbox_inches="tight")
     plt.close(fig_ref)
 
     # カテゴリーの散布図
@@ -151,7 +154,7 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
             )
             ax_cat.legend(handles=category_handles, loc="upper left", bbox_to_anchor=(1, 1), title="カテゴリ")
 
-        fig_cat.savefig(scatter_plot_filename_category, dpi=300, bbox_inches="tight")
+        fig_cat.savefig(scatter_plot_filename_category, dpi=150, bbox_inches="tight")
         plt.close(fig_cat)
 
     # 散布図にプロットされるデータ(CSV)
@@ -285,7 +288,7 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
         category_map = category_map_json["CategoryColor"]
 
     # KnowledgeのRAGデータ毎に処理（エージェントのKNOWLEDGE→BOOKの定義順で出力）
-    db_client = chromadb.PersistentClient(path=rag_folder_db_path)
+    db_client = dmc.get_chroma_client()
     knowledge_map = {k.get("RAG_NAME"): k for k in agent.knowledge}
     color_map = {
         "1": ("blue", "lightskyblue"),
@@ -298,6 +301,28 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
     grouped = dict(list(sorted_plot_data.groupby('rag')))
     ordered_groups = [(name, grouped[name]) for name in rag_order if name in grouped]
     ordered_groups += [(name, grp) for name, grp in grouped.items() if name not in rag_order]
+
+    # 必要なコレクションデータを並列で事前取得
+    _collections_needed = {}
+    for rag_name, group in ordered_groups:
+        knowledge = knowledge_map.get(rag_name)
+        if knowledge:
+            for rd in knowledge["DATA"]:
+                if rd["DATA_TYPE"] == "DB":
+                    _collections_needed[rd["DATA_NAME"]] = None
+
+    def _fetch_collection(col_name):
+        try:
+            col = db_client.get_collection(col_name)
+            return col_name, col.get(include=["metadatas", "embeddings"])
+        except Exception:
+            logger.warning(f"[SKIP] ChromaDB collection not found: {col_name}")
+            return col_name, None
+
+    with ThreadPoolExecutor(max_workers=min(4, len(_collections_needed) or 1)) as executor:
+        for col_name, col_data in executor.map(lambda n: _fetch_collection(n), _collections_needed.keys()):
+            _collections_needed[col_name] = col_data
+
     for rag_name, group in ordered_groups:
         group["q_colors"] = [
             color_map.get(seq, color_map["default"])[0 if mode == "NORMAL" else 1]
@@ -306,20 +331,16 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
 
         knowledge = knowledge_map.get(rag_name)
         if knowledge:
-            # ID→色のルックアップテーブルを事前構築（O(n*m) → O(n+m)）
             id_color_map = dict(zip(group["ID"], group["q_colors"]))
 
             rag_data_list = []
             for rag_data in knowledge["DATA"]:
                 if rag_data["DATA_TYPE"] != "DB":
                     continue
-                try:
-                    collection = db_client.get_collection(rag_data["DATA_NAME"])
-                except Exception as e:
-                    logger.warning(f"[SKIP] ChromaDB collection not found: {rag_data['DATA_NAME']}")
+                rag_data_db = _collections_needed.get(rag_data["DATA_NAME"])
+                if not rag_data_db:
                     continue
 
-                rag_data_db = collection.get(include=["metadatas", "embeddings"])
                 ids = rag_data_db["ids"]
                 metas = rag_data_db["metadatas"]
                 embeddings = rag_data_db["embeddings"]
@@ -330,8 +351,9 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
                         continue
                     v = {"id": ids[i]}
                     v |= meta
-                    v["vector_data_value_text"] = ast.literal_eval(v["vector_data_value_text"])
-                    v["vector_data_key_text"] = embeddings[i].tolist()
+                    vec_str = v.get("vector_data_value_text", "")
+                    v["vector_data_value_text"] = ast.literal_eval(vec_str) if isinstance(vec_str, str) else vec_str
+                    v["vector_data_key_text"] = embeddings[i] if isinstance(embeddings[i], list) else embeddings[i].tolist()
                     v["ref_color"] = id_color_map.get(ids[i], "gray")
                     if "category" in v and cat_category:
                         v["category_sum"] = cat_category.get(v["category"], "その他")

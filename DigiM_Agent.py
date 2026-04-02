@@ -211,9 +211,8 @@ class DigiM_Agent:
         return prompt_template
 
     # ナレッジコンテキスト(RAG)の生成
-    def set_knowledge_context(self, query, query_vecs=[], exec_info={}, meta_searches=[]):
-        #define_code = self.agent["DEFINE_CODE"] if "DEFINE_CODE" in self.agent else {}
-        knowledge_context, knowledge_selected = dmc.create_rag_context(query, query_vecs=query_vecs, rags=self.knowledge, exec_info=exec_info, meta_searches=meta_searches, define_code=self.define_code)
+    def set_knowledge_context(self, query, query_vecs=[], exec_info={}, meta_searches=[], private_mode=False):
+        knowledge_context, knowledge_selected = dmc.create_rag_context(query, query_vecs=query_vecs, rags=self.knowledge, exec_info=exec_info, meta_searches=meta_searches, define_code=self.define_code, private_mode=private_mode)
         return knowledge_context, knowledge_selected
 
     # LLMの実行

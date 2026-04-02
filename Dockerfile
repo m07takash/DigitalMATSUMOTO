@@ -60,5 +60,8 @@ EXPOSE 8899
 # ボリュームを設定
 VOLUME /work
 
-# デフォルトの起動コマンド
-CMD ["streamlit", "run", "WebDigiMatsuAgent.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
+# ポート8895を追加
+EXPOSE 8895
+
+# デフォルトの起動コマンド（startup.shで複数サービスを起動）
+CMD ["/bin/bash", "startup.sh"]

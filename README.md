@@ -65,6 +65,7 @@ RAG（ChromaDB）を組み合わせて動的に生成します。
 | `DigiM_VAnalytics.py` | 知識活用分析 |
 | `DigiM_GeneCommunication.py` | ユーザーフィードバック |
 | `DigiM_GeneUserDialog.py` | ユーザー対話の保存 |
+| `DigiM_SupportEval.py` | サポートエージェントのパフォーマンス評価 |
 
 ## ディレクトリ構造
 
@@ -370,6 +371,38 @@ NOTION_MST_FILE=notion_db.json
 | `value_text` | 参照用テキスト（回答生成時に参照） |
 | `category_items` | カテゴリフィルタ条件（後述） |
 
+**Private Mode（RAGデータの公開制御）：**
+
+RAGデータに `private` フラグを設定できます。`private: true` のデータは、実行時に Private Mode が有効な場合に検索対象から除外されます。
+
+**Notionの場合** — `item_dict` にプロパティを指定:
+
+```json
+"item_dict": {
+  "db": "DigiMATSU_Identity_Memo",
+  "title": {"名前": "title"},
+  "private": {"非公開": "chk"}
+}
+```
+
+上記の場合、Notionの「非公開」チェックボックスプロパティの値（`true`/`false`）がそのままRAGデータの `private` フラグになります。
+
+固定値を設定する場合（全レコードを非公開にしない）:
+
+```json
+"private": false
+```
+
+**CSVの場合** — `field_items` に `"private"` 列を追加:
+
+```json
+"field_items": ["speaker", "situation", "quote", "private"]
+```
+
+CSV内の `private` 列に `True` / `False` を記載します。
+
+> `private` フラグが未設定のデータは自動的に `false`（公開）として扱われます。既存データへの影響はありません。
+
 **category_items によるデータのフィルタリング：**
 
 `category_items` を指定すると、対象CSVデータの特定カラムの値でフィルタリングができます。複数条件はAND条件として適用されます。
@@ -388,6 +421,13 @@ NOTION_MST_FILE=notion_db.json
 WebUIのサイドバー **RAG** セクションから「**Update RAG Data**」ボタンを実行すると、データが読み込まれ ChromaDB にベクトルデータが生成されます。
 
 > 初回実行時は全件のベクトル化が行われます。2回目以降は、`title` / `key_text` / `value_text` に変更があるデータのみ再ベクトル化され、それ以外のフィールド変更はメタデータのみ更新されます。
+
+> **Private Mode の利用：** WebUIの Exec Setting で「Private Mode」チェックボックスをONにすると、`private: true` が設定されたRAGデータが検索対象から除外されます。APIからは `"private_mode": true` パラメータで制御できます。既存データに一括で `private: false` を付与するマイグレーションは以下のコマンドで実行できます:
+>
+> ```python
+> import DigiM_Context as dmc
+> dmc.migrate_add_private_flag()
+> ```
 
 ### エージェントの設定
 
@@ -736,6 +776,13 @@ streamlit run WebDigiMatsuAgent.py --server.port 8501
 
 # API（FastAPI）
 python DigiM_API.py
+
+# ベンチマーク（サポートエージェントの速度・出力比較）
+# 入力: test/questions.xlsx（question列に質問を記載）
+# 出力: test/questions_result_YYYYMMDD_HHMMSS.xlsx
+python3 DigiM_SupportEval.py questions.xlsx                  # RAGクエリ生成 + メタ検索
+python3 DigiM_SupportEval.py questions.xlsx --target intent  # RAGクエリ生成のみ
+python3 DigiM_SupportEval.py questions.xlsx --target meta    # メタ検索のみ
 ```
 
 ---
@@ -750,7 +797,9 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
 |---------|------|------|
 | `POST` | `/run` | メッセージを送信してエージェントの応答を取得（同期） |
 | `GET` | `/agents` | 利用可能なエージェント一覧を取得 |
+| `GET` | `/agents/{agent_file}/engines` | エージェントの選択可能なエンジン一覧を取得 |
 | `GET` | `/agents/{agent_file}/feedback` | エージェントのフィードバック設定を取得 |
+| `GET` | `/web_search_engines` | 利用可能なWeb検索エンジン一覧を取得 |
 | `POST` | `/feedback` | フィードバックを送信（CSV/Notionに保存） |
 | `GET` | `/sessions` | セッション一覧を取得 |
 | `GET` | `/sessions/{session_id}` | セッションの会話履歴を取得 |
@@ -768,26 +817,53 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
 {
   "service_info": {"SERVICE_ID": "サービス名", "SERVICE_DATA": {}},
   "user_info": {"USER_ID": "ユーザーID", "USER_DATA": {}},
-  "session_id": "セッションID（省略時は自動発番）",
-  "session_name": "セッション名（省略時は自動生成）",
+  "session_id": "セッションID",
+  "session_name": "セッション名",
   "user_input": "メッセージ本文",
   "situation": {"TIME": "", "SITUATION": ""},
-  "agent_file": "エージェントファイル名（省略時はsystem.envのAPI_AGENT_FILE）",
-  "engine": "エンジン名（省略時はエージェントのDEFAULT）",
-  "execution": {}
+  "agent_file": "エージェントファイル名",
+  "engine": "エンジン名",
+  "stream_mode": true,
+  "save_digest": true,
+  "memory_use": true,
+  "magic_word_use": false,
+  "meta_search": true,
+  "rag_query_gene": true,
+  "web_search": false,
+  "web_search_engine": "OpenAI"
 }
 ```
 
-| パラメータ | 必須 | 説明 |
-|-----------|------|------|
-| `service_info` | ○ | サービス識別情報（`SERVICE_ID` でサービスを区別） |
-| `user_info` | ○ | ユーザー識別情報（`USER_ID` でユーザーを区別） |
-| `session_id` | | セッションID。LINE連携なら LINE ユーザーID を指定すると会話が継続される |
-| `user_input` | ○ | ユーザーの入力メッセージ |
-| `agent_file` | | 使用するエージェント（例: `agent_X0Sample.json`） |
-| `engine` | | LLMエンジン名（例: `Gemini-2.5-Flash`）。エージェントの ENGINE.LLM に定義されている名前を指定 |
-| `situation` | | 日時・状況設定。`TIME` を空にすると日時なしで実行 |
-| `execution` | | 実行オプション（`WEB_SEARCH`, `META_SEARCH` 等） |
+**基本パラメータ:**
+
+| パラメータ | 必須 | デフォルト | 説明 |
+|-----------|------|-----------|------|
+| `service_info` | ○ | | サービス識別情報（`SERVICE_ID` でサービスを区別） |
+| `user_info` | ○ | | ユーザー識別情報（`USER_ID` でユーザーを区別） |
+| `user_input` | ○ | | ユーザーの入力メッセージ |
+| `session_id` | | 自動発番 | セッションID。LINE連携なら LINE ユーザーID を指定すると会話が継続される |
+| `session_name` | | 自動生成 | セッション名 |
+| `agent_file` | | `API_AGENT_FILE` | 使用するエージェント（例: `agent_X0Sample.json`） |
+| `engine` | | エージェントのDEFAULT | LLMエンジン名（例: `Gemini-2.5-Flash`）。エージェントの ENGINE.LLM に定義されている名前を指定 |
+| `situation` | | `{"TIME":"","SITUATION":""}` | 日時・状況設定。`TIME` を空にすると日時なしで実行 |
+
+**実行設定（Exec Setting）:**
+
+省略したパラメータはAPI用デフォルト値が使われます。WebUIのExec Settingに対応しています。
+
+| パラメータ | APIデフォルト | 説明 |
+|-----------|-------------|------|
+| `stream_mode` | `true` | ストリーミングモード |
+| `save_digest` | `true` | 会話ダイジェストの保存 |
+| `memory_use` | `true` | 会話履歴の参照 |
+| `magic_word_use` | `false` | MAGIC_WORD によるHabit切り替え |
+| `meta_search` | `true` | メタデータ検索（日付抽出） |
+| `rag_query_gene` | `true` | RAG検索用クエリ生成 |
+| `web_search` | `false` | Web検索（`true` にすると `web_search_engine` で指定したエンジンで検索） |
+| `web_search_engine` | `"OpenAI"` | Web検索エンジン（`Perplexity` / `OpenAI` / `Google`）。`web_search` が `false` の場合は使用されない |
+| `private_mode` | `false` | Private Mode。`true` にすると `private: true` のRAGデータが検索対象外になる |
+
+> `memory_similarity` はAPI経由では常に `false` です（パラメータ指定不可）。
 
 **レスポンス:**
 
@@ -842,11 +918,63 @@ curl -s -X POST http://localhost:8899/run \
     "engine": "Gemini-2.5-Flash"
   }' | python3 -m json.tool --no-ensure-ascii
 
+# 全パラメータをデフォルト状態で明示指定して実行
+curl -s -X POST http://localhost:8899/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
+    "user_info": {"USER_ID": "TestUser", "USER_DATA": {}},
+    "session_id": "API_TEST_001",
+    "user_input": "こんにちは",
+    "agent_file": "agent_X0Sample.json",
+    "engine": "",
+    "situation": {"TIME": "", "SITUATION": ""},
+    "stream_mode": true,
+    "save_digest": true,
+    "memory_use": true,
+    "magic_word_use": false,
+    "meta_search": true,
+    "rag_query_gene": true,
+    "web_search": false,
+    "web_search_engine": "OpenAI"
+  }' | python3 -m json.tool --no-ensure-ascii
+
+# 軽量実行（RAGクエリ生成OFF + メタ検索OFF）
+curl -s -X POST http://localhost:8899/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
+    "user_info": {"USER_ID": "TestUser", "USER_DATA": {}},
+    "session_id": "API_TEST_003",
+    "user_input": "こんにちは",
+    "agent_file": "agent_X0Sample.json",
+    "rag_query_gene": false,
+    "meta_search": false
+  }' | python3 -m json.tool --no-ensure-ascii
+
+# 会話履歴なし（単発質問モード）
+curl -s -X POST http://localhost:8899/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
+    "user_info": {"USER_ID": "TestUser", "USER_DATA": {}},
+    "user_input": "自己紹介してください",
+    "agent_file": "agent_X0Sample.json",
+    "memory_use": false,
+    "save_digest": false
+  }' | python3 -m json.tool --no-ensure-ascii
+
 # セッション一覧（ユーザーで絞り込み）
 curl -s "http://localhost:8899/sessions?user_id=TestUser" | python3 -m json.tool --no-ensure-ascii
 
 # セッション履歴
 curl -s http://localhost:8899/sessions/API_TEST_001 | python3 -m json.tool --no-ensure-ascii
+
+# エンジン一覧（エージェントが選択可能なLLM/IMAGEGENエンジン）
+curl -s http://localhost:8899/agents/agent_X0Sample.json/engines | python3 -m json.tool --no-ensure-ascii
+
+# Web検索エンジン一覧
+curl -s http://localhost:8899/web_search_engines | python3 -m json.tool --no-ensure-ascii
 
 # フィードバック設定の確認（エージェントが受け付けるフィードバック項目・カテゴリ一覧）
 curl -s http://localhost:8899/agents/agent_X0Sample.json/feedback | python3 -m json.tool --no-ensure-ascii

@@ -1,4 +1,5 @@
 import os
+import time
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -43,6 +44,7 @@ def _parse_execution_settings(execution):
         "RAG_query_gene":    execution.get("RAG_QUERY_GENE", True),
         "web_search":        execution.get("WEB_SEARCH", False),
         "web_search_engine": execution.get("WEB_SEARCH_ENGINE", ""),
+        "private_mode":      execution.get("PRIVATE_MODE", False),
     }
 
 # B-3: USER_INPUT解決の共通関数
@@ -111,18 +113,13 @@ def _build_meta_searches(service_info, user_info, session_id, session_name, supp
 
 # ダイジェスト生成・保存・アンロックをバックグラウンドで実行
 def _run_digest_background(session, service_info, user_info, session_id, session_name,
-                            support_agent, query_vec, model_name, tokenizer,
-                            memory_limit_tokens, memory_role, memory_priority,
-                            memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit,
+                            support_agent, memories_selected,
                             seq, sub_seq, cfg):
     try:
         dialog_digest_agent_file = support_agent.get("DIALOG_DIGEST", "")
         add_info = {}
         session.set_history()
-        add_info["Memories_Selected"] = session.get_memory(
-            query_vec, model_name, tokenizer, memory_limit_tokens,
-            memory_role, memory_priority, cfg["memory_similarity"],
-            memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
+        add_info["Memories_Selected"] = memories_selected
         _, _, digest_response, digest_model_name, _, digest_response_tokens = dmt.dialog_digest(
             service_info, user_info, session_id, session_name, dialog_digest_agent_file, "", [], add_info)
         timestamp_digest = str(datetime.now())
@@ -217,13 +214,14 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     web_context = ""
     web_search_log = {}
     if cfg["web_search"]:
+        session.save_status_message("WEB検索を開始")
         yield service_info, user_info, "[STATUS]WEB検索を開始", [], []
         timestamp_log += "[06.WEB検索を開始]" + str(datetime.now()) + "<br>"
         search_text = user_query
         if digest_text or situation_prompt:
             search_text = "検索して欲しい内容:\n" + user_query + "\n\n[参考]これまでの会話:\n" + digest_text + "\n\n[参考]今の状況:\n" + situation_prompt
-        web_engine = cfg["web_search_engine"] or dmu.read_yaml_file("setting.yaml").get("WEB_SEARCH_DEFAULT", "Perplexity")
-        _setting = dmu.read_yaml_file("setting.yaml")
+        _setting = system_setting_dict
+        web_engine = cfg["web_search_engine"] or _setting.get("WEB_SEARCH_DEFAULT", "Perplexity")
         _web_model_map = {
             "Perplexity": _setting.get("PERPLEXITY_MODEL", "sonar"),
             "OpenAI": _setting.get("OPENAI_SEARCH_MODEL", "gpt-4.1-mini"),
@@ -249,8 +247,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     query_vecs = dmu.embed_texts_batch([q.replace("\n", "") for q in queries])
     query_vec = query_vecs[0]
 
-    # 会話メモリの取得
-    timestamp_log += "[08.会話メモリの取得開始]" + str(datetime.now()) + "<br>"
+    # 会話メモリ・RAGクエリ生成・メタ検索を並列実行
+    timestamp_log += "[08-10.会話メモリ/RAG検索用クエリ/メタ検索(並列)]" + str(datetime.now()) + "<br>"
     memory_limit_tokens = agent.agent["ENGINE"][model_type]["MEMORY"]["limit"]
     if model_type != "LLM":
         memory_limit_tokens -= (system_tokens + query_tokens)
@@ -258,33 +256,37 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     memory_priority = agent.agent["ENGINE"][model_type]["MEMORY"]["priority"]
     memory_similarity_logic = agent.agent["ENGINE"][model_type]["MEMORY"]["similarity_logic"]
     memory_digest = agent.agent["ENGINE"][model_type]["MEMORY"]["digest"]
-    memories_selected = []
-    if cfg["memory_use"]:
-        memories_selected = session.get_memory(
-            query_vec, model_name, tokenizer, memory_limit_tokens,
-            memory_role, memory_priority, cfg["memory_similarity"],
-            memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
-
     support_agent = agent.agent["SUPPORT_AGENT"]
 
-    # C-1: RAGクエリ生成とメタデータ検索の並列実行フェーズ
-    timestamp_log += "[09-10.RAG検索用クエリ生成/メタデータ検索(並列)]" + str(datetime.now()) + "<br>"
     need_intent = cfg["RAG_query_gene"] and "RAG_QUERY_GENERATOR" in support_agent
     need_meta = cfg["meta_search"] and "EXTRACT_DATE" in support_agent
     if need_intent or need_meta:
+        session.save_status_message("RAG検索クエリの作成を開始")
         yield service_info, user_info, "[STATUS]RAG検索クエリの作成を開始", [], []
-    with ThreadPoolExecutor(max_workers=2) as executor:
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        # メモリ取得を並列起動
+        future_memory = None
+        if cfg["memory_use"]:
+            future_memory = executor.submit(
+                session.get_memory, query_vec, model_name, tokenizer, memory_limit_tokens,
+                memory_role, memory_priority, cfg["memory_similarity"],
+                memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
+        # RAGクエリ生成を並列起動
         future_intent = executor.submit(
             _build_intent_queries, service_info, user_info, session_id, session_name,
-            support_agent, user_query, memories_selected, situation_prompt, query_vec, cfg["RAG_query_gene"])
+            support_agent, user_query, [], situation_prompt, query_vec, cfg["RAG_query_gene"])
+        # メタ検索を並列起動
         future_meta = executor.submit(
             _build_meta_searches, service_info, user_info, session_id, session_name,
-            support_agent, user_query, memories_selected, situation_prompt, query_vec, cfg["meta_search"])
+            support_agent, user_query, [], situation_prompt, query_vec, cfg["meta_search"])
+
+        memories_selected = future_memory.result() if future_memory else []
         intent_queries, intent_vecs, RAG_query_gene_log = future_intent.result()
         meta_searches, meta_search_log = future_meta.result()
     intent_dur = RAG_query_gene_log.get("duration_sec", "-") if RAG_query_gene_log else "-"
     meta_dur = meta_search_log.get("date", {}).get("duration_sec", "-") if meta_search_log else "-"
-    timestamp_log += f"[09.RAG検索用クエリ生成完了({intent_dur}s)][10.メタデータ検索完了({meta_dur}s)]" + str(datetime.now()) + "<br>"
+    timestamp_log += f"[08-10完了: メモリ/RAGクエリ({intent_dur}s)/メタ検索({meta_dur}s)]" + str(datetime.now()) + "<br>"
     queries += intent_queries
     query_vecs += intent_vecs
     output_reference["RAG_query_gene_log"] = RAG_query_gene_log
@@ -292,12 +294,13 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
 
     # RAGコンテキストを取得
     timestamp_log += "[11.RAG開始]" + str(datetime.now()) + "<br>"
+    session.save_status_message("RAGを開始")
     yield service_info, user_info, "[STATUS]RAGを開始", [], []
     if add_knowledge:
         agent.knowledge += add_knowledge
     exec_info = {"SERVICE_INFO": service_info, "USER_INFO": user_info}
     knowledge_context, knowledge_selected = agent.set_knowledge_context(
-        user_query, query_vecs, exec_info, meta_searches)
+        user_query, query_vecs, exec_info, meta_searches, private_mode=cfg["private_mode"])
 
     # プロンプトテンプレート・クエリを設定
     timestamp_log += "[12.プロンプトテンプレート設定]" + str(datetime.now()) + "<br>"
@@ -317,9 +320,12 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     prompt = ""
     response = ""
     completion = []
+    session.save_status_message("LLM実行中")
     timestamp_log += "[13.LLM実行開始]" + str(datetime.now()) + "<br>"
     response_service_info = {}
     response_user_info = {}
+    _last_stream_flush = time.time()
+    _STREAM_FLUSH_INTERVAL = 2  # 疑似ストリーミング書き出し間隔（秒）
     for prompt, response_chunk, completion in agent.generate_response(
             model_type, query, memories_selected, image_files, cfg["stream_mode"]):
         if response_chunk:
@@ -327,8 +333,15 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             response_service_info = service_info
             response_user_info = user_info
             yield response_service_info, response_user_info, response_chunk, export_files, knowledge_selected
+            # 疑似ストリーミング: 一定間隔でレスポンスをステータスに書き出し
+            if cfg["stream_mode"] and time.time() - _last_stream_flush >= _STREAM_FLUSH_INTERVAL:
+                session.save_status_message("LLM実行中", response=response)
+                _last_stream_flush = time.time()
     timestamp_end = str(datetime.now())
     timestamp_log += "[14.LLM実行完了]" + str(datetime.now()) + "<br>"
+
+    # レスポンステキストのサニタイズ（制御文字除去）
+    response = dmu.sanitize_text(response)
 
     prompt_tokens = dmu.count_token(tokenizer, model_name, prompt) if prompt else 0
     response_tokens = dmu.count_token(tokenizer, model_name, response) if response else 0
@@ -420,15 +433,16 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         session.save_history_batch(str(seq), sub_seq_data)
         session.save_user_dialog_session("UNSAVED")
 
+        # レスポンス確定をステータスに反映（疑似ストリーミング用）
+        session.save_status_message("ダイジェスト生成中", response=response)
+
         # ダイジェスト生成をバックグラウンドで起動（完了後にセッションをUNLOCK）
         if cfg["save_digest"]:
             timestamp_log += "[18.メモリダイジェストの作成をバックグラウンドで開始]" + str(datetime.now()) + "<br>"
             threading.Thread(
                 target=_run_digest_background,
                 args=(session, service_info, user_info, session_id, session_name,
-                      support_agent, query_vec, model_name, tokenizer,
-                      memory_limit_tokens, memory_role, memory_priority,
-                      memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit,
+                      support_agent, memories_selected,
                       seq, sub_seq, cfg),
                 daemon=True
             ).start()
@@ -450,11 +464,11 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
     response_user_info = user_info
     _digest_bg_started = False  # バックグラウンドダイジェストが起動された場合はこちらでUNLOCKしない
 
-    # セッションのロック
-    if session.get_status() == "LOCKED":
+    # セッションのロック（pre_locked=Trueの場合は呼び出し元で事前ロック済み）
+    _pre_locked = in_execution.get("_PRE_LOCKED", False)
+    if session.get_status() == "LOCKED" and not _pre_locked:
         raise Exception("Session is locked. Please unlock the session before executing the practice.")
-    else:
-        session.save_status("LOCKED")
+    session.save_status("LOCKED")
 
     try:
         agent = dma.DigiM_Agent(in_agent_file)
@@ -568,7 +582,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 export_contents = []
                 if inspect.isgenerator(tool_result):
                     for resp_svc, resp_usr, chunk, exp in tool_result:
-                        output += str(chunk) if chunk else ""
+                        output += dmu.sanitize_text(str(chunk)) if chunk else ""
                         if exp is not None:
                             export_contents = exp
                         if not last_only or i == last_idx:

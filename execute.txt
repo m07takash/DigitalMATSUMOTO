@@ -8,11 +8,28 @@ streamlit run WebDigiMatsuAgent.py --server.address 0.0.0.0 --server.port 8501
 uvicorn DigiM_API:app --host 0.0.0.0 --port 8899
 gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8899 DigiM_API:app --timeout 600 --graceful-timeout 600 --keep-alive 5 --capture-output --log-level debug
 
+# サポートエージェント評価（test/配下のExcelを入出力）
+python3 DigiM_SupportEval.py questions.xlsx                  # RAGクエリ生成 + メタ検索
+python3 DigiM_SupportEval.py questions.xlsx --target intent  # RAGクエリ生成のみ
+python3 DigiM_SupportEval.py questions.xlsx --target meta    # メタ検索のみ
+
 # ヘルスチェック
 curl -s http://localhost:8899/health
 
 # エージェント一覧
 curl -s http://localhost:8899/agents | python3 -m json.tool --no-ensure-ascii
+
+# エンジン一覧
+curl -s http://localhost:8899/agents/agent_X0Sample.json/engines | python3 -m json.tool --no-ensure-ascii
+
+# Web検索エンジン一覧
+curl -s http://localhost:8899/web_search_engines | python3 -m json.tool --no-ensure-ascii
+
+# セッション一覧
+curl -s "http://localhost:8899/sessions?user_id=TestUser" | python3 -m json.tool --no-ensure-ascii
+
+# セッション履歴
+curl -s http://localhost:8899/sessions/API_TEST_001 | python3 -m json.tool --no-ensure-ascii
 
 # メッセージ送信
 curl -s -X POST http://localhost:8899/run \
@@ -25,11 +42,63 @@ curl -s -X POST http://localhost:8899/run \
     "agent_file": "agent_X0Sample.json"
   }' | python3 -m json.tool --no-ensure-ascii
 
-# セッション一覧
-curl -s "http://localhost:8899/sessions?user_id=TestUser" | python3 -m json.tool --no-ensure-ascii
+# エンジン指定で実行
+curl -s -X POST http://localhost:8899/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
+    "user_info": {"USER_ID": "TestUser", "USER_DATA": {}},
+    "session_id": "API_TEST_002",
+    "user_input": "こんにちは",
+    "agent_file": "agent_X0Sample.json",
+    "engine": "Gemini-2.5-Flash"
+  }' | python3 -m json.tool --no-ensure-ascii
 
-# セッション履歴
-curl -s http://localhost:8899/sessions/API_TEST_001 | python3 -m json.tool --no-ensure-ascii
+# 全パラメータをデフォルト状態で明示指定して実行
+curl -s -X POST http://localhost:8899/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
+    "user_info": {"USER_ID": "TestUser", "USER_DATA": {}},
+    "session_id": "API_TEST_001",
+    "user_input": "こんにちは",
+    "agent_file": "agent_X0Sample.json",
+    "engine": "",
+    "situation": {"TIME": "", "SITUATION": ""},
+    "stream_mode": true,
+    "save_digest": true,
+    "memory_use": true,
+    "magic_word_use": false,
+    "meta_search": true,
+    "rag_query_gene": true,
+    "web_search": false,
+    "web_search_engine": "OpenAI"
+  }' | python3 -m json.tool --no-ensure-ascii
+
+# 軽量実行（RAGクエリ生成OFF + メタ検索OFF）
+curl -s -X POST http://localhost:8899/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
+    "user_info": {"USER_ID": "TestUser", "USER_DATA": {}},
+    "session_id": "API_TEST_003",
+    "user_input": "こんにちは",
+    "agent_file": "agent_X0Sample.json",
+    "rag_query_gene": false,
+    "meta_search": false
+  }' | python3 -m json.tool --no-ensure-ascii
+
+# 会話履歴なし（単発質問モード）
+curl -s -X POST http://localhost:8899/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
+    "user_info": {"USER_ID": "TestUser", "USER_DATA": {}},
+    "user_input": "自己紹介してください",
+    "agent_file": "agent_X0Sample.json",
+    "memory_use": false,
+    "save_digest": false
+  }' | python3 -m json.tool --no-ensure-ascii
 
 # フィードバック設定の確認
 curl -s http://localhost:8899/agents/agent_X0Sample.json/feedback | python3 -m json.tool --no-ensure-ascii
