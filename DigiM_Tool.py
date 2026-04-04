@@ -190,8 +190,10 @@ def dialog_digest(service_info, user_info, session_id, session_name, agent_file,
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
 
     # メモリをテキスト化
-    digest_memories_selected = [{"role": item["role"], "content": item["text"]} for item in memories_selected]
-    digest_memories_text = str(digest_memories_selected)[1:-1]
+    digest_memories_text = ", ".join(
+        f'{{"role": "{item["role"]}", "content": "{item["text"]}"}}'
+        for item in memories_selected
+    )
 
     # プロンプトの設定
     query = f'{prompt_template}{user_query}\n{digest_memories_text}'
@@ -237,8 +239,10 @@ def gene_session_name(service_info, user_info, session_id, session_name, agent_f
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
 
     # メモリをテキスト化
-    digest_memories_selected = [{"role": item["role"], "content": item["text"]} for item in memories_selected]
-    digest_memories_text = str(digest_memories_selected)[1:-1]
+    digest_memories_text = ", ".join(
+        f'{{"role": "{item["role"]}", "content": "{item["text"]}"}}'
+        for item in memories_selected
+    )
 
     # プロンプトの設定
     query = f'{prompt_template}\n{digest_memories_text}\n{user_query}'
