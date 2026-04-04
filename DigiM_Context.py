@@ -661,11 +661,30 @@ def generate_rag():
                 logger.warning("正しいモードが設定されていません。")
 
             if rag_data:
+                # ページIDを保持（save_rag_chunk_dbでidが削除される前にコピー）
+                page_ids_map = {chunk["id"]: chunk["id"] for chunk in rag_data if "id" in chunk}
+
                 # ChromaDBでの保存
                 if rag_setting["data_type"] == "chromadb":
                     cnt_add, cnt_extent = save_rag_chunk_db(rag_id, rag_data)
                     cnt_total = cnt_add + cnt_extent
                     logger.info(f"{rag_id}のDB書き込みが完了しました。追加件数:{cnt_add}, トータル件数:{cnt_total}")
+
+                    # RAG登録完了フラグをNotionに反映（取得対象=fin_flg未設定ページなので全件更新）
+                    fin_flg = rag_setting.get("fin_flg", {})
+                    if fin_flg and rag_setting["input"] == "notion":
+                        fin_cnt = 0
+                        for page_id in page_ids_map.values():
+                            for prop_name, prop_value in fin_flg.items():
+                                try:
+                                    if isinstance(prop_value, bool):
+                                        dmn.update_notion_chk(page_id, prop_name, prop_value)
+                                    else:
+                                        logger.warning(f"fin_flg: 未対応の型 {prop_name}={prop_value}")
+                                    fin_cnt += 1
+                                except Exception as e:
+                                    logger.warning(f"fin_flg更新失敗 (page={page_id}, {prop_name}): {e}")
+                        logger.info(f"{rag_id}: fin_flgを{fin_cnt}件のNotionページに反映しました")
 
 # RAGデータベース（Collection）の削除
 def del_rag_db(ragdb_selected=[]):

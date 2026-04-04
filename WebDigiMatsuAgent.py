@@ -558,6 +558,15 @@ def refresh_session_list(service_id, user_id, user_admin_flg):
     st.session_state.session_inactive_list = dms.get_session_list_inactive_visible(service_id, user_id, user_admin_flg)
     st.session_state.session_inactive_list_selected = []
 
+# AIレスポンスのクリップボードコピーボタン
+def render_copy_button(text, key):
+    import html as _html
+    escaped = _html.escape(text).replace("`", "\\`").replace("$", "\\$")
+    st.components.v1.html(f"""
+    <button onclick="navigator.clipboard.writeText(`{escaped}`).then(()=>{{this.textContent='Copied!';setTimeout(()=>this.textContent='Copy',1500)}})"
+    style="background:transparent;border:1px solid #888;border-radius:4px;padding:2px 10px;cursor:pointer;font-size:12px;color:#888;">Copy</button>
+    """, height=32)
+
 # アップロードしたファイルの表示
 def show_uploaded_files_memory(seq_key, file_path, file_name, file_type):
     uploaded_file = file_path+file_name
@@ -614,6 +623,41 @@ def set_dl_file(chat_history, dl_type="Chats Only", file_id="Chat_History"):
     file_name = f"{file_id}_{dl_type}.md"
     mime = "text/markdown"
     return data, file_name, mime
+
+def set_dl_pdf(chat_history, dl_type="Chats Only", file_id="Chat_History"):
+    """チャット履歴をPDFバイト列として返す"""
+    from fpdf import FPDF
+    _FONT_PATH = "/usr/share/fonts/opentype/ipaexfont-gothic/ipaexg.ttf"
+
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_font("IPAexG", "", _FONT_PATH, uni=True)
+    pdf.add_page()
+    pdf.set_font("IPAexG", size=10)
+
+    for msg in chat_history:
+        if (dl_type == "Chats Only" and msg["role"] in ["user", "assistant"]) or dl_type == "ALL":
+            if "content" in msg:
+                pdf.set_font("IPAexG", size=11)
+                pdf.cell(0, 8, msg["role"].capitalize(), new_x="LMARGIN", new_y="NEXT")
+                pdf.set_font("IPAexG", size=10)
+                for line in msg["content"].split("\n"):
+                    line = line.replace("\r", "").replace("**", "")
+                    pdf.multi_cell(0, 6, line)
+                pdf.ln(2)
+            if "image" in msg:
+                try:
+                    pdf.image(msg["image"], w=100)
+                    pdf.ln(3)
+                except Exception:
+                    pdf.cell(0, 6, f"[画像: {msg['image']}]", new_x="LMARGIN", new_y="NEXT")
+            pdf.set_draw_color(200, 200, 200)
+            pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+            pdf.ln(4)
+
+    pdf_bytes = pdf.output()
+    file_name = f"{file_id}_{dl_type}.pdf"
+    return pdf_bytes, file_name
 
 def seq_label(x: str) -> str:
     return {
@@ -1148,6 +1192,7 @@ def main():
                             for gen_content in v2["image"].values():
                                 download_data.append({"role": v2["response"]["role"], "image": st.session_state.session.session_folder_path +"contents/"+ gen_content["file_name"]})
                                 show_uploaded_files_memory(seq_key, st.session_state.session.session_folder_path +"contents/", gen_content["file_name"], gen_content["file_type"])
+                        render_copy_button(v2["response"]["text"], f"copy_{k}_{k2}")
 
                     if v2["setting"]["type"] in ["LLM","IMAGEGEN"]:
                         if st.session_state.allowed_feedback:
@@ -1204,7 +1249,14 @@ def main():
                                 download_data.append({"role": "detail", "content": st.session_state.session.get_detail_info(k, k2)})
                                 chat_expander = st.expander("Detail Information")
                                 with chat_expander:
-                                    st.markdown(st.session_state.session.get_detail_info(k, k2).replace("\n", "<br>"), unsafe_allow_html=True)
+                                    _detail_info = st.session_state.session.get_detail_info(k, k2)
+                                    import re as _re
+                                    _blocks = _re.split(r'\n(?=【)', _detail_info)
+                                    for _bi, _block in enumerate(_blocks):
+                                        _block_stripped = _block.strip()
+                                        if _block_stripped:
+                                            render_copy_button(_block_stripped, f"detail_copy_{k}_{k2}_{_bi}")
+                                            st.markdown(_block_stripped.replace("\n", "<br>"), unsafe_allow_html=True)
 
                         # Analytics
                         if st.session_state.allowed_analytics_knowledge or st.session_state.allowed_analytics_compare:
@@ -1457,11 +1509,13 @@ def main():
 
     # ファイルダウンローダー
     if st.session_state.allowed_download_md:
-        footer_col1, footer_col2 = st.columns(2)
+        footer_col1, footer_col2, footer_col3 = st.columns(3)
         st.session_state.dl_type = footer_col1.radio("Download Mode:", ("Chats Only", "ALL"))
         dl_file_id = st.session_state.session.session_id +"_"+ st.session_state.session.session_name[:20]
         dl_data, dl_file_name, dl_mime = set_dl_file(download_data, st.session_state.dl_type, file_id=dl_file_id)
         footer_col2.download_button(label="Download(.md)", data=dl_data, file_name=dl_file_name, mime=dl_mime)
+        pdf_data, pdf_file_name = set_dl_pdf(download_data, st.session_state.dl_type, file_id=dl_file_id)
+        footer_col3.download_button(label="Download(.pdf)", data=pdf_data, file_name=pdf_file_name, mime="application/pdf")
 
     # ユーザーの問合せ入力
     if st.session_state.session_user_id == st.session_state.user_id:

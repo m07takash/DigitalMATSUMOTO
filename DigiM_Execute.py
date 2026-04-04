@@ -118,7 +118,6 @@ def _run_digest_background(session, service_info, user_info, session_id, session
     try:
         dialog_digest_agent_file = support_agent.get("DIALOG_DIGEST", "")
         add_info = {}
-        session.set_history()
         add_info["Memories_Selected"] = memories_selected
         _, _, digest_response, digest_model_name, _, digest_response_tokens = dmt.dialog_digest(
             service_info, user_info, session_id, session_name, dialog_digest_agent_file, "", [], add_info)
@@ -484,6 +483,10 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
         chains = practice["CHAINS"]
         last_idx = len(chains) - 1
         for i, chain in enumerate(chains):
+            # チェイン進捗をステータスに反映
+            if len(chains) > 1:
+                session.save_status_message(f"チェイン {i+1}/{len(chains)} ({chain['TYPE']}) 実行中")
+                yield service_info, user_info, f"[STATUS]チェイン {i+1}/{len(chains)} ({chain['TYPE']}) 実行中", {}
             result = {}
             model_type = chain["TYPE"]
             input = ""
