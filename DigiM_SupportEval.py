@@ -118,7 +118,7 @@ def run_intent_eval(support_agent, engines, questions, question_vecs, progress_c
                 "model": model,
                 "question_no": i + 1,
                 "question": question,
-                "response": response.replace("\n", " "),
+                "response": response,
                 "elapsed_sec": duration,
                 "prompt_tokens": prompt_tokens,
                 "response_tokens": response_tokens,
@@ -171,7 +171,7 @@ def run_meta_eval(support_agent, engines, questions, question_vecs, progress_cal
                 "model": model,
                 "question_no": i + 1,
                 "question": question,
-                "response": response.replace("\n", " "),
+                "response": response,
                 "condition": condition,
                 "elapsed_sec": duration,
                 "prompt_tokens": prompt_tokens,
@@ -226,6 +226,16 @@ def save_excel_file(results, output_path, questions):
         _write_excel_sheets(writer, results, questions)
     print(f"\n結果を {output_path} に保存しました。")
 
+def _apply_wrap_format(writer, sheet_name):
+    """テキスト折り返しを有効にする"""
+    from openpyxl.styles import Alignment
+    ws = writer.sheets[sheet_name]
+    wrap_align = Alignment(wrap_text=True, vertical="top")
+    for row in ws.iter_rows(min_row=2):
+        for cell in row:
+            if isinstance(cell.value, str) and "\n" in cell.value:
+                cell.alignment = wrap_align
+
 def _write_excel_sheets(writer, results, questions):
     """Excel書き出し共通処理"""
     for result_type in ["intent", "meta"]:
@@ -234,6 +244,7 @@ def _write_excel_sheets(writer, results, questions):
             continue
         df = pd.DataFrame(type_results)
         df.to_excel(writer, sheet_name=result_type, index=False)
+        _apply_wrap_format(writer, result_type)
 
         pivot_resp = df.pivot_table(index="question_no", columns="engine", values="response", aggfunc="first")
         pivot_time = df.pivot_table(index="question_no", columns="engine", values="elapsed_sec", aggfunc="first")
@@ -241,6 +252,7 @@ def _write_excel_sheets(writer, results, questions):
         pivot_resp.insert(0, "question", pivot_resp.index.map(q_map))
         pivot_time.insert(0, "question", pivot_time.index.map(q_map))
         pivot_resp.to_excel(writer, sheet_name=f"{result_type}_response", index=True)
+        _apply_wrap_format(writer, f"{result_type}_response")
         pivot_time.to_excel(writer, sheet_name=f"{result_type}_time", index=True)
 
     summary_rows = build_summary(results)

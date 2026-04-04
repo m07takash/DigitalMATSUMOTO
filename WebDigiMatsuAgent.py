@@ -2,14 +2,17 @@ import os
 import re
 import ast
 import json
+import hmac
+import hashlib
 import datetime
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 from dotenv import load_dotenv
 import streamlit as st
 import pandas as pd
 from dataclasses import dataclass
 from typing import Any, Dict
+import extra_streamlit_components as stx
 
 import DigiM_Execute as dme
 import DigiM_Session as dms
@@ -129,7 +132,7 @@ if 'eval_summary' not in st.session_state:
 if 'last_archive_zip' not in st.session_state:
     st.session_state.last_archive_zip = None
 if '_bg_task' not in st.session_state:
-    st.session_state._bg_task = None
+    st.session_state._bg_task = None  # {"type": "rag"|"knowledge"|"compare", "message": "..."}
 
 # DB接続情報が設定されているか確認
 _db_configured = all([
@@ -145,6 +148,41 @@ now_time = datetime.now(tz)
 
 # Streamlitの設定
 st.set_page_config(page_title=web_title, layout="wide")
+
+# --- Cookie認証 ---
+_COOKIE_NAME = "digim_auth"
+_COOKIE_SECRET = os.getenv("COOKIE_SECRET", "digim_default_secret_key_2026")
+_COOKIE_EXPIRY_DAYS = 7
+
+def _get_cookie_manager():
+    if "_cookie_manager" not in st.session_state:
+        st.session_state._cookie_manager = stx.CookieManager()
+    return st.session_state._cookie_manager
+
+# user_idからHMACトークンを生成
+def _make_auth_token(user_id: str) -> str:
+    sig = hmac.new(_COOKIE_SECRET.encode(), user_id.encode(), hashlib.sha256).hexdigest()
+    return f"{user_id}:{sig}"
+
+# トークンを検証してuser_idを返す。不正ならNone
+def _verify_auth_token(token: str):
+    if not token or ":" not in token:
+        return None
+    user_id, sig = token.rsplit(":", 1)
+    expected = hmac.new(_COOKIE_SECRET.encode(), user_id.encode(), hashlib.sha256).hexdigest()
+    if hmac.compare_digest(sig, expected):
+        return user_id
+    return None
+
+# ログイン成功時にCookieを設定
+def _set_auth_cookie(cookie_manager, user_id: str):
+    token = _make_auth_token(user_id)
+    expires = datetime.now() + timedelta(days=_COOKIE_EXPIRY_DAYS)
+    cookie_manager.set(_COOKIE_NAME, token, expires_at=expires)
+
+# ログアウト時にCookieを削除
+def _clear_auth_cookie(cookie_manager):
+    cookie_manager.delete(_COOKIE_NAME)
 
 # ユーザーログイン
 def load_user_master():
@@ -211,6 +249,19 @@ def ensure_login():
     if "login_user" in st.session_state and st.session_state.login_user:
         return
 
+    # Cookie認証: session_stateが消えてもCookieから復元
+    cookie_manager = _get_cookie_manager()
+    auth_token = cookie_manager.get(_COOKIE_NAME)
+    if auth_token:
+        cookie_user_id = _verify_auth_token(auth_token)
+        if cookie_user_id:
+            users = load_user_master()
+            user_info = users.get(cookie_user_id)
+            if user_info:
+                set_login_user_to_session(cookie_user_id, user_info)
+                refresh_session_states()
+                return
+
     st.title(web_title)
     st.subheader("Login:")
 
@@ -227,6 +278,7 @@ def ensure_login():
         with st.form("login_form"):
             input_user_id = st.text_input("User ID")
             input_pw = st.text_input("Password", type="password")
+            remember_me = st.checkbox("ログイン状態を保持する", value=True)
             submitted = st.form_submit_button("Login")
 
         if submitted:
@@ -245,6 +297,8 @@ def ensure_login():
                         pass
 
                 set_login_user_to_session(input_user_id, user_info)
+                if remember_me:
+                    _set_auth_cookie(cookie_manager, input_user_id)
                 st.success("ログインしました")
                 refresh_session_states()
                 st.rerun()
@@ -328,8 +382,8 @@ def _clear_bg_task_status():
     except FileNotFoundError:
         pass
 
+# バックグラウンドでタスクを実行し、完了時にファイルフラグを立てる
 def _run_bg_task(task_type, message, func, *args, **kwargs):
-    """バックグラウンドでタスクを実行し、完了時にファイルフラグを立てる"""
     st.session_state._bg_task = {"type": task_type, "message": message}
     _task_file = _bg_task_path()
     _write_bg_task_status_to(_task_file, {"status": "running", "message": message, "error": ""})
@@ -528,20 +582,36 @@ def refresh_session(session_id, session_name, situation, new_session_flg=False):
         st.session_state.session_user_id = st.session_state.user_id
     if new_session_flg:
         st.session_state.display_name = st.session_state.default_agent
+        _idx = st.session_state.agent_list.index(st.session_state.default_agent) if st.session_state.default_agent in st.session_state.agent_list else 0
+        st.session_state.agent_list_index = _idx
+        st.session_state.agent_file = st.session_state.agents[_idx]["FILE"]
+        st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, agent_folder_path)
+        st.session_state.engine_name = st.session_state.agent_data.get("ENGINE", {}).get("LLM", {}).get("DEFAULT", "")
+        st.session_state.imagegen_engine_name = st.session_state.agent_data.get("ENGINE", {}).get("IMAGEGEN", {}).get("DEFAULT", "")
     else:
         session_agent_file = dms.get_agent_file(st.session_state.session.session_id)
-        if os.path.exists(agent_folder_path + session_agent_file):
-            st.session_state.display_name = dma.get_agent_item(session_agent_file, "DISPLAY_NAME")
-            # セッションの最後に使用されたエンジン名を復元
+        _agent_display = dma.get_agent_item(session_agent_file, "DISPLAY_NAME") if os.path.exists(agent_folder_path + session_agent_file) else ""
+        if _agent_display and _agent_display in st.session_state.agent_list:
+            st.session_state.display_name = _agent_display
+            _idx = st.session_state.agent_list.index(_agent_display)
+            st.session_state.agent_list_index = _idx
+            st.session_state.agent_file = session_agent_file
+            st.session_state.agent_data = dmu.read_json_file(session_agent_file, agent_folder_path)
             last_engine = dms.get_last_engine_name(st.session_state.session.session_id)
-            agent_data = dmu.read_json_file(session_agent_file, agent_folder_path)
-            engine_list = dma.get_engine_list(agent_data, "LLM")
+            engine_list = dma.get_engine_list(st.session_state.agent_data, "LLM")
             if last_engine and last_engine in engine_list:
                 st.session_state.engine_name = last_engine
             else:
-                st.session_state.engine_name = agent_data.get("ENGINE", {}).get("LLM", {}).get("DEFAULT", "")
+                st.session_state.engine_name = st.session_state.agent_data.get("ENGINE", {}).get("LLM", {}).get("DEFAULT", "")
+            st.session_state.imagegen_engine_name = st.session_state.agent_data.get("ENGINE", {}).get("IMAGEGEN", {}).get("DEFAULT", "")
         else:
             st.session_state.display_name = st.session_state.default_agent
+            _idx = st.session_state.agent_list.index(st.session_state.default_agent) if st.session_state.default_agent in st.session_state.agent_list else 0
+            st.session_state.agent_list_index = _idx
+            st.session_state.agent_file = st.session_state.agents[_idx]["FILE"]
+            st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, agent_folder_path)
+            st.session_state.engine_name = st.session_state.agent_data.get("ENGINE", {}).get("LLM", {}).get("DEFAULT", "")
+            st.session_state.imagegen_engine_name = st.session_state.agent_data.get("ENGINE", {}).get("IMAGEGEN", {}).get("DEFAULT", "")
     st.session_state.time_setting = situation.get("TIME", "")
     st.session_state.time_mode = "Custom Date" if situation.get("TIME") else "No Date"
     st.session_state.situation_setting = situation["SITUATION"]
@@ -638,9 +708,11 @@ def set_dl_pdf(chat_history, dl_type="Chats Only", file_id="Chat_History"):
     for msg in chat_history:
         if (dl_type == "Chats Only" and msg["role"] in ["user", "assistant"]) or dl_type == "ALL":
             if "content" in msg:
+                # 役割のヘッダー
                 pdf.set_font("IPAexG", size=11)
                 pdf.cell(0, 8, msg["role"].capitalize(), new_x="LMARGIN", new_y="NEXT")
                 pdf.set_font("IPAexG", size=10)
+                # 本文
                 for line in msg["content"].split("\n"):
                     line = line.replace("\r", "").replace("**", "")
                     pdf.multi_cell(0, 6, line)
@@ -655,7 +727,7 @@ def set_dl_pdf(chat_history, dl_type="Chats Only", file_id="Chat_History"):
             pdf.line(10, pdf.get_y(), 200, pdf.get_y())
             pdf.ln(4)
 
-    pdf_bytes = pdf.output()
+    pdf_bytes = bytes(pdf.output())
     file_name = f"{file_id}_{dl_type}.pdf"
     return pdf_bytes, file_name
 
@@ -708,6 +780,7 @@ def main():
                 lu = st.session_state.login_user
                 st.markdown(f"User: {lu.get('Name', '')}")
                 if st.button("Logout"):
+                    _clear_auth_cookie(_get_cookie_manager())
                     for key in ["login_user", "service_id", "user_id"]:
                         if key in st.session_state:
                             del st.session_state[key]
@@ -1250,6 +1323,7 @@ def main():
                                 chat_expander = st.expander("Detail Information")
                                 with chat_expander:
                                     _detail_info = st.session_state.session.get_detail_info(k, k2)
+                                    # 【】ブロックごとに分割してコピーボタンを付与
                                     import re as _re
                                     _blocks = _re.split(r'\n(?=【)', _detail_info)
                                     for _bi, _block in enumerate(_blocks):
