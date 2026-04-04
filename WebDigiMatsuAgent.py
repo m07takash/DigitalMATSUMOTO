@@ -705,26 +705,33 @@ def set_dl_pdf(chat_history, dl_type="Chats Only", file_id="Chat_History"):
     pdf.add_page()
     pdf.set_font("IPAexG", size=10)
 
+    _w = pdf.w - pdf.l_margin - pdf.r_margin
     for msg in chat_history:
         if (dl_type == "Chats Only" and msg["role"] in ["user", "assistant"]) or dl_type == "ALL":
             if "content" in msg:
-                # 役割のヘッダー
                 pdf.set_font("IPAexG", size=11)
-                pdf.cell(0, 8, msg["role"].capitalize(), new_x="LMARGIN", new_y="NEXT")
+                pdf.cell(_w, 8, msg["role"].capitalize(), new_x="LMARGIN", new_y="NEXT")
                 pdf.set_font("IPAexG", size=10)
-                # 本文
                 for line in msg["content"].split("\n"):
                     line = line.replace("\r", "").replace("**", "")
-                    pdf.multi_cell(0, 6, line)
+                    if line.startswith("![") or len(line) > 5000:
+                        continue
+                    try:
+                        pdf.multi_cell(_w, 6, line)
+                    except Exception:
+                        try:
+                            pdf.multi_cell(_w, 6, line[:200] + "...")
+                        except Exception:
+                            pass
                 pdf.ln(2)
             if "image" in msg:
                 try:
                     pdf.image(msg["image"], w=100)
                     pdf.ln(3)
                 except Exception:
-                    pdf.cell(0, 6, f"[画像: {msg['image']}]", new_x="LMARGIN", new_y="NEXT")
+                    pdf.cell(_w, 6, f"[画像]", new_x="LMARGIN", new_y="NEXT")
             pdf.set_draw_color(200, 200, 200)
-            pdf.line(10, pdf.get_y(), 200, pdf.get_y())
+            pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
             pdf.ln(4)
 
     pdf_bytes = bytes(pdf.output())
