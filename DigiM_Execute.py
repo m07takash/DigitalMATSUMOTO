@@ -544,6 +544,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                     "META_SEARCH":       cfg["meta_search"] and setting.get("META_SEARCH", True),
                     "RAG_QUERY_GENE":    cfg["RAG_query_gene"] and setting.get("RAG_QUERY_GENE", True),
                     "WEB_SEARCH":        setting.get("WEB_SEARCH", cfg["web_search"]),
+                    "PRIVATE_MODE":      cfg["private_mode"],
                 }
 
                 response = ""

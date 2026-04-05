@@ -278,7 +278,7 @@ def ensure_login():
         with st.form("login_form"):
             input_user_id = st.text_input("User ID")
             input_pw = st.text_input("Password", type="password")
-            remember_me = st.checkbox("ログイン状態を保持する", value=True)
+            remember_me = st.checkbox("Keep me logged in", value=True)
             submitted = st.form_submit_button("Login")
 
         if submitted:
