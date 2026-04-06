@@ -119,6 +119,52 @@ def extract_date(service_info, user_info, session_id, session_name, agent_file, 
 
     return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
+# Thinking Agent: ユーザーの質問を分析し実行パラメータをJSON形式で返す
+def thinking_agent(service_info, user_info, session_id, session_name, agent_file, user_query, import_contents=[], add_info={}):
+    if not agent_file:
+        agent_file = "agent_70DigiMThinking.json"
+    agent = dma.DigiM_Agent(agent_file)
+
+    model_type = "LLM"
+    model_name = agent.agent["ENGINE"][model_type]["MODEL"]
+    tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
+
+    situation_prompt = add_info.get("Situation", "")
+    digest_text = add_info.get("DigestText", "")
+    habit_info = add_info.get("HabitInfo", "")
+    book_info = add_info.get("BookInfo", "")
+
+    # エージェントファイルのDEFAULTに設定しているPRACTICEの1つ目からプロンプトテンプレートを取得する
+    practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
+    practice = dmu.read_json_file(str(Path(practice_folder_path) / practice_file))
+    if practice["CHAINS"][0]["TYPE"] == "LLM":
+        prompt_temp_cd = practice["CHAINS"][0]["SETTING"]["PROMPT_TEMPLATE"]
+    else:
+        prompt_temp_cd = "Thinking"
+    prompt_template = agent.set_prompt_template(prompt_temp_cd)
+
+    # 追加情報をプロンプトに挿入
+    context = ""
+    if habit_info:
+        context += f"\n【利用可能なHabit一覧】\n{habit_info}\n"
+    if book_info:
+        context += f"\n【利用可能なBook一覧】\n{book_info}\n"
+    if digest_text:
+        context += f"\n【会話のダイジェスト】\n{digest_text}\n"
+
+    prompt = f'{context}{prompt_template}{user_query}{situation_prompt}'
+
+    # LLMの実行
+    response = ""
+    for prompt, response_chunk, completion in agent.generate_response(model_type, prompt, [], stream_mode=False):
+        if response_chunk:
+            response += response_chunk
+
+    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt)
+    response_tokens = dmu.count_token(tokenizer, model_name, response)
+
+    return service_info, user_info, response, model_name, prompt_tokens, response_tokens
+
 # テキストからRAGクエリの生成
 def RAG_query_generator(service_info, user_info, session_id, session_name, agent_file, user_query, import_contents=[], add_info={}):
     if not agent_file:
