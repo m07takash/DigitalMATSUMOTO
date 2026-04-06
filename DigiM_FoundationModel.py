@@ -57,6 +57,29 @@ def _get_llama_client():
     return _clients["llama"]
 
 # 文字列から関数名を取得
+def _sanitize_text(text):
+    """JSONパースエラーの原因となる不正文字を除去する"""
+    if not isinstance(text, str):
+        return text
+    import re
+    # NUL文字を除去
+    text = text.replace("\0", "")
+    # サロゲートペア断片（孤立サロゲート）を除去
+    text = re.sub(r'[\ud800-\udfff]', '', text)
+    # JSONで問題になるC0制御文字を除去（\t, \n, \r は保持）
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
+    return text
+
+def _sanitize_messages(messages):
+    """メッセージリスト内の全テキストをサニタイズする"""
+    if isinstance(messages, str):
+        return _sanitize_text(messages)
+    if isinstance(messages, list):
+        return [_sanitize_messages(m) for m in messages]
+    if isinstance(messages, dict):
+        return {k: _sanitize_messages(v) for k, v in messages.items()}
+    return messages
+
 def call_function_by_name(func_name, *args, **kwargs):
     if func_name in globals():
         func = globals()[func_name]
@@ -87,7 +110,7 @@ def generate_response_T_gpt(query, system_prompt, model, memories=[], image_path
     # ユーザーのプロンプトを設定
     user_prompt = [{"type": "text", "text": query}] + image_message
     user_message = [{"role": "user", "content": user_prompt}]
-    prompt = system_message + memory_message + user_message
+    prompt = _sanitize_messages(system_message + memory_message + user_message)
 
     # ツールを設定【要検討：いったんデフォルト設定】
     tools = agent_tools["TOOL_LIST"]
@@ -133,7 +156,7 @@ def generate_response_T_gpt_response(query, system_prompt, model, memories=[], i
     # ユーザーのプロンプトを設定
     user_prompt = [{"type": "input_text", "text": query}] + image_message
     user_message = [{"role": "user", "content": user_prompt}]
-    prompt = memory_message + user_message
+    prompt = _sanitize_messages(memory_message + user_message)
 
     # ツールを設定
     tools = agent_tools["TOOL_LIST"]
@@ -175,7 +198,7 @@ def generate_response_openai_tool(query, system_prompt, model, memories=[], imag
     # ユーザーのプロンプトを設定
     user_prompt = [{"type": "input_text", "text": query}] + image_message
     user_message = [{"role": "user", "content": user_prompt}]
-    prompt = system_message + memory_message + user_message
+    prompt = _sanitize_messages(system_message + memory_message + user_message)
 
     # ツールを設定【要検討：いったんデフォルト設定】
     tools = agent_tools["TOOL_LIST"]
@@ -222,6 +245,8 @@ def generate_response_T_gemini(query, system_prompt, model, memories=[], image_p
     user_prompt = [{"text": query}]
     contents.append({"role": "user", "parts": user_prompt})
     contents += images
+    contents = _sanitize_messages(contents)
+    system_instruction = _sanitize_text(system_instruction)
 
     # ツールを設定【修正前】
 ###    tools = agent_tools["TOOL_LIST"]
@@ -276,7 +301,8 @@ def generate_response_T_claude(query, system_prompt, model, memories=[], image_p
     # ユーザーのプロンプトを設定
     user_prompt = [{"type": "text", "text": query}] + image_message
     user_message = [{"role": "user", "content": user_prompt}]
-    prompt = memory_message + user_message
+    prompt = _sanitize_messages(memory_message + user_message)
+    system_prompt = _sanitize_text(system_prompt)
 
     # ツールを設定【要検討：いったんデフォルト設定】
     tools = agent_tools["TOOL_LIST"]
@@ -333,8 +359,8 @@ def generate_response_T_grok(query, system_prompt, model, memories=[], image_pat
     user_prompt = [{"type": "text", "text": query}]# + image_message
     user_message = {"role": "user", "content": user_prompt}
     user_message = {"role": "user", "content": query}
-    prompt = memory_message + [user_message]
-    grok_chat.append(user(query, *image_message))
+    prompt = _sanitize_messages(memory_message + [user_message])
+    grok_chat.append(user(_sanitize_text(query), *image_message))
 
     # ツールを設定【要検討：いったんデフォルト設定】
     tools = agent_tools["TOOL_LIST"]
@@ -459,8 +485,8 @@ def generate_image_dalle(prompt, system_prompt, model, memories=[], image_paths=
     for memory in memories:
         memory_message.append({"role": memory["role"], "content": memory["text"]})
 
-    # プロンプトを文字列に
-    prompt_str = json.dumps(memory_message + user_message, ensure_ascii=False).replace("\n", "").replace("\\", "")
+    # プロンプトを文字列に（不正文字を除去）
+    prompt_str = json.dumps(_sanitize_messages(memory_message + user_message), ensure_ascii=False).replace("\n", "").replace("\\", "")
 
     # 画像生成モデルの実行
     params = dict(model["PARAMETER"])
