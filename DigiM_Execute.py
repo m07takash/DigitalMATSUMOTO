@@ -470,8 +470,10 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             for i, img_path in enumerate(completion):
                 img_file_name = "[OUT]seq" + str(seq) + "-" + str(sub_seq) + "_" + os.path.basename(img_path)
                 session.save_contents_file(img_path, img_file_name)
+                _img_ext = os.path.splitext(img_file_name)[1].lstrip(".").lower()
+                _img_mime = f"image/{_img_ext}" if _img_ext else "image/png"
                 img_dict[i] = {"role": "image", "timestamp": timestamp_end,
-                               "file_name": img_file_name, "file_type": "image/jpeg"}
+                               "file_name": img_file_name, "file_type": _img_mime}
                 export_files.append(str(Path(session.session_folder_path) / "contents" / img_file_name))
 
         timestamp_log += "[完了]" + str(datetime.now()) + "<br>"
