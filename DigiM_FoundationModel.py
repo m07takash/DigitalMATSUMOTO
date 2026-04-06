@@ -11,7 +11,13 @@ from google.genai import types
 import anthropic
 from llamaapi import LlamaAPI
 
+import mimetypes
 import DigiM_Util as dmu
+
+def _get_image_mime(image_path):
+    """ファイルパスからMIMEタイプを判定（デフォルト: image/png）"""
+    mime, _ = mimetypes.guess_type(image_path)
+    return mime if mime and mime.startswith("image/") else "image/png"
 
 # setting.yamlからフォルダパスなどを設定
 system_setting_dict = dmu.read_yaml_file("setting.yaml")
@@ -76,7 +82,7 @@ def generate_response_T_gpt(query, system_prompt, model, memories=[], image_path
     image_message = []
     for image_path in image_paths:
         image_base64 = dmu.encode_image_file(image_path)
-        image_message.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}})
+        image_message.append({"type": "image_url", "image_url": {"url": f"data:{_get_image_mime(image_path)};base64,{image_base64}"}})
 
     # ユーザーのプロンプトを設定
     user_prompt = [{"type": "text", "text": query}] + image_message
@@ -122,7 +128,7 @@ def generate_response_T_gpt_response(query, system_prompt, model, memories=[], i
     image_message = []
     for image_path in image_paths:
         image_base64 = dmu.encode_image_file(image_path)
-        image_message.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}})
+        image_message.append({"type": "image_url", "image_url": {"url": f"data:{_get_image_mime(image_path)};base64,{image_base64}"}})
     
     # ユーザーのプロンプトを設定
     user_prompt = [{"type": "input_text", "text": query}] + image_message
@@ -164,7 +170,7 @@ def generate_response_openai_tool(query, system_prompt, model, memories=[], imag
     for image_path in image_paths:
         image_base64 = dmu.encode_image_file(image_path)
         #image_message.append({"type": "image_url", "image_url": {"url": image_url["image_url"]}})
-        image_message.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}})
+        image_message.append({"type": "image_url", "image_url": {"url": f"data:{_get_image_mime(image_path)};base64,{image_base64}"}})
 
     # ユーザーのプロンプトを設定
     user_prompt = [{"type": "input_text", "text": query}] + image_message
@@ -209,14 +215,8 @@ def generate_response_T_gemini(query, system_prompt, model, memories=[], image_p
     images = []
     for image_path in image_paths:
         image_data = dmu.encode_image_file(image_path)
-        image_suffix = Path(image_path).suffix
-        image_type = ""
-        if image_suffix in ["jpeg", "jpg"]:
-            image_type = "image/jpeg"
-        elif image_suffix in ["png"]:
-            image_type = "image/png"
-        if image_type:
-            images.append({"inlineData": {"mimeType": image_type, "data": image_data}})
+        image_type = _get_image_mime(image_path)
+        images.append({"inlineData": {"mimeType": image_type, "data": image_data}})
 
     # ユーザーのプロンプトを設定
     user_prompt = [{"text": query}]
@@ -271,7 +271,7 @@ def generate_response_T_claude(query, system_prompt, model, memories=[], image_p
     image_message = []
     for image_path in image_paths:
         image_base64 = dmu.encode_image_file(image_path)
-        image_message.append({"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": image_base64}})
+        image_message.append({"type": "image", "source": {"type": "base64", "media_type": _get_image_mime(image_path), "data": image_base64}})
 
     # ユーザーのプロンプトを設定
     user_prompt = [{"type": "text", "text": query}] + image_message
@@ -327,7 +327,7 @@ def generate_response_T_grok(query, system_prompt, model, memories=[], image_pat
     image_message = []
     for image_path in image_paths:
         image_base64 = dmu.encode_image_file(image_path)
-        image_message.append(image(image_url=f"data:image/jpeg;base64,{image_base64}"))
+        image_message.append(image(image_url=f"data:{_get_image_mime(image_path)};base64,{image_base64}"))
 
     # ユーザーのプロンプトを設定
     user_prompt = [{"type": "text", "text": query}]# + image_message
@@ -368,7 +368,7 @@ def generate_response_T_llama(query, system_prompt, model, memories=[], image_pa
     image_message = []
 #    for image_path in image_paths:
 #        image_base64 = dmu.encode_image_file(image_path)
-#        image_message.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}})
+#        image_message.append({"type": "image_url", "image_url": {"url": f"data:{_get_image_mime(image_path)};base64,{image_base64}"}})
 
     # ユーザーのプロンプトを設定
     prompt = [{"type": "text", "text": query}] + image_message
@@ -463,17 +463,21 @@ def generate_image_dalle(prompt, system_prompt, model, memories=[], image_paths=
     prompt_str = json.dumps(memory_message + user_message, ensure_ascii=False).replace("\n", "").replace("\\", "")
 
     # 画像生成モデルの実行
+    params = dict(model["PARAMETER"])
+    if "output_format" not in params:
+        params["output_format"] = "png"
     completion = openai_client.images.generate(
         model=model["MODEL"],
         prompt=prompt_str[:3000],
-        **model["PARAMETER"]
+        **params
     )
 
     # TEMPフォルダに保存
     img_files = []
     num = 0
+    ext = params.get("output_format", "png")
     for i, d in enumerate(completion.data):
-        img_file = temp_folder_path + f"{num}_dalle.jpg"
+        img_file = temp_folder_path + f"{num}_dalle.{ext}"
         with open(img_file, "wb") as f:
             f.write(base64.b64decode(d.b64_json))
         img_files.append(img_file)
