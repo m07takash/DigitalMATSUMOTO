@@ -49,6 +49,7 @@ class InputData(BaseModel):
     web_search: Optional[bool] = None
     web_search_engine: Optional[str] = None
     private_mode: Optional[bool] = None
+    thinking_mode: Optional[bool] = None
     # その他の実行設定（上記以外を直接渡す場合）
     execution: Dict[str, Any] = {}
 
@@ -151,6 +152,7 @@ async def run(data: InputData):
         "WEB_SEARCH": data.web_search,
         "WEB_SEARCH_ENGINE": data.web_search_engine,
         "PRIVATE_MODE": data.private_mode,
+        "THINKING_MODE": data.thinking_mode,
     }
     for key, val in _flag_map.items():
         if val is not None:

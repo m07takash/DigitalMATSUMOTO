@@ -45,6 +45,7 @@ def _parse_execution_settings(execution):
         "web_search":        execution.get("WEB_SEARCH", False),
         "web_search_engine": execution.get("WEB_SEARCH_ENGINE", ""),
         "private_mode":      execution.get("PRIVATE_MODE", False),
+        "thinking_mode":     execution.get("THINKING_MODE", False),
     }
 
 # B-3: USER_INPUT解決の共通関数
@@ -111,10 +112,62 @@ def _build_meta_searches(service_info, user_info, session_id, session_name, supp
                     "duration_sec": duration}}
     return [{"DATE": date_list}], log
 
+# B-4: Thinking Agent実行（質問を分析し実行パラメータを判定）
+def _run_thinking_agent(service_info, user_info, session_id, session_name,
+                        support_agent, agent, user_query, digest_text, situation_prompt):
+    """Thinking Agentを実行し、判定結果のJSONとログを返す"""
+    import json as _json
+    if "THINKING" not in support_agent:
+        return {}, {}
+    t_start = datetime.now()
+
+    # Habit一覧を整形
+    habit_info = ""
+    for habit_key, habit_val in agent.habit.items():
+        desc = ", ".join(habit_val.get("MAGIC_WORDS", []))
+        habit_info += f"- {habit_key}: {desc}\n"
+
+    # Book一覧を整形
+    book_info = ""
+    for book in agent.agent.get("BOOK", []):
+        book_info += f"- {book['RAG_NAME']}\n"
+
+    add_info = {
+        "Situation": situation_prompt,
+        "DigestText": digest_text,
+        "HabitInfo": habit_info,
+        "BookInfo": book_info,
+    }
+    agent_file = support_agent["THINKING"]
+    _, _, response, model_name, prompt_tokens, response_tokens = dmt.thinking_agent(
+        service_info, user_info, session_id, session_name, agent_file, user_query, [], add_info)
+
+    # レスポンスからJSONを抽出
+    result = {}
+    reasoning = response
+    try:
+        # ```json ... ``` ブロックがあればその中身を抽出
+        import re
+        json_match = re.search(r'```json\s*(.*?)\s*```', response, re.DOTALL)
+        json_str = json_match.group(1) if json_match else response
+        result = _json.loads(json_str)
+        reasoning = result.get("reasoning", response)
+    except (_json.JSONDecodeError, AttributeError):
+        pass
+
+    duration = round((datetime.now() - t_start).total_seconds(), 2)
+    log = {
+        "agent_file": agent_file, "model": model_name,
+        "reasoning": reasoning, "result": result,
+        "prompt_token": prompt_tokens, "response_token": response_tokens,
+        "duration_sec": duration
+    }
+    return result, log
+
 # ダイジェスト生成・保存・アンロックをバックグラウンドで実行
 def _run_digest_background(session, service_info, user_info, session_id, session_name,
                             support_agent, memories_selected,
-                            seq, sub_seq, cfg):
+                            seq, sub_seq, cfg, unlock_on_complete=True):
     try:
         dialog_digest_agent_file = support_agent.get("DIALOG_DIGEST", "")
         add_info = {}
@@ -137,7 +190,8 @@ def _run_digest_background(session, service_info, user_info, session_id, session
         import logging
         logging.getLogger(__name__).error(f"バックグラウンドダイジェスト生成に失敗しました: {e}")
     finally:
-        session.save_status("UNLOCKED")
+        if unlock_on_complete:
+            session.save_status("UNLOCKED")
 
 # 単体実行用の関数
 def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_file, model_type="LLM",
@@ -208,6 +262,9 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                 _, _, chat_history_digest_dict = session.get_history_max_digest()
             if chat_history_digest_dict:
                 digest_text = "会話履歴のダイジェスト:\n" + chat_history_digest_dict["text"] + "\n---\n"
+
+    # Thinkingログの取得（Practice経由で渡される場合）
+    thinking_log = execution.get("_THINKING_LOG", {})
 
     # Web検索を実行
     web_context = ""
@@ -390,6 +447,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                 "contents": contents_record_to, "situation": situation,
                 "tools": [], "vec_file": query_vec_file
             },
+            "thinking": thinking_log,
             "web_search": web_search_log,
             "RAG_query_genetor": RAG_query_gene_log,
             "meta_search": meta_search_log,
@@ -437,12 +495,13 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
 
         # ダイジェスト生成をバックグラウンドで起動（完了後にセッションをUNLOCK）
         if cfg["save_digest"]:
+            _unlock_on_complete = execution.get("_UNLOCK_ON_DIGEST", True)
             timestamp_log += "[18.メモリダイジェストの作成をバックグラウンドで開始]" + str(datetime.now()) + "<br>"
             threading.Thread(
                 target=_run_digest_background,
                 args=(session, service_info, user_info, session_id, session_name,
                       support_agent, memories_selected,
-                      seq, sub_seq, cfg),
+                      seq, sub_seq, cfg, _unlock_on_complete),
                 daemon=True
             ).start()
             output_reference["_digest_bg_started"] = True
@@ -471,10 +530,57 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
 
     try:
         agent = dma.DigiM_Agent(in_agent_file)
+        thinking_result = {}
+
+        # Thinking Mode: AIが質問を分析して実行パラメータを判定
+        if cfg["thinking_mode"] and "SUPPORT_AGENT" in agent.agent and "THINKING" in agent.agent["SUPPORT_AGENT"]:
+            session.save_status_message("Thinking中...")
+            yield service_info, user_info, "[STATUS]Thinking中...", {}
+
+            # ダイジェスト取得（Thinkingの文脈理解用）
+            _thinking_digest = ""
+            if session.chat_history_active_dict:
+                _, _, _digest_dict = session.get_history_max_digest()
+                if _digest_dict:
+                    _thinking_digest = _digest_dict["text"]
+
+            # シチュエーション取得
+            _thinking_situation = ""
+            if in_situation:
+                _thinking_situation = in_situation.get("SITUATION", "") + " " + in_situation.get("TIME", "")
+
+            thinking_result, thinking_log = _run_thinking_agent(
+                service_info, user_info, session_id, session_name,
+                agent.agent["SUPPORT_AGENT"], agent, user_query,
+                _thinking_digest, _thinking_situation)
+
+            # Thinking結果を実行設定に反映
+            if thinking_result:
+                if "web_search" in thinking_result:
+                    cfg["web_search"] = thinking_result["web_search"]
+                    if "web_search_engine" in thinking_result:
+                        cfg["web_search_engine"] = thinking_result["web_search_engine"]
+                if "rag_query_gene" in thinking_result:
+                    cfg["RAG_query_gene"] = thinking_result["rag_query_gene"]
+
+            # Thinkingログをチェイン実行のexecutionに渡す
+            in_execution["_THINKING_LOG"] = thinking_log
+        else:
+            in_execution["_THINKING_LOG"] = {}
+
+        # Habit選択: Thinking結果があればそちらを優先、なければMagic Word判定
         habit = "DEFAULT"
-        if cfg["magic_word_use"]:
-            agent = dma.DigiM_Agent(in_agent_file)
+        if thinking_result and "habit" in thinking_result and thinking_result["habit"] in agent.habit:
+            habit = thinking_result["habit"]
+        elif cfg["magic_word_use"]:
             habit = agent.set_practice_by_command(user_query)
+
+        # Book選択: Thinking結果から自動追加
+        if thinking_result and "books" in thinking_result:
+            for book_data in agent.agent.get("BOOK", []):
+                if book_data["RAG_NAME"] in thinking_result["books"]:
+                    if book_data not in in_add_knowledge:
+                        in_add_knowledge.append(book_data)
 
         practice_file = agent.habit[habit]["PRACTICE"]
         habit_add_knowledge = agent.habit[habit].get("ADD_KNOWLEDGE", [])
@@ -533,6 +639,8 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 seq_limit = chain.get("PreSEQ", "")
                 sub_seq_limit = chain.get("PreSubSEQ", "")
 
+                # 中間チェインのダイジェストBGスレッドはUNLOCKしない（最後のチェインのみUNLOCK）
+                _is_last_chain = (i == last_idx)
                 execution = {
                     "CONTENTS_SAVE":     cfg["contents_save"],
                     "MEMORY_USE":        cfg["memory_use"] and setting.get("MEMORY_USE", True),
@@ -545,6 +653,9 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                     "RAG_QUERY_GENE":    cfg["RAG_query_gene"] and setting.get("RAG_QUERY_GENE", True),
                     "WEB_SEARCH":        setting.get("WEB_SEARCH", cfg["web_search"]),
                     "PRIVATE_MODE":      cfg["private_mode"],
+                    "THINKING_MODE":     cfg["thinking_mode"],
+                    "_THINKING_LOG":     in_execution.get("_THINKING_LOG", {}),
+                    "_UNLOCK_ON_DIGEST": _is_last_chain,
                 }
 
                 response = ""
@@ -556,7 +667,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                         yield response_service_info, response_user_info, response_chunk, output_reference
                     if response_chunk and not response_chunk.startswith("[STATUS]"):
                         response += response_chunk
-                if output_reference.get("_digest_bg_started", False):
+                if _is_last_chain and output_reference.get("_digest_bg_started", False):
                     _digest_bg_started = True
 
                 input = user_input

@@ -482,6 +482,8 @@ def initialize_session_states():
         st.session_state.memory_similarity = False
     if 'private_mode' not in st.session_state:
         st.session_state.private_mode = False
+    if 'thinking_mode' not in st.session_state:
+        st.session_state.thinking_mode = False
     if 'meta_search' not in st.session_state:
         st.session_state.meta_search = True
     if 'RAG_query_gene' not in st.session_state:
@@ -1147,12 +1149,6 @@ def main():
     if st.session_state.allowed_exec_setting:
         header_col2.markdown("Exec Setting:")
 
-        # Private Modeの設定
-        if header_col2.checkbox("Private Mode", value=st.session_state.private_mode):
-            st.session_state.private_mode = True
-        else:
-            st.session_state.private_mode = False
-
         # ストリーミングの設定
         if header_col2.checkbox("Streaming Mode", value=st.session_state.stream_mode):
             st.session_state.stream_mode = True
@@ -1583,6 +1579,17 @@ def main():
             else:
                 st.session_state.web_search = False
 
+        # Private Mode / Thinking Mode
+        _mode_col1, _mode_col2 = st.columns(2)
+        if _mode_col1.checkbox("Private Mode", value=st.session_state.private_mode):
+            st.session_state.private_mode = True
+        else:
+            st.session_state.private_mode = False
+        if _mode_col2.checkbox("Thinking Mode", value=st.session_state.thinking_mode):
+            st.session_state.thinking_mode = True
+        else:
+            st.session_state.thinking_mode = False
+
         # BOOKから選択
         if st.session_state.allowed_book:
             if "BOOK" in st.session_state.agent_data:
@@ -1687,6 +1694,7 @@ def main():
             execution["WEB_SEARCH"] = st.session_state.web_search
             execution["WEB_SEARCH_ENGINE"] = st.session_state.get("web_search_engine", "")
             execution["PRIVATE_MODE"] = st.session_state.private_mode
+            execution["THINKING_MODE"] = st.session_state.thinking_mode
 
             # バックグラウンドで実行開始（事前ロック）
             import threading

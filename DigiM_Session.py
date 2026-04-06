@@ -862,6 +862,24 @@ class DigiMSession:
             for memory_set_dict in chat_history_dict_seq["response"]["reference"]["memory"]:
                 chat_detail_info += memory_set_dict["log"]
 
+            if "thinking" in chat_history_dict_seq["prompt"] and chat_history_dict_seq["prompt"]["thinking"]:
+                thinking = chat_history_dict_seq["prompt"]["thinking"]
+                chat_detail_info += "\n【Thinking】\n"
+                if "agent_file" in thinking:
+                    chat_detail_info += "エージェント："+thinking["agent_file"]+"\n"
+                if "model" in thinking:
+                    chat_detail_info += "実行モデル："+thinking["model"]+"\n"
+                if "duration_sec" in thinking:
+                    chat_detail_info += "実行時間："+str(thinking["duration_sec"])+"秒\n"
+                if "prompt_token" in thinking:
+                    chat_detail_info += "入力トークン数："+str(thinking["prompt_token"])+"\n"
+                if "response_token" in thinking:
+                    chat_detail_info += "出力トークン数："+str(thinking["response_token"])+"\n"
+                if "reasoning" in thinking:
+                    chat_detail_info += "思考内容："+thinking["reasoning"]+"\n"
+                if "result" in thinking:
+                    chat_detail_info += "判定結果："+str(thinking["result"])+"\n"
+
             chat_detail_info += "\n【RAG検索用クエリ】\n"
             if chat_history_dict_seq["prompt"]["RAG_query_genetor"]:
                 rag_qg = chat_history_dict_seq["prompt"]["RAG_query_genetor"]
