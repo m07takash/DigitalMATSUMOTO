@@ -112,17 +112,11 @@ def generate_response_T_gpt(query, system_prompt, model, memories=[], image_path
     user_message = [{"role": "user", "content": user_prompt}]
     prompt = _sanitize_messages(system_message + memory_message + user_message)
 
-    # ツールを設定【要検討：いったんデフォルト設定】
-    tools = agent_tools["TOOL_LIST"]
-    tool_choice = agent_tools["CHOICE"]
-
     # モデルの実行
     completion = openai_client.chat.completions.create(
         model = model["MODEL"],
         **model["PARAMETER"],
         messages = prompt,
-        tools = tools,
-        tool_choice = tool_choice,
         stream = stream_mode
     )
 
@@ -158,16 +152,12 @@ def generate_response_T_gpt_response(query, system_prompt, model, memories=[], i
     user_message = [{"role": "user", "content": user_prompt}]
     prompt = _sanitize_messages(memory_message + user_message)
 
-    # ツールを設定
-    tools = agent_tools["TOOL_LIST"]
-
     # モデルの実行
     completion = openai_client.responses.create(
         model = model["MODEL"],
         **model["PARAMETER"],
         input = prompt,
-        instructions = instructions,
-        tools = tools
+        instructions = instructions
     )
 
     response = completion.output_text
@@ -200,15 +190,10 @@ def generate_response_openai_tool(query, system_prompt, model, memories=[], imag
     user_message = [{"role": "user", "content": user_prompt}]
     prompt = _sanitize_messages(system_message + memory_message + user_message)
 
-    # ツールを設定【要検討：いったんデフォルト設定】
-    tools = agent_tools["TOOL_LIST"]
-    tool_choice = agent_tools["CHOICE"]
-
     # モデルの実行
     completion = openai_client.responses.create(
         model = model["MODEL"],
         **model["PARAMETER"],
-        tools = tools,
         input = prompt,
         stream = stream_mode
     )
@@ -247,10 +232,6 @@ def generate_response_T_gemini(query, system_prompt, model, memories=[], image_p
     contents += images
     contents = _sanitize_messages(contents)
     system_instruction = _sanitize_text(system_instruction)
-
-    # ツールを設定【修正前】
-###    tools = agent_tools["TOOL_LIST"]
-###    tool_choice = agent_tools["CHOICE"]
 
     # thought_signatureなど非テキストパーツを除いてテキストのみ抽出するヘルパー
     def _extract_text(candidate_response):
@@ -303,10 +284,6 @@ def generate_response_T_claude(query, system_prompt, model, memories=[], image_p
     user_message = [{"role": "user", "content": user_prompt}]
     prompt = _sanitize_messages(memory_message + user_message)
     system_prompt = _sanitize_text(system_prompt)
-
-    # ツールを設定【要検討：いったんデフォルト設定】
-    tools = agent_tools["TOOL_LIST"]
-    tool_choice = agent_tools["CHOICE"]
 
     # モデルの実行
     if stream_mode:
@@ -362,10 +339,6 @@ def generate_response_T_grok(query, system_prompt, model, memories=[], image_pat
     prompt = _sanitize_messages(memory_message + [user_message])
     grok_chat.append(user(_sanitize_text(query), *image_message))
 
-    # ツールを設定【要検討：いったんデフォルト設定】
-    tools = agent_tools["TOOL_LIST"]
-    tool_choice = agent_tools["CHOICE"]
-
     # モデルの実行
     if stream_mode:
         for completion, chunk_completion in grok_chat.stream():
@@ -399,10 +372,6 @@ def generate_response_T_llama(query, system_prompt, model, memories=[], image_pa
     # ユーザーのプロンプトを設定
     prompt = [{"type": "text", "text": query}] + image_message
     user_message = [{"role": "user", "content": prompt}]
-
-    # ツールを設定【要検討：いったんデフォルト設定】
-#    tools = agent_tools["TOOL_LIST"]
-#    tool_choice = agent_tools["CHOICE"]
 
     # モデルの実行
     api_request_json = {

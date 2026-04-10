@@ -484,6 +484,8 @@ def initialize_session_states():
         st.session_state.private_mode = True
     if 'thinking_mode' not in st.session_state:
         st.session_state.thinking_mode = False
+    if 'thinking_targets' not in st.session_state:
+        st.session_state.thinking_targets = ["Habit", "Web Search", "RAG Query", "Books"]
     if 'meta_search' not in st.session_state:
         st.session_state.meta_search = True
     if 'RAG_query_gene' not in st.session_state:
@@ -699,6 +701,8 @@ def set_dl_file(chat_history, dl_type="Chats Only", file_id="Chat_History"):
 def set_dl_pdf(chat_history, dl_type="Chats Only", file_id="Chat_History"):
     """チャット履歴をPDFバイト列として返す"""
     from fpdf import FPDF
+    import logging as _log
+    _log.getLogger("pdf").info(f"set_dl_pdf: {len(chat_history)} messages, dl_type={dl_type}")
     _FONT_PATH = "/usr/share/fonts/opentype/ipaexfont-gothic/ipaexg.ttf"
 
     pdf = FPDF()
@@ -1589,6 +1593,9 @@ def main():
             st.session_state.thinking_mode = True
         else:
             st.session_state.thinking_mode = False
+        if st.session_state.thinking_mode:
+            _thinking_options = ["Habit", "Web Search", "RAG Query", "Books"]
+            st.session_state.thinking_targets = st.multiselect("Thinking Targets", _thinking_options, default=st.session_state.thinking_targets, label_visibility="collapsed")
 
         # BOOKから選択
         if st.session_state.allowed_book:
@@ -1695,6 +1702,13 @@ def main():
             execution["WEB_SEARCH_ENGINE"] = st.session_state.get("web_search_engine", "")
             execution["PRIVATE_MODE"] = st.session_state.private_mode
             execution["THINKING_MODE"] = st.session_state.thinking_mode
+            _targets = st.session_state.thinking_targets if st.session_state.thinking_mode else []
+            execution["THINKING_TARGETS"] = {
+                "habit": "Habit" in _targets,
+                "web_search": "Web Search" in _targets,
+                "rag_query_gene": "RAG Query" in _targets,
+                "books": "Books" in _targets,
+            }
 
             # バックグラウンドで実行開始（事前ロック）
             import threading

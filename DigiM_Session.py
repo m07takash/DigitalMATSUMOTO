@@ -887,6 +887,8 @@ class DigiMSession:
                 chat_detail_info += "実行モデル："+rag_qg["model"]+"\n"
                 if "duration_sec" in rag_qg:
                     chat_detail_info += "実行時間："+str(rag_qg["duration_sec"])+"秒\n"
+                if rag_qg.get("rag_query_hint"):
+                    chat_detail_info += "Thinkingヒント："+rag_qg["rag_query_hint"]+"\n"
                 chat_detail_info += "入力トークン数："+str(rag_qg["prompt_token"])+"\n"
                 chat_detail_info += "出力トークン数："+str(rag_qg["response_token"])+"\n"
                 chat_detail_info += rag_qg["llm_response"]+"\n"
@@ -936,6 +938,8 @@ class DigiMSession:
                         chat_detail_info += "実行モデル："+web_dict["model"]+"\n"
                     if "duration_sec" in web_dict:
                         chat_detail_info += "実行時間："+str(web_dict["duration_sec"])+"秒\n"
+                    if "search_text" in web_dict:
+                        chat_detail_info += "検索テキスト："+web_dict["search_text"]+"\n"
                     chat_detail_info += web_dict["web_context"]+"\n"
                     chat_detail_info += "参考URL：\n"
                     for url in web_dict["urls"]:
