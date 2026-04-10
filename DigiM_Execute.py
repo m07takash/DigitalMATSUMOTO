@@ -79,18 +79,23 @@ def _resolve_contents(contents_setting, in_contents, results):
 
 # B-4: RAG検索用クエリ生成フェーズ（C-1での並列化フック）
 def _build_intent_queries(service_info, user_info, session_id, session_name, support_agent,
-                          user_query, memories_selected, situation_prompt, query_vec, RAG_query_gene):
+                          user_query, memories_selected, situation_prompt, query_vec, RAG_query_gene, rag_query_hint=""):
     """RAG検索用クエリ(意図)を生成し、追加クエリ・ベクトル・ログを返す"""
     if not (RAG_query_gene and "RAG_QUERY_GENERATOR" in support_agent):
         return [], [], {}
     t_start = datetime.now()
+    # Thinkingからのヒントがあればクエリに付加
+    _query = user_query
+    if rag_query_hint:
+        _query = user_query + "\n\n【RAG検索のヒント】\n" + rag_query_hint
     add_info = {"Memories_Selected": memories_selected, "Situation": situation_prompt, "QueryVecs": [query_vec]}
     agent_file = support_agent["RAG_QUERY_GENERATOR"]
     _, _, response, model_name, prompt_tokens, response_tokens = dmt.RAG_query_generator(
-        service_info, user_info, session_id, session_name, agent_file, user_query, [], add_info)
+        service_info, user_info, session_id, session_name, agent_file, _query, [], add_info)
     vec = dmu.embed_text(response.replace("\n", ""))
     duration = round((datetime.now() - t_start).total_seconds(), 2)
     log = {"agent_file": agent_file, "model": model_name, "llm_response": response,
+           "rag_query_hint": rag_query_hint,
            "prompt_token": prompt_tokens, "response_token": response_tokens, "duration_sec": duration}
     return [response], [vec], log
 
@@ -273,9 +278,15 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         session.save_status_message("WEB検索を開始")
         yield service_info, user_info, "[STATUS]WEB検索を開始", [], []
         timestamp_log += "[06.WEB検索を開始]" + str(datetime.now()) + "<br>"
-        search_text = user_query
-        if digest_text or situation_prompt:
+        # ThinkingのWeb検索クエリがあればそちらを優先
+        _thinking_result = execution.get("_THINKING_RESULT", {})
+        _web_search_query = _thinking_result.get("web_search_query", "")
+        if _web_search_query:
+            search_text = "検索して欲しい内容:\n" + _web_search_query + "\n\n[参考]元の質問:\n" + user_query
+        elif digest_text or situation_prompt:
             search_text = "検索して欲しい内容:\n" + user_query + "\n\n[参考]これまでの会話:\n" + digest_text + "\n\n[参考]今の状況:\n" + situation_prompt
+        else:
+            search_text = user_query
         _setting = system_setting_dict
         web_engine = cfg["web_search_engine"] or _setting.get("WEB_SEARCH_DEFAULT", "Perplexity")
         _web_model_map = {
@@ -289,7 +300,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             service_info, user_info, session_id, session_name, agent_file, search_text, [], {}, engine=web_engine)
         web_duration = round((datetime.now() - t_web_start).total_seconds(), 2)
         web_context = "[参考]関連するWEBの検索結果:\n" + web_result_text
-        web_search_log = {"engine": web_engine, "model": web_model, "duration_sec": web_duration, "urls": export_urls, "web_context": web_context}
+        web_search_log = {"engine": web_engine, "model": web_model, "duration_sec": web_duration, "search_text": search_text, "urls": export_urls, "web_context": web_context}
         timestamp_log += f"[06.WEB検索完了({web_engine}/{web_model}, {web_duration}s)]" + str(datetime.now()) + "<br>"
     output_reference["Web_search"] = web_search_log
     user_query += f"\n{web_context}"
@@ -328,10 +339,12 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                 session.get_memory, query_vec, model_name, tokenizer, memory_limit_tokens,
                 memory_role, memory_priority, cfg["memory_similarity"],
                 memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
-        # RAGクエリ生成を並列起動
+        # RAGクエリ生成を並列起動（Thinkingのヒントがあれば渡す）
+        _thinking_result = execution.get("_THINKING_RESULT", {})
+        _rag_query_hint = _thinking_result.get("rag_query_hint", "")
         future_intent = executor.submit(
             _build_intent_queries, service_info, user_info, session_id, session_name,
-            support_agent, user_query, [], situation_prompt, query_vec, cfg["RAG_query_gene"])
+            support_agent, user_query, [], situation_prompt, query_vec, cfg["RAG_query_gene"], _rag_query_hint)
         # メタ検索を並列起動
         future_meta = executor.submit(
             _build_meta_searches, service_info, user_info, session_id, session_name,
@@ -556,29 +569,33 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 agent.agent["SUPPORT_AGENT"], agent, user_query,
                 _thinking_digest, _thinking_situation)
 
-            # Thinking結果を実行設定に反映
+            # Thinking結果を実行設定に反映（THINKING_TARGETSで有効な項目のみ）
+            _targets = in_execution.get("THINKING_TARGETS", {})
             if thinking_result:
-                if "web_search" in thinking_result:
+                if _targets.get("web_search", True) and "web_search" in thinking_result:
                     cfg["web_search"] = thinking_result["web_search"]
                     if "web_search_engine" in thinking_result:
                         cfg["web_search_engine"] = thinking_result["web_search_engine"]
-                if "rag_query_gene" in thinking_result:
+                if _targets.get("rag_query_gene", True) and "rag_query_gene" in thinking_result:
                     cfg["RAG_query_gene"] = thinking_result["rag_query_gene"]
 
-            # Thinkingログをチェイン実行のexecutionに渡す
+            # Thinkingログ・結果をチェイン実行のexecutionに渡す
             in_execution["_THINKING_LOG"] = thinking_log
+            in_execution["_THINKING_RESULT"] = thinking_result
         else:
             in_execution["_THINKING_LOG"] = {}
+            in_execution["_THINKING_RESULT"] = {}
 
         # Habit選択: Thinking結果があればそちらを優先、なければMagic Word判定
+        _targets = in_execution.get("THINKING_TARGETS", {})
         habit = "DEFAULT"
-        if thinking_result and "habit" in thinking_result and thinking_result["habit"] in agent.habit:
+        if thinking_result and _targets.get("habit", True) and "habit" in thinking_result and thinking_result["habit"] in agent.habit:
             habit = thinking_result["habit"]
         elif cfg["magic_word_use"]:
             habit = agent.set_practice_by_command(user_query)
 
         # Book選択: Thinking結果から自動追加
-        if thinking_result and "books" in thinking_result:
+        if thinking_result and _targets.get("books", True) and "books" in thinking_result:
             for book_data in agent.agent.get("BOOK", []):
                 if book_data["RAG_NAME"] in thinking_result["books"]:
                     if book_data not in in_add_knowledge:
@@ -657,6 +674,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                     "PRIVATE_MODE":      cfg["private_mode"],
                     "THINKING_MODE":     cfg["thinking_mode"],
                     "_THINKING_LOG":     in_execution.get("_THINKING_LOG", {}),
+                    "_THINKING_RESULT":  in_execution.get("_THINKING_RESULT", {}),
                     "_UNLOCK_ON_DIGEST": _is_last_chain,
                 }
 
