@@ -449,6 +449,22 @@
             "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{bucket}', 'QUERY_SEQ': '{query_seq}', 'QUERY_MODE': '{query_mode}', 'ID': '{id}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'speaker': '{speaker}', 'text_short': '{value_text_short}'",
             "TEXT_LIMITS": 1000,
             "DISTANCE_LOGIC": "Cosine"
+        },
+        {
+            "RAG_NAME": "ConsultingBook",
+            "RETRIEVER": "PageIndex",
+            "DATA": [
+                {
+                    "DATA_TYPE": "PAGE_INDEX",
+                    "DATA_NAME": "SampleConsultingBook",
+                    "SUPPORT_AGENT": "agent_59PageIndexSearch.json"
+                }
+            ],
+            "HEADER_TEMPLATE": "【コンサルノウハウ集】以下はコンサルティングの方法論に関するナレッジです。\n",
+            "LOG_TEMPLATE": "'rag':'{rag_name}', 'page_id':'{page_id}', 'title':'{title}', 'category':'{category}', 'summary':'{summary}'",
+            "TEXT_LIMITS": 6000,
+            "MAX_PAGES": 3,
+            "DISTANCE_LOGIC": "PageIndex"
         }
     ]
 }

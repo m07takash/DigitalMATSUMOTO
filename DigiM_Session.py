@@ -904,6 +904,18 @@ class DigiMSession:
                 chat_detail_info += "検索条件："+str(meta_date["condition_list"])+"\n"
                 chat_detail_info += meta_date["llm_response"]+"\n"
 
+            # PageIndex選択ページの表示
+            page_index_refs = [r for r in chat_history_dict_seq["response"]["reference"]["knowledge_rag"] if "page_id" in r]
+            if page_index_refs:
+                chat_detail_info += "\n【PageIndex選択ページ】\n"
+                for ref in page_index_refs:
+                    ref_dict = dmu.parse_log_template(ref)
+                    page_id = ref_dict.get("page_id", "")
+                    title = ref_dict.get("title", "")
+                    category = ref_dict.get("category", "")
+                    summary = ref_dict.get("summary", "")
+                    chat_detail_info += f"[{page_id}] {title}（{category}）\n  {summary}\n"
+
             chat_detail_info += "\n【RAGコンテキスト】\n["
             for rag_set_dict in chat_history_dict_seq["response"]["reference"]["knowledge_rag"]:
                 chat_detail_info += "{"+ rag_set_dict.replace("\n", "").replace("$", "＄") + "},\n"

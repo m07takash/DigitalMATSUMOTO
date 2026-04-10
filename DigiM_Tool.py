@@ -119,6 +119,55 @@ def extract_date(service_info, user_info, session_id, session_name, agent_file, 
 
     return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
+# ページインデックス検索: LLMでクエリに関連するページIDを選択する
+def page_index_search(exec_info, agent_file, query, pages, max_pages=5):
+    import json as _json
+    if not agent_file:
+        agent_file = "agent_59PageIndexSearch.json"
+    agent = dma.DigiM_Agent(agent_file)
+
+    model_type = "LLM"
+
+    # ページ一覧を整形
+    page_list_text = ""
+    for p in pages:
+        tags = ", ".join(p.get("tags", [])) if p.get("tags") else ""
+        page_list_text += f"- {p['id']}: {p['title']} — {p.get('summary', '')} [{tags}]\n"
+
+    # プロンプトテンプレートを取得
+    practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
+    practice = dmu.read_json_file(str(Path(practice_folder_path) / practice_file))
+    if practice["CHAINS"][0]["TYPE"] == "LLM":
+        prompt_temp_cd = practice["CHAINS"][0]["SETTING"]["PROMPT_TEMPLATE"]
+    else:
+        prompt_temp_cd = "Page Index Search"
+    prompt_template = agent.set_prompt_template(prompt_temp_cd)
+
+    # プロンプト組み立て
+    prompt = f"{prompt_template}\n\n【ページ一覧】\n{page_list_text}\n最大選択数: {max_pages}件\n\n【ユーザーの質問】\n{query}"
+
+    # LLM実行
+    response = ""
+    for _, response_chunk, _ in agent.generate_response(model_type, prompt, [], stream_mode=False):
+        if response_chunk:
+            response += response_chunk
+
+    # レスポンスからIDリストを抽出
+    selected_ids = []
+    try:
+        import re
+        json_match = re.search(r'\[.*?\]', response, re.DOTALL)
+        if json_match:
+            selected_ids = _json.loads(json_match.group(0))
+    except (_json.JSONDecodeError, AttributeError):
+        pass
+
+    # 有効なIDのみフィルタ
+    valid_ids = {p["id"] for p in pages}
+    selected_ids = [pid for pid in selected_ids if pid in valid_ids][:max_pages]
+
+    return selected_ids
+
 # Thinking Agent: ユーザーの質問を分析し実行パラメータをJSON形式で返す
 def thinking_agent(service_info, user_info, session_id, session_name, agent_file, user_query, import_contents=[], add_info={}):
     if not agent_file:

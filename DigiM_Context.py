@@ -26,6 +26,7 @@ import DigiM_Notion as dmn
 system_setting_dict = dmu.read_yaml_file("setting.yaml")
 mst_folder_path = system_setting_dict["MST_FOLDER"]
 rag_folder_db_path = system_setting_dict["RAG_FOLDER_DB"]
+rag_folder_pages_path = system_setting_dict.get("RAG_FOLDER_PAGES", "user/common/rag/pages/")
 
 # system.envファイルをロードして環境変数を設定
 if os.path.exists("system.env"):
@@ -313,8 +314,15 @@ def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searche
 
     # RAGデータセットごとに処理
     for rag in rags:
+        # PageIndex型はベクトル検索をスキップして専用処理へ
+        if rag.get("RETRIEVER") == "PageIndex":
+            rag_context, rag_selected = select_rag_page_index(query, rag, exec_info)
+            rag_final_context += rag_context
+            rag_final_selected += rag_selected
+            continue
+
         # DBタイプのrag_dataを並列処理（C-2拡張: コレクション単位でも並列化）
-        db_rag_data_list = [rd for rd in rag["DATA"] if rd["DATA_TYPE"] == "DB"]
+        db_rag_data_list = [rd for rd in rag["DATA"] if rd.get("DATA_TYPE") == "DB"]
         rag_data_list = []
         if db_rag_data_list:
             with ThreadPoolExecutor(max_workers=len(db_rag_data_list)) as executor:
@@ -336,7 +344,7 @@ def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searche
         rag_data_list = list(filtered_data.values())
 
         # RAGデータの選択
-        if rag["RETRIEVER"] == "Vector":
+        if rag.get("RETRIEVER") == "Vector":
             rag_context, rag_selected = select_rag_vector(rag_data_list, rag)
             rag_final_context += rag_context
             rag_final_selected += rag_selected
@@ -352,6 +360,10 @@ def get_knowledge_reference(response_vec, rag_selected, logic="Cosine"):
 
     # 各チャンクと類似度評価
     for rag_data in rag_selected:
+        # PageIndex由来の文字列エントリはそのままログに追加してスキップ
+        if isinstance(rag_data, str):
+            rag_ref.append(rag_data)
+            continue
         rag_data["value_text_short"] = rag_data["value_text"][:50] #50文字に絞る
         similarity_response = dmu.calculate_similarity_vec(response_vec, rag_data["vector_data_value_text"], logic)
         rag_data["similarity_response"] = round(similarity_response,3)
@@ -636,6 +648,122 @@ def migrate_add_private_flag():
     logger.info(f"マイグレーション完了: 合計{total}件")
     return total
 
+
+# ページインデックスRAGデータの保存（.md + _index.json）
+def save_rag_pages(rag_id, rag_data):
+    pages_dir = str(Path(rag_folder_pages_path) / rag_id)
+    os.makedirs(pages_dir, exist_ok=True)
+
+    index_pages = []
+    cnt = 0
+    for chunk in rag_data:
+        page_id = chunk.get("page_id", "").strip()
+        if not page_id:
+            continue
+
+        # ページ本文を .md として保存
+        body = chunk.get("body", chunk.get("value_text", ""))
+        title = chunk.get("title", page_id)
+        md_content = f"# {title}\n\n{body}"
+        md_path = str(Path(pages_dir) / f"{page_id}.md")
+        dmu.save_text_file(md_content, md_path)
+
+        # インデックスエントリを作成
+        tags_raw = chunk.get("tags", "")
+        tags = [t.strip() for t in tags_raw.split(",") if t.strip()] if isinstance(tags_raw, str) else tags_raw
+        index_entry = {
+            "id": page_id,
+            "title": title,
+            "summary": chunk.get("summary", ""),
+            "tags": tags,
+            "category": chunk.get("category", ""),
+        }
+        sort_order = chunk.get("sort_order")
+        if sort_order is not None:
+            index_entry["sort_order"] = sort_order
+        index_pages.append(index_entry)
+        cnt += 1
+
+    # sort_orderがあればソート
+    if index_pages and "sort_order" in index_pages[0]:
+        index_pages.sort(key=lambda x: x.get("sort_order", 0))
+
+    # _index.json を保存
+    index_data = {"PAGES": index_pages}
+    index_path = str(Path(pages_dir) / "_index.json")
+    dmu.save_json_file(index_data, index_path)
+
+    logger.info(f"{rag_id}: {cnt}件のページを保存しました → {pages_dir}")
+    return cnt, len(index_pages)
+
+
+# ページインデックスRAGのコンテキスト取得
+def select_rag_page_index(query, rag, exec_info):
+    rag_context = ""
+    rag_selected = []
+
+    # DATA_NAMEからページフォルダを特定
+    for rd in rag.get("DATA", []):
+        if rd.get("DATA_TYPE") != "PAGE_INDEX":
+            continue
+        data_name = rd["DATA_NAME"]
+        pages_dir = str(Path(rag_folder_pages_path) / data_name)
+        index_path = str(Path(pages_dir) / "_index.json")
+
+        if not os.path.exists(index_path):
+            logger.warning(f"ページインデックスが見つかりません: {index_path}")
+            continue
+
+        # インデックスを読み込み
+        index_data = dmu.read_json_file(index_path)
+        pages = index_data.get("PAGES", [])
+        if not pages:
+            continue
+
+        # ページIDからメタ情報を引くためのマップ
+        pages_map = {p["id"]: p for p in pages}
+
+        # LLMでページIDを選択
+        max_pages = rag.get("MAX_PAGES", 5)
+        support_agent = rd.get("SUPPORT_AGENT", "agent_59PageIndexSearch.json")
+        selected_ids = dmt.page_index_search(
+            exec_info, support_agent, query, pages, max_pages)
+
+        # 選択されたページの本文を読み込み、ログ用データを構築
+        log_template = rag.get("LOG_TEMPLATE", "'rag':'{rag_name}', 'page_id':'{page_id}', 'title':'{title}', 'category':'{category}', 'summary':'{summary}'")
+        for page_id in selected_ids:
+            md_path = str(Path(pages_dir) / f"{page_id}.md")
+            if os.path.exists(md_path):
+                page_content = dmu.read_text_file(md_path)
+                rag_context += page_content + "\n\n"
+
+                # ログエントリをLOG_TEMPLATEで整形
+                page_meta = pages_map.get(page_id, {})
+                log_data = {
+                    "rag_name": rag.get("RAG_NAME", ""),
+                    "page_id": page_id,
+                    "title": page_meta.get("title", ""),
+                    "category": page_meta.get("category", ""),
+                    "summary": page_meta.get("summary", ""),
+                }
+                try:
+                    log_entry = log_template.format(**log_data)
+                except (KeyError, IndexError):
+                    log_entry = str(log_data)
+                rag_selected.append(log_entry)
+
+    # ヘッダーテンプレートを先頭に付与
+    if rag_context:
+        header = rag.get("HEADER_TEMPLATE", "")
+        rag_context = header + rag_context
+
+        # テキスト上限でカット
+        text_limits = rag.get("TEXT_LIMITS", 6000)
+        if len(rag_context) > text_limits:
+            rag_context = rag_context[:text_limits]
+
+    return rag_context, rag_selected
+
 # RAGデータ生成
 def generate_rag():
     # RAGマスターの読込
@@ -671,6 +799,27 @@ def generate_rag():
                     logger.info(f"{rag_id}のDB書き込みが完了しました。追加件数:{cnt_add}, トータル件数:{cnt_total}")
 
                     # RAG登録完了フラグをNotionに反映（取得対象=fin_flg未設定ページなので全件更新）
+                    fin_flg = rag_setting.get("fin_flg", {})
+                    if fin_flg and rag_setting["input"] == "notion":
+                        fin_cnt = 0
+                        for page_id in page_ids_map.values():
+                            for prop_name, prop_value in fin_flg.items():
+                                try:
+                                    if isinstance(prop_value, bool):
+                                        dmn.update_notion_chk(page_id, prop_name, prop_value)
+                                    else:
+                                        logger.warning(f"fin_flg: 未対応の型 {prop_name}={prop_value}")
+                                    fin_cnt += 1
+                                except Exception as e:
+                                    logger.warning(f"fin_flg更新失敗 (page={page_id}, {prop_name}): {e}")
+                        logger.info(f"{rag_id}: fin_flgを{fin_cnt}件のNotionページに反映しました")
+
+                # ページインデックスでの保存
+                elif rag_setting["data_type"] == "page_index":
+                    cnt_add, cnt_total = save_rag_pages(rag_id, rag_data)
+                    logger.info(f"{rag_id}のページ書き込みが完了しました。ページ数:{cnt_total}")
+
+                    # RAG登録完了フラグをNotionに反映
                     fin_flg = rag_setting.get("fin_flg", {})
                     if fin_flg and rag_setting["input"] == "notion":
                         fin_cnt = 0

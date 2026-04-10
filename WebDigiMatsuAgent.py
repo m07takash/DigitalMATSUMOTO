@@ -481,7 +481,7 @@ def initialize_session_states():
     if 'memory_similarity' not in st.session_state:
         st.session_state.memory_similarity = False
     if 'private_mode' not in st.session_state:
-        st.session_state.private_mode = False
+        st.session_state.private_mode = True
     if 'thinking_mode' not in st.session_state:
         st.session_state.thinking_mode = False
     if 'meta_search' not in st.session_state:
@@ -1421,7 +1421,7 @@ def main():
                                             if ak_col1.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}", disabled=bool(st.session_state._bg_task)):
                                                 _ak_agent_file = v2["setting"]["agent_file"]
                                                 _ak_title = f"{k}-{k2}-{st.session_state.session.session_name}"
-                                                _ak_refs = [dmu.parse_log_template(rd) for rd in v2["response"]["reference"]["knowledge_rag"]]
+                                                _ak_refs = [dmu.parse_log_template(rd) for rd in v2["response"]["reference"]["knowledge_rag"] if "page_id" not in rd]
                                                 _ak_folder = st.session_state.session.session_analytics_folder_path
                                                 _ak_mode = st.session_state.analytics_knowledge_mode
                                                 _ak_dim = dict(st.session_state.analytics_dimension_mode)
@@ -1466,7 +1466,7 @@ def main():
                                                             st.session_state.analytics_dimension_mode_compare["params"]["perplexity"] = ak_compare_col3.number_input(label="t-SNE Perplexity:", value=40, step=1, format="%d", key=f"tsne_perplexity_compare_{k}_{k2}")
                                                         if ak_compare_col1.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}_compare{selected_compare_idx}", disabled=bool(st.session_state._bg_task)):
                                                             _cak_title = f"{k}-{k2}-{st.session_state.session.session_name}_compare{selected_compare_idx}"
-                                                            _cak_refs = [dmu.parse_log_template(rd) for rd in compare_agent_info["knowledge_rag"]["knowledge_ref"]]
+                                                            _cak_refs = [dmu.parse_log_template(rd) for rd in compare_agent_info["knowledge_rag"]["knowledge_ref"] if "page_id" not in rd]
                                                             _cak_agent_file = compare_agent_file
                                                             _cak_timestamp = compare_timestamp
                                                             _cak_folder = st.session_state.session.session_analytics_folder_path

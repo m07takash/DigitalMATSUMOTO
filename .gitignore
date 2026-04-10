@@ -191,6 +191,8 @@ user/common/rag/json/*
 !user/common/rag/json/RAGsample_vec.json
 user/common/rag/docs/*
 !user/common/rag/docs/RAGsample.txt
+user/common/rag/pages/*
+!user/common/rag/pages/SampleConsultingBook/
 
 # DigiM Folder(csv)
 user/common/csv/*
