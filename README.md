@@ -157,6 +157,7 @@ cp system.env_sample system.env
 | `EMBEDDING_MODEL` | `text-embedding-3-large` | 埋め込みベクトルモデル |
 | `WEB_TITLE` | `Digital Twin` | WebUIのタイトル |
 | `WEB_DEFAULT_AGENT_FILE` | `agent_X0Sample.json` | WebUIのデフォルトエージェント |
+| `WEB_MAX_UPLOAD_SIZE` | `500` | ファイルアップロード上限（MB） |
 
 **マスターファイル設定：**
 
@@ -191,6 +192,91 @@ cp system.env_sample system.env
 ### 5. 動作確認
 
 ブラウザで `http://localhost:8501` にアクセスし、WebUIが表示されれば完了です。
+
+### 6. Nginx リバースプロキシの設定（本番環境向け）
+
+HTTPS対応やドメイン運用を行う場合、Nginxをリバースプロキシとして配置します。以下はAzure VM + Let's Encrypt での構成例です。
+
+#### グローバル設定（`/etc/nginx/nginx.conf`）
+
+`http` ブロック内に以下を追加します。ファイルアップロード（PPTX/PDF等）でエラー（413）が出る場合はこの設定が必要です。
+
+```nginx
+http {
+    client_max_body_size 500m;  # デフォルト: 1m
+    ...
+}
+```
+
+#### サイト設定（`/etc/nginx/sites-available/your-site`）
+
+```nginx
+# HTTP → HTTPS リダイレクト
+server {
+    listen 80;
+    server_name your-domain.example.com;
+
+    # Let's Encrypt 証明書更新用
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# HTTPS メインサイト
+server {
+    listen 443 ssl;
+    server_name your-domain.example.com;
+
+    ssl_certificate     /etc/letsencrypt/live/your-domain.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/your-domain.example.com/privkey.pem;
+
+    # Streamlit WebUI
+    location / {
+        proxy_pass http://127.0.0.1:8501/;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_connect_timeout 10s;
+
+        # WebSocket対応（Streamlit必須）
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+
+    # FastAPI
+    location /api/ {
+        proxy_pass http://127.0.0.1:8899/;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+        proxy_connect_timeout 10s;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+#### 有効化とリロード
+
+```bash
+# サイト設定を有効化
+sudo ln -s /etc/nginx/sites-available/your-site /etc/nginx/sites-enabled/
+
+# 構文チェック
+sudo nginx -t
+
+# リロード
+sudo systemctl reload nginx
+```
+
+> **WebSocket対応について：** StreamlitはWebSocketで通信するため、`proxy_http_version 1.1` と `Upgrade` / `Connection` ヘッダーの設定が必須です。これがないとWebUIが正常に動作しません。
+
+> **タイムアウトについて：** LLM実行は数十秒〜数分かかることがあるため、`proxy_read_timeout` / `proxy_send_timeout` を十分な値（300s以上）に設定してください。
 
 ---
 

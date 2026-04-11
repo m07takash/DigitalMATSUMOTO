@@ -213,5 +213,8 @@ backup/
 # nohup
 nohup.out
 
+# Streamlit
+.streamlit/
+
 # Claude
 .claude

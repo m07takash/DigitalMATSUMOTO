@@ -31,3 +31,6 @@ matplotlib==3.10.6
 numpy==2.2.6
 pandas==2.3.3
 PyYAML==6.0.3
+python-docx==1.2.0
+python-pptx==1.0.2
+PyMuPDF==1.27.2.2

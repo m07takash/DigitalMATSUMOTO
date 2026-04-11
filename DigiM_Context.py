@@ -25,6 +25,7 @@ import DigiM_Notion as dmn
 # setting.yamlからフォルダパスなどを設定
 system_setting_dict = dmu.read_yaml_file("setting.yaml")
 mst_folder_path = system_setting_dict["MST_FOLDER"]
+temp_folder_path = system_setting_dict["TEMP_FOLDER"]
 rag_folder_db_path = system_setting_dict["RAG_FOLDER_DB"]
 rag_folder_pages_path = system_setting_dict.get("RAG_FOLDER_PAGES", "user/common/rag/pages/")
 
@@ -60,7 +61,10 @@ def create_contents_context(agent_data, contents, seq=0, sub_seq=0):
         contents_context += content_context
         contents_records.append(content_record)
         if image_file:
-            image_files.append(image_file)
+            if isinstance(image_file, list):
+                image_files.extend(image_file)
+            else:
+                image_files.append(image_file)
         file_seq += 1
 
     return contents_context, contents_records, image_files
@@ -81,22 +85,40 @@ def get_text_content(agent_data, content, seq, sub_seq, file_seq):
     # サポートエージェントの設定
     support_agent = agent_data["SUPPORT_AGENT"]
 
+    # ファイル拡張子を取得
+    file_ext = os.path.splitext(content)[1].lower()
+    _header = f"<br>---------<br>ファイル名: {file_name}<br><br>"
+
     # ファイル形式毎にコンテキストを取得
-    if "text" in file_type:
-        content_context = "<br>---------<br>ファイル名: "+file_name+"<br><br>"+dmu.read_text_file(content)
-    elif "pdf" in file_type:
-        content_context = "<br>---------<br>ファイル名: "+file_name+"<br><br>"+json.dumps(dmu.read_pdf_file(content), ensure_ascii=False)
-    elif "json" in file_type:
-        content_context = "<br>---------<br>ファイル名: "+file_name+"<br><br>"+json.dumps(dmu.read_json_file(content), ensure_ascii=False)
-    elif "image" in file_type:
+    if file_ext in [".docx"]:
+        text, extracted_images = dmu.read_docx_file(content, temp_folder_path)
+        content_context = _header + text
+        if extracted_images:
+            image_file = extracted_images
+    elif file_ext in [".xlsx"]:
+        text = dmu.read_xlsx_file(content)
+        content_context = _header + text
+    elif file_ext in [".pptx"]:
+        text, extracted_images = dmu.read_pptx_file(content, temp_folder_path)
+        content_context = _header + text
+        if extracted_images:
+            image_file = extracted_images
+    elif file_ext in [".pdf"] or (file_type and "pdf" in file_type):
+        pdf_text, extracted_images = dmu.read_pdf_with_images(content, temp_folder_path)
+        content_context = _header + json.dumps(pdf_text, ensure_ascii=False)
+        if extracted_images:
+            image_file = extracted_images
+    elif file_type and "text" in file_type:
+        content_context = _header + dmu.read_text_file(content)
+    elif file_type and "json" in file_type:
+        content_context = _header + json.dumps(dmu.read_json_file(content), ensure_ascii=False)
+    elif file_type and "image" in file_type:
         art_critics_agent_file = support_agent["ART_CRITICS"]
         _, _, response, model_name, prompt_tokens, response_tokens = dmt.art_critics({}, {}, image_paths=[content], agent_file=art_critics_agent_file)
-        content_context = "<br>---------<br>ファイル名: "+file_name+"<br><br>"+response
+        content_context = _header + response
         image_file = content
-    #elif "video" in file_type:
-        #将来的にコンテキストを取得
-    elif "audio" in file_type:
-        content_context = "<br>---------<br>ファイル名: "+file_name+"<br><br>"+dmu.mp3_to_text(content)
+    elif file_type and "audio" in file_type:
+        content_context = _header + dmu.mp3_to_text(content)
 
     # コンテンツの記録
     content_records = {"from": content, "to":{"file_name": file_name, "file_type": file_type, "file_size": file_size, "context": content_context}}
