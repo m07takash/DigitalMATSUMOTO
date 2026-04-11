@@ -26,6 +26,10 @@ import tiktoken
 import openai
 from openai import OpenAI
 from google import genai
+import fitz  # PyMuPDF
+from docx import Document as DocxDocument
+from pptx import Presentation
+from pptx.util import Emu
 
 # system.envファイルをロードして環境変数を設定
 if os.path.exists("system.env"):
@@ -286,6 +290,144 @@ def read_pdf_file(file_name, folder_path=""):
             # 各ページのテキストを抽出してページごとに辞書型に格納
             pdf_dict[f"Page_{i + 1}"] = page.extract_text()
     return pdf_dict
+
+# PDFファイルからテキスト＋画像を抽出
+def read_pdf_with_images(file_path, temp_folder):
+    """PDFからテキスト（ページ単位）と埋め込み画像を抽出する"""
+    pdf_text = {}
+    image_files = []
+    os.makedirs(temp_folder, exist_ok=True)
+
+    # テキスト抽出（pdfplumber）
+    with pdfplumber.open(file_path) as pdf:
+        for i, page in enumerate(pdf.pages):
+            text = page.extract_text() or ""
+            # テーブルも抽出
+            tables = page.extract_tables()
+            if tables:
+                for table in tables:
+                    text += "\n[表]\n"
+                    for row in table:
+                        text += " | ".join([str(cell) if cell else "" for cell in row]) + "\n"
+            pdf_text[f"Page_{i + 1}"] = text
+
+    # 画像抽出（PyMuPDF）
+    doc = fitz.open(file_path)
+    img_idx = 0
+    for page_num in range(len(doc)):
+        page = doc[page_num]
+        images = page.get_images(full=True)
+        for img in images:
+            xref = img[0]
+            base_image = doc.extract_image(xref)
+            if base_image and base_image["image"]:
+                ext = base_image.get("ext", "png")
+                img_path = os.path.join(temp_folder, f"pdf_p{page_num+1}_img{img_idx}.{ext}")
+                with open(img_path, "wb") as f:
+                    f.write(base_image["image"])
+                image_files.append(img_path)
+                img_idx += 1
+    doc.close()
+    return pdf_text, image_files
+
+# DOCXファイルからテキスト＋画像を抽出
+def read_docx_file(file_path, temp_folder):
+    """DOCXから段落テキスト・テーブル・埋め込み画像を抽出する"""
+    os.makedirs(temp_folder, exist_ok=True)
+    doc = DocxDocument(file_path)
+    text_parts = []
+    image_files = []
+    img_idx = 0
+
+    # 段落テキスト
+    for para in doc.paragraphs:
+        if para.text.strip():
+            text_parts.append(para.text)
+
+    # テーブル
+    for table in doc.tables:
+        text_parts.append("[表]")
+        for row in table.rows:
+            cells = [cell.text for cell in row.cells]
+            text_parts.append(" | ".join(cells))
+
+    # 埋め込み画像
+    for rel in doc.part.rels.values():
+        if "image" in rel.reltype:
+            img_data = rel.target_part.blob
+            ext = os.path.splitext(rel.target_ref)[1] or ".png"
+            img_path = os.path.join(temp_folder, f"docx_img{img_idx}{ext}")
+            with open(img_path, "wb") as f:
+                f.write(img_data)
+            image_files.append(img_path)
+            img_idx += 1
+
+    return "\n".join(text_parts), image_files
+
+# XLSXファイルからテキストを抽出
+def read_xlsx_file(file_path):
+    """XLSXから全シートのセルデータをテーブル形式で抽出する"""
+    import openpyxl
+    wb = openpyxl.load_workbook(file_path, data_only=True)
+    text_parts = []
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        text_parts.append(f"[シート: {sheet_name}]")
+        for row in ws.iter_rows(values_only=True):
+            cells = [str(cell) if cell is not None else "" for cell in row]
+            if any(cells):
+                text_parts.append(" | ".join(cells))
+    return "\n".join(text_parts)
+
+# PPTXファイルからテキスト＋画像を抽出
+def read_pptx_file(file_path, temp_folder):
+    """PPTXからスライドごとのテキスト・テーブル・ノート・埋め込み画像を抽出する"""
+    os.makedirs(temp_folder, exist_ok=True)
+    prs = Presentation(file_path)
+    text_parts = []
+    image_files = []
+    img_idx = 0
+
+    for slide_num, slide in enumerate(prs.slides, 1):
+        slide_text = f"\n[スライド {slide_num}]"
+
+        # タイトル
+        if slide.shapes.title and slide.shapes.title.text:
+            slide_text += f"\nタイトル: {slide.shapes.title.text}"
+
+        # テキスト・テーブル・画像
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                for para in shape.text_frame.paragraphs:
+                    if para.text.strip():
+                        slide_text += f"\n{para.text}"
+            elif shape.has_table:
+                slide_text += "\n[表]"
+                for row in shape.table.rows:
+                    cells = [cell.text for cell in row.cells]
+                    slide_text += "\n" + " | ".join(cells)
+            if shape.shape_type == 13:  # Picture
+                try:
+                    img_blob = shape.image.blob
+                    ext = shape.image.content_type.split("/")[-1] if shape.image.content_type else "png"
+                    img_path = os.path.join(temp_folder, f"pptx_s{slide_num}_img{img_idx}.{ext}")
+                    with open(img_path, "wb") as f:
+                        f.write(img_blob)
+                    image_files.append(img_path)
+                    img_idx += 1
+                    slide_text += f"\n[画像: pptx_s{slide_num}_img{img_idx-1}.{ext}]"
+                except Exception:
+                    pass
+
+        # ノート
+        if slide.has_notes_slide and slide.notes_slide.notes_text_frame:
+            notes = slide.notes_slide.notes_text_frame.text.strip()
+            if notes:
+                slide_text += f"\nノート: {notes}"
+
+        text_parts.append(slide_text)
+
+    return "\n".join(text_parts), image_files
 
 # JSONファイルの読込
 def read_json_file(file_name, folder_path=""):

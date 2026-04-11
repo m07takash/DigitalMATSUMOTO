@@ -8,6 +8,15 @@ import datetime
 from datetime import datetime, timedelta
 import pytz
 from dotenv import load_dotenv
+
+# Streamlitインポート前にconfig.tomlを生成（アップロード上限の設定）
+if os.path.exists("system.env"):
+    load_dotenv("system.env", override=False)
+_max_upload = os.getenv("WEB_MAX_UPLOAD_SIZE", "500")
+os.makedirs(".streamlit", exist_ok=True)
+with open(".streamlit/config.toml", "w") as _cf:
+    _cf.write(f"[server]\nmaxUploadSize = {_max_upload}\nmaxMessageSize = {_max_upload}\n")
+
 import streamlit as st
 import pandas as pd
 from dataclasses import dataclass
@@ -1015,27 +1024,24 @@ def main():
                                                    height=80, key="eval_questions")
                     _questions = [q.strip() for q in _questions_text.strip().split("\n") if q.strip()][:_num_questions]
 
-                    # 実行
-                    if st.button("評価実行", key="run_support_eval"):
+                    # 実行（バックグラウンド）
+                    if st.button("評価実行", key="run_support_eval", disabled=bool(st.session_state._bg_task)):
                         if not _selected_engines:
                             st.warning("エンジンを選択してください")
                         elif not _questions:
                             st.warning("質問を入力してください")
                         else:
-                            _progress = st.progress(0, text="準備中...")
-                            def _update_progress(ratio, text):
-                                _progress.progress(ratio, text=text)
-                            try:
+                            _eval_af = _agent_file
+                            _eval_tgt = _selected_target
+                            _eval_eng = list(_selected_engines)
+                            _eval_qs = list(_questions)
+                            def _run_eval():
                                 _results, _summary, _excel = dmse.run_eval_for_ui(
-                                    _agent_file, _selected_target, _selected_engines,
-                                    _questions, progress_callback=_update_progress
-                                )
+                                    _eval_af, _eval_tgt, _eval_eng, _eval_qs)
                                 st.session_state.eval_results_excel = _excel
                                 st.session_state.eval_summary = _summary
-                                _progress.progress(1.0, text="完了")
-                            except Exception as e:
-                                st.error(f"評価エラー: {e}")
-                                _progress.empty()
+                            _run_bg_task("eval", "サポートエージェント評価を実行中", _run_eval)
+                            st.rerun()
 
                     # 結果サマリー表示
                     if st.session_state.eval_summary:
@@ -1075,6 +1081,9 @@ def main():
         st.write(st.session_state.sidebar_message)
 
         st.markdown("----")
+        # セッション名の検索フィルタ
+        _session_filter = st.text_input("Session Name:", value="", placeholder="検索（ワイルドカード * 対応）", label_visibility="collapsed")
+
         # セッションリストの表示
         num_sessions = 0
         for session_dict in st.session_state.session_list:
@@ -1086,12 +1095,18 @@ def main():
                     session_name_list = session_list.session_name
                     session_active_flg = session_list.get_active_session()
                     if session_active_flg != "N":
+                        # セッション名フィルタ（ワイルドカード * 対応）
+                        if _session_filter:
+                            import fnmatch
+                            _pattern = _session_filter if "*" in _session_filter else f"*{_session_filter}*"
+                            if not fnmatch.fnmatch(session_name_list.lower(), _pattern.lower()):
+                                continue
                         if bool(re.fullmatch(r"[+-]?\d+(\.\d+)?", session_id_list)):
                             session_name_btn = session_id_list +"_"+ session_name_list
                         else:
                             session_name_btn = session_name_list
                         session_name_btn = session_name_btn[:15]
-                        situation = dms.get_situation(session_id_list)                
+                        situation = dms.get_situation(session_id_list)
                         if not situation:
                             situation["TIME"] = now_time.strftime("%Y/%m/%d %H:%M:%S")
                             situation["SITUATION"] = ""
@@ -1567,7 +1582,7 @@ def main():
 
     if st.session_state.session_user_id == st.session_state.user_id:
         # ファイルアップローダー
-        uploaded_files = st.file_uploader("Attached Files:", type=["txt", "vtt", "csv", "json", "pdf", "jpg", "jpeg", "png", "mp3"], accept_multiple_files=True)
+        uploaded_files = st.file_uploader("Attached Files:", type=["txt", "vtt", "csv", "json", "pdf", "md", "docx", "xlsx", "pptx", "jpg", "jpeg", "png", "mp3"], accept_multiple_files=True)
         st.session_state.uploaded_files = uploaded_files
         show_uploaded_files_widget(st.session_state.uploaded_files)
 
