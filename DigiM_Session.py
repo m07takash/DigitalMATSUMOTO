@@ -372,10 +372,13 @@ def set_new_session_id():
 
 # セッションクラス
 class DigiMSession:
-    def __init__(self, session_id="", session_name=""):
+    def __init__(self, session_id="", session_name="", base_path=""):
         self.session_id = session_id if session_id else set_new_session_id()
         self.session_name = session_name if session_name else get_session_name(self.session_id)
-        _session_base = Path(user_folder_path) / (session_folder_prefix + self.session_id)
+        if base_path:
+            _session_base = Path(base_path)
+        else:
+            _session_base = Path(user_folder_path) / (session_folder_prefix + self.session_id)
         self.session_folder_path = str(_session_base) + "/"
         self.session_vec_folder_path = str(_session_base / "vecs") + "/"
         self.session_file_path = str(_session_base / session_file_name)

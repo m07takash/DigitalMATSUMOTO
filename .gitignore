@@ -202,6 +202,9 @@ user/common/csv/*
 # DigiM Folder
 user/session*/
 user/common/analytics/*
+!user/common/analytics/rag_explorer/
+user/common/analytics/rag_explorer/*
+!user/common/analytics/rag_explorer/.gitkeep
 user/common/temp/*
 !user/common/temp/tempファイルの格納先
 test/*

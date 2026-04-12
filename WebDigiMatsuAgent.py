@@ -110,6 +110,8 @@ if 'group_cd' not in st.session_state:
     st.session_state.group_cd = "All"
 if 'allowed_rag_management' not in st.session_state:
     st.session_state.allowed_rag_management = True
+if 'allowed_rag_explorer' not in st.session_state:
+    st.session_state.allowed_rag_explorer = True
 if 'allowed_exec_setting' not in st.session_state:
     st.session_state.allowed_exec_setting = True
 if 'allowed_rag_setting' not in st.session_state:
@@ -350,6 +352,7 @@ def ensure_login():
 # ユーザーの利用可能な画面機能の設定
 def user_allowed_parameter(allowded_dict):
     st.session_state.allowed_rag_management = allowded_dict.get("RAG Management", True)
+    st.session_state.allowed_rag_explorer = allowded_dict.get("RAG Explorer", True)
     st.session_state.allowed_exec_setting = allowded_dict.get("Exec Setting", True)
     st.session_state.allowed_rag_setting = allowded_dict.get("RAG Setting", True)
     st.session_state.allowed_feedback = allowded_dict.get("Feedback", True)
@@ -783,6 +786,1336 @@ def ak_line(ak_dict):
     )
     return line
 
+### RAG Explorer画面 ###
+def _rag_explorer():
+    import fnmatch
+
+    _ANALYTICS_BASE = "user/common/analytics/rag_explorer/"
+
+    # RAG Explorer用の全session_stateキー
+    _RAG_STATE_KEYS = [
+        "_rag_searched", "_rag_cached_data", "_rag_cached_type", "_rag_prev_collection",
+        "_rag_scatter_cache", "_rag_cluster_cache", "_rag_cluster_explanation",
+        "_rag_sensitivity", "_rag_sensitivity_explanation",
+        "_rag_temporal", "_rag_temporal_explanation",
+        "_rag_llm_response", "_rag_report",
+        "_rag_ask_result", "_rag_ask_history",
+        "_rag_ak_result", "_rag_cmp_result",
+        "_rag_pi_ask_result", "_rag_pi_ask_history",
+        "_rag_pi_ak_result", "_rag_pi_cmp_result",
+        "_rag_pi_sensitivity",
+        "_rag_loaded_collection", "_rag_loaded_type",
+        "_rag_analytics_folder",
+    ]
+
+    def _save_analysis_session(collection_name):
+        """全RAG Explorer状態をフォルダに保存する"""
+        import pickle
+        _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        _folder = os.path.join(_ANALYTICS_BASE, f"analytics{_ts}")
+        os.makedirs(_folder, exist_ok=True)
+
+        # メタ情報
+        _meta = {
+            "collection": collection_name,
+            "timestamp": _ts,
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        dmu.save_json_file(_meta, os.path.join(_folder, "meta.json"))
+
+        # 全状態をpickleで丸ごと保存
+        _state = {}
+        for _k in _RAG_STATE_KEYS:
+            if _k in st.session_state:
+                _state[_k] = st.session_state[_k]
+        with open(os.path.join(_folder, "state.pkl"), "wb") as f:
+            pickle.dump(_state, f)
+
+        # 分析フォルダパスをsession_stateに保持
+        st.session_state._rag_analytics_folder = _folder
+
+        # レポートがあればmdでも保存（人間が読める形で）
+        if st.session_state.get("_rag_report"):
+            dmu.save_text_file(st.session_state._rag_report, os.path.join(_folder, "report.md"))
+
+        return _folder
+
+    def _load_analysis_session(folder_path):
+        """保存された全状態をsession_stateに復元する"""
+        import pickle
+        _meta_path = os.path.join(folder_path, "meta.json")
+        if not os.path.exists(_meta_path):
+            return None
+        _meta = dmu.read_json_file(_meta_path)
+
+        # まず全RAGキーをクリア
+        for _k in _RAG_STATE_KEYS:
+            if _k in st.session_state:
+                del st.session_state[_k]
+
+        # pickleから復元
+        _pkl_path = os.path.join(folder_path, "state.pkl")
+        if os.path.exists(_pkl_path):
+            with open(_pkl_path, "rb") as f:
+                _state = pickle.load(f)
+            for _k, _v in _state.items():
+                st.session_state[_k] = _v
+
+        # 読み込み済みフラグ
+        st.session_state._rag_searched = True
+        st.session_state._rag_loaded_collection = _meta.get("collection", "")
+
+        return _meta
+
+    def _list_saved_sessions():
+        """保存済み分析セッションの一覧を返す"""
+        if not os.path.exists(_ANALYTICS_BASE):
+            return []
+        sessions = []
+        for folder in sorted(os.listdir(_ANALYTICS_BASE), reverse=True):
+            _meta_path = os.path.join(_ANALYTICS_BASE, folder, "meta.json")
+            if os.path.exists(_meta_path):
+                _meta = dmu.read_json_file(_meta_path)
+                sessions.append({
+                    "folder": folder,
+                    "path": os.path.join(_ANALYTICS_BASE, folder),
+                    "collection": _meta.get("collection", ""),
+                    "created_at": _meta.get("created_at", ""),
+                })
+        return sessions
+
+    def _ask_agent_ui(context_text, key_prefix="rag"):
+        """Ask Agent共通UI: 実行設定+質問入力+DigiMatsuExecute実行。結果をsession_stateに保存。"""
+        st.markdown("---")
+        st.subheader("Ask Agent")
+        _llm_agent_list = st.session_state.agent_list
+        _llm_agent_idx = 0
+        if st.session_state.get("agent_id") in _llm_agent_list:
+            _llm_agent_idx = _llm_agent_list.index(st.session_state.agent_id)
+        _llm_agent = st.selectbox("Agent:", _llm_agent_list, index=_llm_agent_idx, key=f"{key_prefix}_llm_agent")
+
+        # 実行設定
+        _ask_exp = st.expander("Exec Settings")
+        with _ask_exp:
+            _ask_c1, _ask_c2, _ask_c3, _ask_c4 = st.columns(4)
+            _ask_web = _ask_c1.checkbox("Web Search", value=False, key=f"{key_prefix}_ask_web")
+            _ask_private = _ask_c2.checkbox("Private Mode", value=st.session_state.get("private_mode", True), key=f"{key_prefix}_ask_private")
+            _ask_thinking = _ask_c3.checkbox("Thinking Mode", value=False, key=f"{key_prefix}_ask_thinking")
+            _ask_book = _ask_c4.checkbox("Use Books", value=False, key=f"{key_prefix}_ask_book")
+
+        _llm_query = st.text_area("Question:", placeholder="例: カテゴリごとの特徴を説明して", height=100, key=f"{key_prefix}_llm_query")
+
+        if _llm_query and st.button("Ask", key=f"{key_prefix}_llm_ask"):
+            _agent_file = next((a["FILE"] for a in st.session_state.agents if a["AGENT"] == _llm_agent), None)
+            if _agent_file:
+                _user_input = f"{context_text}\n\n【質問】\n{_llm_query}"
+                _exec = {
+                    "MEMORY_USE": False, "MEMORY_SAVE": True, "SAVE_DIGEST": False,
+                    "CONTENTS_SAVE": False, "STREAM_MODE": False, "MAGIC_WORD_USE": False,
+                    "META_SEARCH": False, "RAG_QUERY_GENE": True,
+                    "WEB_SEARCH": _ask_web, "PRIVATE_MODE": _ask_private,
+                    "THINKING_MODE": _ask_thinking,
+                }
+                _add_knowledge = []
+                if _ask_book:
+                    _agent_data = dmu.read_json_file(_agent_file, agent_folder_path)
+                    _add_knowledge = _agent_data.get("BOOK", [])
+
+                _session_id = "RAG_EXPLORER_" + dms.set_new_session_id()
+                # analyticsフォルダ内にセッションを作成
+                _analytics_folder = st.session_state.get("_rag_analytics_folder", "")
+                if not _analytics_folder:
+                    _analytics_folder = os.path.join(_ANALYTICS_BASE, f"analytics{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+                    st.session_state._rag_analytics_folder = _analytics_folder
+                _session_base = os.path.join(_analytics_folder, _session_id)
+                _tmp_session = dms.DigiMSession(_session_id, "RAG Explorer", base_path=_session_base)
+                _tmp_session.save_status("LOCKED")
+                _exec["_SESSION_BASE_PATH"] = _session_base
+
+                with st.spinner("エージェント実行中..."):
+                    try:
+                        _response = ""
+                        _output_ref = {}
+                        for _, _, chunk, _, _oref in dme.DigiMatsuExecute(
+                                st.session_state.web_service, st.session_state.web_user,
+                                _session_id, "RAG Explorer", _agent_file, "LLM",
+                                1, _user_input, [], {}, {}, _add_knowledge, "No Template", _exec):
+                            if chunk and not chunk.startswith("[STATUS]"):
+                                _response += chunk
+                            if _oref:
+                                _output_ref = _oref
+                        _new_result = {
+                            "response": _response,
+                            "query": _llm_query,
+                            "session_id": _session_id,
+                            "session_base_path": _session_base,
+                            "agent_file": _agent_file,
+                            "agent_name": _llm_agent,
+                            "output_ref": _output_ref,
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        }
+                        # 最新の結果（Detail/Analytics用）
+                        st.session_state[f"_{key_prefix}_ask_result"] = _new_result
+                        # 会話履歴に追加
+                        if f"_{key_prefix}_ask_history" not in st.session_state:
+                            st.session_state[f"_{key_prefix}_ask_history"] = []
+                        st.session_state[f"_{key_prefix}_ask_history"].append(_new_result)
+                    except Exception as e:
+                        import traceback
+                        st.error(f"エージェント実行エラー: {type(e).__name__}: {e}")
+                        st.code(traceback.format_exc())
+                    finally:
+                        _tmp_session.save_status("UNLOCKED")
+
+    def _show_ask_result(key_prefix="rag"):
+        """Ask Agentの会話履歴 + 最新結果のDetail/Analytics を表示"""
+        _history = st.session_state.get(f"_{key_prefix}_ask_history", [])
+        _result = st.session_state.get(f"_{key_prefix}_ask_result")
+        if not _history and not _result:
+            return None
+
+        # 過去の会話履歴を表示
+        if len(_history) > 1:
+            for _h in _history[:-1]:
+                with st.chat_message("user"):
+                    st.markdown(f"**[{_h.get('timestamp','')}] {_h.get('agent_name','')}**")
+                    st.markdown(_h.get("query", ""))
+                with st.chat_message("assistant"):
+                    st.markdown(_h["response"])
+
+        # 最新の回答
+        if _result:
+            with st.chat_message("user"):
+                st.markdown(f"**[{_result.get('timestamp','')}] {_result.get('agent_name','')}**")
+                st.markdown(_result.get("query", ""))
+            with st.chat_message("assistant"):
+                st.markdown(_result["response"])
+
+        _sid = _result["session_id"]
+        _agent_file = _result["agent_file"]
+        _base_path = _result.get("session_base_path", "")
+
+        # Detail Information
+        _detail_exp = st.expander("Detail Information")
+        with _detail_exp:
+            try:
+                _session = dms.DigiMSession(_sid, base_path=_base_path) if _base_path else dms.DigiMSession(_sid)
+                _detail = _session.get_detail_info("1", "1")
+                if _detail:
+                    import re as _re
+                    _blocks = _re.split(r'\n(?=【)', _detail)
+                    for _block in _blocks:
+                        _block = _block.strip()
+                        if _block:
+                            st.markdown(_block.replace("\n", "<br>"), unsafe_allow_html=True)
+            except Exception as e:
+                st.caption(f"Detail取得エラー: {e}")
+
+        # Analytics Results（セッションデータが保存されている場合のみ表示）
+        _session_check = dms.DigiMSession(_sid, base_path=_base_path) if _base_path else dms.DigiMSession(_sid)
+        if not os.path.exists(_session_check.session_file_path):
+            return _result["response"]
+        _analytics_exp = st.expander("Analytics Results")
+        with _analytics_exp:
+            try:
+                _session = dms.DigiMSession(_sid, base_path=_base_path) if _base_path else dms.DigiMSession(_sid)
+                _history = _session.get_history()
+                if _history and "1" in _history and "1" in _history["1"]:
+                    _v2 = _history["1"]["1"]
+
+                    # --- Compare Agents ---
+                    if st.session_state.get("allowed_analytics_compare", True):
+                        _cmp_agent = st.selectbox("Select Compare Agent:", st.session_state.agent_list,
+                                                  index=st.session_state.agent_list_index, key=f"{key_prefix}_cmp_agent")
+                        _cmp_file_tmp = next((a["FILE"] for a in st.session_state.agents if a["AGENT"] == _cmp_agent), None)
+                        _cmp_data_tmp = dmu.read_json_file(_cmp_file_tmp, agent_folder_path) if _cmp_file_tmp else {}
+                        _cmp_engine_list = dma.get_engine_list(_cmp_data_tmp, model_type="LLM")
+                        _cmp_engine = ""
+                        if _cmp_engine_list:
+                            _cmp_engine = st.selectbox("Compare Engine(LLM):", _cmp_engine_list, key=f"{key_prefix}_cmp_engine")
+                        compare_col1, _ = st.columns(2)
+                        if compare_col1.button("Analytics Results - Compare Agents", key=f"{key_prefix}_cmp_run", disabled=bool(st.session_state._bg_task)):
+                            _cmp_file = _cmp_file_tmp
+                            if _cmp_file:
+                                _cmp_overwrite = {}
+                                if _cmp_engine and _cmp_engine in _cmp_data_tmp.get("ENGINE", {}).get("LLM", {}):
+                                    _cmp_overwrite.setdefault("ENGINE", {})["LLM"] = _cmp_data_tmp["ENGINE"]["LLM"][_cmp_engine]
+                                _orig_query = _v2["prompt"]["query"]["input"]
+                                _orig_situation = _v2["prompt"]["query"].get("situation", {})
+                                _orig_template = _v2["prompt"]["prompt_template"]["setting"]
+
+                                import DigiM_VAnalytics as _dmva_cmp
+                                def _run_cmp():
+                                    _, _, cmp_resp, cmp_model, _, cmp_know_ref = _dmva_cmp.genLLMAgentSimple(
+                                        st.session_state.web_service, st.session_state.web_user,
+                                        _sid, "RAG Explorer", _cmp_file, model_type="LLM", sub_seq=1,
+                                        query=_orig_query, import_contents=[], situation=_orig_situation,
+                                        overwrite_items=_cmp_overwrite, prompt_temp_cd=_orig_template,
+                                        seq_limit="1", sub_seq_limit="0")
+                                    vec_resp = dmu.embed_text(_v2["response"]["text"])
+                                    vec_cmp = dmu.embed_text(cmp_resp)
+                                    cmp_diff = dmu.calculate_cosine_distance(vec_resp, vec_cmp)
+                                    exec_agent_name = dma.get_agent_item(_v2["setting"]["agent_file"], "DISPLAY_NAME")
+                                    _, _, cmp_text, cmp_text_model, _, _ = dmt.compare_texts(
+                                        st.session_state.web_service, st.session_state.web_user,
+                                        exec_agent_name, _v2["response"]["text"], _cmp_agent, cmp_resp)
+                                    st.session_state[f"_{key_prefix}_cmp_result"] = {
+                                        "agent_file": _cmp_file, "agent": _cmp_agent, "model_name": cmp_model,
+                                        "response": cmp_resp, "diff": round(cmp_diff, 3),
+                                        "compare_text": cmp_text, "compare_model": cmp_text_model,
+                                        "knowledge_rag": cmp_know_ref}
+                                _run_bg_task("compare", f"比較分析を実行中(RAG Explorer)", _run_cmp)
+                                st.rerun()
+
+                    # Compare結果表示
+                    if st.session_state.get(f"_{key_prefix}_cmp_result"):
+                        _cmp_r = st.session_state[f"_{key_prefix}_cmp_result"]
+                        st.markdown(f"**Agent:** {_cmp_r.get('agent', '')} | **Model:** {_cmp_r.get('model_name', '')} | **Diff:** {_cmp_r.get('diff', '')}")
+                        st.markdown("")
+                        st.markdown(_cmp_r.get("response", "").replace("\n", "<br>"), unsafe_allow_html=True)
+                        if _cmp_r.get("compare_text"):
+                            st.markdown(f"**Compare Text ({_cmp_r.get('compare_model', '')}):**")
+                            st.markdown(_cmp_r["compare_text"].replace("\n", "<br>"), unsafe_allow_html=True)
+
+                    # --- Knowledge Utility ---
+                    if st.session_state.get("allowed_analytics_knowledge", True):
+                        _know_refs = _v2.get("response", {}).get("reference", {}).get("knowledge_rag", [])
+                        _ak_refs = [dmu.parse_log_template(rd) for rd in _know_refs if "page_id" not in rd]
+                        if _ak_refs:
+                            st.markdown("---")
+                            ak_col1, ak_col2, ak_col3 = st.columns(3)
+                            _ak_mode = ak_col2.radio("Knowledge Utility:", ["Default", "Norm(All)", "Norm(Group)"], index=1, key=f"{key_prefix}_ak_mode")
+                            _ak_dim_method = ak_col3.radio("Dimension Reduction:", ["PCA", "t-SNE"], index=0, key=f"{key_prefix}_ak_dim")
+                            _ak_dim_params = {}
+                            if _ak_dim_method == "t-SNE":
+                                _ak_dim_params["perplexity"] = ak_col3.number_input("t-SNE Perplexity:", value=40, step=1, key=f"{key_prefix}_ak_perp")
+                            _ak_dim = {"method": _ak_dim_method, "params": _ak_dim_params}
+
+                            if ak_col1.button("Analytics Results - Knowledge Utility", key=f"{key_prefix}_ak_run", disabled=bool(st.session_state._bg_task)):
+                                import DigiM_VAnalytics as _dmva_ak
+                                _ref_ts = _v2.get("prompt", {}).get("timestamp", str(datetime.now()))
+                                _ak_title = f"RAGExplorer_{_sid}"
+                                # analytics個別フォルダに保存（なければ一時的に作成）
+                                _ak_folder = st.session_state.get("_rag_analytics_folder", "")
+                                if not _ak_folder:
+                                    _ak_folder = os.path.join(_ANALYTICS_BASE, f"analytics{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+                                    st.session_state._rag_analytics_folder = _ak_folder
+                                os.makedirs(_ak_folder, exist_ok=True)
+                                def _run_ak():
+                                    _r = _dmva_ak.analytics_knowledge(_agent_file, _ref_ts, _ak_title, _ak_refs, _ak_folder, _ak_mode, _ak_dim)
+                                    st.session_state[f"_{key_prefix}_ak_result"] = _r
+                                _run_bg_task("knowledge", "知識活用性を分析中(RAG Explorer)", _run_ak)
+                                st.rerun()
+
+                            if st.session_state.get(f"_{key_prefix}_ak_result"):
+                                _ak_r = st.session_state[f"_{key_prefix}_ak_result"]
+                                _ak_img_folder = st.session_state.get("_rag_analytics_folder", temp_folder_path)
+                                if "image_files" in _ak_r:
+                                    for _, _imgs in _ak_r["image_files"].items():
+                                        for _img in _imgs:
+                                            _img_path = os.path.join(_ak_img_folder, _img)
+                                            if os.path.exists(_img_path):
+                                                st.image(_img_path)
+                                if "similarity_utility" in _ak_r:
+                                    st.json(_ak_r["similarity_utility"])
+
+            except Exception as e:
+                st.caption(f"Analytics取得エラー: {e}")
+
+        return _result["response"]
+
+    st.subheader("RAG Explorer")
+
+    # サイドバーからの読み込みリクエストを処理
+    if st.session_state.get("_rag_load_folder"):
+        _load_path = st.session_state._rag_load_folder
+        st.session_state._rag_load_folder = None
+        _loaded = _load_analysis_session(_load_path)
+        if _loaded:
+            st.session_state._rag_searched = True
+            st.session_state._rag_loaded_collection = _loaded.get("collection", "")
+            st.session_state._rag_loaded_type = _loaded.get("data_type", "ChromaDB")
+            st.info(f"分析セッションを読み込みました: {_loaded.get('created_at', '')} - {_loaded.get('collection', '')}")
+
+    # 選択中エージェントのKNOWLEDGE/BOOKからデータソースを抽出
+    _agent_data = st.session_state.get("agent_data", {})
+    _agent_db_names = set()
+    _agent_pi_names = set()
+    for _k in _agent_data.get("KNOWLEDGE", []) + _agent_data.get("BOOK", []):
+        if _k.get("RETRIEVER") == "PageIndex":
+            for _d in _k.get("DATA", []):
+                if _d.get("DATA_TYPE") == "PAGE_INDEX":
+                    _agent_pi_names.add(_d["DATA_NAME"])
+        else:
+            for _d in _k.get("DATA", []):
+                _agent_db_names.add(_d.get("DATA_NAME", ""))
+
+    # データソース一覧をエージェントの設定で絞り込み
+    _all_chroma = dmc.get_rag_list()
+    _all_page_index = dmc.get_page_index_list()
+    _chroma_list = [c for c in _all_chroma if c in _agent_db_names] if _agent_db_names else _all_chroma
+    _page_index_names = [p for p in _all_page_index.keys() if p in _agent_pi_names] if _agent_pi_names else list(_all_page_index.keys())
+    _page_index_dict = {k: v for k, v in _all_page_index.items() if k in _page_index_names} if _agent_pi_names else _all_page_index
+
+    # データソースが両方あるかでラジオボタン表示を制御
+    _has_vectordb = bool(_chroma_list)
+    _has_pageindex = bool(_page_index_names)
+    _source_options = []
+    if _has_vectordb:
+        _source_options.append("Collection (VectorDB)")
+    if _has_pageindex:
+        _source_options.append("PageIndex")
+    if not _source_options:
+        st.info("選択中のエージェントにRAGデータが設定されていません")
+        return
+
+    _source_type = st.radio("Data Source:", _source_options, horizontal=True, key="rag_source_type") if len(_source_options) > 1 else _source_options[0]
+    _is_page_index = (_source_type == "PageIndex")
+
+    if _is_page_index:
+        _selected_pi = st.selectbox("PageIndex:", _page_index_names, key="rag_pi_select")
+        _selected_list = [f"[PageIndex] {_selected_pi}"]
+    else:
+        _selected_list = st.multiselect("Collection:", _chroma_list, default=[], key="rag_collection_chromadb")
+
+    # 選択をソートして文字列化（キャッシュキーに使う）
+    _selected_key = str(sorted(_selected_list))
+
+    # Collection変更時にキャッシュと検索状態をリセット
+    # （空選択時、読み込み済みセッションがある場合、BGタスク実行中はスキップ）
+    _has_loaded = st.session_state.get("_rag_loaded_collection", "")
+    _is_bg_running = bool(st.session_state.get("_bg_task"))
+    if (_selected_key and _selected_key != "[]"
+        and _selected_key != st.session_state.get("_rag_prev_collection")
+        and not _has_loaded and not _is_bg_running):
+        st.session_state._rag_prev_collection = _selected_key
+        st.session_state._rag_searched = False
+        st.session_state._rag_cached_data = None
+        st.session_state._rag_cached_type = None
+        st.session_state._rag_scatter_cache = None
+        st.session_state._rag_cluster_cache = None
+        st.session_state._rag_cluster_explanation = None
+        st.session_state._rag_sensitivity = None
+        st.session_state._rag_sensitivity_explanation = None
+        st.session_state._rag_temporal = None
+        st.session_state._rag_temporal_explanation = None
+        st.session_state._rag_llm_response = None
+        st.session_state._rag_report = None
+
+    # 読み込み済みセッションがある場合、Collection未選択でも続行
+    if not _selected_list:
+        _loaded_col = st.session_state.get("_rag_loaded_collection", "")
+        if _loaded_col and st.session_state.get("_rag_cached_data") is not None:
+            _selected_list = [_loaded_col] if isinstance(_loaded_col, str) else _loaded_col
+            _selected_list = [s for s in ((_loaded_col.split(", ") if ", " in _loaded_col else [_loaded_col])) if s]
+        else:
+            return
+
+    # 表示用の選択名（レポート等で使用）
+    _selected = ", ".join(_selected_list)
+
+    # ===== PageIndex専用画面 =====
+    if _is_page_index:
+        _pi_name = _selected_list[0].replace("[PageIndex] ", "")
+        _pi_pages = _page_index_dict.get(_pi_name, [])
+        _data_type = "PageIndex"
+
+        if not _pi_pages:
+            st.warning("ページデータが0件です")
+            return
+
+        df = pd.DataFrame(_pi_pages)
+        total_count = len(df)
+
+        # ツリー構造表示
+        st.subheader("Page Tree")
+        _categories = {}
+        for p in _pi_pages:
+            cat = p.get("category", "未分類")
+            if cat not in _categories:
+                _categories[cat] = []
+            _categories[cat].append(p)
+
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        fig_tree, ax_tree = plt.subplots(figsize=(12, max(4, len(_pi_pages) * 0.35)))
+        ax_tree.set_xlim(-0.5, 10)
+        ax_tree.set_ylim(-0.5, len(_pi_pages) + len(_categories))
+        ax_tree.axis("off")
+        ax_tree.set_title(f"Page Index: {_pi_name} ({total_count} pages)", fontsize=14, fontweight="bold")
+
+        # ハイライト対象のIDセット（感度分析後にセット）
+        _highlight_ids = set()
+        _pi_sens = st.session_state.get("_rag_pi_sensitivity")
+        if _pi_sens and _pi_sens.get("pi_name") == _pi_name:
+            _highlight_ids = set(_pi_sens.get("selected_ids", []))
+
+        y_pos = len(_pi_pages) + len(_categories) - 1
+        for cat, pages in _categories.items():
+            # カテゴリヘッダー
+            ax_tree.text(0.3, y_pos, f"[{cat}]", fontsize=11, fontweight="bold", va="center",
+                        fontfamily="IPAexGothic")
+            y_pos -= 1
+            for p in pages:
+                pid = p["id"]
+                title = p.get("title", "")
+                _color = "#1565C0" if pid in _highlight_ids else "#333333"
+                _weight = "bold" if pid in _highlight_ids else "normal"
+                _marker = ">>>" if pid in _highlight_ids else " - "
+                ax_tree.text(1.0, y_pos, f"{_marker} [{pid}] {title}", fontsize=9, va="center",
+                            color=_color, fontweight=_weight, fontfamily="IPAexGothic")
+                y_pos -= 1
+
+        st.pyplot(fig_tree)
+        plt.close(fig_tree)
+
+        # データ一覧
+        _list_cols = [c for c in df.columns if c not in ("sort_order",)]
+        st.dataframe(df[_list_cols], hide_index=True, use_container_width=True, height=300)
+
+        # PageIndex感度分析
+        st.markdown("---")
+        st.subheader("Page Sensitivity")
+        _pi_query = st.text_input("Query:", placeholder="キーワードや文章を入力してページ選択をシミュレート", key="rag_pi_sens_query")
+        _pi_max = st.slider("Max Pages:", min_value=1, max_value=min(10, total_count), value=min(5, total_count), key="rag_pi_max")
+
+        if _pi_query and st.button("Analyze", key="rag_pi_sens_run"):
+            # PageIndex検索エージェントでページ選択をシミュレート
+            import DigiM_Tool as _dmt_pi
+            with st.spinner("ページ選択をシミュレート中..."):
+                try:
+                    _exec_info = {"SERVICE_INFO": st.session_state.web_service, "USER_INFO": st.session_state.web_user}
+                    _support_agent = "agent_59PageIndexSearch.json"
+                    _sel_ids = _dmt_pi.page_index_search(_exec_info, _support_agent, _pi_query, _pi_pages, _pi_max)
+                    st.session_state._rag_pi_sensitivity = {
+                        "pi_name": _pi_name,
+                        "query": _pi_query,
+                        "selected_ids": _sel_ids,
+                    }
+                    st.rerun()  # ツリーをハイライト付きで再描画
+                except Exception as e:
+                    st.warning(f"ページ選択シミュレートでエラー: {e}")
+
+        # 感度分析結果表示
+        if _pi_sens and _pi_sens.get("pi_name") == _pi_name:
+            st.caption(f"Query: **{_pi_sens['query']}** → 選択ページ: **{', '.join(_pi_sens['selected_ids'])}**")
+            _sel_pages = [p for p in _pi_pages if p["id"] in _pi_sens["selected_ids"]]
+            if _sel_pages:
+                st.dataframe(pd.DataFrame(_sel_pages), hide_index=True, use_container_width=True)
+
+        # Ask Agent（PageIndex用）
+        _pi_context = f"以下のページインデックスデータと分析結果を踏まえて質問に回答してください。\n\nPageIndex: {_pi_name} ({total_count}ページ)\n\nページ一覧:\n"
+        for p in _pi_pages:
+            _pi_context += f"- [{p['id']}] {p.get('title','')} ({p.get('category','')}) : {p.get('summary','')}\n"
+        if _pi_sens and _pi_sens.get("pi_name") == _pi_name:
+            _pi_context += f"\n感度分析結果 (Query: {_pi_sens['query']}):\n選択ページ: {', '.join(_pi_sens['selected_ids'])}\n"
+        _ask_agent_ui(_pi_context, key_prefix="rag_pi")
+        _show_ask_result(key_prefix="rag_pi")
+
+        # Export Report（PageIndex用）
+        st.markdown("---")
+        st.subheader("Export Report")
+        if st.button("Generate Report", key="rag_pi_gen_report"):
+            _now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            _report = f"# RAG Explorer {_now}\n\n"
+            _report += f"**分析実施日:** {_now}\n\n"
+            _report += f"**ページ数:** {total_count}\n\n"
+            _report += "## Page Tree\n\n"
+            for cat, pages in _categories.items():
+                _report += f"### {cat}\n"
+                for p in pages:
+                    _report += f"- [{p['id']}] {p.get('title', '')}: {p.get('summary', '')}\n"
+                _report += "\n"
+            _pi_sens = st.session_state.get("_rag_pi_sensitivity")
+            if _pi_sens and _pi_sens.get("pi_name") == _pi_name:
+                _report += f"## Page Sensitivity\n\nQuery: {_pi_sens['query']}\n\n"
+                _report += f"選択ページ: {', '.join(_pi_sens['selected_ids'])}\n\n"
+            _pi_history = st.session_state.get("_rag_pi_ask_history", [])
+            if _pi_history:
+                _report += "## Ask Agent\n\n"
+                for _h in _pi_history:
+                    _report += f"**Q ({_h.get('timestamp','')}):** {_h.get('query','')}\n\n"
+                    _report += f"**A ({_h.get('agent_name','')}):** {_h.get('response','')}\n\n---\n\n"
+            _report += f"\n---\nGenerated: {_now}\n"
+            st.session_state._rag_report = _report
+            try:
+                _saved_path = _save_analysis_session(f"[PageIndex] {_pi_name}")
+                st.success(f"レポートを生成し、セッションを保存しました: {_saved_path}")
+            except Exception as e:
+                st.success("レポートを生成しました")
+                st.warning(f"セッション保存エラー: {e}")
+
+        if st.session_state.get("_rag_report"):
+            _report_name = f"RAG_Explorer_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            st.download_button("Download (.md)", data=st.session_state._rag_report.encode("utf-8"),
+                              file_name=f"{_report_name}.md", mime="text/markdown", key="rag_pi_dl_md")
+
+        return  # PageIndexはここで終了（以降のChromaDB用処理をスキップ）
+
+    # ===== ChromaDB用画面（以降は既存ロジック） =====
+    _data_type = "ChromaDB"
+
+    # データ取得（キャッシュがあればそれを使う）
+    if st.session_state.get("_rag_cached_data") is not None:
+        df = st.session_state._rag_cached_data
+        _data_type = st.session_state._rag_cached_type
+    else:
+        _all_raw_data = []
+        for _sel in _selected_list:
+            _col_data = dmc.get_rag_collection_data(_sel)
+            for d in _col_data:
+                d["_source"] = _sel
+            _all_raw_data.extend(_col_data)
+
+        if not _all_raw_data:
+            st.warning("データが0件です")
+            return
+
+        # PageIndexとChromaDBが混在する場合はMixed
+        _has_pi = any(s.startswith("[PageIndex]") for s in _selected_list)
+        _has_db = any(not s.startswith("[PageIndex]") for s in _selected_list)
+        if _has_pi and _has_db:
+            _data_type = "Mixed"
+        elif _has_pi:
+            _data_type = "PageIndex"
+
+        df = pd.DataFrame(_all_raw_data)
+        st.session_state._rag_cached_data = df
+        st.session_state._rag_cached_type = _data_type
+
+    total_count = len(df)
+
+    # ベクトルデータ列は表示から除外
+    _exclude_cols = [c for c in df.columns if "vector_data" in c]
+    df_display = df.drop(columns=_exclude_cols, errors="ignore")
+
+    # リスト型カラムを文字列に変換（tags等）
+    for c in df_display.columns:
+        if df_display[c].apply(lambda x: isinstance(x, list)).any():
+            df_display[c] = df_display[c].apply(lambda x: ", ".join(str(i) for i in x) if isinstance(x, list) else x)
+
+    # フィルタ可能なカラムを事前計算
+    _filterable_cols = [c for c in df_display.columns if df_display[c].dtype == "object" and df_display[c].nunique() < 100]
+
+    # フィルタセクション
+    _has_date = "create_date" in df_display.columns
+    if _has_date:
+        _filter_col1, _filter_col2, _filter_col3 = st.columns(3)
+    else:
+        _filter_col1, _filter_col2, _filter_col3 = st.columns(3)
+    _filter_column = _filter_col1.selectbox("Filter Column:", ["(none)"] + _filterable_cols, key="rag_filter_col")
+    _filter_values = []
+    if _filter_column != "(none)":
+        _unique_vals = sorted(df_display[_filter_column].dropna().unique().tolist())
+        _filter_values = _filter_col2.multiselect("Filter Value:", _unique_vals, key="rag_filter_val")
+    _search_text = _filter_col3.text_input("Text Search:", value="", placeholder="ワイルドカード * 対応", key="rag_search_text")
+
+    # Privateフラグ除外
+    _exclude_private = False
+    if "private" in df_display.columns:
+        _exclude_private = st.checkbox("Exclude Private Data", value=True, key="rag_exclude_private")
+
+    # 日付範囲フィルタ（create_dateがある場合）
+    _date_from = None
+    _date_to = None
+    if _has_date:
+        from datetime import date as _date_type
+        _dates_parsed = pd.to_datetime(df_display["create_date"], errors="coerce").dropna()
+        if not _dates_parsed.empty:
+            _min_date = _dates_parsed.min().date()
+            _max_date = _dates_parsed.max().date()
+            _date_col1, _date_col2 = st.columns(2)
+            _date_from = _date_col1.date_input("Date From:", value=_min_date, min_value=_min_date, max_value=_max_date, key="rag_date_from")
+            _date_to = _date_col2.date_input("Date To:", value=_max_date, min_value=_min_date, max_value=_max_date, key="rag_date_to")
+
+    # グループ集計・検索ボタン
+    _action_col1, _action_col2, _action_col3 = st.columns([1, 1, 1])
+    _group_by = _action_col1.selectbox("Group By:", ["(none)"] + _filterable_cols, key="rag_group_by")
+    _do_search = _action_col3.button("Search", key="rag_do_search", type="primary")
+
+    # 検索実行時にフラグを保持
+    if _do_search:
+        st.session_state._rag_searched = True
+    if not st.session_state.get("_rag_searched", False):
+        st.caption(f"**{_data_type}** | Total: **{total_count}** 件 | 検索条件を指定して **Search** を押してください（指定なしで全件表示）")
+        return
+
+    # フィルタ適用
+    df_filtered = df_display.copy()
+    if _exclude_private and "private" in df_filtered.columns:
+        df_filtered = df_filtered[df_filtered["private"] != True]
+    if _filter_column != "(none)" and _filter_values:
+        df_filtered = df_filtered[df_filtered[_filter_column].isin(_filter_values)]
+    if _date_from is not None and _date_to is not None and _has_date:
+        _df_dates = pd.to_datetime(df_filtered["create_date"], errors="coerce")
+        _mask_date = (_df_dates >= pd.Timestamp(_date_from)) & (_df_dates <= pd.Timestamp(_date_to) + pd.Timedelta(days=1))
+        df_filtered = df_filtered[_mask_date]
+    if _search_text:
+        _pattern = _search_text if "*" in _search_text else f"*{_search_text}*"
+        _mask = df_filtered.apply(
+            lambda row: any(fnmatch.fnmatch(str(v).lower(), _pattern.lower()) for v in row), axis=1)
+        df_filtered = df_filtered[_mask]
+
+    # カラム順序の整理
+    _priority_cols = ["id", "db", "title", "create_date", "category", "X1", "X2", "key_text", "value_text"]
+    _existing_priority = [c for c in _priority_cols if c in df_filtered.columns]
+    _remaining = sorted([c for c in df_filtered.columns if c not in _priority_cols])
+    df_filtered = df_filtered[_existing_priority + _remaining]
+
+    filtered_count = len(df_filtered)
+    st.caption(f"**{_data_type}** | Total: **{total_count}** 件 | Filtered: **{filtered_count}** 件")
+
+    # グループ集計
+    if _group_by != "(none)":
+        _group_df = df_filtered.groupby(_group_by).size().reset_index(name="count").sort_values("count", ascending=False)
+        _action_col2.dataframe(_group_df, hide_index=True, use_container_width=True)
+
+    # データテーブル（散布図生成後は座標付きに差し替え）
+    _df_with_coords = df_filtered
+    _table_placeholder = st.empty()
+    _table_placeholder.dataframe(df_filtered, hide_index=True, use_container_width=True, height=400)
+
+    # CSVダウンロード（散布図生成後に座標付きCSVに差し替え）
+    _csv_placeholder = st.empty()
+    _csv_data = df_filtered.to_csv(index=False).encode("utf-8-sig")
+    _csv_placeholder.download_button("CSV Download", data=_csv_data, file_name=f"rag_{_selected}.csv", mime="text/csv", key="rag_csv_dl")
+
+    # 散布図セクション（ChromaDBでvector_data_value_textがある場合のみ）
+    _has_vectors = "vector_data_value_text" in df.columns and _data_type in ("ChromaDB", "Mixed")
+    if _has_vectors and filtered_count >= 3:
+        st.markdown("---")
+        st.subheader("Scatter Plot")
+        _scatter_col1, _scatter_col2, _scatter_col3, _scatter_col4 = st.columns([1, 1, 1, 1])
+        _dim_method = _scatter_col1.radio("Dimension Reduction:", ["PCA", "t-SNE"], index=0, horizontal=True, key="rag_dim_method")
+        _dim_params = {}
+        if _dim_method == "t-SNE":
+            _dim_params["perplexity"] = _scatter_col2.number_input("Perplexity:", value=30, step=1, key="rag_tsne_perp")
+
+        # 色分け用カラム選択（categoryがあればデフォルトに）
+        _color_options = ["(none)"] + _filterable_cols
+        _color_default = 0
+        if "category" in _filterable_cols:
+            _color_default = _color_options.index("category")
+        _color_col = _scatter_col3.selectbox("Color By:", _color_options, index=_color_default, key="rag_color_by")
+
+        # ドットサイズモード・生成ボタン
+        _scatter_col5, _scatter_col6 = st.columns([1, 1])
+        _size_mode = _scatter_col5.radio("Dot Size:", ["Uniform", "Newer=Larger"], index=0, horizontal=True, key="rag_dot_size")
+        _gen_scatter = _scatter_col6.button("Generate Scatter", key="rag_gen_scatter")
+
+        if _gen_scatter:
+            import DigiM_VAnalytics as dmva
+
+            # category_mapから色定義を読み込み
+            _cat_color_map = {}
+            try:
+                _cat_map_json = dmu.read_json_file("category_map.json", mst_folder_path)
+                if not _cat_map_json:
+                    _cat_map_json = dmu.read_json_file("sample_category_map.json", mst_folder_path)
+                _cat_color_map = _cat_map_json.get("CategoryColor", {})
+            except Exception:
+                pass
+
+            # フィルタ済みデータ（ベクトル付き）
+            _df_for_scatter = df[df["id"].isin(df_filtered["id"])].copy()
+
+            with st.spinner("次元削減を実行中..."):
+                try:
+                    _df_reduced, _dim_info = dmva.reduce_dimensions(_df_for_scatter, method=_dim_method, params=_dim_params)
+
+                    # 結果をキャッシュ
+                    st.session_state._rag_scatter_cache = {
+                        "df_reduced": _df_reduced,
+                        "dim_info": _dim_info,
+                        "dim_method": _dim_method,
+                        "color_col": _color_col,
+                        "size_mode": _size_mode,
+                        "cat_color_map": _cat_color_map,
+                        "selected": _selected,
+                        "filtered_count": filtered_count,
+                    }
+                except Exception as e:
+                    st.warning(f"散布図の生成でエラーが発生しました: {e}")
+                    st.session_state._rag_scatter_cache = None
+
+        # キャッシュがあれば散布図を表示
+        _scatter_cache = st.session_state.get("_rag_scatter_cache")
+        if _scatter_cache and _scatter_cache.get("selected") == _selected:
+            _df_reduced = _scatter_cache["df_reduced"]
+            _dim_info = _scatter_cache["dim_info"]
+            _sc_method = _scatter_cache["dim_method"]
+            _sc_color = _scatter_cache["color_col"]
+            _sc_size = _scatter_cache["size_mode"]
+            _sc_cat_map = _scatter_cache["cat_color_map"]
+            _sc_count = _scatter_cache["filtered_count"]
+
+            # ドットサイズ計算
+            _dot_sizes = None
+            if _sc_size == "Newer=Larger" and "create_date" in _df_reduced.columns:
+                _dates = pd.to_datetime(_df_reduced["create_date"], errors="coerce")
+                if _dates.notna().any():
+                    _min_ts = _dates.min().timestamp()
+                    _max_ts = _dates.max().timestamp()
+                    _range = _max_ts - _min_ts if _max_ts > _min_ts else 1
+                    _dot_sizes = _dates.apply(lambda d: 10 + 190 * ((d.timestamp() - _min_ts) / _range) if pd.notna(d) else 10).values
+
+            # 散布図描画
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+            fig, ax = plt.subplots(figsize=(10, 7))
+
+            if _sc_color != "(none)" and _sc_color in _df_reduced.columns:
+                _categories = sorted(_df_reduced[_sc_color].dropna().unique())
+                for cat in _categories:
+                    _mask = _df_reduced[_sc_color] == cat
+                    _color = _sc_cat_map.get(cat, None)
+                    _s = _dot_sizes[_mask] if _dot_sizes is not None else None
+                    ax.scatter(_df_reduced.loc[_mask, "X1"], _df_reduced.loc[_mask, "X2"],
+                              color=_color, s=_s, alpha=0.7, label=str(cat)[:20])
+                ax.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=8)
+            else:
+                ax.scatter(_df_reduced["X1"], _df_reduced["X2"], s=_dot_sizes, alpha=0.7)
+
+            ax.set_title(f"{_sc_method} - {_selected} ({_sc_count}件)\n{_dim_info}")
+            ax.grid(True)
+            st.pyplot(fig)
+            plt.close(fig)
+
+            # 座標を一覧に追加して差し替え
+            _coord_map = _df_reduced.set_index("id")[["X1", "X2"]]
+            _df_with_coords = df_filtered.copy()
+            _df_with_coords = _df_with_coords.merge(_coord_map, left_on="id", right_index=True, how="left")
+            _existing_priority = [c for c in _priority_cols if c in _df_with_coords.columns]
+            _remaining = sorted([c for c in _df_with_coords.columns if c not in _priority_cols])
+            _df_with_coords = _df_with_coords[_existing_priority + _remaining]
+            _table_placeholder.dataframe(_df_with_coords, hide_index=True, use_container_width=True, height=400)
+            _csv_data = _df_with_coords.to_csv(index=False).encode("utf-8-sig")
+            _csv_placeholder.download_button("CSV Download", data=_csv_data, file_name=f"rag_{_selected}.csv", mime="text/csv", key="rag_csv_dl_updated")
+
+    # ===== 感度分析セクション（散布図キャッシュがある場合のみ） =====
+    _scatter_cache = st.session_state.get("_rag_scatter_cache")
+    if _scatter_cache and _scatter_cache.get("selected") == _selected:
+        st.markdown("---")
+        st.subheader("Sensitivity Analysis")
+        _sens_query = st.text_input("Query:", placeholder="キーワードや文章を入力して知識の反応を分析", key="rag_sens_query")
+
+        # 期間ボーナス設定
+        _sens_has_date = "create_date" in df.columns
+        _sens_date_from = None
+        _sens_date_to = None
+        _sens_bonus = 0.0
+        if _sens_has_date:
+            _dates_for_sens = pd.to_datetime(df_filtered["create_date"], errors="coerce").dropna()
+            if not _dates_for_sens.empty:
+                _s_min = _dates_for_sens.min().date()
+                _s_max = _dates_for_sens.max().date()
+                _sb_col1, _sb_col2, _sb_col3 = st.columns([1, 1, 1])
+                _sens_date_from = _sb_col1.date_input("Bonus From:", value=_s_min, min_value=_s_min, max_value=_s_max, key="rag_sens_dfrom")
+                _sens_date_to = _sb_col2.date_input("Bonus To:", value=_s_max, min_value=_s_min, max_value=_s_max, key="rag_sens_dto")
+                _sens_bonus = _sb_col3.number_input("Bonus (0=off):", value=0.0, min_value=0.0, max_value=1.0, step=0.1, format="%.1f", key="rag_sens_bonus")
+
+        _sens_top_n = st.slider("Top N:", min_value=5, max_value=50, value=20, key="rag_sens_topn")
+
+        if _sens_query and st.button("Analyze Sensitivity", key="rag_run_sens"):
+            import DigiM_VAnalytics as dmva
+            _df_for_sens = df[df["id"].isin(df_filtered["id"])].copy()
+            _df_reduced_sens = _scatter_cache["df_reduced"]
+            _coord_sens = _df_reduced_sens.set_index("id")[["X1", "X2"]]
+            _df_for_sens = _df_for_sens.merge(_coord_sens, left_on="id", right_index=True, how="left")
+            _cl_cache = st.session_state.get("_rag_cluster_cache")
+            if _cl_cache and _cl_cache.get("selected") == _selected and "Cluster" in _cl_cache["df_clustered"].columns:
+                _cl_map = _cl_cache["df_clustered"].set_index("id")[["Cluster"]]
+                _df_for_sens = _df_for_sens.merge(_cl_map, left_on="id", right_index=True, how="left")
+
+            with st.spinner("類似度を計算中..."):
+                try:
+                    _sens_ranking, _sens_cluster_stats = dmva.sensitivity_analysis(
+                        _df_for_sens, _sens_query, top_n=_sens_top_n,
+                        date_from=_sens_date_from, date_to=_sens_date_to, date_bonus=_sens_bonus)
+                    st.session_state._rag_sensitivity = {
+                        "ranking": _sens_ranking,
+                        "cluster_stats": _sens_cluster_stats,
+                        "query": _sens_query,
+                        "selected": _selected,
+                    }
+                except Exception as e:
+                    st.warning(f"感度分析でエラーが発生しました: {e}")
+
+        # キャッシュから感度分析結果を表示
+        _sens_cache = st.session_state.get("_rag_sensitivity")
+        if _sens_cache and _sens_cache.get("selected") == _selected:
+            _sens = _sens_cache
+            st.caption(f"Query: **{_sens['query']}** | Top {len(_sens['ranking'])}")
+
+            # 感度分析対象のみの散布図
+            _sr = _sens["ranking"]
+            if "X1" in _sr.columns and "X2" in _sr.columns:
+                import matplotlib
+                matplotlib.use("Agg")
+                import matplotlib.pyplot as plt
+                from matplotlib.colors import LinearSegmentedColormap
+
+                _df_all = _scatter_cache["df_reduced"]
+                fig_sens_sc, ax_sens_sc = plt.subplots(figsize=(10, 7))
+                ax_sens_sc.scatter(_df_all["X1"], _df_all["X2"], color="lightgray", alpha=0.3, s=15)
+
+                # ボーナス未適用 → 青グラデ、ボーナス適用 → 緑グラデ
+                _blue_cmap = LinearSegmentedColormap.from_list("blue_v", ["#E8F0FE", "#1565C0", "#0D47A1"])
+                _green_cmap = LinearSegmentedColormap.from_list("green_v", ["#E8F5E9", "#2E7D32", "#1B5E20"])
+
+                _sr_normal = _sr[~_sr["bonus_applied"]]
+                _sr_bonus = _sr[_sr["bonus_applied"]]
+
+                _score_max = _sr["score"].max() if not _sr["score"].empty else 1
+                # 通常（青）
+                if not _sr_normal.empty:
+                    _inv_n = _score_max - _sr_normal["score"]
+                    ax_sens_sc.scatter(_sr_normal["X1"], _sr_normal["X2"], c=_inv_n,
+                                      cmap=_blue_cmap, alpha=0.9, s=60, edgecolors="black", linewidths=0.5,
+                                      label="Normal")
+                # ボーナス適用（緑）
+                if not _sr_bonus.empty:
+                    _inv_b = _score_max - _sr_bonus["score"]
+                    ax_sens_sc.scatter(_sr_bonus["X1"], _sr_bonus["X2"], c=_inv_b,
+                                      cmap=_green_cmap, alpha=0.9, s=60, edgecolors="black", linewidths=0.5,
+                                      marker="D", label="Bonus Applied")
+                ax_sens_sc.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=8)
+                ax_sens_sc.set_title(f"Sensitivity: \"{_sens['query']}\" (Top {len(_sr)})")
+                ax_sens_sc.grid(True)
+                st.pyplot(fig_sens_sc)
+                plt.close(fig_sens_sc)
+
+            # クラスター別平均スコア
+            if _sens["cluster_stats"] is not None:
+                st.markdown("**クラスター別 平均スコア:**")
+                import matplotlib
+                matplotlib.use("Agg")
+                import matplotlib.pyplot as plt
+                _cs = _sens["cluster_stats"]
+                fig_sens, ax_sens = plt.subplots(figsize=(8, 3))
+                ax_sens.barh([f"Cluster {int(c)}" if c >= 0 else "Noise" for c in _cs["Cluster"]],
+                             _cs["avg_score"], color="steelblue", alpha=0.8)
+                ax_sens.set_xlabel("Avg Score (lower = more relevant)")
+                ax_sens.invert_yaxis()
+                ax_sens.grid(axis="x", alpha=0.3)
+                st.pyplot(fig_sens)
+                plt.close(fig_sens)
+
+            # スコアランキング
+            st.markdown("**スコアランキング:**")
+            _display_cols = ["score", "cos_distance", "bonus_applied", "id", "title", "category", "value_text"]
+            if "Cluster" in _sr.columns:
+                _display_cols.insert(5, "Cluster")
+            _display_cols = [c for c in _display_cols if c in _sr.columns]
+            st.dataframe(_sr[_display_cols], hide_index=True, use_container_width=True, height=300)
+
+            # LLMによる感度分析解説
+            _sens_exp_col1, _sens_exp_col2 = st.columns([1, 1])
+            _sens_engine_list = list(dmu.read_json_file("agent_23DataAnalyst.json", agent_folder_path).get("ENGINE", {}).get("LLM", {}).keys())
+            _sens_engine_list = [e for e in _sens_engine_list if e != "DEFAULT"]
+            _sens_engine = _sens_exp_col2.selectbox("Engine:", _sens_engine_list, key="rag_sens_engine") if _sens_engine_list else None
+
+            if _sens_exp_col1.button("Explain Sensitivity", key="rag_explain_sens"):
+                _sens_agent_file = "agent_23DataAnalyst.json"
+                # 上位データのサマリー構築
+                _sens_summary = f"クエリ: {_sens['query']}\n\n上位{len(_sr)}件のデータ:\n"
+                for _, row in _sr.head(10).iterrows():
+                    _bonus_mark = " [Bonus]" if row.get("bonus_applied") else ""
+                    _title = row.get("title", "")
+                    _cat = row.get("category", "")
+                    _score = row.get("score", "")
+                    _dist = row.get("cos_distance", "")
+                    _text = str(row.get("value_text", ""))[:80]
+                    _sens_summary += f"  score={_score}, cos_dist={_dist}{_bonus_mark} [{_cat}] {_title}: {_text}\n"
+                with st.spinner("感度分析を解説中..."):
+                    try:
+                        _agent = dma.DigiM_Agent(_sens_agent_file)
+                        if _sens_engine and _sens_engine in _agent.agent.get("ENGINE", {}).get("LLM", {}):
+                            _agent.agent["ENGINE"]["LLM"]["DEFAULT"] = _sens_engine
+                        _template = _agent.set_prompt_template("Sensitivity Analyst")
+                        _prompt = f"{_template}\n{_sens_summary}"
+                        _response = ""
+                        for _, chunk, _ in _agent.generate_response("LLM", _prompt, [], stream_mode=False):
+                            if chunk:
+                                _response += chunk
+                        st.session_state._rag_sensitivity_explanation = _response
+                    except Exception as e:
+                        st.error(f"感度分析解説エラー: {e}")
+
+            if st.session_state.get("_rag_sensitivity_explanation"):
+                st.markdown("**感度分析の解説:**")
+                st.markdown(st.session_state._rag_sensitivity_explanation)
+
+    # クラスタリングセクション（散布図キャッシュがある場合のみ）
+    _scatter_cache = st.session_state.get("_rag_scatter_cache")
+    if _scatter_cache and _scatter_cache.get("selected") == _selected:
+        st.markdown("---")
+        st.subheader("Clustering")
+        _cl_col1, _cl_col2, _cl_col3 = st.columns([1, 1, 1])
+        _cl_method = _cl_col1.selectbox("Method:", ["K-Means", "DBSCAN", "Hierarchical"], key="rag_cl_method")
+        _cl_params = {}
+        if _cl_method in ["K-Means", "Hierarchical"]:
+            _cl_params["n_clusters"] = _cl_col2.number_input("Clusters:", value=5, min_value=2, max_value=20, step=1, key="rag_cl_k")
+        elif _cl_method == "DBSCAN":
+            # eps自動推定値をデフォルトに
+            import DigiM_VAnalytics as _dmva_eps
+            _default_min_samples = 5
+            _df_for_eps = _scatter_cache["df_reduced"]
+            _auto_eps = _dmva_eps.estimate_dbscan_eps(_df_for_eps, k=_default_min_samples)
+            _cl_params["min_samples"] = _cl_col3.number_input("min_samples:", value=_default_min_samples, min_value=2, step=1, key="rag_cl_min")
+            _cl_params["eps"] = _cl_col2.number_input(f"eps (auto={_auto_eps}):", value=_auto_eps, min_value=0.1, step=0.5, format="%.2f", key="rag_cl_eps")
+
+        _run_cluster = st.button("Run Clustering", key="rag_run_cluster")
+
+        if _run_cluster:
+            import DigiM_VAnalytics as dmva
+            _df_reduced = _scatter_cache["df_reduced"]
+            try:
+                _df_clustered, _cl_info = dmva.apply_clustering(_df_reduced, method=_cl_method, params=_cl_params)
+                _cl_summary = dmva.build_cluster_summary(_df_clustered)
+                st.session_state._rag_cluster_cache = {
+                    "df_clustered": _df_clustered,
+                    "cl_info": _cl_info,
+                    "cl_summary": _cl_summary,
+                    "selected": _selected,
+                }
+            except Exception as e:
+                st.warning(f"クラスタリングでエラーが発生しました: {e}")
+                st.session_state._rag_cluster_cache = None
+
+        # キャッシュからクラスタリング結果を表示
+        _cluster_cache = st.session_state.get("_rag_cluster_cache")
+        if _cluster_cache and _cluster_cache.get("selected") == _selected:
+            _df_clustered = _cluster_cache["df_clustered"]
+            _cl_info = _cluster_cache["cl_info"]
+            _cl_summary = _cluster_cache["cl_summary"]
+
+            st.caption(f"**{_cl_info}**")
+
+            # クラスター散布図
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+            fig_cl, ax_cl = plt.subplots(figsize=(10, 7))
+            _cl_labels = sorted(_df_clustered["Cluster"].unique())
+            _cmap = plt.cm.get_cmap("tab10", len(_cl_labels))
+            for i, cl in enumerate(_cl_labels):
+                _mask = _df_clustered["Cluster"] == cl
+                _label = f"Cluster {cl}" if cl >= 0 else "Noise"
+                _color = "gray" if cl < 0 else _cmap(i)
+                ax_cl.scatter(_df_clustered.loc[_mask, "X1"], _df_clustered.loc[_mask, "X2"],
+                              color=_color, alpha=0.7, label=_label)
+            ax_cl.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=8)
+            ax_cl.set_title(f"Clustering: {_cl_info}")
+            ax_cl.grid(True)
+            st.pyplot(fig_cl)
+            plt.close(fig_cl)
+
+            # クラスター分布テーブル
+            _cl_dist = _df_clustered.groupby("Cluster").size().reset_index(name="count").sort_values("Cluster")
+            st.dataframe(_cl_dist, hide_index=True, use_container_width=True)
+
+            # 座標+Clusterを一覧に追加して差し替え
+            _coord_cl_map = _df_clustered.set_index("id")[["X1", "X2", "Cluster"]]
+            _df_with_coords = df_filtered.copy()
+            _df_with_coords = _df_with_coords.merge(_coord_cl_map, left_on="id", right_index=True, how="left")
+            _priority_with_cluster = ["id", "db", "title", "create_date", "category", "Cluster", "X1", "X2", "key_text", "value_text"]
+            _existing_priority = [c for c in _priority_with_cluster if c in _df_with_coords.columns]
+            _remaining = sorted([c for c in _df_with_coords.columns if c not in _priority_with_cluster])
+            _df_with_coords = _df_with_coords[_existing_priority + _remaining]
+            _table_placeholder.dataframe(_df_with_coords, hide_index=True, use_container_width=True, height=400)
+            _csv_data = _df_with_coords.to_csv(index=False).encode("utf-8-sig")
+            _csv_placeholder.download_button("CSV Download", data=_csv_data, file_name=f"rag_{_selected}_clustered.csv", mime="text/csv", key="rag_csv_dl_clustered")
+
+            # LLMによるクラスター解説（散布図+一覧の下に表示）
+            _explain_col1, _explain_col2 = st.columns([1, 1])
+            _cl_engine_list = list(dmu.read_json_file("agent_23DataAnalyst.json", agent_folder_path).get("ENGINE", {}).get("LLM", {}).keys())
+            _cl_engine_list = [e for e in _cl_engine_list if e != "DEFAULT"]
+            _cl_engine = _explain_col2.selectbox("Explain Engine:", _cl_engine_list, key="rag_cl_engine") if _cl_engine_list else None
+
+            if _explain_col1.button("Explain Clusters", key="rag_explain_cluster"):
+                _cl_agent_file = "agent_23DataAnalyst.json"
+                _cl_data = f"以下はRAGデータ「{_selected}」のクラスタリング結果です。\n\nクラスタリング手法: {_cl_info}\n{_cl_summary}"
+                with st.spinner("クラスターを解説中..."):
+                    try:
+                        _agent = dma.DigiM_Agent(_cl_agent_file)
+                        if _cl_engine and _cl_engine in _agent.agent.get("ENGINE", {}).get("LLM", {}):
+                            _agent.agent["ENGINE"]["LLM"]["DEFAULT"] = _cl_engine
+                        _template = _agent.set_prompt_template("Cluster Analyst")
+                        _prompt = f"{_template}\n{_cl_data}"
+                        _response = ""
+                        for _, chunk, _ in _agent.generate_response("LLM", _prompt, [], stream_mode=False):
+                            if chunk:
+                                _response += chunk
+                        st.session_state._rag_cluster_explanation = _response
+                    except Exception as e:
+                        st.error(f"クラスター解説エラー: {e}")
+
+            # キャッシュからクラスター解説を表示
+            if st.session_state.get("_rag_cluster_explanation"):
+                st.markdown("**クラスター解説:**")
+                st.markdown(st.session_state._rag_cluster_explanation)
+
+    # ===== 時系列分析セクション（create_dateがある場合のみ） =====
+    if _has_date and filtered_count >= 3:
+        st.markdown("---")
+        st.subheader("Temporal Analysis")
+        _temp_col1, _temp_col2 = st.columns([1, 1])
+        _temp_period = _temp_col1.selectbox("Period:", ["month", "quarter", "year"], key="rag_temp_period")
+        _temp_topn = _temp_col2.slider("Keywords per period:", min_value=3, max_value=20, value=7, key="rag_temp_topn")
+
+        if st.button("Analyze Temporal", key="rag_run_temporal"):
+            import DigiM_VAnalytics as dmva
+            with st.spinner("時系列分析を実行中..."):
+                try:
+                    _cat_pivot, _kw_df, _temp_summary = dmva.temporal_analysis(
+                        df_filtered, period=_temp_period, top_n_keywords=_temp_topn)
+                    st.session_state._rag_temporal = {
+                        "cat_pivot": _cat_pivot,
+                        "kw_df": _kw_df,
+                        "summary": _temp_summary,
+                        "period": _temp_period,
+                    }
+                except Exception as e:
+                    st.warning(f"時系列分析でエラーが発生しました: {e}")
+
+        # キャッシュから時系列分析結果を表示
+        if st.session_state.get("_rag_temporal"):
+            _temp = st.session_state._rag_temporal
+
+            # カテゴリ推移グラフ
+            if _temp["cat_pivot"] is not None and not _temp["cat_pivot"].empty:
+                st.markdown("**カテゴリ構成の推移:**")
+                import matplotlib
+                matplotlib.use("Agg")
+                import matplotlib.pyplot as plt
+                # category_mapの色を適用
+                _cat_color_map_t = {}
+                try:
+                    _cat_map_json_t = dmu.read_json_file("category_map.json", mst_folder_path)
+                    if not _cat_map_json_t:
+                        _cat_map_json_t = dmu.read_json_file("sample_category_map.json", mst_folder_path)
+                    _cat_color_map_t = _cat_map_json_t.get("CategoryColor", {})
+                except Exception:
+                    pass
+                _cp = _temp["cat_pivot"]
+                _colors = [_cat_color_map_t.get(c, None) for c in _cp.columns]
+                fig_cat, ax_cat = plt.subplots(figsize=(12, 5))
+                _cp.plot(kind="bar", stacked=True, ax=ax_cat, color=_colors if all(_colors) else None, alpha=0.8)
+                ax_cat.set_title(f"Category Composition ({_temp['period']})")
+                ax_cat.set_ylabel("Count")
+                ax_cat.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=7)
+                plt.xticks(rotation=45, ha="right")
+                plt.tight_layout()
+                st.pyplot(fig_cat)
+                plt.close(fig_cat)
+
+            # キーワード推移テーブル
+            if _temp["kw_df"] is not None and not _temp["kw_df"].empty:
+                st.markdown("**期間別キーワード:**")
+                st.dataframe(_temp["kw_df"], hide_index=True, use_container_width=True, height=300)
+
+            # LLMによる時系列解説
+            _temp_explain_col1, _temp_explain_col2 = st.columns([1, 1])
+            _temp_engine_list = list(dmu.read_json_file("agent_23DataAnalyst.json", agent_folder_path).get("ENGINE", {}).get("LLM", {}).keys())
+            _temp_engine_list = [e for e in _temp_engine_list if e != "DEFAULT"]
+            _temp_engine = _temp_explain_col2.selectbox("Engine:", _temp_engine_list, key="rag_temp_engine") if _temp_engine_list else None
+
+            if _temp_explain_col1.button("Explain Trends", key="rag_explain_temporal"):
+                _cl_agent_file = "agent_23DataAnalyst.json"
+                _temp_prompt_data = f"以下はRAGデータ「{_selected}」の時系列分析結果です。\n各期間のキーワードから関心の変遷を読み取ってください。\n\n{_temp['summary']}"
+                with st.spinner("時系列の変遷を解説中..."):
+                    try:
+                        _agent = dma.DigiM_Agent(_cl_agent_file)
+                        if _temp_engine and _temp_engine in _agent.agent.get("ENGINE", {}).get("LLM", {}):
+                            _agent.agent["ENGINE"]["LLM"]["DEFAULT"] = _temp_engine
+                        _template = _agent.set_prompt_template("Temporal Analyst")
+                        _prompt = f"{_template}\n{_temp_prompt_data}"
+                        _response = ""
+                        for _, chunk, _ in _agent.generate_response("LLM", _prompt, [], stream_mode=False):
+                            if chunk:
+                                _response += chunk
+                        st.session_state._rag_temporal_explanation = _response
+                    except Exception as e:
+                        st.error(f"時系列解説エラー: {e}")
+
+            if st.session_state.get("_rag_temporal_explanation"):
+                st.markdown("**時系列の変遷:**")
+                st.markdown(st.session_state._rag_temporal_explanation)
+
+    # Ask Agent（ChromaDB用 - 全分析結果をコンテキストに含める）
+    _summary_lines = [f"以下のRAGデータと分析結果を踏まえて質問に回答してください。\n\nRAGデータ: {_selected} (フィルタ後: {filtered_count}件 / 全体: {total_count}件)"]
+    _df_for_llm = df_filtered.drop(columns=[c for c in df_filtered.columns if "vector" in c], errors="ignore")
+    if _filterable_cols:
+        for col in _filterable_cols[:5]:
+            _val_counts = _df_for_llm[col].value_counts().head(10).to_dict() if col in _df_for_llm.columns else {}
+            if _val_counts:
+                _summary_lines.append(f"\n[{col}の分布]\n" + "\n".join(f"  {k}: {v}件" for k, v in _val_counts.items()))
+    _sample_n = min(30, len(_df_for_llm))
+    _summary_lines.append(f"\n[データ(先頭{_sample_n}件)]\n{_df_for_llm.head(_sample_n).to_csv(index=False)}")
+    _sens_cache = st.session_state.get("_rag_sensitivity")
+    if _sens_cache and _sens_cache.get("selected") == _selected:
+        _summary_lines.append(f"\n[感度分析結果 (Query: {_sens_cache['query']})]\n")
+        for _, r in _sens_cache["ranking"].head(10).iterrows():
+            _summary_lines.append(f"  score={r.get('score','')}, [{r.get('category','')}] {r.get('title','')}: {str(r.get('value_text',''))[:60]}")
+    if st.session_state.get("_rag_sensitivity_explanation"):
+        _summary_lines.append(f"\n[感度分析の解説]\n{st.session_state._rag_sensitivity_explanation[:500]}")
+    _cl_cache = st.session_state.get("_rag_cluster_cache")
+    if _cl_cache and _cl_cache.get("selected") == _selected:
+        _summary_lines.append(f"\n[クラスタリング結果: {_cl_cache['cl_info']}]\n{_cl_cache['cl_summary'][:500]}")
+    if st.session_state.get("_rag_cluster_explanation"):
+        _summary_lines.append(f"\n[クラスター解説]\n{st.session_state._rag_cluster_explanation[:500]}")
+    _temp_cache = st.session_state.get("_rag_temporal")
+    if _temp_cache:
+        _summary_lines.append(f"\n[時系列分析]\n{_temp_cache.get('summary', '')[:500]}")
+    if st.session_state.get("_rag_temporal_explanation"):
+        _summary_lines.append(f"\n[時系列解説]\n{st.session_state._rag_temporal_explanation[:500]}")
+
+    _chromadb_context = "\n".join(_summary_lines)
+    _ask_agent_ui(_chromadb_context, key_prefix="rag")
+    _chromadb_response = _show_ask_result(key_prefix="rag")
+    if _chromadb_response:
+        st.session_state._rag_llm_response = _chromadb_response
+
+    # ===== 分析結果のダウンロード =====
+    st.markdown("---")
+    st.subheader("Export Report")
+    if st.button("Generate Report", key="rag_gen_report"):
+        import base64
+        import io
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+
+        def _fig_to_md(fig):
+            """matplotlibのfigをBase64埋め込みMarkdown画像に変換"""
+            buf = io.BytesIO()
+            fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
+            buf.seek(0)
+            b64 = base64.b64encode(buf.read()).decode()
+            plt.close(fig)
+            return f"![chart](data:image/png;base64,{b64})"
+
+        _now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        _report = f"# RAG Explorer {_now}\n\n"
+        _report += f"**対象データ:** {_selected}\n\n"
+        _report += f"**データ件数:** フィルタ後 {filtered_count}件 / 全体 {total_count}件\n\n"
+
+        # 散布図
+        _sc_cache = st.session_state.get("_rag_scatter_cache")
+        if _sc_cache and _sc_cache.get("selected") == _selected:
+            _report += "## Scatter Plot\n\n"
+            _dfr = _sc_cache["df_reduced"]
+            _sc_m = _sc_cache["dim_method"]
+            _sc_info = _sc_cache["dim_info"]
+            _sc_color = _sc_cache["color_col"]
+            _sc_cat_map = _sc_cache.get("cat_color_map", {})
+            fig_r, ax_r = plt.subplots(figsize=(10, 7))
+            if _sc_color != "(none)" and _sc_color in _dfr.columns:
+                for cat in sorted(_dfr[_sc_color].dropna().unique()):
+                    _m = _dfr[_sc_color] == cat
+                    ax_r.scatter(_dfr.loc[_m, "X1"], _dfr.loc[_m, "X2"], color=_sc_cat_map.get(cat), alpha=0.7, label=str(cat)[:20])
+                ax_r.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=8)
+            else:
+                ax_r.scatter(_dfr["X1"], _dfr["X2"], alpha=0.7)
+            ax_r.set_title(f"{_sc_m} ({_sc_info})")
+            ax_r.grid(True)
+            _report += _fig_to_md(fig_r) + "\n\n"
+
+        # 感度分析
+        _sens_c = st.session_state.get("_rag_sensitivity")
+        if _sens_c and _sens_c.get("selected") == _selected:
+            _report += f"## Sensitivity Analysis\n\nQuery: {_sens_c.get('query', '')}\n\n"
+            _sr = _sens_c["ranking"]
+            if "X1" in _sr.columns and _sc_cache:
+                _df_all = _sc_cache["df_reduced"]
+                from matplotlib.colors import LinearSegmentedColormap
+                _blue_cm = LinearSegmentedColormap.from_list("bv", ["#E8F0FE", "#1565C0", "#0D47A1"])
+                _green_cm = LinearSegmentedColormap.from_list("gv", ["#E8F5E9", "#2E7D32", "#1B5E20"])
+                fig_s, ax_s = plt.subplots(figsize=(10, 7))
+                ax_s.scatter(_df_all["X1"], _df_all["X2"], color="lightgray", alpha=0.3, s=15)
+                _score_max = _sr["score"].max() if not _sr["score"].empty else 1
+                _sr_n = _sr[~_sr["bonus_applied"]]
+                _sr_b = _sr[_sr["bonus_applied"]]
+                if not _sr_n.empty:
+                    ax_s.scatter(_sr_n["X1"], _sr_n["X2"], c=_score_max - _sr_n["score"], cmap=_blue_cm, alpha=0.9, s=60, edgecolors="black", linewidths=0.5)
+                if not _sr_b.empty:
+                    ax_s.scatter(_sr_b["X1"], _sr_b["X2"], c=_score_max - _sr_b["score"], cmap=_green_cm, alpha=0.9, s=60, edgecolors="black", linewidths=0.5, marker="D")
+                ax_s.set_title(f"Sensitivity: \"{_sens_c['query']}\"")
+                ax_s.grid(True)
+                _report += _fig_to_md(fig_s) + "\n\n"
+            if st.session_state.get("_rag_sensitivity_explanation"):
+                _report += st.session_state._rag_sensitivity_explanation + "\n\n"
+
+        # クラスタリング
+        _cl_c = st.session_state.get("_rag_cluster_cache")
+        if _cl_c and _cl_c.get("selected") == _selected:
+            _report += f"## Clustering\n\n{_cl_c.get('cl_info', '')}\n\n"
+            _dfc = _cl_c["df_clustered"]
+            fig_c, ax_c = plt.subplots(figsize=(10, 7))
+            _cmap_c = plt.cm.get_cmap("tab10", len(_dfc["Cluster"].unique()))
+            for i, cl in enumerate(sorted(_dfc["Cluster"].unique())):
+                _m = _dfc["Cluster"] == cl
+                ax_c.scatter(_dfc.loc[_m, "X1"], _dfc.loc[_m, "X2"], color="gray" if cl < 0 else _cmap_c(i), alpha=0.7, label=f"Cluster {cl}" if cl >= 0 else "Noise")
+            ax_c.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=8)
+            ax_c.set_title(f"Clustering: {_cl_c['cl_info']}")
+            ax_c.grid(True)
+            _report += _fig_to_md(fig_c) + "\n\n"
+            if st.session_state.get("_rag_cluster_explanation"):
+                _report += st.session_state._rag_cluster_explanation + "\n\n"
+
+        # 時系列分析
+        _temp_c = st.session_state.get("_rag_temporal")
+        if _temp_c:
+            _report += "## Temporal Analysis\n\n"
+            if _temp_c.get("cat_pivot") is not None and not _temp_c["cat_pivot"].empty:
+                _cat_color_map_r = {}
+                try:
+                    _cm_j = dmu.read_json_file("category_map.json", mst_folder_path)
+                    if not _cm_j:
+                        _cm_j = dmu.read_json_file("sample_category_map.json", mst_folder_path)
+                    _cat_color_map_r = _cm_j.get("CategoryColor", {})
+                except Exception:
+                    pass
+                _cp = _temp_c["cat_pivot"]
+                _colors_r = [_cat_color_map_r.get(c) for c in _cp.columns]
+                fig_t, ax_t = plt.subplots(figsize=(12, 5))
+                _cp.plot(kind="bar", stacked=True, ax=ax_t, color=_colors_r if all(_colors_r) else None, alpha=0.8)
+                ax_t.set_title(f"Category Composition ({_temp_c.get('period', 'month')})")
+                ax_t.set_ylabel("Count")
+                ax_t.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=7)
+                plt.xticks(rotation=45, ha="right")
+                plt.tight_layout()
+                _report += _fig_to_md(fig_t) + "\n\n"
+            if _temp_c.get("kw_df") is not None:
+                _report += _temp_c["kw_df"].to_markdown(index=False) + "\n\n"
+            if st.session_state.get("_rag_temporal_explanation"):
+                _report += st.session_state._rag_temporal_explanation + "\n\n"
+
+        # Ask Agent
+        if st.session_state.get("_rag_llm_response"):
+            _report += "## Ask Agent\n\n"
+            _report += st.session_state._rag_llm_response + "\n\n"
+
+        _report += f"\n---\nGenerated: {_now}\n"
+
+        st.session_state._rag_report = _report
+
+        # レポート生成と同時に分析セッションを自動保存
+        try:
+            _saved_path = _save_analysis_session(_selected)
+            st.success(f"レポートを生成し、セッションを保存しました: {_saved_path}")
+        except Exception as e:
+            st.success("レポートを生成しました")
+            st.warning(f"セッション保存エラー: {e}")
+
+    if st.session_state.get("_rag_report"):
+        _report_name = f"RAG_Explorer_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        st.download_button("Download (.md)", data=st.session_state._rag_report.encode("utf-8"),
+                          file_name=f"{_report_name}.md", mime="text/markdown", key="rag_dl_md")
+
 ### Streamlit画面 ###
 def main():
     # セッションステートを初期化
@@ -808,6 +2141,14 @@ def main():
                             del st.session_state[key]
                     st.rerun()
 
+        # メインビュー切り替え
+        if st.session_state.allowed_rag_explorer:
+            _view_options = ["Chat", "RAG Explorer"]
+            _view_index = _view_options.index(st.session_state.get("main_view", "Chat")) if st.session_state.get("main_view", "Chat") in _view_options else 0
+            st.session_state.main_view = st.radio("View:", _view_options, index=_view_index, horizontal=True, label_visibility="collapsed")
+        else:
+            st.session_state.main_view = "Chat"
+
         # エージェントを選択（JSON)
         if agent_id_selected := st.selectbox("Select Agent:", st.session_state.agent_list, index=st.session_state.agent_list_index):
             st.session_state.agent_id = agent_id_selected
@@ -819,14 +2160,22 @@ def main():
         side_col1, side_col2 = st.columns(2)
 
         # 新しいセッションを発番（IDを指定して、新規にセッションリフレッシュ）
-        if side_col1.button("New Chat", key="new_chat"):
-            session_id = dms.set_new_session_id()
-            session_name = "New Chat"
-            situation = {}
-            situation["TIME"] = ""
-            situation["SITUATION"] = ""
-            refresh_session_states()
-            refresh_session(session_id, session_name, situation, True)
+        if st.session_state.get("main_view") == "RAG Explorer":
+            if side_col1.button("New Analysis", key="new_analysis_sidebar"):
+                for _k in list(st.session_state.keys()):
+                    if _k.startswith("_rag_"):
+                        del st.session_state[_k]
+                st.rerun()
+        else:
+            if side_col1.button("New Chat", key="new_chat"):
+                st.session_state.main_view = "Chat"
+                session_id = dms.set_new_session_id()
+                session_name = "New Chat"
+                situation = {}
+                situation["TIME"] = ""
+                situation["SITUATION"] = ""
+                refresh_session_states()
+                refresh_session(session_id, session_name, situation, True)
 
         # 会話履歴の更新
         if side_col2.button("Refresh List", key="refresh_session_list"):
@@ -1080,51 +2429,76 @@ def main():
 
         st.write(st.session_state.sidebar_message)
 
-        st.markdown("----")
-        # セッション名の検索フィルタ
-        _session_filter = st.text_input("Session Name:", value="", placeholder="検索（ワイルドカード * 対応）", label_visibility="collapsed")
+        # セッション一覧はChat画面でのみ表示
+        if st.session_state.get("main_view", "Chat") == "Chat":
+            st.markdown("----")
+            # セッション名の検索フィルタ
+            _session_filter = st.text_input("Session Name:", value="", placeholder="検索（ワイルドカード * 対応）", label_visibility="collapsed")
 
-        # セッションリストの表示
-        num_sessions = 0
-        for session_dict in st.session_state.session_list:
-            try:
-                if num_session_visible > num_sessions:
-                    session_id_list = session_dict["id"]
-                    session_key_list = session_folder_prefix + session_id_list
-                    session_list = dms.DigiMSession(session_id_list)
-                    session_name_list = session_list.session_name
-                    session_active_flg = session_list.get_active_session()
-                    if session_active_flg != "N":
-                        # セッション名フィルタ（ワイルドカード * 対応）
-                        if _session_filter:
-                            import fnmatch
-                            _pattern = _session_filter if "*" in _session_filter else f"*{_session_filter}*"
-                            if not fnmatch.fnmatch(session_name_list.lower(), _pattern.lower()):
-                                continue
-                        if bool(re.fullmatch(r"[+-]?\d+(\.\d+)?", session_id_list)):
-                            session_name_btn = session_id_list +"_"+ session_name_list
-                        else:
-                            session_name_btn = session_name_list
-                        session_name_btn = session_name_btn[:15]
-                        situation = dms.get_situation(session_id_list)
-                        if not situation:
-                            situation["TIME"] = now_time.strftime("%Y/%m/%d %H:%M:%S")
-                            situation["SITUATION"] = ""
-                        if st.button(session_name_btn, key=session_key_list):
-                            refresh_session_states()
-                            refresh_session(session_id_list, session_name_list, situation)
-#                        if st.button(f"Del:{session_id_list}", key=f"{session_key_list}_del_btn"):
-                        if st.button(f"Del", key=f"{session_key_list}_del_btn"):
-                            del_session = dms.DigiMSession(session_id_list, session_name_list)
-                            del_session.save_active_session("N")
-                            del_session.save_user_dialog_session("DISCARD")
-                            st.session_state.sidebar_message = f"セッションを非表示にしました({session_id_list}_{session_name_list})"
+            # セッションリストの表示
+            num_sessions = 0
+            for session_dict in st.session_state.session_list:
+                try:
+                    if num_session_visible > num_sessions:
+                        session_id_list = session_dict["id"]
+                        session_key_list = session_folder_prefix + session_id_list
+                        session_list = dms.DigiMSession(session_id_list)
+                        session_name_list = session_list.session_name
+                        session_active_flg = session_list.get_active_session()
+                        if session_active_flg != "N":
+                            # セッション名フィルタ（ワイルドカード * 対応）
+                            if _session_filter:
+                                import fnmatch
+                                _pattern = _session_filter if "*" in _session_filter else f"*{_session_filter}*"
+                                if not fnmatch.fnmatch(session_name_list.lower(), _pattern.lower()):
+                                    continue
+                            if bool(re.fullmatch(r"[+-]?\d+(\.\d+)?", session_id_list)):
+                                session_name_btn = session_id_list +"_"+ session_name_list
+                            else:
+                                session_name_btn = session_name_list
+                            session_name_btn = session_name_btn[:15]
+                            situation = dms.get_situation(session_id_list)
+                            if not situation:
+                                situation["TIME"] = now_time.strftime("%Y/%m/%d %H:%M:%S")
+                                situation["SITUATION"] = ""
+                            if st.button(session_name_btn, key=session_key_list):
+                                st.session_state.main_view = "Chat"
+                                refresh_session_states()
+                                refresh_session(session_id_list, session_name_list, situation)
+#                            if st.button(f"Del:{session_id_list}", key=f"{session_key_list}_del_btn"):
+                            if st.button(f"Del", key=f"{session_key_list}_del_btn"):
+                                del_session = dms.DigiMSession(session_id_list, session_name_list)
+                                del_session.save_active_session("N")
+                                del_session.save_user_dialog_session("DISCARD")
+                                st.session_state.sidebar_message = f"セッションを非表示にしました({session_id_list}_{session_name_list})"
+                                st.rerun()
+                            num_sessions += 1
+                except Exception as e:
+                    sid = session_dict["id"]
+                    st.warning(f"セッション {sid} の描画でエラーのためスキップしました: {e}")
+                    continue
+
+        # RAG Explorer用: 保存済み分析セッション一覧
+        elif st.session_state.get("main_view", "Chat") == "RAG Explorer":
+            st.markdown("----")
+            _analytics_base = "user/common/analytics/rag_explorer/"
+            if os.path.exists(_analytics_base):
+                _saved_folders = sorted(
+                    [f for f in os.listdir(_analytics_base) if os.path.isdir(os.path.join(_analytics_base, f)) and f != ".gitkeep"],
+                    reverse=True)
+                for _sf in _saved_folders[:10]:
+                    _meta_p = os.path.join(_analytics_base, _sf, "meta.json")
+                    if os.path.exists(_meta_p):
+                        _m = dmu.read_json_file(_meta_p)
+                        _label = f"{_m.get('created_at', '')[:10]} {_m.get('collection', '')}"[:20]
+                        if st.button(_label, key=f"rag_load_{_sf}"):
+                            st.session_state._rag_load_folder = os.path.join(_analytics_base, _sf)
                             st.rerun()
-                        num_sessions += 1
-            except Exception as e:
-                sid = session_dict["id"]
-                st.warning(f"セッション {sid} の描画でエラーのためスキップしました: {e}")
-                continue
+
+    # メインエリアの画面切り替え
+    if st.session_state.get("main_view") == "RAG Explorer":
+        _rag_explorer()
+        return
 
     # チャットセッション名の設定
     if session_name := st.text_input("Chat Name:", value=st.session_state.session.session_name):

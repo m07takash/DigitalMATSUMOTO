@@ -535,7 +535,7 @@ def embed_text(text):
     return response.data[0].embedding
 
 # C-3: 複数テキストを1回のAPI呼び出しでベクトル化（バッチ処理）
-def embed_texts_batch(texts):
+def embed_texts_batch(texts, batch_token_limit=250000):
     client, enc = _get_embed_client()
     max_tokens = 8192
     safe_texts = []
@@ -544,8 +544,26 @@ def embed_texts_batch(texts):
         if len(tokens) > max_tokens:
             tokens = tokens[:max_tokens]
         safe_texts.append(enc.decode(tokens))
-    response = client.embeddings.create(model=embedding_model, input=safe_texts)
-    return [item.embedding for item in sorted(response.data, key=lambda x: x.index)]
+
+    # バッチをトークン上限で分割して送信
+    all_embeddings = [None] * len(safe_texts)
+    batch_start = 0
+    while batch_start < len(safe_texts):
+        batch_tokens = 0
+        batch_end = batch_start
+        for i in range(batch_start, len(safe_texts)):
+            t = len(enc.encode(safe_texts[i]))
+            if batch_tokens + t > batch_token_limit and i > batch_start:
+                break
+            batch_tokens += t
+            batch_end = i + 1
+        batch = safe_texts[batch_start:batch_end]
+        response = client.embeddings.create(model=embedding_model, input=batch)
+        for item in response.data:
+            all_embeddings[batch_start + item.index] = item.embedding
+        batch_start = batch_end
+
+    return all_embeddings
 
 # 埋め込みベクトルの配列を1つのnpyファイルに保存
 def save_vectext_to_npy(vec_text, file_path, dtype="float32"):

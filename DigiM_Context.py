@@ -135,19 +135,56 @@ def set_prompt_template(prompt_temp_cd):
         prompt_template = prompt_template + prompt_temp +"\n"
     return prompt_template
 
-# RAGデータ一覧の取得
+# RAGデータ一覧の取得（rags.jsonの並び順）
 def get_rag_list():
-    rag_list = []
+    # rags.jsonのbucket順を基準にする
+    rag_mst = dmu.read_json_file(rag_mst_file, mst_folder_path)
+    ordered = []
+    for rag_id, setting in rag_mst.items():
+        bucket = setting.get("bucket", rag_id)
+        if bucket not in ordered:
+            ordered.append(bucket)
 
-    #ChromaDBから取得
+    # ChromaDBに実在するコレクション一覧
     db_client = get_chroma_client()
     collections = db_client.list_collections()
-    rag_list += [col.name for col in collections]
+    existing = {col.name for col in collections}
 
-    #昇順に並び替え
-    rag_list.sort()
+    # rags.json順で並べ、存在するもののみ。残りはアルファベット順で末尾に追加
+    result = [name for name in ordered if name in existing]
+    rest = sorted(existing - set(result))
+    return result + rest
 
-    return rag_list
+# RAGコレクションのメタデータ一覧を取得（RAG Explorer用）
+def get_rag_collection_data(collection_name):
+    """ChromaDBコレクションの全メタデータをリスト[dict]で返す"""
+    db_client = get_chroma_client()
+    try:
+        collection = db_client.get_collection(collection_name)
+    except Exception:
+        return []
+    response = collection.get(include=["metadatas"])
+    if not response or not response["ids"]:
+        return []
+    data = []
+    for i, cid in enumerate(response["ids"]):
+        row = {"id": cid}
+        row.update(response["metadatas"][i])
+        data.append(row)
+    return data
+
+# PageIndexのメタデータ一覧を取得（RAG Explorer用）
+def get_page_index_list():
+    """pages/ 配下の全PageIndexデータセットを返す"""
+    result = {}
+    if not os.path.exists(rag_folder_pages_path):
+        return result
+    for folder_name in sorted(os.listdir(rag_folder_pages_path)):
+        index_path = str(Path(rag_folder_pages_path) / folder_name / "_index.json")
+        if os.path.exists(index_path):
+            index_data = dmu.read_json_file(index_path)
+            result[folder_name] = index_data.get("PAGES", [])
+    return result
 
 # RAGデータの取得
 def select_rag_vector(rag_data_list, rag={}):
