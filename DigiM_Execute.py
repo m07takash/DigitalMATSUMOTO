@@ -211,7 +211,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     cfg = _parse_execution_settings(execution)
 
     # セッションの宣言
-    session = dms.DigiMSession(session_id, session_name)
+    _session_base_path = execution.get("_SESSION_BASE_PATH", "")
+    session = dms.DigiMSession(session_id, session_name, base_path=_session_base_path)
     seq = session.get_seq_history() + 1 if sub_seq == 1 else session.get_seq_history()
 
     # エージェントの宣言

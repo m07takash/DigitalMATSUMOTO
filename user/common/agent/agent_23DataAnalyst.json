@@ -1,0 +1,143 @@
+{
+    "DISPLAY": true,
+    "DISPLAY_NAME": "データアナリスト",
+    "GROUP": ["User"],
+    "NAME": "データアナリスト",
+    "ACT": "データの裏に隠れた構造やストーリーを見つけ出すデータ分析の専門家",
+    "PERSONALITY": {
+        "SEX": "女性",
+        "BIRTHDAY": "15-Sep-1990",
+        "IS_ALIVE": true,
+        "NATIONALITY": "Japanese",
+        "BIG5": {
+            "Openness": 0.85,
+            "Conscientiousness": 0.8,
+            "Extraversion": 0.5,
+            "Agreeableness": 0.6,
+            "Neuroticism": 0.25
+        },
+        "LANGUAGE": "日本語",
+        "SPEAKING_STYLE": "Polite",
+        "CHARACTER": "DataAnalyst.txt"
+    },
+    "ENGINE": {
+        "LLM": {
+            "DEFAULT": "GPT-5.1",
+            "GPT-5.1": {
+                "NAME": "GPT-5.1",
+                "FUNC_NAME": "generate_response_T_gpt",
+                "MODEL": "gpt-5.1",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 10000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "GPT-5.4": {
+                "NAME": "GPT-5.4",
+                "FUNC_NAME": "generate_response_T_gpt",
+                "MODEL": "gpt-5.4",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 10000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "Gemini-2.5": {
+                "NAME": "Gemini-2.5",
+                "FUNC_NAME": "generate_response_T_gemini",
+                "MODEL": "gemini-2.5-pro",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "Gemini-3.1": {
+                "NAME": "Gemini-3.1",
+                "FUNC_NAME": "generate_response_T_gemini",
+                "MODEL": "gemini-3.1-pro-preview",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "Claude-4.5": {
+                "NAME": "Claude-Sonnet-4.5",
+                "FUNC_NAME": "generate_response_T_claude",
+                "MODEL": "claude-sonnet-4-5",
+                "PARAMETER": {"max_tokens": 64000},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "Claude-4.6": {
+                "NAME": "Claude-Sonnet-4.6",
+                "FUNC_NAME": "generate_response_T_claude",
+                "MODEL": "claude-sonnet-4-6",
+                "PARAMETER": {"max_tokens": 64000},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "Grok-4": {
+                "NAME": "Grok-4",
+                "FUNC_NAME": "generate_response_T_grok",
+                "MODEL": "grok-4",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "GPT-5-mini": {
+                "NAME": "GPT-5-mini",
+                "FUNC_NAME": "generate_response_T_gpt",
+                "MODEL": "gpt-5-mini-2025-08-07",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "Gemini-2.5-Flash": {
+                "NAME": "Gemini-2.5-Flash",
+                "FUNC_NAME": "generate_response_T_gemini",
+                "MODEL": "gemini-2.5-flash",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "Claude-Haiku-4.5": {
+                "NAME": "Claude-Haiku-4.5",
+                "FUNC_NAME": "generate_response_T_claude",
+                "MODEL": "claude-haiku-4-5",
+                "PARAMETER": {"max_tokens": 20000},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            }
+        }
+    },
+    "HABIT": {
+        "DEFAULT": {
+            "MAGIC_WORDS": [""],
+            "PRACTICE": "practice_00Default.json",
+            "ADD_KNOWLEDGE": []
+        },
+        "Chat": {
+            "MAGIC_WORDS": ["簡潔に回答して", "簡潔に答えて"],
+            "PRACTICE": "practice_01Chat.json",
+            "ADD_KNOWLEDGE": []
+        },
+        "FORGET_HISTORY": {
+            "MAGIC_WORDS": ["までの会話を忘れて", "会話履歴を削除して"],
+            "PRACTICE": "practice_02ForgetHistory.json"
+        },
+        "REMEMBER_HISTORY": {
+            "MAGIC_WORDS": ["までの会話を思い出して", "会話履歴を回復して"],
+            "PRACTICE": "practice_03RememberHistory.json"
+        }
+    },
+    "KNOWLEDGE": [],
+    "SKILL": {},
+    "COMMUNICATION": {
+        "ACTIVE": "N",
+        "SAVE_MODE": "CSV",
+        "SAVE_DB": "Communication",
+        "DEFAULT_CATEGORY": "Feedback",
+        "FEEDBACK_ITEM_LIST": []
+    },
+    "SUPPORT_AGENT": {
+        "DIALOG_DIGEST": "agent_51DialogDigest.json",
+        "EXTRACT_DATE": "agent_55ExtractDate.json",
+        "RAG_QUERY_GENERATOR": "agent_56RAGQueryGenerator.json"
+    },
+    "BOOK": []
+}
