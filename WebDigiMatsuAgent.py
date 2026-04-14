@@ -2689,7 +2689,7 @@ def main():
                                             feedback[fb_item]["saved_memo"] = feedback[fb_item]["memo"]
 
                                             if st.checkbox(f"{fb_item}", key=f"feedback_{fb_item}_{k}_{k2}", value=feedback[fb_item]["visible"]):
-                                                feedback[fb_item]["memo"] = st.text_input("Memo:", key=f"feedback_{fb_item}_memo{k}_{k2}", value=feedback[fb_item]["memo"], label_visibility="collapsed")
+                                                feedback[fb_item]["memo"] = st.text_area("Memo:", key=f"feedback_{fb_item}_memo{k}_{k2}", value=feedback[fb_item]["memo"], height=100, label_visibility="collapsed")
                                                 _cat_idx = _cat_options.index(feedback[fb_item].get("category", _default_cat)) if feedback[fb_item].get("category", _default_cat) in _cat_options else 0
                                                 feedback[fb_item]["category"] = st.selectbox("Category:", _cat_options, index=_cat_idx, key=f"feedback_{fb_item}_cat{k}_{k2}", label_visibility="collapsed")
                                                 feedback[fb_item]["visible"] = True
