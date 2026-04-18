@@ -22,9 +22,15 @@ logger = logging.getLogger(__name__)
 # ------------------------------------------------------------------ #
 load_dotenv("system.env")
 
+def _safe_int(value, default):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
 DB_CONFIG = {
     "host":     os.getenv("POSTGRES_HOST"),
-    "port":     int(os.getenv("POSTGRES_PORT", 5432)),
+    "port":     _safe_int(os.getenv("POSTGRES_PORT"), 5432),
     "dbname":   os.getenv("POSTGRES_DB"),
     "user":     os.getenv("POSTGRES_USER"),
     "password": os.getenv("POSTGRES_PASSWORD"),
