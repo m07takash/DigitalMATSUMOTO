@@ -596,6 +596,136 @@ def get_chunk_notion(bucket, db_name, item_dict, chk_dict=None, date_dict=None, 
             rag_data.append(page_items)
     return rag_data
 
+# ページインデックス用: Notionデータベースからチャンクを生成（ボディ付き）
+def get_chunk_notion_pageindex(bucket, db_name, item_dict, chk_dict=None, date_dict=None, category_dict=None):
+    rag_data = []
+
+    # Notion_DBのIDを取得
+    notion_db_mst_file_path = str(Path(mst_folder_path) / notion_db_mst_file)
+    notion_db_mst = dmu.read_json_file(notion_db_mst_file_path)
+    db_id = notion_db_mst[db_name]
+
+    # RAG対象のページを取得
+    pages = dmn.get_pages_done(db_id, chk_dict, date_dict, category_dict)
+
+    for page in pages:
+        notion_page_id = page["id"]
+        if item_dict is None:
+            continue
+
+        page_items = {"notion_page_id": notion_page_id, "bucket": bucket}
+        skip_page = False
+        for key, value in item_dict.items():
+            if isinstance(value, dict):
+                for k, v in value.items():
+                    item_val = dmn.get_notion_item_by_id(pages, notion_page_id, k, v)
+                    if item_val is None:
+                        logger.warning(f"[SKIP] Notionページ {notion_page_id} のプロパティ「{k}」({v}型) が未設定のためスキップします")
+                        skip_page = True
+                        break
+                    page_items[key] = item_val
+                if skip_page:
+                    break
+            elif isinstance(value, list):
+                page_item_text = ""
+                for item in value:
+                    if isinstance(item, dict):
+                        for k, v in item.items():
+                            page_item_text += dmn.get_notion_item_by_id(pages, notion_page_id, k, v) or ""
+                    else:
+                        page_item_text += item
+                page_items[key] = page_item_text
+            else:
+                page_items[key] = value
+        if skip_page:
+            continue
+
+        # ページ本文を取得してbodyに格納
+        try:
+            page_items["body"] = dmn.get_page_body_text(notion_page_id)
+        except Exception as e:
+            logger.warning(f"Notionページ本文の取得に失敗 (page={notion_page_id}): {e}")
+            page_items["body"] = ""
+
+        if "create_date" not in page_items:
+            page_items["create_date"] = datetime.now().strftime("%Y-%m-%d")
+
+        rag_data.append(page_items)
+    return rag_data
+
+
+# idから動的にsort_orderを算出（"1-0"→100, "1-2"→102, "1-2-3"→10203）
+def _derive_sort_order(page_id):
+    parts = str(page_id).split("-")
+    sort_order = 0
+    for i, p in enumerate(parts):
+        try:
+            num = int(p)
+        except ValueError:
+            num = 0
+        weight = 100 ** (len(parts) - 1 - i)
+        sort_order += num * weight
+    return sort_order
+
+
+# ページインデックスRAGデータの保存（Notion由来、id重複は上書き）
+def save_rag_pageindex(bucket, rag_data):
+    pages_dir = str(Path(rag_folder_pages_path) / bucket)
+    os.makedirs(pages_dir, exist_ok=True)
+
+    index_path = str(Path(pages_dir) / "_index.json")
+    index_data = dmu.read_json_file(index_path) if os.path.exists(index_path) else {}
+    pages_map = {p["id"]: p for p in index_data.get("PAGES", []) if "id" in p}
+
+    book_title = None
+    processed = []
+
+    for chunk in rag_data:
+        page_id = str(chunk.get("id", "")).strip()
+        if not page_id:
+            logger.warning(f"[SKIP] idが未設定のためページインデックスに保存できません (notion={chunk.get('notion_page_id')})")
+            continue
+
+        if book_title is None and chunk.get("book"):
+            book_title = chunk["book"]
+
+        title = chunk.get("title", page_id)
+        body = chunk.get("body", "")
+        md_content = f"# {title}\n\n{body}" if body else f"# {title}\n"
+        md_path = str(Path(pages_dir) / f"{page_id}.md")
+        dmu.save_text_file(md_content, md_path)
+
+        tags = chunk.get("tags", [])
+        if isinstance(tags, str):
+            tags = [t.strip() for t in tags.split(",") if t.strip()]
+
+        entry = {
+            "id": page_id,
+            "title": title,
+            "timestamp": chunk.get("create_date", ""),
+            "summary": chunk.get("summary", ""),
+            "tags": tags,
+            "category": chunk.get("category", ""),
+            "sort_order": _derive_sort_order(page_id),
+        }
+        pages_map[page_id] = entry
+        processed.append({"id": page_id, "notion_page_id": chunk.get("notion_page_id")})
+
+    # BOOK情報の設定（最初に見つかったbook値 or 既存維持 or bucket名）
+    if book_title:
+        index_data["BOOK"] = {"title": book_title}
+    elif "BOOK" not in index_data:
+        index_data["BOOK"] = {"title": bucket}
+
+    # sort_orderで並び替えて格納
+    sorted_pages = sorted(pages_map.values(), key=lambda x: x.get("sort_order", 0))
+    index_data["PAGES"] = sorted_pages
+
+    dmu.save_json_file(index_data, index_path)
+    logger.info(f"{bucket}: {len(processed)}件のページを保存しました → {pages_dir}")
+    return processed
+
+
 # RAGチャンクデータの編集(ChromaDB)
 def save_rag_chunk_db(rag_id, rag_data):
     db_client = get_chroma_client()
@@ -837,7 +967,10 @@ def generate_rag():
     for rag_id, rag_setting in rag_mst_dict.items():
         if rag_setting["active"] == "Y":
             if rag_setting["input"] == "notion":
-                rag_data = get_chunk_notion(rag_setting["bucket"], rag_setting["data_name"], rag_setting["item_dict"], rag_setting["chk_dict"], rag_setting["date_dict"], rag_setting["category_dict"])
+                if rag_setting.get("data_type") == "pageindex":
+                    rag_data = get_chunk_notion_pageindex(rag_setting["bucket"], rag_setting["data_name"], rag_setting["item_dict"], rag_setting.get("chk_dict"), rag_setting.get("date_dict"), rag_setting.get("category_dict"))
+                else:
+                    rag_data = get_chunk_notion(rag_setting["bucket"], rag_setting["data_name"], rag_setting["item_dict"], rag_setting["chk_dict"], rag_setting["date_dict"], rag_setting["category_dict"])
             elif rag_setting["input"] == "csv":
                 if isinstance(rag_setting["file_name"], list):
                     for rag_data_file_name in rag_setting["file_name"]:
@@ -873,7 +1006,31 @@ def generate_rag():
                                     logger.warning(f"fin_flg更新失敗 (page={page_id}, {prop_name}): {e}")
                         logger.info(f"{rag_id}: fin_flgを{fin_cnt}件のNotionページに反映しました")
 
-                # ページインデックスでの保存
+                # ページインデックスでの保存（Notion由来）
+                elif rag_setting["data_type"] == "pageindex":
+                    processed = save_rag_pageindex(rag_setting["bucket"], rag_data)
+                    logger.info(f"{rag_id}のページインデックス書き込みが完了しました。件数:{len(processed)}")
+
+                    # RAG登録完了フラグをNotionに反映（Notion入力時のみ）
+                    fin_flg = rag_setting.get("fin_flg", {})
+                    if fin_flg and rag_setting["input"] == "notion":
+                        fin_cnt = 0
+                        for rec in processed:
+                            notion_pid = rec.get("notion_page_id")
+                            if not notion_pid:
+                                continue
+                            for prop_name, prop_value in fin_flg.items():
+                                try:
+                                    if isinstance(prop_value, bool):
+                                        dmn.update_notion_chk(notion_pid, prop_name, prop_value)
+                                    else:
+                                        logger.warning(f"fin_flg: 未対応の型 {prop_name}={prop_value}")
+                                    fin_cnt += 1
+                                except Exception as e:
+                                    logger.warning(f"fin_flg更新失敗 (page={notion_pid}, {prop_name}): {e}")
+                        logger.info(f"{rag_id}: fin_flgを{fin_cnt}件のNotionページに反映しました")
+
+                # 旧ページインデックス（CSV等のpage_id付きチャンク）
                 elif rag_setting["data_type"] == "page_index":
                     cnt_add, cnt_total = save_rag_pages(rag_id, rag_data)
                     logger.info(f"{rag_id}のページ書き込みが完了しました。ページ数:{cnt_total}")
