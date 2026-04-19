@@ -86,6 +86,14 @@ def get_select_by_id(pages, page_id, item):
             sel = page['properties'][item].get('select')
             return sel['name'] if sel else None
 
+# ページIDを指定してマルチセレクト項目を取得（名前のリストを返す）
+def get_multi_select_by_id(pages, page_id, item):
+    for page in pages:
+        if page['id'] == page_id:
+            multi = page['properties'][item].get('multi_select', []) or []
+            return [m.get('name') for m in multi if m.get('name')]
+    return []
+
 # ページIDを指定してURLを取得
 def get_url_by_id(pages, page_id, item):
     for page in pages:
@@ -111,6 +119,8 @@ def get_notion_item_by_id(pages, page_id, item, item_type):
         item_data = get_chk_by_id(pages, page_id, item)
     elif item_type == "select":
         item_data = get_select_by_id(pages, page_id, item)
+    elif item_type == "multi_select":
+        item_data = get_multi_select_by_id(pages, page_id, item)
     elif item_type == "url":
         item_data = get_url_by_id(pages, page_id, item)
     else:
@@ -179,12 +189,20 @@ def get_pages_done(database_id, chk_dict=None, date_dict=None, category_dict=Non
             payload = {"filter": {"and": []}}
             if chk_dict is not None:
                 for chk_item, chk in chk_dict.items():
-                    payload["filter"]["and"].append({
-                        "property": chk_item,
-                        "checkbox": {
-                            "equals": chk
-                        }
-                    })
+                    if isinstance(chk, bool):
+                        payload["filter"]["and"].append({
+                            "property": chk_item,
+                            "checkbox": {
+                                "equals": chk
+                            }
+                        })
+                    elif isinstance(chk, str):
+                        payload["filter"]["and"].append({
+                            "property": chk_item,
+                            "select": {
+                                "equals": chk
+                            }
+                        })
             if date_dict is not None:
                 for date_item, set_date in date_dict.items():
                     start_date = datetime.strptime(set_date[0], "%Y-%m-%d") if set_date[0] else datetime.strptime("1000-01-01", "%Y-%m-%d")
@@ -395,6 +413,78 @@ def archive_page(page_id):
     response = requests.patch(f"https://api.notion.com/v1/pages/{page_id}", headers=notion_headers, json=update_payload)
     if response.status_code != 200:
         logger.error(f"Error archiving page {page_id}. Response: {response.json()}")
+
+# リッチテキスト配列をプレーン文字列化
+def _rich_text_to_plain(rich_text_array):
+    return "".join([rt.get("plain_text", "") for rt in (rich_text_array or [])])
+
+# Notionブロック配列をMarkdown風テキストに変換（再帰対応）
+def _blocks_to_text(blocks, indent=0):
+    lines = []
+    prefix = "  " * indent
+    for block in blocks:
+        bt = block.get("type")
+        content = block.get(bt, {}) if bt else {}
+        rich = content.get("rich_text", []) if isinstance(content, dict) else []
+        text = _rich_text_to_plain(rich)
+        if bt == "paragraph":
+            lines.append(prefix + text)
+        elif bt == "heading_1":
+            lines.append(prefix + "# " + text)
+        elif bt == "heading_2":
+            lines.append(prefix + "## " + text)
+        elif bt == "heading_3":
+            lines.append(prefix + "### " + text)
+        elif bt == "bulleted_list_item":
+            lines.append(prefix + "- " + text)
+        elif bt == "numbered_list_item":
+            lines.append(prefix + "1. " + text)
+        elif bt == "to_do":
+            mark = "[x]" if content.get("checked") else "[ ]"
+            lines.append(f"{prefix}- {mark} {text}")
+        elif bt == "quote" or bt == "callout":
+            lines.append(prefix + "> " + text)
+        elif bt == "toggle":
+            lines.append(prefix + text)
+        elif bt == "code":
+            language = content.get("language", "") if isinstance(content, dict) else ""
+            lines.append(f"{prefix}```{language}\n{text}\n{prefix}```")
+        elif bt == "divider":
+            lines.append(prefix + "---")
+        elif text:
+            lines.append(prefix + text)
+
+        if block.get("has_children"):
+            child_blocks = _get_children_blocks(block["id"])
+            child_text = _blocks_to_text(child_blocks, indent + 1)
+            if child_text:
+                lines.append(child_text)
+    return "\n".join(lines)
+
+# 指定ブロックID配下のchildrenを取得（ページング対応）
+def _get_children_blocks(block_id):
+    all_blocks = []
+    has_more = True
+    next_cursor = None
+    while has_more:
+        url = f"https://api.notion.com/v1/blocks/{block_id}/children"
+        params = {"page_size": 100}
+        if next_cursor:
+            params["start_cursor"] = next_cursor
+        response = requests.get(url, headers=notion_headers, params=params)
+        if response.status_code != 200:
+            logger.error(f"Error fetching children for {block_id}: {response.text}")
+            return all_blocks
+        response_json = response.json()
+        all_blocks.extend(response_json.get("results", []))
+        has_more = response_json.get("has_more", False)
+        next_cursor = response_json.get("next_cursor")
+    return all_blocks
+
+# Notionページの本文をMarkdown風テキストで取得
+def get_page_body_text(page_id):
+    blocks = _get_children_blocks(page_id)
+    return _blocks_to_text(blocks)
 
 # Notionページ追加処理
 def create_page(db_id, page_title, title_item="名前"):

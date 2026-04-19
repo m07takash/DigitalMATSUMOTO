@@ -2179,6 +2179,7 @@ def main():
 
         # 会話履歴の更新
         if side_col2.button("Refresh List", key="refresh_session_list"):
+            st.session_state.sidebar_message = ""
             refresh_session_list(st.session_state.service_id, st.session_state.user_id, st.session_state.user_admin_flg)
 
         # エージェントのエンジンを選択
