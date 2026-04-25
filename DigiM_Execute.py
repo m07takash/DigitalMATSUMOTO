@@ -13,6 +13,7 @@ import DigiM_Agent as dma
 import DigiM_Context as dmc
 import DigiM_Session as dms
 import DigiM_Tool as dmt
+import DigiM_JobRegistry as djr
 
 # setting.yamlからフォルダパスなどを設定
 system_setting_dict = dmu.read_yaml_file("setting.yaml")
@@ -513,13 +514,28 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         if cfg["save_digest"]:
             _unlock_on_complete = execution.get("_UNLOCK_ON_DIGEST", True)
             timestamp_log += "[18.メモリダイジェストの作成をバックグラウンドで開始]" + str(datetime.now()) + "<br>"
-            threading.Thread(
-                target=_run_digest_background,
-                args=(session, service_info, user_info, session_id, session_name,
-                      support_agent, memories_selected,
-                      seq, sub_seq, cfg, _unlock_on_complete),
-                daemon=True
-            ).start()
+
+            _digest_job_id = djr.new_job_id()
+            _digest_args = (session, service_info, user_info, session_id, session_name,
+                            support_agent, memories_selected,
+                            seq, sub_seq, cfg, _unlock_on_complete)
+
+            def _digest_wrapper():
+                try:
+                    _run_digest_background(*_digest_args)
+                except (SystemExit, KeyboardInterrupt):
+                    try:
+                        session.save_status("UNLOCKED", error="Cancelled by user")
+                    except Exception:
+                        pass
+                finally:
+                    djr.unregister_job(_digest_job_id)
+
+            _digest_thread = threading.Thread(target=_digest_wrapper, daemon=True)
+            djr.register_job(_digest_job_id, _digest_thread, "digest",
+                             f"ダイジェスト生成: {session_name}", session_id=session_id,
+                             user_id=user_info.get("USER_ID") if isinstance(user_info, dict) else None)
+            _digest_thread.start()
             output_reference["_digest_bg_started"] = True
 
     yield response_service_info, user_info, "", export_files, output_reference
