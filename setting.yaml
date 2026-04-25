@@ -27,3 +27,32 @@ OPENAI_SEARCH_SYSTEM_PROMPT: "Be precise and concise."
 OPENAI_SEARCH_USER_PROMPT: "以下の入力に基づいて、関連する情報を提供してください。"
 GOOGLE_SEARCH_MODEL: "gemini-2.5-flash-preview-05-20"
 GOOGLE_SEARCH_USER_PROMPT: "以下の入力に基づいて、関連する情報を提供してください。"
+URL_FETCH:
+  TIMEOUT: 10
+  MAX_BYTES: 2097152
+  MAX_SUBPAGES: 5
+  MAX_DEPTH: 1
+  USER_AGENT: "DigiMatsuAgent/1.0 (+URL fetch)"
+  # 追加で拒否したいドメイン（サブドメインも再帰的に拒否）
+  BLOCKED_DOMAINS: []
+  # 非空の場合はホワイトリストモード（列挙ドメインのみ許可）
+  ALLOWED_DOMAINS: []
+  # hosts形式 (`0.0.0.0 example.com`) または 1行1ドメインの外部ブロックリストへのパス
+  # 推奨公開リスト:
+  #   - StevenBlack/hosts (adult+gambling+malware等): https://github.com/StevenBlack/hosts
+  #   - UT1 blacklists (カテゴリ別: adult / malware / phishing / warez 等): https://dsi.ut-capitole.fr/blacklists/
+  #   - Hagezi DNS blocklists: https://github.com/hagezi/dns-blocklists
+  # 例: BLOCKLIST_FILE: "user/common/mst/blocklist_hosts.txt"
+  BLOCKLIST_FILE: ""
+  BLOCKED_EXTENSIONS:
+    - ".exe"
+    - ".bat"
+    - ".cmd"
+    - ".msi"
+    - ".scr"
+    - ".dll"
+    - ".vbs"
+    - ".ps1"
+    - ".jar"
+    - ".apk"
+    - ".dmg"

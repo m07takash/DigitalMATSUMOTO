@@ -34,6 +34,7 @@ import DigiM_GeneUserDialog as dmgu
 import DigiM_VAnalytics as dmva
 import DigiM_DB_Export as dmdbe
 import DigiM_SupportEval as dmse
+import DigiM_UrlFetch as dmuf
 
 @dataclass(frozen=True)
 class AppConfig:
@@ -191,9 +192,17 @@ def _set_auth_cookie(cookie_manager, user_id: str):
     expires = datetime.now() + timedelta(days=_COOKIE_EXPIRY_DAYS)
     cookie_manager.set(_COOKIE_NAME, token, expires_at=expires)
 
-# ログアウト時にCookieを削除
+# ログアウト時にCookieを削除（KeyError回避のため期限切れで上書き）
 def _clear_auth_cookie(cookie_manager):
-    cookie_manager.delete(_COOKIE_NAME)
+    try:
+        expires = datetime.now() - timedelta(days=1)
+        cookie_manager.set(_COOKIE_NAME, "", expires_at=expires)
+    except Exception:
+        # 念のためのフォールバック（内部キャッシュに存在しない場合のKeyError等）
+        try:
+            cookie_manager.delete(_COOKIE_NAME)
+        except Exception:
+            pass
 
 # ユーザーログイン
 def load_user_master():
@@ -262,7 +271,12 @@ def ensure_login():
 
     # Cookie認証: session_stateが消えてもCookieから復元
     cookie_manager = _get_cookie_manager()
-    auth_token = cookie_manager.get(_COOKIE_NAME)
+    # 直前にLogoutした場合は、Cookie削除がブラウザ側に反映される前の再描画で
+    # 自動再ログインしてしまわないよう、この1回はCookie復元をスキップする
+    if st.session_state.pop("_just_logged_out", False):
+        auth_token = None
+    else:
+        auth_token = cookie_manager.get(_COOKIE_NAME)
     if auth_token:
         cookie_user_id = _verify_auth_token(auth_token)
         if cookie_user_id:
@@ -370,6 +384,7 @@ def user_allowed_parameter(allowded_dict):
 import threading as _threading
 
 import json as _json
+import DigiM_JobRegistry as djr
 _BG_TASK_FILE = "/tmp/digim_bg_task_{}.json"
 
 def _bg_task_path():
@@ -400,6 +415,9 @@ def _run_bg_task(task_type, message, func, *args, **kwargs):
     _task_file = _bg_task_path()
     _write_bg_task_status_to(_task_file, {"status": "running", "message": message, "error": ""})
 
+    _user_id = st.session_state.get("user_id")
+    _job_id = djr.new_job_id()
+
     def _worker():
         import logging as _logging
         _log = _logging.getLogger("bg_task")
@@ -408,11 +426,18 @@ def _run_bg_task(task_type, message, func, *args, **kwargs):
             func(*args, **kwargs)
             _log.info(f"[BG_TASK] done: {task_type}")
             _write_bg_task_status_to(_task_file, {"status": "done", "message": message, "error": ""})
+        except (SystemExit, KeyboardInterrupt):
+            _log.warning(f"[BG_TASK] cancelled: {task_type}")
+            _write_bg_task_status_to(_task_file, {"status": "done", "message": message, "error": "cancelled"})
         except Exception as e:
             _log.error(f"[BG_TASK] error: {task_type} - {e}", exc_info=True)
             _write_bg_task_status_to(_task_file, {"status": "done", "message": message, "error": str(e)})
+        finally:
+            djr.unregister_job(_job_id)
 
-    _threading.Thread(target=_worker, daemon=True).start()
+    _thread = _threading.Thread(target=_worker, daemon=True)
+    djr.register_job(_job_id, _thread, task_type, message, user_id=_user_id)
+    _thread.start()
 
 # セッションステートの初期宣言
 def initialize_session_states():
@@ -506,6 +531,8 @@ def initialize_session_states():
         st.session_state.uploaded_files = []
     if 'file_uploader' not in st.session_state:
         st.session_state.file_uploader = st.file_uploader
+    if 'url_fetch_subpages' not in st.session_state:
+        st.session_state.url_fetch_subpages = False
     if 'chat_history_visible_dict' not in st.session_state:
         st.session_state.chat_history_visible_dict = {}
     if 'seq_visible_set' not in st.session_state:
@@ -572,6 +599,7 @@ def refresh_session_states():
     st.session_state.RAG_query_gene = True
     st.session_state.uploaded_files = []
     st.session_state.file_uploader = st.file_uploader
+    st.session_state.url_fetch_subpages = False
     st.session_state.chat_history_visible_dict = {}
     st.session_state.seq_visible_set = True
     st.session_state.overwrite_flg_persona = False
@@ -2136,9 +2164,15 @@ def main():
                 st.markdown(f"User: {lu.get('Name', '')}")
                 if st.button("Logout"):
                     _clear_auth_cookie(_get_cookie_manager())
-                    for key in ["login_user", "service_id", "user_id"]:
-                        if key in st.session_state:
-                            del st.session_state[key]
+                    # UIキャッシュ（session_state）を全クリア。
+                    # 別ユーザーで再ログインしたときに前ユーザーの
+                    # セッション一覧・エージェント設定・権限フラグ等が残らないようにする。
+                    _preserved = {"_cookie_manager"}
+                    for key in list(st.session_state.keys()):
+                        if key in _preserved:
+                            continue
+                        del st.session_state[key]
+                    st.session_state._just_logged_out = True
                     st.rerun()
 
         # メインビュー切り替え
@@ -2200,6 +2234,31 @@ def main():
         # セッションの管理
         sessions_expander = st.expander("Sessions")
         with sessions_expander:
+            # 実行中バックグラウンドジョブの管理
+            _running_jobs = djr.list_jobs(user_id=st.session_state.get("user_id")) if st.session_state.get("user_admin_flg") != "Y" else djr.list_jobs()
+            st.markdown("**Background Jobs**")
+            if not _running_jobs:
+                st.caption("実行中のジョブはありません")
+            else:
+                _job_labels = []
+                _label_to_id = {}
+                for j in _running_jobs:
+                    _elapsed = (datetime.now() - j["start_time"]).total_seconds()
+                    _sid = f" [{j['session_id']}]" if j.get("session_id") else ""
+                    _label = f"{j['type']}{_sid} | {j['message']} ({int(_elapsed)}s){' [cancelling]' if j['cancel_requested'] else ''}"
+                    _job_labels.append(_label)
+                    _label_to_id[_label] = j["job_id"]
+                _selected_job_labels = st.multiselect("Running Jobs", _job_labels, key="running_jobs_selected")
+                if st.button("Cancel Selected Jobs", key="cancel_bg_jobs"):
+                    _cancelled = 0
+                    for _lbl in _selected_job_labels:
+                        _jid = _label_to_id.get(_lbl)
+                        if _jid and djr.cancel_job(_jid):
+                            _cancelled += 1
+                    st.session_state.sidebar_message = f"{_cancelled}件のバックグラウンドジョブにキャンセルを要求しました"
+                    st.rerun()
+            st.markdown("---")
+
             num_session_visible = st.number_input(label="Visible Sessions", value=5, step=1, format="%d")
             st.session_state.session_inactive_list = dms.get_session_list_inactive()
             st.session_state.session_inactive_list_selected = st.multiselect("Activate Sessions", [f"{item['id']}_{item['name']}" for item in st.session_state.session_inactive_list])
@@ -2973,6 +3032,13 @@ def main():
             else:
                 st.session_state.web_search = False
 
+        # URL取得: 入力中のhttp(s)リンクは自動でフェッチして添付扱い。
+        # サブページの追加クロールは任意（デフォルトOFF）。
+        st.session_state.url_fetch_subpages = st.checkbox(
+            "Include URL Subpages", value=st.session_state.url_fetch_subpages,
+            help="入力にURLが含まれていれば自動で取得します。ONにすると同一ドメイン内のリンク先も可能な範囲で追加取得します（上限はsetting.yamlのURL_FETCH）。",
+        )
+
         # Private Mode / Thinking Mode
         _mode_col1, _mode_col2 = st.columns(2)
         if _mode_col1.checkbox("Private Mode", value=st.session_state.private_mode):
@@ -3055,6 +3121,26 @@ def main():
                     with open(uploaded_file_path, "wb") as f:
                         f.write(uploaded_file.getbuffer())
                     uploaded_contents.append(uploaded_file_path)
+
+            # URL取得（入力中のhttp(s)リンクを自動検出しフェッチ）
+            if dmuf.extract_urls(user_input):
+                with st.spinner("URLの内容を取得しています..."):
+                    try:
+                        _uf_result = dmuf.fetch_urls_from_text(
+                            user_input,
+                            temp_folder_path,
+                            include_subpages=st.session_state.url_fetch_subpages,
+                        )
+                    except Exception as _uf_err:
+                        _uf_result = {"saved_paths": [], "summaries": [], "blocked": [],
+                                      "error": str(_uf_err)}
+                        st.error(f"URL取得で例外が発生しました: {_uf_err}")
+                for _p in _uf_result.get("saved_paths", []):
+                    uploaded_contents.append(_p)
+                for _s in _uf_result.get("summaries", []):
+                    st.info(f"取得: {_s.get('title') or _s['url']}（{_s['pages']}ページ） → {_s['file']}")
+                for _b in _uf_result.get("blocked", []):
+                    st.warning(f"ブロック/取得失敗: {_b.get('url')} — {_b.get('reason')}")
 
             # オーバーライト項目の設定
             overwrite_items = {}
