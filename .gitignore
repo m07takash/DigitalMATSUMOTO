@@ -198,6 +198,10 @@ user/common/rag/pages/*
 user/common/csv/*
 !user/common/csv/Sample*.csv
 !user/common/csv/Format*.csv
+!user/common/csv/pageindex/
+user/common/csv/pageindex/*
+!user/common/csv/pageindex/Sample*/
+!user/common/csv/pageindex/Sample*/*
 
 # DigiM Folder
 user/session*/

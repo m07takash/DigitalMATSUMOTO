@@ -654,6 +654,77 @@ def get_chunk_notion_pageindex(bucket, db_name, item_dict, chk_dict=None, date_d
     return rag_data
 
 
+_PAGEINDEX_BODY_EXTS = {".txt", ".md"}
+
+
+# bodyセル値がsource_dir配下の.txt/.mdファイル名ならその中身を返す。違えば値をそのまま返す。
+# パストラバーサル対策のためファイル名のみを許可する（区切り文字や..を含む場合はインライン扱い）。
+def _resolve_pageindex_body(source_dir, value):
+    if not isinstance(value, str):
+        return ""
+    candidate = value.strip()
+    if not candidate:
+        return ""
+    if any(sep in candidate for sep in ("/", "\\", "..")):
+        return value
+    if Path(candidate).suffix.lower() not in _PAGEINDEX_BODY_EXTS:
+        return value
+    file_path = Path(source_dir) / candidate
+    if not file_path.is_file():
+        return value
+    try:
+        return file_path.read_text(encoding="utf-8")
+    except Exception as e:
+        logger.warning(f"本文ファイル読込失敗 ({file_path}): {e}")
+        return value
+
+
+# Excelシート（1行=1ページ）からページインデックス用チャンクを生成
+def get_chunk_excel_pageindex(bucket, source_dir, source_file, sheet, item_dict):
+    rag_data = []
+    src_path = Path(source_dir) / source_file
+    if not src_path.exists():
+        logger.warning(f"Excelソースが見つかりません: {src_path}")
+        return rag_data
+
+    try:
+        df = pd.read_excel(str(src_path), sheet_name=sheet, dtype=str).fillna("")
+    except Exception as e:
+        logger.error(f"Excel読込失敗 ({src_path}, sheet={sheet}): {e}")
+        return rag_data
+
+    if not isinstance(item_dict, dict):
+        logger.warning(f"item_dictが不正です: {item_dict}")
+        return rag_data
+
+    for _, row in df.iterrows():
+        page_items = {"bucket": bucket}
+        for key, col in item_dict.items():
+            if not col:
+                page_items[key] = ""
+                continue
+            val = row.get(col, "")
+            page_items[key] = val.strip() if isinstance(val, str) else val
+
+        page_id = str(page_items.get("id", "")).strip()
+        if not page_id:
+            logger.warning(f"[SKIP] Excel行: ID列「{item_dict.get('id')}」が空のためスキップ")
+            continue
+        page_items["id"] = page_id
+
+        page_items["body"] = _resolve_pageindex_body(source_dir, page_items.get("body", ""))
+
+        tags = page_items.get("tags", "")
+        if isinstance(tags, str):
+            page_items["tags"] = [t.strip() for t in re.split(r"[,|]", tags) if t.strip()]
+
+        if not page_items.get("create_date"):
+            page_items["create_date"] = datetime.now().strftime("%Y-%m-%d")
+
+        rag_data.append(page_items)
+    return rag_data
+
+
 # idから動的にsort_orderを算出（"1-0"→100, "1-2"→102, "1-2-3"→10203）
 def _derive_sort_order(page_id):
     parts = str(page_id).split("-")
@@ -724,6 +795,69 @@ def save_rag_pageindex(bucket, rag_data):
     dmu.save_json_file(index_data, index_path)
     logger.info(f"{bucket}: {len(processed)}件のページを保存しました → {pages_dir}")
     return processed
+
+
+# ページインデックスRAGをExcel + 個別.mdファイルのZIPバンドルとして書き出し（bytesで返す）。
+# 出力Excelの書式は input='excel' のpageindexインポートと互換（body列にファイル名を格納）。
+def export_pageindex_as_excel_bundle(bucket):
+    import io
+    import zipfile
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    pages_dir = Path(rag_folder_pages_path) / bucket
+    index_path = pages_dir / "_index.json"
+    if not index_path.exists():
+        return None
+
+    index_data = dmu.read_json_file(str(index_path))
+    book_title = index_data.get("BOOK", {}).get("title", bucket)
+    pages = sorted(index_data.get("PAGES", []), key=lambda p: p.get("sort_order", 0))
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "pages"
+    headers = ["ブック名", "ID", "タイトル", "サマリー", "タグ", "カテゴリ", "本文"]
+    ws.append(headers)
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="4472C4")
+    for cell in ws[1]:
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    for p in pages:
+        page_id = str(p.get("id", ""))
+        tags_val = p.get("tags", [])
+        if isinstance(tags_val, list):
+            tags_val = ",".join(tags_val)
+        body_ref = f"{page_id}.md" if (pages_dir / f"{page_id}.md").exists() else ""
+        ws.append([
+            book_title, page_id,
+            p.get("title", ""), p.get("summary", ""),
+            tags_val, p.get("category", ""), body_ref,
+        ])
+
+    widths = [22, 8, 36, 50, 28, 12, 60]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    for row in ws.iter_rows(min_row=2):
+        for cell in row:
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+
+    xlsx_buf = io.BytesIO()
+    wb.save(xlsx_buf)
+
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(f"{bucket}/{bucket}.xlsx", xlsx_buf.getvalue())
+        for p in pages:
+            page_id = str(p.get("id", ""))
+            md_path = pages_dir / f"{page_id}.md"
+            if md_path.exists():
+                zf.writestr(f"{bucket}/{page_id}.md", md_path.read_bytes())
+    return zip_buf.getvalue()
 
 
 # RAGチャンクデータの編集(ChromaDB)
@@ -977,6 +1111,17 @@ def generate_rag():
                         rag_data += get_chunk_csv(rag_setting["bucket"], rag_setting["file_path"], rag_data_file_name, rag_setting["field_items"], rag_setting["title"], rag_setting["key_text"], rag_setting["value_text"], rag_setting["category_items"])
                 else:
                     rag_data = get_chunk_csv(rag_setting["bucket"], rag_setting["file_path"], rag_setting["file_name"], rag_setting["field_items"], rag_setting["title"], rag_setting["key_text"], rag_setting["value_text"], rag_setting["category_items"])
+            elif rag_setting["input"] == "excel":
+                if rag_setting.get("data_type") == "pageindex":
+                    rag_data = get_chunk_excel_pageindex(
+                        rag_setting["bucket"],
+                        rag_setting["source_dir"],
+                        rag_setting["source_file"],
+                        rag_setting.get("sheet", "pages"),
+                        rag_setting["item_dict"],
+                    )
+                else:
+                    logger.warning("excel入力は現状pageindexのみ対応しています")
             else:
                 logger.warning("正しいモードが設定されていません。")
 
