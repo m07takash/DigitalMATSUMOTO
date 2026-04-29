@@ -2345,8 +2345,30 @@ def main():
                     st.session_state.sidebar_message = "RAGを削除しました"
                     st.session_state.rag_data_list = dmc.get_rag_list()
 
+                # PageIndex Export: 選択したPageIndexをExcel+個別ファイルのZIPでローカル保存
+                _pi_dict = dmc.get_page_index_list()
+                _pi_names = list(_pi_dict.keys())
+                if _pi_names:
+                    st.markdown("---")
+                    st.markdown("**Page Index Export**")
+                    _pi_export = st.selectbox("Page Index", _pi_names, key="pi_export_select")
+                    if _pi_export:
+                        try:
+                            _pi_zip = dmc.export_pageindex_as_excel_bundle(_pi_export)
+                        except Exception as _pi_err:
+                            _pi_zip = None
+                            st.error(f"エクスポート失敗: {_pi_err}")
+                        if _pi_zip:
+                            st.download_button(
+                                "Download (Excel + Files)", data=_pi_zip,
+                                file_name=f"{_pi_export}.zip", mime="application/zip",
+                                key=f"pi_dl_{_pi_export}",
+                            )
+
                 # セッションのユーザーダイアログ保存
                 if cfg.user_dialog_auto_save_flg == "N":
+                    st.markdown("---")
+                    st.markdown("**User Dialog**")
                     if st.button("Save User Dialog", key="save_user_dialog"):
                         dmgu.save_user_dialogs(st.session_state.web_service, st.session_state.web_user)
                         st.session_state.sidebar_message = "ユーザーダイアログを保存しました"

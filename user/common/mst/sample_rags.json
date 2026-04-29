@@ -82,5 +82,24 @@
         "title": ["title"],
         "key_text": ["dialog"],
         "value_text": ["dialog"]
+    },
+    "SampleConsultingBookExcel": {
+        "active": "Y",
+        "input": "excel",
+        "data_type": "pageindex",
+        "data_name": "SampleConsultingBookExcel",
+        "bucket": "SampleConsultingBookExcel",
+        "source_dir": "user/common/csv/pageindex/SampleConsultingBookExcel",
+        "source_file": "SampleConsultingBookExcel.xlsx",
+        "sheet": "pages",
+        "item_dict": {
+            "book": "ブック名",
+            "id": "ID",
+            "title": "タイトル",
+            "summary": "サマリー",
+            "tags": "タグ",
+            "category": "カテゴリ",
+            "body": "本文"
+        }
     }
 }

@@ -455,6 +455,22 @@
             "TEXT_LIMITS": 6000,
             "MAX_PAGES": 3,
             "DISTANCE_LOGIC": "PageIndex"
+        },
+        {
+            "RAG_NAME": "ConsultingBookExcel",
+            "RETRIEVER": "PageIndex",
+            "DATA": [
+                {
+                    "DATA_TYPE": "PAGE_INDEX",
+                    "DATA_NAME": "SampleConsultingBookExcel",
+                    "SUPPORT_AGENT": "agent_59PageIndexSearch.json"
+                }
+            ],
+            "HEADER_TEMPLATE": "【コンサルノウハウ集（Excel版）】以下はコンサルティングの方法論に関するナレッジです。\n",
+            "LOG_TEMPLATE": "'rag':'{rag_name}', 'page_id':'{page_id}', 'title':'{title}', 'category':'{category}', 'summary':'{summary}'",
+            "TEXT_LIMITS": 6000,
+            "MAX_PAGES": 3,
+            "DISTANCE_LOGIC": "PageIndex"
         }
     ]
 }

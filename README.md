@@ -67,7 +67,9 @@ RAG（ChromaDB）を組み合わせて動的に生成します。
 | `DigiM_GeneCommunication.py` | ユーザーフィードバック |
 | `DigiM_GeneUserDialog.py` | ユーザー対話の保存 |
 | `DigiM_SupportEval.py` | サポートエージェントのパフォーマンス評価 |
+| `DigiM_Benchmark.py` | サポートエージェントの速度・出力比較ベンチマーク（CLI） |
 | `DigiM_JobRegistry.py` | バックグラウンドスレッドの登録・キャンセル（UIからの停止用） |
+| `DigiM_UrlFetch.py` | チャット入力中のhttp(s)リンク自動取得（サブページクロール対応） |
 
 ## ディレクトリ構造
 
@@ -75,19 +77,23 @@ RAG（ChromaDB）を組み合わせて動的に生成します。
 DigitalMATSUMOTO/
 ├── user/
 │   ├── common/
-│   │   ├── agent/          # エージェント設定JSON
-│   │   ├── practice/       # プラクティス設定JSON
-│   │   ├── mst/            # マスターデータ（ユーザー・RAG・プロンプト等）
-│   │   ├── rag/chromadb/   # ベクトルDB（ChromaDB）
-│   │   ├── rag/pages/      # ページインデックスRAG（.md + _index.json）
-│   │   └── csv/            # RAG用CSVデータ
-│   ├── session*/           # セッションデータ（チャット履歴）
-│   └── archive/            # セッションアーカイブ（ZIP）
-├── setting.yaml            # フォルダパス等のシステム設定
-├── system.env              # APIキー等の環境変数（要作成）
-├── system.env_sample       # 環境変数のテンプレート
-├── requirements.txt        # Pythonパッケージ一覧
-└── Dockerfile              # Dockerビルド定義
+│   │   ├── agent/                # エージェント設定JSON
+│   │   ├── practice/             # プラクティス設定JSON
+│   │   ├── mst/                  # マスターデータ（ユーザー・RAG・プロンプト等）
+│   │   ├── rag/chromadb/         # ベクトルDB（ChromaDB）
+│   │   ├── rag/pages/            # ページインデックスRAG（.md + _index.json）
+│   │   ├── csv/                  # RAG用CSVデータ
+│   │   ├── csv/pageindex/        # Excel入力のページインデックス（Excel + 個別本文ファイル）
+│   │   ├── analytics/rag_explorer/ # RAG Explorer の保存セッション
+│   │   └── temp/                 # チャット添付・URL取得等の一時ファイル
+│   ├── session*/                 # セッションデータ（チャット履歴）
+│   └── archive/                  # セッションアーカイブ（ZIP）
+├── test/                         # ベンチマーク・評価入出力（questions.xlsx 等）
+├── setting.yaml                  # フォルダパス等のシステム設定
+├── system.env                    # APIキー等の環境変数（要作成）
+├── system.env_sample             # 環境変数のテンプレート
+├── requirements.txt              # Pythonパッケージ一覧
+└── Dockerfile                    # Dockerビルド定義
 ```
 
 ## 環境構築・インストレーション
@@ -630,6 +636,61 @@ user/common/rag/pages/SampleConsultingBook/
 
 エージェントのBOOKに `"RETRIEVER": "PageIndex"` で設定すると、WebUIのBOOKセクションから選択できます（詳細はBOOKの項を参照）。
 
+##### Excelソースからのページインデックス生成
+
+Notion以外に、Excelファイル（1行=1ページ）からもページインデックスを生成できます。`source_dir` 配下にExcelと本文用テキストファイル（`.txt`/`.md`）を一緒に格納する形です。
+
+```json
+{
+  "SampleConsultingBookExcel": {
+    "active": "Y",
+    "input": "excel",
+    "data_type": "pageindex",
+    "data_name": "SampleConsultingBookExcel",
+    "bucket": "SampleConsultingBookExcel",
+    "source_dir": "user/common/csv/pageindex/SampleConsultingBookExcel",
+    "source_file": "SampleConsultingBookExcel.xlsx",
+    "sheet": "pages",
+    "item_dict": {
+      "book": "ブック名",
+      "id": "ID",
+      "title": "タイトル",
+      "summary": "サマリー",
+      "tags": "タグ",
+      "category": "カテゴリ",
+      "body": "本文"
+    }
+  }
+}
+```
+
+- `item_dict` の値は **Excelの列名**。`book`/`id`/`title`/`summary`/`tags`/`category`/`body` の各キーに列名を割り当てる
+- `tags` 列はカンマ（`,`）または縦棒（`|`）区切りの文字列を配列に変換
+- **`body` セルの解決ロジック**：
+  - セル値が `source_dir` 配下に存在する `.txt`/`.md` ファイル名と一致 → そのファイル本文を取り込む
+  - 一致しなければ → セル値自体を本文として使用（短文向け）
+  - パストラバーサル防止のため、区切り文字（`/`/`\\`/`..`）を含む値はインライン扱い
+
+フォルダ構成例：
+```
+user/common/csv/pageindex/SampleConsultingBookExcel/
+├── SampleConsultingBookExcel.xlsx   # 1行1ページのインデックス
+├── 1-1.txt                          # body列に "1-1.txt" と書かれていれば参照
+├── 1-2.txt
+├── 2-2.md
+└── ...
+```
+
+「Update RAG Data」を実行すると、`user/common/rag/pages/{bucket}/` に `_index.json` と各ページの `.md` が生成されます（Notion由来と同じ出力形式）。
+
+##### ページインデックスのローカルダウンロード（Page Index Export）
+
+WebUIのサイドバー **RAG Management → Page Index Export** から、既存のページインデックス（Notion由来・Excel由来問わず）を **Excel + 個別.mdファイルのZIP** としてダウンロードできます。
+
+- 出力Excelの書式は `input: "excel"` のインポート互換（`body` 列はファイル名参照）
+- ZIP内構造: `{bucket}/{bucket}.xlsx` + `{bucket}/{id}.md`
+- ローカルでExcel編集 → `user/common/csv/pageindex/{bucket}/` に展開し直して再インポート、というオフライン編集ワークフローに使える
+
 ### エージェントの設定
 
 `user/common/agent/` 配下にエージェント定義JSONを配置します。`agent_X0Sample.json` をコピーしてカスタマイズするのが推奨です。
@@ -1006,6 +1067,26 @@ PERPLEXITY_API_KEY=PerplexityのAPIキー
 OPENAI_API_KEY=OpenAIのAPIキー（LLMと共用）
 GEMINI_API_KEY=Google GeminiのAPIキー（LLMと共用）
 ```
+
+### URL自動取得（添付ファイル化）
+
+ユーザー入力に `http(s)://...` のリンクが含まれていると、`DigiM_UrlFetch` が自動的にページ本文を取得し、添付ファイルとしてLLMの入力に追加します。
+
+- **サブページクロール**: チャット入力欄上部の「Include URL Subpages」チェックボックスでON/OFF（デフォルトOFF）。ONにすると同一ドメイン内のリンク先も追加取得します。
+- **安全制御**: プライベートIP・ループバック・リンクローカルへのアクセス禁止、サイズ上限（`MAX_BYTES`）、危険な拡張子（`.exe`/`.dll`等）の取得拒否。
+
+`setting.yaml` の `URL_FETCH` で挙動を調整できます：
+
+| 項目 | 説明 |
+|------|------|
+| `TIMEOUT` | HTTPタイムアウト秒数 |
+| `MAX_BYTES` | 1ページあたりの最大取得バイト数 |
+| `MAX_SUBPAGES` / `MAX_DEPTH` | サブページクロールの上限 |
+| `USER_AGENT` | リクエスト時のUA文字列 |
+| `ALLOWED_DOMAINS` | 非空のときホワイトリストモード（列挙ドメインのみ許可） |
+| `BLOCKED_DOMAINS` | 拒否するドメイン（サブドメインも再帰的に拒否） |
+| `BLOCKLIST_FILE` | hosts形式または1行1ドメインの外部ブロックリストへのパス（StevenBlack/hosts、UT1 blacklists、Hagezi DNS blocklists 等） |
+| `BLOCKED_EXTENSIONS` | 取得を拒否する拡張子リスト |
 
 ### バックグラウンドジョブの管理
 
