@@ -2288,6 +2288,22 @@ def main():
 
                 # DB Exportボタン（接続情報が設定されている場合のみ表示）
                 if _db_configured:
+                    # 接続テスト: psycopg2で軽くSELECT 1（タイムアウト5秒）
+                    if st.button("Check DB Connection", key="db_check"):
+                        with st.spinner("DB接続を確認中..."):
+                            try:
+                                import psycopg2
+                                _cfg = dict(dmdbe.DB_CONFIG)
+                                _cfg["connect_timeout"] = 5
+                                with psycopg2.connect(**_cfg) as _conn:
+                                    with _conn.cursor() as _cur:
+                                        _cur.execute("SELECT version()")
+                                        _ver = _cur.fetchone()[0]
+                                st.session_state.sidebar_message = f"DB接続OK: {_ver}"
+                            except Exception as _e:
+                                st.session_state.sidebar_message = f"DB接続失敗: {_e}"
+                        st.rerun()
+
                     if st.button("Export to DB", key="db_export"):
                         with st.spinner("DBへエクスポート中..."):
                             try:
