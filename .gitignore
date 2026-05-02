@@ -187,6 +187,7 @@ user/common/practice/*
 !user/common/practice/practice_2*.json
 !user/common/practice/practice_3*.json
 !user/common/practice/practice_50PersonaMerge.json
+!user/common/practice/practice_51PersonaCompare.json
 
 # DigiM Folder(rag)
 user/common/rag/chromadb/*

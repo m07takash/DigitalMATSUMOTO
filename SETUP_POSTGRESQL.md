@@ -108,6 +108,10 @@ CREATE TABLE digim_dialogs (
     sub_seq                   INTEGER,
     flg                       CHAR(1),       -- 論理削除フラグ（'N'は表示・参照とも除外）
     memory_flg                CHAR(1),       -- メモリ参照フラグ（'N'は表示は残るがメモリ参照から除外）
+    persona_id                VARCHAR(64),   -- 適用ペルソナID（personaなしのときは空）
+    persona_name              VARCHAR(128),  -- 適用ペルソナ名（display用）
+    chain_index               INTEGER,       -- Practiceチェイン内のステップ番号（0始まり）
+    chain_role                VARCHAR(32),   -- 'persona' / 'merge' / null（PERSONAS並列ステップの識別）
     practice_name             VARCHAR(128),
     model_type                VARCHAR(32),
     agent_file                VARCHAR(255),
@@ -151,6 +155,15 @@ CREATE TABLE digim_dialogs (
 > ```sql
 > ALTER TABLE digim_dialogs ADD COLUMN IF NOT EXISTS memory_flg CHAR(1);
 > UPDATE digim_dialogs SET memory_flg = 'Y' WHERE memory_flg IS NULL;
+> ```
+>
+> Phase 6 マルチペルソナ用カラムを追加する場合:
+> ```sql
+> ALTER TABLE digim_dialogs
+>   ADD COLUMN IF NOT EXISTS persona_id   VARCHAR(64),
+>   ADD COLUMN IF NOT EXISTS persona_name VARCHAR(128),
+>   ADD COLUMN IF NOT EXISTS chain_index  INTEGER,
+>   ADD COLUMN IF NOT EXISTS chain_role   VARCHAR(32);
 > ```
 
 ### 4-3. digim_references

@@ -142,7 +142,7 @@ def parse_session(session_id: str, status: dict, memory: dict, from_seq: int = 0
 
         setting_block = seq_val.get("SETTING", {})
         flg = setting_block.get("FLG", "Y")
-        memory_flg = setting_block.get("MEMORY_FLG", "Y")
+        seq_memory_flg = setting_block.get("MEMORY_FLG", "Y")  # 後方互換: seq単位
         practice_name = setting_block.get("practice", {}).get("NAME", "")
 
         for sub_key, sub_val in seq_val.items():
@@ -177,12 +177,18 @@ def parse_session(session_id: str, status: dict, memory: dict, from_seq: int = 0
             meta_used = isinstance(meta_cond, list) and len(meta_cond) > 0
 
             sit = query.get("situation", {})
+            # memory_flg: sub_seq.setting.memory_flg を優先、無ければseq単位のSETTING.MEMORY_FLG
+            memory_flg = setting.get("memory_flg") or seq_memory_flg
             dialog_row = {
                 "session_id":                session_id,
                 "seq":                       seq,
                 "sub_seq":                   sub_seq,
                 "flg":                       flg,
                 "memory_flg":                memory_flg,
+                "persona_id":                _trunc(setting.get("persona_id"), 64),
+                "persona_name":              _trunc(setting.get("persona_name"), 128),
+                "chain_index":               setting.get("chain_index"),
+                "chain_role":                _trunc(setting.get("chain_role"), 32),
                 "practice_name":             _trunc(practice_name, 128),
                 "model_type":                _trunc(setting.get("type"), 32),
                 "agent_file":                _trunc(setting.get("agent_file"), 255),
@@ -260,7 +266,9 @@ ON CONFLICT (session_id) DO UPDATE SET
 
 INSERT_DIALOG = """
 INSERT INTO digim_dialogs
-    (session_id, seq, sub_seq, flg, memory_flg, practice_name, model_type,
+    (session_id, seq, sub_seq, flg, memory_flg,
+     persona_id, persona_name, chain_index, chain_role,
+     practice_name, model_type,
      agent_file, agent_name, model_name, prompt_template, situation_time,
      user_input, query_text, response_text, digest_text,
      prompt_timestamp, response_timestamp, response_duration_sec,
@@ -269,7 +277,9 @@ INSERT INTO digim_dialogs
      meta_search_date_used, meta_search_date_result, web_search_used,
      knowledge_ref_count, memory_ref_count)
 VALUES
-    (%(session_id)s, %(seq)s, %(sub_seq)s, %(flg)s, %(memory_flg)s, %(practice_name)s, %(model_type)s,
+    (%(session_id)s, %(seq)s, %(sub_seq)s, %(flg)s, %(memory_flg)s,
+     %(persona_id)s, %(persona_name)s, %(chain_index)s, %(chain_role)s,
+     %(practice_name)s, %(model_type)s,
      %(agent_file)s, %(agent_name)s, %(model_name)s, %(prompt_template)s, %(situation_time)s,
      %(user_input)s, %(query_text)s, %(response_text)s, %(digest_text)s,
      %(prompt_timestamp)s, %(response_timestamp)s, %(response_duration_sec)s,
