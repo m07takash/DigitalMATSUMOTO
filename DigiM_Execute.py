@@ -1022,23 +1022,46 @@ def DigiMatsuExecute_MultiPersona(service_info, user_info, session_id, session_n
 
     # Phase 6: practiceがchain.PERSONASを持つ場合、Practice内のchain単位並列に委譲
     # （MultiPersona側ではwhole-practice反復を行わない。in_personasをPracticeへ渡す）
+    # マジックワードで起動された別habitのpracticeにもchain.PERSONASがあり得るので、
+    # 全HABITのpracticeを走査してchain.PERSONASがあるか確認する。
     try:
         agent_for_inspect = dma.DigiM_Agent(in_agent_file)
-        habit = "DEFAULT"
-        if "HABIT" in agent_for_inspect.agent and "DEFAULT" in agent_for_inspect.agent["HABIT"]:
-            habit_practice_file = agent_for_inspect.agent["HABIT"]["DEFAULT"].get("PRACTICE")
-            if habit_practice_file:
+        # マジックワードで実際に起動するhabitを判定。それを最優先にチェック
+        candidate_habits = []
+        try:
+            magic_habit = agent_for_inspect.set_practice_by_command(user_query)
+            if magic_habit:
+                candidate_habits.append(magic_habit)
+        except Exception:
+            pass
+        # フォールバックとして全habitのpracticeも走査
+        for h_key in (agent_for_inspect.agent.get("HABIT") or {}):
+            if h_key not in candidate_habits:
+                candidate_habits.append(h_key)
+
+        has_chain_personas = False
+        for h_key in candidate_habits:
+            habit_practice_file = (agent_for_inspect.agent.get("HABIT", {})
+                                   .get(h_key, {}).get("PRACTICE"))
+            if not habit_practice_file:
+                continue
+            try:
                 practice_data = dmu.read_json_file(str(Path(practice_folder_path) / habit_practice_file))
-                if practice_data and any(c.get("PERSONAS") for c in practice_data.get("CHAINS", [])):
-                    # chain.PERSONASがあればPractice単発呼び出しに切替
-                    yield from DigiMatsuExecute_Practice(
-                        service_info, user_info, session_id, session_name,
-                        in_agent_file, user_query, in_contents, in_situation,
-                        in_overwrite_items, in_add_knowledge, in_execution,
-                        in_persona=None, in_rag_query_text=in_rag_query_text,
-                        in_personas=in_personas,
-                    )
-                    return
+            except Exception:
+                continue
+            if practice_data and any(c.get("PERSONAS") for c in practice_data.get("CHAINS", [])):
+                has_chain_personas = True
+                break
+
+        if has_chain_personas:
+            yield from DigiMatsuExecute_Practice(
+                service_info, user_info, session_id, session_name,
+                in_agent_file, user_query, in_contents, in_situation,
+                in_overwrite_items, in_add_knowledge, in_execution,
+                in_persona=None, in_rag_query_text=in_rag_query_text,
+                in_personas=in_personas,
+            )
+            return
     except Exception:
         pass
 
