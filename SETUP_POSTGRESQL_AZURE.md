@@ -272,6 +272,80 @@ SET name=EXCLUDED.name, pw=EXCLUDED.pw, group_cd=EXCLUDED.group_cd,
 >            ELSE jsonb_build_array(group_cd) END;
 > ```
 
+### 6-6. digim_agent_personas（エージェントペルソナマスタ）
+
+テンプレートエージェントに対して複数のペルソナ（人格・所属・権限制限）をPostgreSQL側で管理する場合に作成します（`system.env` で `AGENT_PERSONA_SOURCE=RDB` または `BOTH` を指定）。アプリ初回利用時に `CREATE TABLE IF NOT EXISTS` で自動作成もされます。
+
+```sql
+CREATE TABLE IF NOT EXISTS digim_agent_personas (
+    persona_id     TEXT PRIMARY KEY,
+    template_agent TEXT,           -- 紐付くテンプレートエージェントファイル名（任意）
+    org            JSONB,          -- 所属組織（dict）。agent側ORGの全キーをこの値が同値で含めばマッチ
+    company        TEXT,
+    dept           TEXT,
+    name           TEXT,
+    act            TEXT,
+    personality    JSONB,          -- 性別/Big5等の人格設定（agent.PERSONALITYを全置換）
+    habits         JSONB,          -- ["ALL"]または実行可能なHABIT名のリスト
+    knowledge      JSONB,          -- ["ALL"]または参照可能なKNOWLEDGE.RAG_NAMEのリスト
+    define_code    JSONB,          -- 自由スキーマ（COMPANY_CODE/DEPT_CODE/EMP_CODE等）
+    character_text TEXT,           -- キャラクターテキスト（直接記述）
+    character_file TEXT,           -- character/フォルダ配下のファイル名（長文の場合）
+    active         CHAR(1) DEFAULT 'Y'
+);
+```
+
+Excel（`user/common/agent/persona_data/`）からの移行登録例:
+
+```sql
+INSERT INTO digim_agent_personas
+  (persona_id, template_agent, org, company, dept, name, act, personality,
+   habits, knowledge, define_code, character_text, character_file, active)
+VALUES
+  ('P0001', 'agent_X0Sample.json',
+   '{"company":"デジMラボ","dept":"Consulting","BU":"DX"}'::jsonb,
+   'デジMラボ', 'Consulting', 'DXコンサル太郎', 'DX戦略コンサルタント',
+   '{"SEX":"男性","NATIONALITY":"Japanese","SPEAKING_STYLE":"Polite"}'::jsonb,
+   '["ALL"]'::jsonb, '["ALL"]'::jsonb,
+   '{"COMPANY_CODE":["DML"],"DEPT_CODE":["CON"],"EMP_CODE":["e0001"]}'::jsonb,
+   'DXの推進力に長けた戦略コンサル。', '', 'Y')
+ON CONFLICT (persona_id) DO UPDATE
+SET template_agent=EXCLUDED.template_agent, org=EXCLUDED.org,
+    company=EXCLUDED.company, dept=EXCLUDED.dept, name=EXCLUDED.name,
+    act=EXCLUDED.act, personality=EXCLUDED.personality,
+    habits=EXCLUDED.habits, knowledge=EXCLUDED.knowledge,
+    define_code=EXCLUDED.define_code,
+    character_text=EXCLUDED.character_text, character_file=EXCLUDED.character_file,
+    active=EXCLUDED.active;
+```
+
+> WebUIのサイドバーから Excel をアップロードして RDB に一括 UPSERT するUIも今後追加予定（Phase 7）。`active='N'` で論理削除。
+
+### 6-7. digim_agent_personas（エージェントペルソナマスタ）
+
+1つのテンプレートエージェントに複数ペルソナ（人格・所属・権限制限）を登録し、ORGで切り替えて並列実行する場合に作成します（`system.env` で `AGENT_PERSONA_SOURCE=RDB` または `BOTH` を指定）。アプリ初回利用時に `CREATE TABLE IF NOT EXISTS` で自動作成もされます。
+
+```sql
+CREATE TABLE IF NOT EXISTS digim_agent_personas (
+    persona_id     TEXT PRIMARY KEY,
+    template_agent TEXT,                 -- 紐付くテンプレートエージェントファイル名
+    org            JSONB,                -- 所属組織dict（agent側ORGの全キーをこの値が同値で含めばマッチ）
+    company        TEXT,
+    dept           TEXT,
+    name           TEXT,
+    act            TEXT,
+    personality    JSONB,                -- agent.PERSONALITYを全置換
+    habits         JSONB,                -- ["ALL"]または実行可能なHABIT名のリスト
+    knowledge      JSONB,                -- ["ALL"]または参照可能なKNOWLEDGE.RAG_NAMEのリスト
+    define_code    JSONB,                -- 自由スキーマ
+    character_text TEXT,
+    character_file TEXT,
+    active         CHAR(1) DEFAULT 'Y'
+);
+```
+
+> エージェントJSONに `"ORG": [...]` と `"PERSONA_FILES": [...]` を定義することで、WebUIサイドバーにORG selectbox + Persona multiselectが出現します。
+
 ---
 
 ## 7. ベクトル自動生成トリガーの作成
@@ -331,6 +405,9 @@ AZURE_OPENAI_EMBED_MODEL=text-embedding-3-large
 # ログイン認証ソースの切替（"JSON" or "RDB"）
 # RDBの場合、上記POSTGRES_*接続でdigim_usersテーブルを使用
 LOGIN_AUTH_METHOD="RDB"
+
+# エージェントペルソナのソース（"EXCEL" or "RDB" or "BOTH"）
+AGENT_PERSONA_SOURCE="RDB"
 ```
 
 > `system.env` は `.gitignore` に含めてリポジトリにコミットしないこと。

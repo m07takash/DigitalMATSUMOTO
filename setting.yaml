@@ -15,6 +15,8 @@ RAG_FOLDER_PAGES: "user/common/rag/pages/"
 RAG_DATA_CSV_FOLDER: "user/common/csv/"
 TEMP_FOLDER: "user/common/temp/"
 TEST_FOLDER: "test/"
+# エージェントペルソナの並列実行上限（複数ペルソナ同時送信時のThreadPoolExecutor max_workers）
+MAX_PARALLEL_PERSONAS: 4
 WEB_SEARCH_DEFAULT: "Perplexity"
 PERPLEXITY_URL: "https://api.perplexity.ai/chat/completions"
 PERPLEXITY_MODEL: "sonar"
