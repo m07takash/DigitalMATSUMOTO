@@ -3210,7 +3210,16 @@ def main():
             st.session_state.thinking_mode = False
         if st.session_state.thinking_mode:
             _thinking_options = ["Habit", "Web Search", "RAG Query", "Books"]
-            st.session_state.thinking_targets = st.multiselect("Thinking Targets", _thinking_options, default=st.session_state.thinking_targets, label_visibility="collapsed")
+            # Personasオプションは ORG が定義されているエージェントのみ追加
+            _agent_orgs = st.session_state.agent_data.get("ORG") or []
+            if isinstance(_agent_orgs, list) and _agent_orgs:
+                _thinking_options.append("Personas")
+            # 既存の選択値からエージェントが対応していない項目を除外
+            _saved_targets = [t for t in st.session_state.thinking_targets if t in _thinking_options]
+            st.session_state.thinking_targets = st.multiselect(
+                "Thinking Targets", _thinking_options,
+                default=_saved_targets, label_visibility="collapsed",
+            )
 
         # BOOKから選択
         if st.session_state.allowed_book:
@@ -3343,6 +3352,7 @@ def main():
                 "web_search": "Web Search" in _targets,
                 "rag_query_gene": "RAG Query" in _targets,
                 "books": "Books" in _targets,
+                "personas": "Personas" in _targets,
             }
 
             # バックグラウンドで実行開始（事前ロック）

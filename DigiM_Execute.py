@@ -732,7 +732,9 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
 
         # Phase 7: chain.PERSONAS="THINKING" がpracticeに含まれていれば、PersonaSelectorで自動選定
         # 候補プールは選択中ORG（in_org）配下、最大人数は execution["MAX_PERSONAS"] / setting.yaml
-        if any(c.get("PERSONAS") == "THINKING" for c in chains):
+        # THINKING_TARGETS.personas が False の場合は選定をスキップ（_resolve_step_personasがUI選択にフォールバック）
+        _personas_target_on = _targets.get("personas", True) if isinstance(_targets, dict) else True
+        if _personas_target_on and any(c.get("PERSONAS") == "THINKING" for c in chains):
             _max_p = int(in_execution.get("MAX_PERSONAS",
                                            system_setting_dict.get("MAX_PERSONAS", 3)))
             _candidates = []
