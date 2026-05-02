@@ -44,19 +44,29 @@ def get_all_agents():
     return agents
 
 # 選択可能なエージェント一覧の取得
+# group_cd は文字列1つ または 文字列のリスト。リストの場合はOR条件でエージェントを抽出する。
 def get_display_agents(group_cd="All"):
+    if isinstance(group_cd, str):
+        user_groups = [group_cd] if group_cd else []
+    else:
+        user_groups = [g for g in (group_cd or []) if g]
+    has_all_or_admin = any(g in ("All", "Admin") for g in user_groups)
+
     agent_files = dmu.get_files(agent_folder_path, ".json")
     agents = []
     for agent_file in agent_files:
         agent_data = _read_agent_json(agent_file)
-        if agent_data["DISPLAY"]:
-            if "GROUP" not in agent_data:
-                agents.append({"AGENT": agent_data["DISPLAY_NAME"], "FILE": agent_file})
-            else:
-                if group_cd in ["All", "Admin"]:
-                    agents.append({"AGENT": agent_data["DISPLAY_NAME"], "FILE": agent_file})
-                elif group_cd in agent_data["GROUP"]:
-                    agents.append({"AGENT": agent_data["DISPLAY_NAME"], "FILE": agent_file})
+        if not agent_data.get("DISPLAY"):
+            continue
+        if "GROUP" not in agent_data:
+            agents.append({"AGENT": agent_data["DISPLAY_NAME"], "FILE": agent_file})
+            continue
+        if has_all_or_admin:
+            agents.append({"AGENT": agent_data["DISPLAY_NAME"], "FILE": agent_file})
+            continue
+        # OR一致: ユーザーのいずれかのグループがエージェントのGROUPに含まれていれば選択可
+        if any(g in agent_data["GROUP"] for g in user_groups):
+            agents.append({"AGENT": agent_data["DISPLAY_NAME"], "FILE": agent_file})
     return agents
 
 # エージェントが持つエンジン一覧を取得（LLM配下のモデル名リスト、rawなJSONデータを渡す）

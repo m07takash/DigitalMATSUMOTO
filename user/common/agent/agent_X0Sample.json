@@ -387,9 +387,9 @@
     ],
     "SKILL": {},
     "DEFINE_CODE": {
-        "COMPANY_CODE": "",
-        "DEPT_CODE": "",
-        "EMP_CODE": "emp001"
+        "COMPANY_CODE": [],
+        "DEPT_CODE": [],
+        "EMP_CODE": ["emp001"]
     },
     "COMMUNICATION": {
         "ACTIVE": "Y",

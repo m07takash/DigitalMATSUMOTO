@@ -262,10 +262,20 @@ def _build_where_limitation(rag_data, exec_info, define_code={}):
             {"$and" if cond["USER_INFO"]["PATTERN"] == "and" else "$or": items})
 
     if "DEFINE_CODE" in cond:
-        items = [{v: {"$eq": define_code[k]}} for k, v in cond["DEFINE_CODE"]["CODES"].items()]
-        where_limitation_conditions.append(
-            items[0] if len(items) == 1 else
-            {"$and" if cond["DEFINE_CODE"]["PATTERN"] == "and" else "$or": items})
+        # define_code[k] は文字列または文字列リスト。リストなら $in、文字列なら従来通り $eq
+        items = []
+        for k, v in cond["DEFINE_CODE"]["CODES"].items():
+            code_val = define_code.get(k)
+            if isinstance(code_val, list):
+                non_empty = [x for x in code_val if x not in ("", None)]
+                if non_empty:
+                    items.append({v: {"$in": non_empty}})
+            else:
+                items.append({v: {"$eq": code_val}})
+        if items:
+            where_limitation_conditions.append(
+                items[0] if len(items) == 1 else
+                {"$and" if cond["DEFINE_CODE"]["PATTERN"] == "and" else "$or": items})
 
     if len(where_limitation_conditions) == 1:
         where_limitation.append(where_limitation_conditions[0])

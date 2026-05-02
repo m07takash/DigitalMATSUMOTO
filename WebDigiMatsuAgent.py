@@ -204,25 +204,18 @@ def _clear_auth_cookie(cookie_manager):
         except Exception:
             pass
 
-# ユーザーログイン
+# ユーザーログイン（JSON / RDB は LOGIN_AUTH_METHOD で切替。詳細は DigiM_Auth.py 参照）
+import DigiM_Auth as dma_auth
+
+
 def load_user_master():
-    user_mst_path = mst_folder_path + user_mst_file
-    try:
-        with open(user_mst_path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return {}
-    except json.JSONDecodeError:
-        return {}
+    return dma_auth.load_user_master()
+
 
 # ログインユーザー情報の保持
 def save_user_master(users: dict):
     """ユーザーマスタを保存（PWは平文/ハッシュどちらも許容）"""
-    user_mst_path = mst_folder_path + user_mst_file
-    # mst_folder_path が存在しない場合に備える
-    os.makedirs(os.path.dirname(user_mst_path), exist_ok=True)
-    with open(user_mst_path, "w", encoding="utf-8") as f:
-        json.dump(users, f, ensure_ascii=False, indent=2)
+    dma_auth.save_user_master(users)
 
 # パスワード変更
 def change_password(user_id: str, current_pw: str, new_pw: str) -> tuple[bool, str]:
@@ -242,18 +235,27 @@ def change_password(user_id: str, current_pw: str, new_pw: str) -> tuple[bool, s
 
 # ログインユーザー情報をセッションに設定
 def set_login_user_to_session(user_id: str, user_info: dict):
+    # Groupは文字列・リストの両方を受け付け、内部的にはリストに正規化
+    raw_group = user_info.get("Group", "")
+    if isinstance(raw_group, list):
+        groups = [g for g in raw_group if g]
+    elif raw_group:
+        groups = [raw_group]
+    else:
+        groups = []
+
     st.session_state.login_user = {
         "USER_ID": user_id,
         "Name": user_info.get("Name", ""),
-        "Group": user_info.get("Group", ""),
+        "Group": groups,
         "Agent": user_info.get("Agent", ""),
         "Allowed": user_info.get("Allowed", {})
     }
     st.session_state.user_id = user_id
     st.session_state.session_user_id = st.session_state.user_id
-    st.session_state.user_admin_flg = "Y" if st.session_state.login_user["Group"] == "Admin" else "N"
-    if st.session_state.login_user["Group"]:
-        st.session_state.group_cd = st.session_state.login_user["Group"]
+    st.session_state.user_admin_flg = "Y" if "Admin" in groups else "N"
+    if groups:
+        st.session_state.group_cd = groups
     if st.session_state.login_user["Agent"] == "DEFAULT":
         default_agent_data = dmu.read_json_file(cfg.web_default_agent_file, agent_folder_path)
         st.session_state.default_agent = default_agent_data["DISPLAY_NAME"]
@@ -280,7 +282,11 @@ def ensure_login():
     if auth_token:
         cookie_user_id = _verify_auth_token(auth_token)
         if cookie_user_id:
-            users = load_user_master()
+            try:
+                users = load_user_master()
+            except Exception:
+                # cookie復元時のロード失敗はログインフォームでもう一度ハンドリングする
+                users = {}
             user_info = users.get(cookie_user_id)
             if user_info:
                 set_login_user_to_session(cookie_user_id, user_info)
@@ -290,10 +296,14 @@ def ensure_login():
     st.title(web_title)
     st.subheader("Login:")
 
-    # ユーザーマスタの読み込み
-    users = load_user_master()
+    # ユーザーマスタの読み込み（LOGIN_AUTH_METHOD: JSON / RDB）
+    try:
+        users = load_user_master()
+    except Exception as e:
+        st.error(f"ユーザーマスタの読み込みに失敗しました（LOGIN_AUTH_METHOD={dma_auth.get_method()}）: {e}")
+        st.stop()
     if not users:
-        st.error("users.json が読めませんでした。")
+        st.error(f"ユーザーマスタが空です（LOGIN_AUTH_METHOD={dma_auth.get_method()}）。マスタを設定してください。")
         st.stop()
 
     tab_login, tab_change = st.tabs(["Login", "Change Password"])

@@ -230,6 +230,41 @@ CREATE INDEX digim_references_dialog_id_idx        ON digim_references (dialog_i
 CREATE INDEX digim_references_rag_name_db_name_idx ON digim_references (rag_name, db_name);
 ```
 
+### 6-5. digim_users（ログイン認証マスタ）
+
+WebUIのログイン認証ソースとしてAzure PostgreSQLを使う場合に作成します（`system.env` で `LOGIN_AUTH_METHOD=RDB` を指定）。アプリ初回起動時に `CREATE TABLE IF NOT EXISTS` で自動作成もされますが、明示的に作成しておくと運用が分かりやすいです。
+
+```sql
+CREATE TABLE IF NOT EXISTS digim_users (
+    user_id    TEXT PRIMARY KEY,
+    name       TEXT,
+    pw         TEXT,           -- bcryptハッシュ。平文初回ログイン時は自動でハッシュ化される
+    group_cd   JSONB,          -- 所属グループの配列（複数指定可、["Admin"]/["Sales","Marketing"]等）
+    agent      TEXT,           -- デフォルトエージェントファイル名（"DEFAULT" or "agent_*.json"）
+    allowed    JSONB           -- UI機能の表示/非表示マップ
+);
+```
+
+既存JSON（`users.json`）からの移行登録例:
+
+```sql
+INSERT INTO digim_users (user_id, name, pw, group_cd, agent, allowed) VALUES
+  ('ADMIN0001', 'Administrator', 'password', '["Admin"]'::jsonb, 'DEFAULT', '{}'::jsonb),
+  ('USER0001', 'Consult Oh', 'password', '["User"]'::jsonb, 'DEFAULT', '{}'::jsonb)
+ON CONFLICT (user_id) DO UPDATE
+SET name=EXCLUDED.name, pw=EXCLUDED.pw, group_cd=EXCLUDED.group_cd,
+    agent=EXCLUDED.agent, allowed=EXCLUDED.allowed;
+```
+
+> 平文パスワードを入れた場合、初回ログイン後にbcryptハッシュへ自動変換されます。最初からハッシュ値（`$2b$...`）を入れることも可能。
+
+> 過去に `group_cd TEXT` で作成済みの場合は、JSONBへの型変換が必要です:
+> ```sql
+> ALTER TABLE digim_users ALTER COLUMN group_cd TYPE JSONB
+> USING CASE WHEN group_cd IS NULL OR group_cd = '' THEN '[]'::jsonb
+>            ELSE jsonb_build_array(group_cd) END;
+> ```
+
 ---
 
 ## 7. ベクトル自動生成トリガーの作成
@@ -285,6 +320,10 @@ POSTGRES_PASSWORD=<your_password>
 AZURE_OPENAI_ENDPOINT=https://xxxx.openai.azure.com/
 AZURE_OPENAI_API_KEY=<your_api_key>
 AZURE_OPENAI_EMBED_MODEL=text-embedding-3-large
+
+# ログイン認証ソースの切替（"JSON" or "RDB"）
+# RDBの場合、上記POSTGRES_*接続でdigim_usersテーブルを使用
+LOGIN_AUTH_METHOD="RDB"
 ```
 
 > `system.env` は `.gitignore` に含めてリポジトリにコミットしないこと。

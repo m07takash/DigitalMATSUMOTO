@@ -161,6 +161,7 @@ cp system.env_sample system.env
 |------|-----------|------|
 | `TIMEZONE` | `Asia/Tokyo` | タイムゾーン |
 | `LOGIN_ENABLE_FLG` | `N` | ログイン認証の有効化（`Y` で有効） |
+| `LOGIN_AUTH_METHOD` | `JSON` | ログイン認証方法。`JSON`: `USER_MST_FILE`を使用 / `RDB`: PostgreSQLの`digim_users`テーブルを使用（テーブルは初回アクセス時に自動作成） |
 | `EMBEDDING_MODEL` | `text-embedding-3-large` | 埋め込みベクトルモデル |
 | `WEB_TITLE` | `Digital Twin` | WebUIのタイトル |
 | `WEB_DEFAULT_AGENT_FILE` | `agent_X0Sample.json` | WebUIのデフォルトエージェント |
@@ -316,7 +317,7 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
   "USER0001": {
     "Name": "表示名",
     "PW": "パスワード",
-    "Group": "User",
+    "Group": ["User"],
     "Agent": "agent_X0Sample.json",
     "Allowed": {
       "Session Archive": true,
@@ -340,7 +341,7 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
 |------|------|
 | `Name` | WebUIに表示されるユーザー名 |
 | `PW` | パスワード（初回ログイン時にbcryptハッシュ値へ自動変換される） |
-| `Group` | ユーザーグループ（後述） |
+| `Group` | ユーザーグループ（配列。後述） |
 | `Agent` | デフォルトで使用するエージェントファイル名 |
 | `Allowed` | 各機能の表示/非表示を制御（`true`/`false`） |
 
@@ -368,9 +369,11 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
 - WebUIのログイン画面の「Change Password」タブからパスワードを変更できます
 
 **Groupについて：**
-- `"Admin"` を設定すると全ユーザーのチャット履歴を閲覧でき、全エージェントが選択可能になります
-- 個別のグループ名（例: `"Sales"`）を設定すると、エージェント側で同じ `GROUP` が設定されたエージェントのみ選択可能になります
+- 配列形式（例: `["User"]`、`["Sales", "Marketing"]`）で**複数グループを指定可能**。後方互換のため文字列も受け付けます（内部で配列に正規化）
+- 配列のいずれかが `"Admin"` の場合、全ユーザーのチャット履歴を閲覧でき、全エージェントが選択可能になります
+- 個別のグループ名を設定すると、エージェント側で同じ `GROUP` が設定されたエージェントのみ選択可能になります（**OR一致**: 自分のグループのいずれかと一致するエージェントが対象）
 - ログイン認証を有効にするには `system.env` で `LOGIN_ENABLE_FLG=Y` を設定してください
+- 認証ソースをPostgreSQLに切り替える場合は `LOGIN_AUTH_METHOD=RDB` を設定。`digim_users` テーブルが自動作成されます（カラム: `user_id`/`name`/`pw`/`group_cd[JSONB]`/`agent`/`allowed[JSONB]`）
 
 #### プロンプトテンプレート
 
