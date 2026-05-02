@@ -17,6 +17,8 @@ TEMP_FOLDER: "user/common/temp/"
 TEST_FOLDER: "test/"
 # エージェントペルソナの並列実行上限（複数ペルソナ同時送信時のThreadPoolExecutor max_workers）
 MAX_PARALLEL_PERSONAS: 4
+# Thinking Modeでpersonaを自動選定する際の最大人数（WebUI Max Personas入力の既定値）
+MAX_PERSONAS: 3
 WEB_SEARCH_DEFAULT: "Perplexity"
 PERPLEXITY_URL: "https://api.perplexity.ai/chat/completions"
 PERPLEXITY_MODEL: "sonar"

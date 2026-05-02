@@ -500,6 +500,12 @@ def initialize_session_states():
         st.session_state.selected_persona_ids = []
     if 'include_query' not in st.session_state:
         st.session_state.include_query = False
+    if 'max_personas' not in st.session_state:
+        try:
+            _yaml = dmu.read_yaml_file("setting.yaml")
+            st.session_state.max_personas = int(_yaml.get("MAX_PERSONAS", 3))
+        except Exception:
+            st.session_state.max_personas = 3
     if 'engine_name' not in st.session_state:
         st.session_state.engine_name = st.session_state.agent_data.get("ENGINE", {}).get("LLM", {}).get("DEFAULT", "")
     if 'imagegen_engine_name' not in st.session_state:
@@ -3181,6 +3187,17 @@ def main():
             help="ONにすると、直前seq(MEMORY_FLG=N)の各ペルソナ応答全文を次ターン入力の先頭に埋め込みます。RAGクエリ生成には影響しません。",
         )
 
+        # Max Personas: Practiceに chain.PERSONAS="THINKING" がある時、PersonaSelectorが選定する上限
+        _system_setting = dmu.read_yaml_file("setting.yaml")
+        _default_max_p = int(_system_setting.get("MAX_PERSONAS", 3))
+        st.session_state.max_personas = st.number_input(
+            "Max Personas (Thinking時の上限)",
+            min_value=1, max_value=20,
+            value=int(st.session_state.get("max_personas", _default_max_p)),
+            step=1,
+            help="Practiceに chain.PERSONAS=\"THINKING\" がある時、PersonaSelectorが選定するペルソナ数の上限。手動選択（multiselect）には影響しません。",
+        )
+
         # Private Mode / Thinking Mode
         _mode_col1, _mode_col2 = st.columns(2)
         if _mode_col1.checkbox("Private Mode", value=st.session_state.private_mode):
@@ -3332,6 +3349,8 @@ def main():
             import threading
             st.session_state.session.save_status("LOCKED")
             execution["_PRE_LOCKED"] = True
+            # Phase 7: PersonaSelectorの上限をexecutionに注入
+            execution["MAX_PERSONAS"] = int(st.session_state.get("max_personas", 3))
             # 選択中のペルソナIDを実ペルソナdictに解決（ORG指定が無ければ空のまま）
             _resolved_personas = []
             _selected_pids = list(st.session_state.get("selected_persona_ids") or [])
@@ -3390,6 +3409,7 @@ def main():
                 "add_knowledges": add_knowledges,
                 "execution": execution,
                 "personas": _resolved_personas,
+                "org": st.session_state.get("selected_org"),
             }
             st.session_state._bg_user_input = user_input
 
@@ -3404,6 +3424,7 @@ def main():
                         params["overwrite_items"], params["add_knowledges"],
                         params["execution"], params.get("personas") or [],
                         in_rag_query_text=params.get("rag_query_text") or "",
+                        in_org=params.get("org"),
                     ):
                         pass  # チャンクを消費（結果はchat_memory.jsonに保存される）
                 except Exception as e:

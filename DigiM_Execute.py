@@ -170,13 +170,24 @@ def _run_thinking_agent(service_info, user_info, session_id, session_name,
     }
     return result, log
 
-# Phase 6: chain.PERSONAS設定を実ペルソナdictリストに解決
-def _resolve_step_personas(chain_personas, in_personas, in_agent_file):
+# Phase 6/7: chain.PERSONAS設定を実ペルソナdictリストに解決
+# WEB_UI: in_personas（UIで選択中）をそのまま使う
+# THINKING: 事前にPersonaSelectorで選定された結果を execution["_THINKING_RESULT"]["personas"] から取得
+# list: persona_id列をDigiM_AgentPersonaから解決
+def _resolve_step_personas(chain_personas, in_personas, in_agent_file, execution=None):
     if not chain_personas:
         return []
     if isinstance(chain_personas, str):
-        if chain_personas.upper() in ("WEB_UI", "THINKING"):
-            # THINKINGはPhase 7で実装予定。当面はWEB_UI同等
+        upper = chain_personas.upper()
+        if upper == "WEB_UI":
+            return list(in_personas or [])
+        if upper == "THINKING":
+            # Practice先頭のpersona選定で確定したリストを参照
+            thinking = (execution or {}).get("_THINKING_RESULT", {}) or {}
+            picked = thinking.get("personas") or []
+            if picked:
+                return list(picked)
+            # フォールバック: UI選択
             return list(in_personas or [])
         return []
     if isinstance(chain_personas, list):
@@ -634,7 +645,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     yield response_service_info, user_info, "", export_files, output_reference
 
 # プラクティスで実行
-def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name, in_agent_file, user_query, in_contents=[], in_situation={}, in_overwrite_items={}, in_add_knowledge=[], in_execution={}, in_persona=None, in_rag_query_text="", in_personas=None):
+def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name, in_agent_file, user_query, in_contents=[], in_situation={}, in_overwrite_items={}, in_add_knowledge=[], in_execution={}, in_persona=None, in_rag_query_text="", in_personas=None, in_org=None):
 
     # B-2: 実行設定の取得
     last_only = in_execution.get("LAST_ONLY", False)
@@ -718,6 +729,42 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
 
         chains = practice["CHAINS"]
         last_idx = len(chains) - 1
+
+        # Phase 7: chain.PERSONAS="THINKING" がpracticeに含まれていれば、PersonaSelectorで自動選定
+        # 候補プールは選択中ORG（in_org）配下、最大人数は execution["MAX_PERSONAS"] / setting.yaml
+        if any(c.get("PERSONAS") == "THINKING" for c in chains):
+            _max_p = int(in_execution.get("MAX_PERSONAS",
+                                           system_setting_dict.get("MAX_PERSONAS", 3)))
+            _candidates = []
+            try:
+                import DigiM_AgentPersona as dap
+                if isinstance(in_org, dict) and in_org:
+                    _persona_files = agent.agent.get("PERSONA_FILES") or None
+                    _candidates = dap.find_personas_by_org(in_org, template_agent=in_agent_file,
+                                                           persona_files=_persona_files)
+                else:
+                    _candidates = list(in_personas or [])
+            except Exception as _e:
+                _candidates = list(in_personas or [])
+            # PersonaSelectorで選定
+            session.save_status_message(f"Persona選定中（最大{_max_p}人）")
+            yield service_info, user_info, f"[STATUS]Persona選定中（最大{_max_p}人、候補{len(_candidates)}人）", {}
+            try:
+                _selected_ids, _select_reason, _, _, _ = dmt.select_personas(
+                    service_info, user_info, session_id, session_name,
+                    agent.agent.get("SUPPORT_AGENT", {}).get("PERSONA_SELECTOR", "agent_54PersonaSelector.json"),
+                    user_query, _candidates, max_personas=_max_p,
+                )
+            except Exception as _e:
+                _selected_ids, _select_reason = [], f"selector error: {_e}"
+            _by_id = {p.get("persona_id"): p for p in _candidates}
+            _thinking_personas = [_by_id[pid] for pid in _selected_ids if pid in _by_id]
+            # Thinking結果に保存（chain loopから _resolve_step_personas で参照）
+            in_execution.setdefault("_THINKING_RESULT", {})
+            in_execution["_THINKING_RESULT"]["personas"] = _thinking_personas
+            in_execution["_THINKING_RESULT"]["personas_reason"] = _select_reason
+            in_execution["_THINKING_RESULT"]["personas_selected_ids"] = _selected_ids
+            yield service_info, user_info, f"[STATUS]Persona選定: {len(_thinking_personas)}人 ({', '.join(p.get('name','?') for p in _thinking_personas)})", {}
         for i, chain in enumerate(chains):
             # チェイン進捗をステータスに反映
             if len(chains) > 1:
@@ -795,8 +842,8 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                     "_SESSION_BASE_PATH": in_execution.get("_SESSION_BASE_PATH", ""),
                 }
 
-                # Phase 6: chain.PERSONAS による step 内マルチペルソナ並列実行を判定
-                step_personas = _resolve_step_personas(chain.get("PERSONAS"), in_personas, in_agent_file)
+                # Phase 6/7: chain.PERSONAS による step 内マルチペルソナ並列実行を判定
+                step_personas = _resolve_step_personas(chain.get("PERSONAS"), in_personas, in_agent_file, in_execution)
 
                 response = ""
                 # 最初のチェインステップでのみrag_query_textを使用
@@ -1006,7 +1053,7 @@ def DigiMatsuExecute_MultiPersona(service_info, user_info, session_id, session_n
                                    in_agent_file, user_query,
                                    in_contents=[], in_situation={}, in_overwrite_items={},
                                    in_add_knowledge=[], in_execution={}, in_personas=None,
-                                   in_rag_query_text=""):
+                                   in_rag_query_text="", in_org=None):
     in_personas = list(in_personas or [])
 
     # 0/1ペルソナは既存パスへフォワード（既存挙動と完全一致）
@@ -1017,6 +1064,7 @@ def DigiMatsuExecute_MultiPersona(service_info, user_info, session_id, session_n
             in_agent_file, user_query, in_contents, in_situation,
             in_overwrite_items, in_add_knowledge, in_execution,
             in_persona=single_persona, in_rag_query_text=in_rag_query_text,
+            in_org=in_org,
         )
         return
 
@@ -1059,7 +1107,7 @@ def DigiMatsuExecute_MultiPersona(service_info, user_info, session_id, session_n
                 in_agent_file, user_query, in_contents, in_situation,
                 in_overwrite_items, in_add_knowledge, in_execution,
                 in_persona=None, in_rag_query_text=in_rag_query_text,
-                in_personas=in_personas,
+                in_personas=in_personas, in_org=in_org,
             )
             return
     except Exception:

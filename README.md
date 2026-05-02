@@ -1014,7 +1014,18 @@ Practiceの各CHAINステップで、その**ステップだけ**を複数ペル
 - 各並列ペルソナsub_seqは `chain_role="persona"`, `memory_flg="N"` を持つ
 - 次ステップは `OUTPUT_<開始sub_seq>` で前ステップのマージ結果を参照
 
-**サンプル**: [`practice_51PersonaCompare.json`](user/common/practice/practice_51PersonaCompare.json) — chain[0]で並列回答 → chain[1]で比較評価。`agent_X0Sample.json` の `HABIT.PERSONA_COMPARE` に紐付き、ユーザー入力に **「皆の意見を聞いて」** が含まれると起動。
+**サンプル**:
+- [`practice_51PersonaCompare.json`](user/common/practice/practice_51PersonaCompare.json): chain[0]で**WEB_UI選択ペルソナ**並列回答 → chain[1]で比較評価。マジックワード **「皆の意見を聞いて」** で起動
+- [`practice_52PersonaThinking.json`](user/common/practice/practice_52PersonaThinking.json): chain[0]で**Thinkingが自動選定**したペルソナで並列回答 → chain[1]で比較評価。マジックワード **「適任に聞いて」** で起動
+
+**Phase 7: ThinkingMode persona auto-select**:
+
+`chain.PERSONAS = "THINKING"` のときは [`agent_54PersonaSelector.json`](user/common/agent/agent_54PersonaSelector.json) が呼ばれ、ユーザーの質問内容に応じて最適なペルソナを **最大N人** 自動選定します:
+- **候補プール**: 選択中ORG（WebUIで選んだ1つ）に合致するペルソナ全件
+- **上限N**: WebUIサイドバーの「Max Personas」入力（既定は `setting.yaml` の `MAX_PERSONAS=3`）
+- **選定ロジック**: PersonaSelectorが質問の内容と互いに補完的な視点を持つペルソナを選ぶ。1人で十分なら1人、専門外は除外
+- **フォールバック**: 選定失敗 / 0人選定 → UI multiselect の選択にフォールバック
+- **Detail Information**: `_THINKING_RESULT.personas_reason` に選定理由が記録される
 
 **サポートエージェント**:
 - `agent_50PersonaMerge.json`: `PERSONA_MERGE="summary"` 時に呼ばれる統合用LLM
