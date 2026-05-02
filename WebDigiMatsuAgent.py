@@ -2293,10 +2293,15 @@ def main():
                         st.rerun()
 
                 # Archiveボタン
+                _archive_days = st.number_input(
+                    "Archive Older Than (days)", min_value=1, value=30, step=1,
+                    key="archive_days_input",
+                    help="この日数より古い（最終更新日基準）セッションをZIPに圧縮します",
+                )
                 if st.button("Archive Old Sessions", key="archive_sessions"):
                     with st.spinner("アーカイブ中..."):
                         try:
-                            result = dms.archive_old_sessions()
+                            result = dms.archive_old_sessions(days=int(_archive_days))
                             archived_count = len(result["archived"])
                             st.session_state.sidebar_message = f"アーカイブ完了: {archived_count}件を圧縮しました"
                             st.session_state.last_archive_zip = result["zip_path"]
