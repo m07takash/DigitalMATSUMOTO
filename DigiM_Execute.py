@@ -178,6 +178,7 @@ def _run_digest_background(session, service_info, user_info, session_id, session
         dialog_digest_agent_file = support_agent.get("DIALOG_DIGEST", "")
         add_info = {}
         add_info["Memories_Selected"] = memories_selected
+        timestamp_digest_start = str(datetime.now())
         _, _, digest_response, digest_model_name, _, digest_response_tokens = dmt.dialog_digest(
             service_info, user_info, session_id, session_name, dialog_digest_agent_file, "", [], add_info)
         timestamp_digest = str(datetime.now())
@@ -187,7 +188,8 @@ def _run_digest_background(session, service_info, user_info, session_id, session
             digest_vec_file = session.save_vec_file(str(seq), str(sub_seq), "digest", digest_vec)
         digest_chat_dict = {
             "agent_file": dialog_digest_agent_file, "model": digest_model_name,
-            "role": "assistant", "timestamp": timestamp_digest,
+            "role": "assistant",
+            "timestamp_start": timestamp_digest_start, "timestamp": timestamp_digest,
             "token": digest_response_tokens, "text": digest_response,
             "vec_file": digest_vec_file
         }
@@ -515,9 +517,20 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             _unlock_on_complete = execution.get("_UNLOCK_ON_DIGEST", True)
             timestamp_log += "[18.メモリダイジェストの作成をバックグラウンドで開始]" + str(datetime.now()) + "<br>"
 
+            # インクリメンタル方式: 前回ダイジェスト + 今回1往復のみを入力にして高速化
+            _slim_memories = []
+            try:
+                _, _, _prev_digest = session.get_history_digest(str(seq), str(sub_seq))
+                if _prev_digest and _prev_digest.get("text"):
+                    _slim_memories.append({"role": "assistant", "text": _prev_digest["text"]})
+            except Exception:
+                pass
+            _slim_memories.append({"role": "user", "text": user_query})
+            _slim_memories.append({"role": "assistant", "text": response})
+
             _digest_job_id = djr.new_job_id()
             _digest_args = (session, service_info, user_info, session_id, session_name,
-                            support_agent, memories_selected,
+                            support_agent, _slim_memories,
                             seq, sub_seq, cfg, _unlock_on_complete)
 
             def _digest_wrapper():

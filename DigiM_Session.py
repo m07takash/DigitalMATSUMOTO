@@ -858,6 +858,8 @@ class DigiMSession:
                 chat_detail_info += "エージェント："+chat_history_dict_seq["digest"]["agent_file"]+"\n"
                 if "model" in chat_history_dict_seq["digest"]:
                     chat_detail_info += "実行モデル："+chat_history_dict_seq["digest"]["model"]+"\n"
+                if "timestamp_start" in chat_history_dict_seq["digest"] and "timestamp" in chat_history_dict_seq["digest"]:
+                    chat_detail_info += "実行時間："+dmu.get_time_diff(chat_history_dict_seq["digest"]["timestamp_start"], chat_history_dict_seq["digest"]["timestamp"], format_str="%Y-%m-%d %H:%M:%S.%f")+"\n"
                 chat_detail_info += "出力トークン数："+str(chat_history_dict_seq["digest"]["token"])+"\n"
                 chat_detail_info += chat_history_dict_seq["digest"]["text"]+"\n"
 
