@@ -1,0 +1,37 @@
+{
+    "NAME": "Persona Parallel + Compare",
+    "CHAINS": [
+        {
+            "TYPE": "LLM",
+            "PERSONAS": "WEB_UI",
+            "PERSONA_MERGE": "include_query",
+            "PERSONA_MERGE_LEVEL": "medium",
+            "SETTING": {
+                "AGENT_FILE": "USER",
+                "OVERWRITE_ITEMS": "USER",
+                "ADD_KNOWLEDGE": ["USER"],
+                "PROMPT_TEMPLATE": "Normal Template",
+                "USER_INPUT": "USER",
+                "CONTENTS": "USER",
+                "SITUATION": "USER",
+                "MEMORY_USE": true
+            }
+        },
+        {
+            "TYPE": "LLM",
+            "SETTING": {
+                "AGENT_FILE": "USER",
+                "OVERWRITE_ITEMS": {},
+                "ADD_KNOWLEDGE": [],
+                "PROMPT_TEMPLATE": "No Template",
+                "USER_INPUT": [
+                    "OUTPUT_1",
+                    "\n\n[追加指示]\n上記の各ペルソナの主張を比較評価し、共通点・相違点・最も妥当な結論をまとめてください。"
+                ],
+                "CONTENTS": [],
+                "SITUATION": "USER",
+                "MEMORY_USE": false
+            }
+        }
+    ]
+}

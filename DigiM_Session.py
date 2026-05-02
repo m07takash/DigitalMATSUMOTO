@@ -546,12 +546,14 @@ class DigiMSession:
                             similarity_prompt = dmu.calculate_similarity_vec(query_vec, chat_history_digest_dict["vec_text"], memory_similarity_logic)
                         memories_list.append({"seq": max_seq, "sub_seq": max_sub_seq, "type": "digest", "role": chat_history_digest_dict["role"], "timestamp": chat_history_digest_dict["timestamp"], "token": chat_history_digest_dict["token"], "similarity_prompt": similarity_prompt, "text": chat_history_digest_dict["text"], "vec_text": chat_history_digest_dict["vec_text"]})
 
-            # 各履歴を取得（MEMORY_FLG="N"のseqはメモリ参照から除外。表示は残る）
+            # 各履歴を取得（MEMORY_FLG="N"のseq、または setting.memory_flg="N" のsub_seq はメモリ参照から除外。表示は残る）
             for k, v in chat_history_active_dict.items():
                 if v.get("SETTING", {}).get("MEMORY_FLG", "Y") == "N":
                     continue
                 for k2, v2 in v.items():
                     if k2 != "SETTING":
+                        if v2.get("setting", {}).get("memory_flg", "Y") == "N":
+                            continue
                         similarity_prompt = 0
                         v2["prompt"]["query"]["vec_text"] = []
                         v2["response"]["vec_text"] = []
@@ -815,6 +817,35 @@ class DigiMSession:
             chat_history_dict = dmu.read_json_file(session_file_name, self.session_folder_path)
             if seq in chat_history_dict and "SETTING" in chat_history_dict[seq]:
                 chat_history_dict[seq]["SETTING"]["MEMORY_FLG"] = value
+                with open(self.session_file_path, 'w', encoding='utf-8') as f:
+                    json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
+
+    # 個別sub_seq単位のメモリ参照フラグを変更する（Phase 6: chain.PERSONAS用）
+    # setting.memory_flg = "N" の sub_seq は表示は残るがメモリ参照から除外
+    def chg_subseq_memory_flg(self, seq, sub_seq, value="Y"):
+        with _get_file_lock(self.session_file_path):
+            if not os.path.exists(self.session_file_path):
+                return
+            chat_history_dict = dmu.read_json_file(self.session_file_path)
+            if seq in chat_history_dict and sub_seq in chat_history_dict[seq]:
+                if "setting" not in chat_history_dict[seq][sub_seq]:
+                    chat_history_dict[seq][sub_seq]["setting"] = {}
+                chat_history_dict[seq][sub_seq]["setting"]["memory_flg"] = value
+                with open(self.session_file_path, 'w', encoding='utf-8') as f:
+                    json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
+
+    # 個別sub_seqの setting にキー/値を追加（Phase 6: chain_index/chain_role 等の付与用）
+    def update_subseq_setting(self, seq, sub_seq, updates):
+        if not isinstance(updates, dict) or not updates:
+            return
+        with _get_file_lock(self.session_file_path):
+            if not os.path.exists(self.session_file_path):
+                return
+            chat_history_dict = dmu.read_json_file(self.session_file_path)
+            if seq in chat_history_dict and sub_seq in chat_history_dict[seq]:
+                if "setting" not in chat_history_dict[seq][sub_seq]:
+                    chat_history_dict[seq][sub_seq]["setting"] = {}
+                chat_history_dict[seq][sub_seq]["setting"].update(updates)
                 with open(self.session_file_path, 'w', encoding='utf-8') as f:
                     json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
 

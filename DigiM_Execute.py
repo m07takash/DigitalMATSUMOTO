@@ -170,6 +170,75 @@ def _run_thinking_agent(service_info, user_info, session_id, session_name,
     }
     return result, log
 
+# Phase 6: chain.PERSONAS設定を実ペルソナdictリストに解決
+def _resolve_step_personas(chain_personas, in_personas, in_agent_file):
+    if not chain_personas:
+        return []
+    if isinstance(chain_personas, str):
+        if chain_personas.upper() in ("WEB_UI", "THINKING"):
+            # THINKINGはPhase 7で実装予定。当面はWEB_UI同等
+            return list(in_personas or [])
+        return []
+    if isinstance(chain_personas, list):
+        try:
+            import DigiM_AgentPersona as dap
+        except Exception:
+            return []
+        try:
+            all_p = dap.load_personas(template_agent=in_agent_file)
+        except Exception:
+            return []
+        by_id = {p.get("persona_id"): p for p in all_p}
+        return [by_id[pid] for pid in chain_personas if pid in by_id]
+    return []
+
+
+# Phase 6: include_query形式（[前回の各ペルソナの回答] + [今回の質問]）でユーザー入力を整形
+def _format_persona_responses_as_query(persona_responses, user_query):
+    blobs = []
+    for r in persona_responses:
+        name = r.get("persona_name") or "?"
+        text = r.get("text") or ""
+        if text:
+            blobs.append(f"- {name}:\n{text}")
+    if not blobs:
+        return user_query
+    return ("[前回の各ペルソナの回答]\n" + "\n\n".join(blobs)
+            + "\n\n[今回の質問]\n" + (user_query or ""))
+
+
+# Phase 6: PERSONA_MERGE戦略を適用してマージ済みテキストを返す
+# methods: "summary" / "concat" / "first" / "include_query" / "none"
+def _apply_persona_merge(merge_method, persona_responses, user_query, merge_level,
+                        service_info, user_info, session_id, session_name, support_agent):
+    method = (merge_method or "summary").lower()
+    if method == "first":
+        return persona_responses[0].get("text", "") if persona_responses else ""
+    if method in ("concat", "none"):
+        return "\n\n".join(
+            f"【{r.get('persona_name','?')}】\n{r.get('text','')}"
+            for r in persona_responses if r.get("text")
+        )
+    if method == "include_query":
+        return _format_persona_responses_as_query(persona_responses, user_query)
+    if method == "summary":
+        merge_agent = (support_agent or {}).get("PERSONA_MERGE", "agent_50PersonaMerge.json")
+        try:
+            _, _, merged, _, _, _ = dmt.dialog_persona_merge(
+                service_info, user_info, session_id, session_name,
+                merge_agent, user_query, persona_responses, summary_level=merge_level,
+            )
+            return merged
+        except Exception as e:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(f"persona_merge失敗（concatにフォールバック）: {e}")
+            return "\n\n".join(
+                f"【{r.get('persona_name','?')}】\n{r.get('text','')}"
+                for r in persona_responses if r.get("text")
+            )
+    return ""
+
+
 # ダイジェスト生成・保存・アンロックをバックグラウンドで実行
 def _run_digest_background(session, service_info, user_info, session_id, session_name,
                             support_agent, memories_selected,
@@ -565,7 +634,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     yield response_service_info, user_info, "", export_files, output_reference
 
 # プラクティスで実行
-def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name, in_agent_file, user_query, in_contents=[], in_situation={}, in_overwrite_items={}, in_add_knowledge=[], in_execution={}, in_persona=None, in_rag_query_text=""):
+def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name, in_agent_file, user_query, in_contents=[], in_situation={}, in_overwrite_items={}, in_add_knowledge=[], in_execution={}, in_persona=None, in_rag_query_text="", in_personas=None):
 
     # B-2: 実行設定の取得
     last_only = in_execution.get("LAST_ONLY", False)
@@ -660,6 +729,8 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
             output = ""
             import_contents = []
             export_contents = []
+            # マルチペルソナ実行でも次stepからOUTPUT_<開始sub_seq>で参照できるよう、stepの開始sub_seqを記録
+            _step_start_sub_seq = sub_seq
 
             # TYPE「LLM」の場合
             if model_type in ["LLM", "IMAGEGEN"]:
@@ -724,20 +795,90 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                     "_SESSION_BASE_PATH": in_execution.get("_SESSION_BASE_PATH", ""),
                 }
 
+                # Phase 6: chain.PERSONAS による step 内マルチペルソナ並列実行を判定
+                step_personas = _resolve_step_personas(chain.get("PERSONAS"), in_personas, in_agent_file)
+
                 response = ""
-                # 最初のチェインステップでのみrag_query_textを使用（後続ステップは既にエージェント入力が変わっている）
+                # 最初のチェインステップでのみrag_query_textを使用
                 _rag_query_text_for_step = in_rag_query_text if i == 0 else ""
-                for response_service_info, response_user_info, response_chunk, export_contents, output_reference in DigiMatsuExecute(
-                        service_info, user_info, session_id, session_name, agent_file, model_type,
-                        sub_seq, user_input, import_contents, situation, overwrite_items,
-                        add_knowledge, prompt_temp_cd, execution, seq_limit, sub_seq_limit,
-                        persona=in_persona, rag_query_text=_rag_query_text_for_step):
-                    if not last_only or i == last_idx:
-                        yield response_service_info, response_user_info, response_chunk, output_reference
-                    if response_chunk and not response_chunk.startswith("[STATUS]"):
-                        response += response_chunk
-                if _is_last_chain and output_reference.get("_digest_bg_started", False):
-                    _digest_bg_started = True
+
+                if len(step_personas) >= 2:
+                    # ---- マルチペルソナ並列実行 ----
+                    yield service_info, user_info, f"[STATUS]chain[{i}] {len(step_personas)}ペルソナで並列実行中...", {}
+                    # seqを事前確定（_SEQ_OVERRIDE未設定時）
+                    if execution.get("_SEQ_OVERRIDE") is None:
+                        _step_seq = session.get_seq_history() + 1 if sub_seq == 1 else session.get_seq_history()
+                        execution["_SEQ_OVERRIDE"] = _step_seq
+                    _persona_responses = []
+                    _max_workers = min(len(step_personas),
+                                       max(1, int(system_setting_dict.get("MAX_PARALLEL_PERSONAS", 4))))
+
+                    def _run_step_persona(p_idx, persona):
+                        local_sub_seq = sub_seq + p_idx
+                        local_resp = ""
+                        try:
+                            for _r_svc, _r_usr, _chunk, _exp, _oref in DigiMatsuExecute(
+                                    service_info, user_info, session_id, session_name, agent_file, model_type,
+                                    local_sub_seq, user_input, import_contents, situation, overwrite_items,
+                                    add_knowledge, prompt_temp_cd, execution, seq_limit, sub_seq_limit,
+                                    persona=persona, rag_query_text=_rag_query_text_for_step):
+                                if _chunk and not _chunk.startswith("[STATUS]"):
+                                    local_resp += _chunk
+                        except Exception as _e:
+                            local_resp = f"[ERROR] {_e}"
+                        return persona, local_sub_seq, local_resp
+
+                    with ThreadPoolExecutor(max_workers=_max_workers) as _ex:
+                        _futures = [_ex.submit(_run_step_persona, _i, _p) for _i, _p in enumerate(step_personas)]
+                        for _fut in as_completed(_futures):
+                            _p, _ss, _resp = _fut.result()
+                            _persona_responses.append({
+                                "persona_id": _p.get("persona_id", ""),
+                                "persona_name": _p.get("name", ""),
+                                "sub_seq": _ss,
+                                "text": _resp,
+                            })
+                            yield service_info, user_info, f"[STATUS]chain[{i}] {_p.get('name','?')}完了", {}
+
+                    # sub_seq順でソート（保存順を安定化）
+                    _persona_responses.sort(key=lambda r: r["sub_seq"])
+
+                    # 各persona sub_seq に setting.memory_flg="N" / chain_index / chain_role を付与
+                    _seq_str = str(execution["_SEQ_OVERRIDE"])
+                    for _r in _persona_responses:
+                        try:
+                            session.update_subseq_setting(_seq_str, str(_r["sub_seq"]), {
+                                "memory_flg": "N",
+                                "chain_index": i,
+                                "chain_role": "persona",
+                            })
+                        except Exception:
+                            pass
+
+                    # PERSONA_MERGEを適用（出力テキスト = 次stepへのoutput）
+                    _merge_method = chain.get("PERSONA_MERGE", "summary")
+                    _merge_level = chain.get("PERSONA_MERGE_LEVEL", "medium")
+                    response = _apply_persona_merge(
+                        _merge_method, _persona_responses, user_input, _merge_level,
+                        service_info, user_info, session_id, session_name, agent.support_agent
+                    )
+
+                    # sub_seqをN分進める
+                    sub_seq += len(step_personas) - 1   # 既存ループ末尾で +1 されるので合計 N
+
+                else:
+                    # ---- 既存パス: 単一ペルソナ実行（または in_persona）----
+                    for response_service_info, response_user_info, response_chunk, export_contents, output_reference in DigiMatsuExecute(
+                            service_info, user_info, session_id, session_name, agent_file, model_type,
+                            sub_seq, user_input, import_contents, situation, overwrite_items,
+                            add_knowledge, prompt_temp_cd, execution, seq_limit, sub_seq_limit,
+                            persona=in_persona, rag_query_text=_rag_query_text_for_step):
+                        if not last_only or i == last_idx:
+                            yield response_service_info, response_user_info, response_chunk, output_reference
+                        if response_chunk and not response_chunk.startswith("[STATUS]"):
+                            response += response_chunk
+                    if _is_last_chain and output_reference.get("_digest_bg_started", False):
+                        _digest_bg_started = True
 
                 input = user_input
                 output = response
@@ -810,7 +951,8 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 })
 
             # 結果のリストへの格納
-            result["SubSEQ"] = sub_seq
+            # マルチペルソナ実行時はstep開始時のsub_seqを使う（OUTPUT_<n>参照を安定化）
+            result["SubSEQ"] = _step_start_sub_seq
             result["TYPE"] = model_type
             result["INPUT"] = input
             chat_history_dict = session.get_history()
@@ -877,6 +1019,28 @@ def DigiMatsuExecute_MultiPersona(service_info, user_info, session_id, session_n
             in_persona=single_persona, in_rag_query_text=in_rag_query_text,
         )
         return
+
+    # Phase 6: practiceがchain.PERSONASを持つ場合、Practice内のchain単位並列に委譲
+    # （MultiPersona側ではwhole-practice反復を行わない。in_personasをPracticeへ渡す）
+    try:
+        agent_for_inspect = dma.DigiM_Agent(in_agent_file)
+        habit = "DEFAULT"
+        if "HABIT" in agent_for_inspect.agent and "DEFAULT" in agent_for_inspect.agent["HABIT"]:
+            habit_practice_file = agent_for_inspect.agent["HABIT"]["DEFAULT"].get("PRACTICE")
+            if habit_practice_file:
+                practice_data = dmu.read_json_file(str(Path(practice_folder_path) / habit_practice_file))
+                if practice_data and any(c.get("PERSONAS") for c in practice_data.get("CHAINS", [])):
+                    # chain.PERSONASがあればPractice単発呼び出しに切替
+                    yield from DigiMatsuExecute_Practice(
+                        service_info, user_info, session_id, session_name,
+                        in_agent_file, user_query, in_contents, in_situation,
+                        in_overwrite_items, in_add_knowledge, in_execution,
+                        in_persona=None, in_rag_query_text=in_rag_query_text,
+                        in_personas=in_personas,
+                    )
+                    return
+    except Exception:
+        pass
 
     # ---- 2人以上: 並列実行 ----
     max_workers_setting = system_setting_dict.get("MAX_PARALLEL_PERSONAS", 4)
