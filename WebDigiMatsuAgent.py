@@ -3179,24 +3179,38 @@ def main():
             help="入力にURLが含まれていれば自動で取得します。ONにすると同一ドメイン内のリンク先も可能な範囲で追加取得します（上限はsetting.yamlのURL_FETCH）。",
         )
 
-        # Include Query: マルチペルソナ等で MEMORY_FLG="N" になっている直前seqの応答を、
-        # 次ターンの入力に直接埋め込む（RAGクエリには含めない）。デフォルトOFF。
-        st.session_state.include_query = st.checkbox(
-            "Include Query (前回ペルソナ応答を入力に含める)",
-            value=st.session_state.get("include_query", False),
-            help="ONにすると、直前seq(MEMORY_FLG=N)の各ペルソナ応答全文を次ターン入力の先頭に埋め込みます。RAGクエリ生成には影響しません。",
-        )
+        # Include Query: 直前seqが複数ペルソナ実行だった場合のみ表示
+        def _prev_seq_is_multi_persona():
+            try:
+                _hist = st.session_state.session.chat_history_active_dict or {}
+                if not _hist:
+                    return False
+                _max_seq = max(_hist.keys(), key=int)
+                _seq_block = _hist.get(_max_seq, {})
+                # seq単位のMEMORY_FLG=N（Phase 4: whole-practice並列）
+                if _seq_block.get("SETTING", {}).get("MEMORY_FLG") == "N":
+                    return True
+                # 2つ以上のsub_seqで persona_id が設定されている（Phase 6: chain.PERSONAS）
+                _sub_seqs = [k for k in _seq_block.keys() if k != "SETTING"]
+                if len(_sub_seqs) >= 2:
+                    _persona_count = sum(
+                        1 for k in _sub_seqs
+                        if _seq_block.get(k, {}).get("setting", {}).get("persona_id")
+                    )
+                    if _persona_count >= 2:
+                        return True
+                return False
+            except Exception:
+                return False
 
-        # Max Personas: Practiceに chain.PERSONAS="THINKING" がある時、PersonaSelectorが選定する上限
-        _system_setting = dmu.read_yaml_file("setting.yaml")
-        _default_max_p = int(_system_setting.get("MAX_PERSONAS", 3))
-        st.session_state.max_personas = st.number_input(
-            "Max Personas (Thinking時の上限)",
-            min_value=1, max_value=20,
-            value=int(st.session_state.get("max_personas", _default_max_p)),
-            step=1,
-            help="Practiceに chain.PERSONAS=\"THINKING\" がある時、PersonaSelectorが選定するペルソナ数の上限。手動選択（multiselect）には影響しません。",
-        )
+        if _prev_seq_is_multi_persona():
+            st.session_state.include_query = st.checkbox(
+                "Include Query (前回ペルソナ応答を入力に含める)",
+                value=st.session_state.get("include_query", False),
+                help="ONにすると、直前seqの各ペルソナ応答全文を次ターン入力の先頭に埋め込みます。RAGクエリ生成には影響しません。",
+            )
+        else:
+            st.session_state.include_query = False
 
         # Private Mode / Thinking Mode
         _mode_col1, _mode_col2 = st.columns(2)
@@ -3221,10 +3235,25 @@ def main():
                 default=_saved_targets, label_visibility="collapsed",
             )
 
-        # BOOKから選択
+            # Max Personas: Thinking Mode ON かつ Personas が選択されているときのみ表示
+            if "Personas" in st.session_state.thinking_targets:
+                _system_setting = dmu.read_yaml_file("setting.yaml")
+                _default_max_p = int(_system_setting.get("MAX_PERSONAS", 3))
+                st.session_state.max_personas = st.number_input(
+                    "Max Personas (Thinking時の上限)",
+                    min_value=1, max_value=20,
+                    value=int(st.session_state.get("max_personas", _default_max_p)),
+                    step=1,
+                    help="chain.PERSONAS=\"THINKING\" のステップでPersonaSelectorが選定する上限。手動選択(multiselect)には影響しません。",
+                )
+
+        # BOOKから選択（エージェントに1つ以上のBookが設定されているときだけ表示）
         if st.session_state.allowed_book:
-            if "BOOK" in st.session_state.agent_data:
-                st.session_state.book_selected = st.multiselect("BOOK", [item["RAG_NAME"] for item in st.session_state.agent_data["BOOK"]])
+            _book_list = st.session_state.agent_data.get("BOOK") or []
+            if isinstance(_book_list, list) and len(_book_list) > 0:
+                st.session_state.book_selected = st.multiselect(
+                    "BOOK", [item["RAG_NAME"] for item in _book_list]
+                )
 
     # ファイルダウンローダー
     if st.session_state.allowed_download_md:
