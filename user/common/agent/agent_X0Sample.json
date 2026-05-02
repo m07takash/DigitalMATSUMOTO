@@ -181,6 +181,13 @@
             "PRACTICE": "practice_51PersonaCompare.json",
             "ADD_KNOWLEDGE": []
         },
+        "PERSONA_THINKING": {
+            "MAGIC_WORDS": [
+                "適任に聞いて"
+            ],
+            "PRACTICE": "practice_52PersonaThinking.json",
+            "ADD_KNOWLEDGE": []
+        },
         "Chat": {
             "MAGIC_WORDS": [
                 "簡潔に回答して",
