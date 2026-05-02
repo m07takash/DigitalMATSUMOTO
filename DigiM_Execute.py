@@ -900,13 +900,16 @@ def DigiMatsuExecute_MultiPersona(service_info, user_info, session_id, session_n
     def _run_one(idx, persona):
         last_oref = {}
         try:
-            for _, _, chunk, _, _oref in DigiMatsuExecute_Practice(
+            # Practiceは4要素タプル(service_info, user_info, response_chunk, output_reference)をyieldする
+            for _yielded in DigiMatsuExecute_Practice(
                     service_info, user_info, session_id, session_name,
                     in_agent_file, user_query, in_contents, in_situation,
                     in_overwrite_items, in_add_knowledge, _make_exec(idx),
                     in_persona=persona, in_rag_query_text=in_rag_query_text):
-                if _oref:
-                    last_oref = _oref
+                if isinstance(_yielded, tuple) and len(_yielded) >= 4:
+                    _oref = _yielded[3]
+                    if _oref:
+                        last_oref = _oref
         except Exception as e:
             return persona, str(e), last_oref
         return persona, None, last_oref
