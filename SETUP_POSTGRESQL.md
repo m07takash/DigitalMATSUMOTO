@@ -106,7 +106,8 @@ CREATE TABLE digim_dialogs (
     session_id                VARCHAR(64),
     seq                       INTEGER,
     sub_seq                   INTEGER,
-    flg                       CHAR(1),
+    flg                       CHAR(1),       -- 論理削除フラグ（'N'は表示・参照とも除外）
+    memory_flg                CHAR(1),       -- メモリ参照フラグ（'N'は表示は残るがメモリ参照から除外）
     practice_name             VARCHAR(128),
     model_type                VARCHAR(32),
     agent_file                VARCHAR(255),
@@ -145,6 +146,12 @@ CREATE TABLE digim_dialogs (
 ```
 
 > `vector(3072)` は `text-embedding-3-large` に対応した次元数です。ベクトル検索が不要な場合は該当行を削除してください。
+
+> 既に `digim_dialogs` を作成済みで `memory_flg` カラムが無い場合は以下を実行:
+> ```sql
+> ALTER TABLE digim_dialogs ADD COLUMN IF NOT EXISTS memory_flg CHAR(1);
+> UPDATE digim_dialogs SET memory_flg = 'Y' WHERE memory_flg IS NULL;
+> ```
 
 ### 4-3. digim_references
 

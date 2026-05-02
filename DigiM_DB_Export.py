@@ -142,6 +142,7 @@ def parse_session(session_id: str, status: dict, memory: dict, from_seq: int = 0
 
         setting_block = seq_val.get("SETTING", {})
         flg = setting_block.get("FLG", "Y")
+        memory_flg = setting_block.get("MEMORY_FLG", "Y")
         practice_name = setting_block.get("practice", {}).get("NAME", "")
 
         for sub_key, sub_val in seq_val.items():
@@ -181,6 +182,7 @@ def parse_session(session_id: str, status: dict, memory: dict, from_seq: int = 0
                 "seq":                       seq,
                 "sub_seq":                   sub_seq,
                 "flg":                       flg,
+                "memory_flg":                memory_flg,
                 "practice_name":             _trunc(practice_name, 128),
                 "model_type":                _trunc(setting.get("type"), 32),
                 "agent_file":                _trunc(setting.get("agent_file"), 255),
@@ -258,7 +260,7 @@ ON CONFLICT (session_id) DO UPDATE SET
 
 INSERT_DIALOG = """
 INSERT INTO digim_dialogs
-    (session_id, seq, sub_seq, flg, practice_name, model_type,
+    (session_id, seq, sub_seq, flg, memory_flg, practice_name, model_type,
      agent_file, agent_name, model_name, prompt_template, situation_time,
      user_input, query_text, response_text, digest_text,
      prompt_timestamp, response_timestamp, response_duration_sec,
@@ -267,7 +269,7 @@ INSERT INTO digim_dialogs
      meta_search_date_used, meta_search_date_result, web_search_used,
      knowledge_ref_count, memory_ref_count)
 VALUES
-    (%(session_id)s, %(seq)s, %(sub_seq)s, %(flg)s, %(practice_name)s, %(model_type)s,
+    (%(session_id)s, %(seq)s, %(sub_seq)s, %(flg)s, %(memory_flg)s, %(practice_name)s, %(model_type)s,
      %(agent_file)s, %(agent_name)s, %(model_name)s, %(prompt_template)s, %(situation_time)s,
      %(user_input)s, %(query_text)s, %(response_text)s, %(digest_text)s,
      %(prompt_timestamp)s, %(response_timestamp)s, %(response_duration_sec)s,

@@ -474,7 +474,13 @@ def initialize_session_states():
     if 'agent_list' not in st.session_state:
         st.session_state.agent_list = [a1["AGENT"] for a1 in st.session_state.agents]
     if 'agent_list_index' not in st.session_state:
-        st.session_state.agent_list_index = st.session_state.agent_list.index(st.session_state.display_name)
+        # default_agent がユーザのGroupで非表示の場合は先頭エージェントにフォールバック
+        if st.session_state.display_name in st.session_state.agent_list:
+            st.session_state.agent_list_index = st.session_state.agent_list.index(st.session_state.display_name)
+        else:
+            st.session_state.agent_list_index = 0
+            if st.session_state.agent_list:
+                st.session_state.display_name = st.session_state.agent_list[0]
     if 'agent_id' not in st.session_state:
         st.session_state.agent_id = st.session_state.agents[st.session_state.agent_list_index]["AGENT"]
     if 'compare_agent_id' not in st.session_state:
@@ -578,7 +584,13 @@ def refresh_session_states():
     st.session_state.display_name = st.session_state.default_agent
     st.session_state.agents = dma.get_display_agents(st.session_state.group_cd)
     st.session_state.agent_list = [a1["AGENT"] for a1 in st.session_state.agents]
-    st.session_state.agent_list_index = st.session_state.agent_list.index(st.session_state.display_name)
+    # default_agent がユーザのGroupで非表示の場合は先頭エージェントにフォールバック
+    if st.session_state.display_name in st.session_state.agent_list:
+        st.session_state.agent_list_index = st.session_state.agent_list.index(st.session_state.display_name)
+    else:
+        st.session_state.agent_list_index = 0
+        if st.session_state.agent_list:
+            st.session_state.display_name = st.session_state.agent_list[0]
     st.session_state.agent_id = st.session_state.agents[st.session_state.agent_list_index]["AGENT"]
     st.session_state.compare_agent_id = st.session_state.agents[st.session_state.agent_list_index]["AGENT"]
     st.session_state.agent_file = st.session_state.agents[st.session_state.agent_list_index]["FILE"]
@@ -3066,6 +3078,16 @@ def main():
             # 会話履歴の論理削除設定
             if st.checkbox(f"Delete(seq:{k})", key="del_chat_seq"+k):
                 st.session_state.seq_memory.append(k)
+
+            # メモリ参照のみ除外（表示は残す）。トグル変更時にその場で永続化
+            _seq_setting = v.get("SETTING", {})
+            _mem_off_now = (_seq_setting.get("MEMORY_FLG", "Y") == "N")
+            _mem_off_new = st.checkbox(f"Memory Off(seq:{k})", value=_mem_off_now,
+                                       key="mem_off_chat_seq"+k,
+                                       help="ONにするとこのseqは画面には残るがLLMの会話メモリには含まれなくなります")
+            if _mem_off_new != _mem_off_now:
+                st.session_state.session.chg_seq_memory_flg(k, "N" if _mem_off_new else "Y")
+                st.rerun()
 
     if st.session_state.session_user_id == st.session_state.user_id:
         # ファイルアップローダー
