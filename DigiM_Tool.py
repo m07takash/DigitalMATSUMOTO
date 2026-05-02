@@ -310,6 +310,60 @@ def dialog_digest(service_info, user_info, session_id, session_name, agent_file,
 
     return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
+# 複数ペルソナ応答の公平な統合・要約。
+# persona_responses: [{"persona_name": "...", "text": "..."}, ...]
+# summary_level: "light"/"medium"/"heavy" もしくは自由文字列（"300字程度"等）
+def dialog_persona_merge(service_info, user_info, session_id, session_name, agent_file,
+                          user_query, persona_responses, summary_level="medium"):
+    if not agent_file:
+        agent_file = "agent_50PersonaMerge.json"
+    agent = dma.DigiM_Agent(agent_file)
+
+    model_type = "LLM"
+    model_name = agent.agent["ENGINE"][model_type]["MODEL"]
+    tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
+
+    # サマリーレベルのキーワード→説明文マッピング（自由文字列はそのまま）
+    level_map = {
+        "light":  "簡潔（200字程度）",
+        "medium": "標準（500字程度）",
+        "heavy":  "詳細（1000字程度）",
+    }
+    summary_level_text = level_map.get(summary_level, summary_level)
+
+    # プロンプトテンプレート取得＆{summary_level}置換
+    practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
+    practice = dmu.read_json_file(str(Path(practice_folder_path) / practice_file))
+    if practice["CHAINS"][0]["TYPE"] == "LLM":
+        prompt_temp_cd = practice["CHAINS"][0]["SETTING"]["PROMPT_TEMPLATE"]
+    else:
+        prompt_temp_cd = "Persona Merge"
+    prompt_template = agent.set_prompt_template(prompt_temp_cd)
+    prompt_template = prompt_template.replace("{summary_level}", summary_level_text)
+
+    # ペルソナ応答をテキスト化
+    responses_text = "\n\n".join(
+        f"【{(r.get('persona_name') or '?')}】\n{r.get('text', '')}"
+        for r in persona_responses
+    )
+
+    query = (
+        f"{prompt_template}\n\n"
+        f"【元の質問】\n{user_query}\n\n"
+        f"【各ペルソナの回答】\n{responses_text}"
+    )
+
+    response = ""
+    for prompt, response_chunk, completion in agent.generate_response(model_type, query, stream_mode=False):
+        if response_chunk:
+            response += response_chunk
+
+    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt)
+    response_tokens = dmu.count_token(tokenizer, model_name, response)
+
+    return service_info, user_info, response, model_name, prompt_tokens, response_tokens
+
+
 # セッション名の生成
 def gene_session_name(service_info, user_info, session_id, session_name, agent_file, user_query, import_contents=[], add_info={}):
     if not agent_file:

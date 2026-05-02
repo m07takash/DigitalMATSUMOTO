@@ -4,6 +4,14 @@
     "GROUP": [
         "User"
     ],
+    "ORG": [
+        {"company": "デジMラボ"},
+        {"company": "デジMラボ", "dept": "Consulting"},
+        {"company": "デジMラボ", "BU": "DX"}
+    ],
+    "PERSONA_FILES": [
+        "agent_X0Sample_personas.xlsx"
+    ],
     "NAME": "デジタルコンサル",
     "ACT": "コンサルティングファームのパートナー",
     "PERSONALITY": {

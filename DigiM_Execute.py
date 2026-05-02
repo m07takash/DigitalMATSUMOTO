@@ -4,7 +4,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from dotenv import load_dotenv
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import inspect
 import pytz
@@ -204,7 +204,8 @@ def _run_digest_background(session, service_info, user_info, session_id, session
 # 単体実行用の関数
 def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_file, model_type="LLM",
                      sub_seq=1, user_input="", contents=[], situation={}, overwrite_items={},
-                     add_knowledge=[], prompt_temp_cd="", execution={}, seq_limit="", sub_seq_limit=""):
+                     add_knowledge=[], prompt_temp_cd="", execution={}, seq_limit="", sub_seq_limit="",
+                     persona=None, rag_query_text=""):
     export_files = []
     output_reference = {}
     timestamp_begin = str(datetime.now())
@@ -216,11 +217,16 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     # セッションの宣言
     _session_base_path = execution.get("_SESSION_BASE_PATH", "")
     session = dms.DigiMSession(session_id, session_name, base_path=_session_base_path)
-    seq = session.get_seq_history() + 1 if sub_seq == 1 else session.get_seq_history()
+    # seqはexecution["_SEQ_OVERRIDE"]があれば優先（マルチペルソナ並列時のレース回避）
+    _seq_override = execution.get("_SEQ_OVERRIDE")
+    if _seq_override is not None:
+        seq = _seq_override
+    else:
+        seq = session.get_seq_history() + 1 if sub_seq == 1 else session.get_seq_history()
 
-    # エージェントの宣言
+    # エージェントの宣言（personaが指定されていれば上書き適用）
     timestamp_log += "[02.エージェント設定開始]" + str(datetime.now()) + "<br>"
-    agent = dma.DigiM_Agent(agent_file)
+    agent = dma.DigiM_Agent(agent_file, persona=persona)
     if overwrite_items:
         dmu.update_dict(agent.agent, overwrite_items)
         agent.set_property(agent.agent)
@@ -344,15 +350,18 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                 memory_role, memory_priority, cfg["memory_similarity"],
                 memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
         # RAGクエリ生成を並列起動（Thinkingのヒントがあれば渡す）
+        # Include Query等で user_input にペルソナ前回応答などのプレフィックスが付いている場合、
+        # rag_query_text（=元のユーザー入力）が渡されていればRAG/メタ検索はそちらを使う。
+        _rag_input_text = rag_query_text if rag_query_text else user_query
         _thinking_result = execution.get("_THINKING_RESULT", {})
         _rag_query_hint = _thinking_result.get("rag_query_hint", "")
         future_intent = executor.submit(
             _build_intent_queries, service_info, user_info, session_id, session_name,
-            support_agent, user_query, [], situation_prompt, query_vec, cfg["RAG_query_gene"], _rag_query_hint)
+            support_agent, _rag_input_text, [], situation_prompt, query_vec, cfg["RAG_query_gene"], _rag_query_hint)
         # メタ検索を並列起動
         future_meta = executor.submit(
             _build_meta_searches, service_info, user_info, session_id, session_name,
-            support_agent, user_query, [], situation_prompt, query_vec, cfg["meta_search"])
+            support_agent, _rag_input_text, [], situation_prompt, query_vec, cfg["meta_search"])
 
         memories_selected = future_memory.result() if future_memory else []
         intent_queries, intent_vecs, RAG_query_gene_log = future_intent.result()
@@ -453,7 +462,9 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             "agent_file": agent_file,
             "name": agent.name,
             "engine": agent.agent["ENGINE"][model_type],
-            "communication": agent.agent["COMMUNICATION"]
+            "communication": agent.agent["COMMUNICATION"],
+            "persona_id": getattr(agent, "persona_id", "") or "",
+            "persona_name": getattr(agent, "persona_name", "") or "",
         }
         prompt_chat_dict = {
             "role": "user",
@@ -554,14 +565,15 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     yield response_service_info, user_info, "", export_files, output_reference
 
 # プラクティスで実行
-def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name, in_agent_file, user_query, in_contents=[], in_situation={}, in_overwrite_items={}, in_add_knowledge=[], in_execution={}):
+def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name, in_agent_file, user_query, in_contents=[], in_situation={}, in_overwrite_items={}, in_add_knowledge=[], in_execution={}, in_persona=None, in_rag_query_text=""):
 
     # B-2: 実行設定の取得
     last_only = in_execution.get("LAST_ONLY", False)
     cfg = _parse_execution_settings(in_execution)
 
     session = dms.DigiMSession(session_id, session_name)
-    sub_seq = 1
+    # マルチペルソナ並列時はsub_seq_startで開始位置を指定（既定1）
+    sub_seq = in_execution.get("_SUB_SEQ_START", 1)
     results = []
     response_service_info = service_info
     response_user_info = user_info
@@ -709,10 +721,13 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 }
 
                 response = ""
+                # 最初のチェインステップでのみrag_query_textを使用（後続ステップは既にエージェント入力が変わっている）
+                _rag_query_text_for_step = in_rag_query_text if i == 0 else ""
                 for response_service_info, response_user_info, response_chunk, export_contents, output_reference in DigiMatsuExecute(
                         service_info, user_info, session_id, session_name, agent_file, model_type,
                         sub_seq, user_input, import_contents, situation, overwrite_items,
-                        add_knowledge, prompt_temp_cd, execution, seq_limit, sub_seq_limit):
+                        add_knowledge, prompt_temp_cd, execution, seq_limit, sub_seq_limit,
+                        persona=in_persona, rag_query_text=_rag_query_text_for_step):
                     if not last_only or i == last_idx:
                         yield response_service_info, response_user_info, response_chunk, output_reference
                     if response_chunk and not response_chunk.startswith("[STATUS]"):
@@ -830,5 +845,99 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
 
     finally:
         # バックグラウンドダイジェストが起動済みの場合はそちらでUNLOCKされる
-        if not _digest_bg_started:
+        # マルチペルソナ並列時は呼び出し元(MultiPersona)が一括UNLOCKするため、内側のPracticeはUNLOCKしない
+        if not _digest_bg_started and not in_execution.get("_NO_UNLOCK"):
             session.save_status("UNLOCKED")
+
+
+# 複数ペルソナの並列実行ラッパー（generator）。
+# personasが空/1件 → DigiMatsuExecute_Practiceを単発呼び出し（既存挙動）。
+# 2件以上 → ThreadPoolExecutorで並列実行。各ペルソナは同seq・別sub_seqで保存され、
+#         完了後にseqのMEMORY_FLG="N"を立てる（次ターンの自動メモリ参照を抑制）。
+#         ダイジェスト生成はスキップ（SAVE_DIGEST=False）。並列パスはストリーミング非対応で、
+#         各ワーカー内でgeneratorをdrainし、完了したペルソナ単位で[STATUS]チャンクをyieldする。
+def DigiMatsuExecute_MultiPersona(service_info, user_info, session_id, session_name,
+                                   in_agent_file, user_query,
+                                   in_contents=[], in_situation={}, in_overwrite_items={},
+                                   in_add_knowledge=[], in_execution={}, in_personas=None,
+                                   in_rag_query_text=""):
+    in_personas = list(in_personas or [])
+
+    # 0/1ペルソナは既存パスへフォワード（既存挙動と完全一致）
+    if len(in_personas) <= 1:
+        single_persona = in_personas[0] if in_personas else None
+        yield from DigiMatsuExecute_Practice(
+            service_info, user_info, session_id, session_name,
+            in_agent_file, user_query, in_contents, in_situation,
+            in_overwrite_items, in_add_knowledge, in_execution,
+            in_persona=single_persona, in_rag_query_text=in_rag_query_text,
+        )
+        return
+
+    # ---- 2人以上: 並列実行 ----
+    max_workers_setting = system_setting_dict.get("MAX_PARALLEL_PERSONAS", 4)
+    max_workers = min(len(in_personas), max(1, int(max_workers_setting)))
+
+    # 事前にセッションロック＆seqを確定（並列ワーカ間のレース回避）
+    _session_base_path = in_execution.get("_SESSION_BASE_PATH", "")
+    session = dms.DigiMSession(session_id, session_name, base_path=_session_base_path)
+    _pre_locked = in_execution.get("_PRE_LOCKED", False)
+    if session.get_status() == "LOCKED" and not _pre_locked:
+        raise Exception("Session is locked. Please unlock the session before executing.")
+    session.save_status("LOCKED")
+    seq = session.get_seq_history() + 1
+
+    # 各ペルソナ用の実行設定を組み立て（直列処理を抑制）
+    def _make_exec(idx):
+        e = dict(in_execution)
+        e["_PRE_LOCKED"] = True
+        e["_SEQ_OVERRIDE"] = seq
+        e["_SUB_SEQ_START"] = idx + 1   # ペルソナ毎にsub_seqを分ける
+        e["SAVE_DIGEST"] = False         # マルチペルソナはダイジェスト生成をスキップ
+        e["_NO_UNLOCK"] = True            # 各ペルソナのPracticeはUNLOCKしない（このラッパーが最後に1回UNLOCK）
+        return e
+
+    def _run_one(idx, persona):
+        last_oref = {}
+        try:
+            for _, _, chunk, _, _oref in DigiMatsuExecute_Practice(
+                    service_info, user_info, session_id, session_name,
+                    in_agent_file, user_query, in_contents, in_situation,
+                    in_overwrite_items, in_add_knowledge, _make_exec(idx),
+                    in_persona=persona, in_rag_query_text=in_rag_query_text):
+                if _oref:
+                    last_oref = _oref
+        except Exception as e:
+            return persona, str(e), last_oref
+        return persona, None, last_oref
+
+    yield service_info, user_info, f"[STATUS]{len(in_personas)}ペルソナで並列実行中...", {}
+
+    errors = []
+    try:
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            futures = {ex.submit(_run_one, i, p): (i, p) for i, p in enumerate(in_personas)}
+            done_count = 0
+            for fut in as_completed(futures):
+                persona, err, _oref = fut.result()
+                done_count += 1
+                pid = persona.get("persona_id", "")
+                pname = persona.get("name", "")
+                if err:
+                    errors.append((pid, err))
+                    yield service_info, user_info, f"[STATUS]{pid}({pname})エラー: {err}", {}
+                else:
+                    yield service_info, user_info, f"[STATUS]{pid}({pname})完了 ({done_count}/{len(in_personas)})", {}
+
+        # 完了後: このseqをMEMORY_FLG="N"でマーク（複数ペルソナの応答を次ターンメモリから除外）
+        try:
+            session.chg_seq_memory_flg(str(seq), "N")
+        except Exception as e:
+            yield service_info, user_info, f"[STATUS]MEMORY_FLG更新失敗: {e}", {}
+    finally:
+        session.save_status("UNLOCKED")
+
+    if errors:
+        yield service_info, user_info, f"[STATUS]完了（エラー{len(errors)}件）", {"_persona_errors": errors}
+    else:
+        yield service_info, user_info, f"[STATUS]全ペルソナ完了", {}

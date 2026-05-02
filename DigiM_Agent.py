@@ -130,10 +130,60 @@ def ext_generate_pureLLM(agent_file, query, memories_selected=[], prompt_temp_cd
     response, model_name, prompt_tokens, response_tokens = generate_pureLLM(base_agent, query, memories_selected=[], prompt_temp_cd=prompt_temp_cd)
     return response, model_name, prompt_tokens, response_tokens
 
+# persona dict（DigiM_AgentPersona.load_personasの戻り）からエージェントデータを上書き。
+# 上書き対象: NAME / ACT / PERSONALITY（character_text/character_fileを含む） / HABIT（フィルタ） / KNOWLEDGE（フィルタ） / DEFINE_CODE
+# 不変:       ENGINE / SUPPORT_AGENT / BOOK / SKILL / COMMUNICATION / GROUP / ORG / PERSONA_FILES
+def _apply_persona(agent_data, persona):
+    if not persona:
+        return agent_data
+
+    if persona.get("name"):
+        agent_data["NAME"] = persona["name"]
+    if persona.get("act"):
+        agent_data["ACT"] = persona["act"]
+
+    # PERSONALITY: persona.personalityで全置換し、CHARACTERは character_file > character_text > personality内CHARACTER の優先順
+    if persona.get("personality"):
+        new_personality = dict(persona["personality"])
+    else:
+        new_personality = dict(agent_data.get("PERSONALITY") or {})
+    if persona.get("character_file"):
+        new_personality["CHARACTER"] = persona["character_file"]
+    elif persona.get("character_text"):
+        new_personality["CHARACTER"] = persona["character_text"]
+    agent_data["PERSONALITY"] = new_personality
+
+    # HABIT: ["ALL"]ならスルー、リストならホワイトリスト
+    habits_filter = persona.get("habits") or ["ALL"]
+    if "ALL" not in habits_filter:
+        habit_dict = agent_data.get("HABIT") or {}
+        agent_data["HABIT"] = {k: v for k, v in habit_dict.items() if k in habits_filter}
+
+    # KNOWLEDGE: ["ALL"]ならスルー、リストならRAG_NAMEでフィルタ
+    knowledge_filter = persona.get("knowledge") or ["ALL"]
+    if "ALL" not in knowledge_filter:
+        knowledge_list = agent_data.get("KNOWLEDGE") or []
+        agent_data["KNOWLEDGE"] = [k for k in knowledge_list
+                                    if k.get("RAG_NAME") in knowledge_filter]
+
+    # DEFINE_CODE: 全置換（persona側で明示的に空dictも許容）
+    if persona.get("define_code") is not None:
+        agent_data["DEFINE_CODE"] = persona["define_code"]
+
+    return agent_data
+
+
 # Agent
 class DigiM_Agent:
-    def __init__(self, agent_file):
+    def __init__(self, agent_file, persona=None):
         agent_data = _read_agent_json(agent_file)
+        if persona:
+            agent_data = _apply_persona(agent_data, persona)
+            self.persona_id = persona.get("persona_id", "")
+            self.persona_name = persona.get("name", "")
+        else:
+            self.persona_id = ""
+            self.persona_name = ""
         self.set_property(agent_data)
 
     # エージェントのプロパティの設定

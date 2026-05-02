@@ -33,6 +33,7 @@ import DigiM_GeneCommunication as dmgc
 import DigiM_GeneUserDialog as dmgu
 import DigiM_VAnalytics as dmva
 import DigiM_DB_Export as dmdbe
+import DigiM_AgentPersona as dap
 import DigiM_SupportEval as dmse
 import DigiM_UrlFetch as dmuf
 
@@ -493,6 +494,12 @@ def initialize_session_states():
         st.session_state.agent_file = st.session_state.agents[st.session_state.agent_list_index]["FILE"]
     if 'agent_data' not in st.session_state:
         st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, agent_folder_path)
+    if 'selected_org' not in st.session_state:
+        st.session_state.selected_org = None     # dict or None
+    if 'selected_persona_ids' not in st.session_state:
+        st.session_state.selected_persona_ids = []
+    if 'include_query' not in st.session_state:
+        st.session_state.include_query = False
     if 'engine_name' not in st.session_state:
         st.session_state.engine_name = st.session_state.agent_data.get("ENGINE", {}).get("LLM", {}).get("DEFAULT", "")
     if 'imagegen_engine_name' not in st.session_state:
@@ -595,6 +602,8 @@ def refresh_session_states():
     st.session_state.compare_agent_id = st.session_state.agents[st.session_state.agent_list_index]["AGENT"]
     st.session_state.agent_file = st.session_state.agents[st.session_state.agent_list_index]["FILE"]
     st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, agent_folder_path)
+    st.session_state.selected_org = None
+    st.session_state.selected_persona_ids = []
     st.session_state.rag_data_list = dmc.get_rag_list()
     st.session_state.rag_data_list_selected = []
     st.session_state.session_list = dms.get_session_list_visible(st.session_state.service_id, st.session_state.user_id, st.session_state.user_admin_flg)
@@ -2207,11 +2216,61 @@ def main():
 
         # エージェントを選択（JSON)
         if agent_id_selected := st.selectbox("Select Agent:", st.session_state.agent_list, index=st.session_state.agent_list_index):
+            if st.session_state.agent_id != agent_id_selected:
+                # エージェント切替時はORG/Persona選択をリセット
+                st.session_state.selected_org = None
+                st.session_state.selected_persona_ids = []
             st.session_state.agent_id = agent_id_selected
             st.session_state.agent_file = next((a2["FILE"] for a2 in st.session_state.agents if a2["AGENT"] == st.session_state.agent_id), None)
             st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, agent_folder_path)
             st.session_state.engine_name = st.session_state.agent_data.get("ENGINE", {}).get("LLM", {}).get("DEFAULT", "")
             st.session_state.imagegen_engine_name = st.session_state.agent_data.get("ENGINE", {}).get("IMAGEGEN", {}).get("DEFAULT", "")
+
+        # ORG / Persona 選択（エージェントに ORG が定義されている場合のみ表示）
+        _agent_orgs = st.session_state.agent_data.get("ORG") or []
+        if isinstance(_agent_orgs, list) and _agent_orgs:
+            def _format_org(org_dict):
+                if not isinstance(org_dict, dict) or not org_dict:
+                    return "(empty)"
+                return ", ".join(f"{k}={v}" for k, v in org_dict.items())
+
+            _org_labels = [_format_org(o) for o in _agent_orgs]
+            _label_to_org = dict(zip(_org_labels, _agent_orgs))
+
+            # 既存選択があれば対応するindexを復元、無ければ先頭
+            _current_idx = 0
+            if st.session_state.selected_org in _agent_orgs:
+                _current_idx = _agent_orgs.index(st.session_state.selected_org)
+            _selected_label = st.selectbox("ORG:", _org_labels, index=_current_idx, key="org_select")
+            _selected_org = _label_to_org[_selected_label]
+            if st.session_state.selected_org != _selected_org:
+                st.session_state.selected_org = _selected_org
+                st.session_state.selected_persona_ids = []  # ORG切替時はPersona選択をリセット
+
+            # ORGに合致するペルソナを取得
+            _persona_files = st.session_state.agent_data.get("PERSONA_FILES") or None
+            try:
+                _candidate_personas = dap.find_personas_by_org(
+                    _selected_org,
+                    template_agent=st.session_state.agent_file,
+                    persona_files=_persona_files,
+                )
+            except Exception as _e:
+                _candidate_personas = []
+                st.warning(f"ペルソナ取得失敗: {_e}")
+
+            if _candidate_personas:
+                _persona_labels = [f"{p['persona_id']}: {p['name']}" for p in _candidate_personas]
+                _label_to_pid = {lbl: p["persona_id"] for lbl, p in zip(_persona_labels, _candidate_personas)}
+                _pid_to_label = {p["persona_id"]: lbl for lbl, p in zip(_persona_labels, _candidate_personas)}
+                _default_labels = [_pid_to_label[pid] for pid in st.session_state.selected_persona_ids if pid in _pid_to_label]
+                _selected_labels = st.multiselect("Personas:", _persona_labels, default=_default_labels, key="persona_select")
+                st.session_state.selected_persona_ids = [_label_to_pid[lbl] for lbl in _selected_labels]
+                if len(st.session_state.selected_persona_ids) >= 2:
+                    st.caption(f"複数ペルソナ並列実行モード ({len(st.session_state.selected_persona_ids)}人)")
+            else:
+                st.caption("該当するペルソナがありません")
+                st.session_state.selected_persona_ids = []
 
         side_col1, side_col2 = st.columns(2)
 
@@ -3114,6 +3173,14 @@ def main():
             help="入力にURLが含まれていれば自動で取得します。ONにすると同一ドメイン内のリンク先も可能な範囲で追加取得します（上限はsetting.yamlのURL_FETCH）。",
         )
 
+        # Include Query: マルチペルソナ等で MEMORY_FLG="N" になっている直前seqの応答を、
+        # 次ターンの入力に直接埋め込む（RAGクエリには含めない）。デフォルトOFF。
+        st.session_state.include_query = st.checkbox(
+            "Include Query (前回ペルソナ応答を入力に含める)",
+            value=st.session_state.get("include_query", False),
+            help="ONにすると、直前seq(MEMORY_FLG=N)の各ペルソナ応答全文を次ターン入力の先頭に埋め込みます。RAGクエリ生成には影響しません。",
+        )
+
         # Private Mode / Thinking Mode
         _mode_col1, _mode_col2 = st.columns(2)
         if _mode_col1.checkbox("Private Mode", value=st.session_state.private_mode):
@@ -3265,31 +3332,78 @@ def main():
             import threading
             st.session_state.session.save_status("LOCKED")
             execution["_PRE_LOCKED"] = True
+            # 選択中のペルソナIDを実ペルソナdictに解決（ORG指定が無ければ空のまま）
+            _resolved_personas = []
+            _selected_pids = list(st.session_state.get("selected_persona_ids") or [])
+            if _selected_pids and st.session_state.get("selected_org"):
+                _persona_files = st.session_state.agent_data.get("PERSONA_FILES") or None
+                try:
+                    _candidates = dap.find_personas_by_org(
+                        st.session_state.selected_org,
+                        template_agent=st.session_state.agent_file,
+                        persona_files=_persona_files,
+                    )
+                    _by_id = {p["persona_id"]: p for p in _candidates}
+                    _resolved_personas = [_by_id[pid] for pid in _selected_pids if pid in _by_id]
+                except Exception:
+                    _resolved_personas = []
+
+            # Include Query: 直前seqがMEMORY_FLG=N（マルチペルソナ等）なら、その全sub_seq応答を
+            # ユーザー入力の先頭に埋め込み。RAGクエリには元の入力（rag_query_text）を使う。
+            _enriched_input = user_input
+            _rag_query_text = ""
+            if st.session_state.get("include_query"):
+                try:
+                    _hist = st.session_state.session.chat_history_active_dict or {}
+                    if _hist:
+                        _max_seq = max(_hist.keys(), key=int)
+                        _seq_block = _hist.get(_max_seq, {})
+                        _setting = _seq_block.get("SETTING", {})
+                        if _setting.get("MEMORY_FLG", "Y") == "N":
+                            _persona_blobs = []
+                            for _ssk in sorted([k for k in _seq_block.keys() if k != "SETTING"], key=int):
+                                _sub = _seq_block[_ssk]
+                                _resp = (_sub.get("response") or {}).get("text") or ""
+                                _pname = (_sub.get("setting") or {}).get("persona_name") or (_sub.get("setting") or {}).get("name") or ""
+                                if _resp:
+                                    _persona_blobs.append(f"- {_pname}:\n{_resp}")
+                            if _persona_blobs:
+                                _enriched_input = (
+                                    "[前回の各ペルソナの回答]\n" + "\n\n".join(_persona_blobs)
+                                    + "\n\n[今回の質問]\n" + user_input
+                                )
+                                _rag_query_text = user_input
+                except Exception:
+                    pass
+
             _bg_params = {
                 "service_info": dict(st.session_state.web_service),
                 "user_info": dict(st.session_state.web_user),
                 "session_id": st.session_state.session.session_id,
                 "session_name": st.session_state.session.session_name,
                 "agent_file": st.session_state.agent_file,
-                "user_input": user_input,
+                "user_input": _enriched_input,
+                "rag_query_text": _rag_query_text,
                 "uploaded_contents": uploaded_contents,
                 "situation": situation,
                 "overwrite_items": overwrite_items,
                 "add_knowledges": add_knowledges,
                 "execution": execution,
+                "personas": _resolved_personas,
             }
             st.session_state._bg_user_input = user_input
 
             def _run_bg(params):
                 _exec_error = ""
                 try:
-                    for _ in dme.DigiMatsuExecute_Practice(
+                    for _ in dme.DigiMatsuExecute_MultiPersona(
                         params["service_info"], params["user_info"],
                         params["session_id"], params["session_name"],
                         params["agent_file"], params["user_input"],
                         params["uploaded_contents"], params["situation"],
                         params["overwrite_items"], params["add_knowledges"],
-                        params["execution"]
+                        params["execution"], params.get("personas") or [],
+                        in_rag_query_text=params.get("rag_query_text") or "",
                     ):
                         pass  # チャンクを消費（結果はchat_memory.jsonに保存される）
                 except Exception as e:
