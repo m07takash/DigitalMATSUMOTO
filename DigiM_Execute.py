@@ -718,6 +718,10 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                     "_THINKING_LOG":     in_execution.get("_THINKING_LOG", {}),
                     "_THINKING_RESULT":  in_execution.get("_THINKING_RESULT", {}),
                     "_UNLOCK_ON_DIGEST": _is_last_chain,
+                    # マルチペルソナ並列実行用のフラグを下流のDigiMatsuExecuteへ伝播
+                    "_SEQ_OVERRIDE":     in_execution.get("_SEQ_OVERRIDE"),
+                    "_SUB_SEQ_START":    in_execution.get("_SUB_SEQ_START"),
+                    "_SESSION_BASE_PATH": in_execution.get("_SESSION_BASE_PATH", ""),
                 }
 
                 response = ""
