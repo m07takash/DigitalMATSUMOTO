@@ -546,8 +546,10 @@ class DigiMSession:
                             similarity_prompt = dmu.calculate_similarity_vec(query_vec, chat_history_digest_dict["vec_text"], memory_similarity_logic)
                         memories_list.append({"seq": max_seq, "sub_seq": max_sub_seq, "type": "digest", "role": chat_history_digest_dict["role"], "timestamp": chat_history_digest_dict["timestamp"], "token": chat_history_digest_dict["token"], "similarity_prompt": similarity_prompt, "text": chat_history_digest_dict["text"], "vec_text": chat_history_digest_dict["vec_text"]})
 
-            # 各履歴を取得
+            # 各履歴を取得（MEMORY_FLG="N"のseqはメモリ参照から除外。表示は残る）
             for k, v in chat_history_active_dict.items():
+                if v.get("SETTING", {}).get("MEMORY_FLG", "Y") == "N":
+                    continue
                 for k2, v2 in v.items():
                     if k2 != "SETTING":
                         similarity_prompt = 0
@@ -805,6 +807,16 @@ class DigiMSession:
             chat_history_dict[seq]["SETTING"]["FLG"] = value
         with open(self.session_file_path, 'w', encoding='utf-8') as f:
             json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
+
+    # 会話履歴のシーケンスのメモリ参照フラグを変更する
+    # MEMORY_FLG="N": 表示は残るがメモリ参照（LLMコンテキスト）から除外
+    def chg_seq_memory_flg(self, seq, value="Y"):
+        if os.path.exists(self.session_file_path):
+            chat_history_dict = dmu.read_json_file(session_file_name, self.session_folder_path)
+            if seq in chat_history_dict and "SETTING" in chat_history_dict[seq]:
+                chat_history_dict[seq]["SETTING"]["MEMORY_FLG"] = value
+                with open(self.session_file_path, 'w', encoding='utf-8') as f:
+                    json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
 
     # 会話履歴にフィードバックを保存する
     def set_feedback_history(self, seq, sub_seq, feedbacks={}):
