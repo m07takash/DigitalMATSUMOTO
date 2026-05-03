@@ -2255,11 +2255,13 @@ def main():
 
             # ORGに合致するペルソナを取得
             _persona_files = st.session_state.agent_data.get("PERSONA_FILES") or None
+            _persona_source = st.session_state.agent_data.get("PERSONA_SOURCE")
             try:
                 _candidate_personas = dap.find_personas_by_org(
                     _selected_org,
                     template_agent=st.session_state.agent_file,
                     persona_files=_persona_files,
+                    source=_persona_source,
                 )
             except Exception as _e:
                 _candidate_personas = []
@@ -3395,11 +3397,13 @@ def main():
             _selected_pids = list(st.session_state.get("selected_persona_ids") or [])
             if _selected_pids and st.session_state.get("selected_org"):
                 _persona_files = st.session_state.agent_data.get("PERSONA_FILES") or None
+                _persona_source = st.session_state.agent_data.get("PERSONA_SOURCE")
                 try:
                     _candidates = dap.find_personas_by_org(
                         st.session_state.selected_org,
                         template_agent=st.session_state.agent_file,
                         persona_files=_persona_files,
+                        source=_persona_source,
                     )
                     _by_id = {p["persona_id"]: p for p in _candidates}
                     _resolved_personas = [_by_id[pid] for pid in _selected_pids if pid in _by_id]
