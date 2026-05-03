@@ -456,8 +456,15 @@ class DigiMSession:
                 chat_history_active_omit_dict[key]["1"]["setting"] = sub_dict[str(min_subseq)]["setting"]
                 if "prompt" in sub_dict[str(max_subseq)]:
                     chat_history_active_omit_dict[key]["1"]["prompt"] = sub_dict[str(min_subseq)]["prompt"]
-                if "image" in sub_dict[str(max_subseq)]:
-                    chat_history_active_omit_dict[key]["1"]["image"] = sub_dict[str(max_subseq)]["image"]
+                # 画像は max_subseq だけでなく途中のsub_seq（IMAGEGENが中間チェインのケース）からも収集
+                _merged_images = {}
+                for _ss in sub_seqs:
+                    _ss_block = sub_dict.get(str(_ss), {})
+                    if "image" in _ss_block and isinstance(_ss_block["image"], dict):
+                        for _img_k, _img_v in _ss_block["image"].items():
+                            _merged_images[f"{_ss}_{_img_k}"] = _img_v
+                if _merged_images:
+                    chat_history_active_omit_dict[key]["1"]["image"] = _merged_images
                 if "response" in sub_dict[str(max_subseq)]:
                     chat_history_active_omit_dict[key]["1"]["response"] = sub_dict[str(max_subseq)]["response"]
                 if "digest" in sub_dict[str(max_subseq)]:
