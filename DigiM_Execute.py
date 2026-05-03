@@ -742,8 +742,10 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 import DigiM_AgentPersona as dap
                 if isinstance(in_org, dict) and in_org:
                     _persona_files = agent.agent.get("PERSONA_FILES") or None
+                    _persona_source = agent.agent.get("PERSONA_SOURCE")
                     _candidates = dap.find_personas_by_org(in_org, template_agent=in_agent_file,
-                                                           persona_files=_persona_files)
+                                                           persona_files=_persona_files,
+                                                           source=_persona_source)
                 else:
                     _candidates = list(in_personas or [])
             except Exception as _e:

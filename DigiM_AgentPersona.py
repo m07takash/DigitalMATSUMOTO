@@ -248,9 +248,11 @@ def _upsert_persona_rdb(persona):
 
 
 # ---------- public API ----------
-def load_personas(template_agent=None, persona_files=None):
-    """全ペルソナ取得。template_agent指定時はそのテンプレ用または未指定（全テンプレ共通）に絞る。"""
-    src = get_source()
+def load_personas(template_agent=None, persona_files=None, source=None):
+    """全ペルソナ取得。template_agent指定時はそのテンプレ用または未指定（全テンプレ共通）に絞る。
+    sourceを指定するとエージェント単位で参照先を切替可能（"EXCEL"/"RDB"/"BOTH"）。
+    未指定時は環境変数 AGENT_PERSONA_SOURCE にフォールバック。"""
+    src = (source or get_source()).upper()
     if src == "RDB":
         personas = _load_personas_rdb()
     elif src == "BOTH":
@@ -267,10 +269,10 @@ def load_personas(template_agent=None, persona_files=None):
     return personas
 
 
-def find_personas_by_org(agent_org, template_agent=None, persona_files=None):
+def find_personas_by_org(agent_org, template_agent=None, persona_files=None, source=None):
     """agent側ORG（dict）の全キーを persona側ORGが同値で含むペルソナを返す（subset match）。
-    agent_orgが空dictなら全件返す。"""
-    personas = load_personas(template_agent, persona_files)
+    agent_orgが空dictなら全件返す。sourceでエージェント単位の参照先を切替可能。"""
+    personas = load_personas(template_agent, persona_files, source=source)
     if not isinstance(agent_org, dict) or not agent_org:
         return personas
     matched = []
