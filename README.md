@@ -753,6 +753,24 @@ WebUIのサイドバー **RAG Management → Page Index Export** から、既存
 | Google | `generate_response_T_gemini` | Gemini-2.5-Flash, Gemini-3.1 等 |
 | Anthropic | `generate_response_T_claude` | Claude-Sonnet-4.5, Claude-Haiku 等 |
 | XAI | `generate_response_T_grok` | Grok-4 等 |
+| **Azure OpenAI** | `generate_response_T_azure_openai` | Azure上のgpt-*デプロイ（`MODEL`にデプロイ名を指定） |
+
+**Azure OpenAI Service の利用**
+
+`system.env` に `AZURE_OPENAI_ENDPOINT` / `AZURE_OPENAI_API_KEY` / `AZURE_OPENAI_API_VERSION`（既定 `2024-10-21`）を設定。エージェントJSONの`MODEL`はAzure上のdeployment名を入れます。`PARAMETER.api_version`で**エンジン単位の上書き**（例: gpt-5系のみ新版APIを使う）も可能:
+
+```json
+"GPT-Azure": {
+  "NAME": "GPT-Azure",
+  "FUNC_NAME": "generate_response_T_azure_openai",
+  "MODEL": "my-gpt5-deployment",
+  "PARAMETER": {"api_version": "2025-04-01-preview"},
+  "TOKENIZER": "tiktoken",
+  "MEMORY": {"limit": 10000, "role": "both", ...}
+}
+```
+
+画像生成も同様に `generate_image_azure_dalle` で Azure 上の `gpt-image-1`/`dall-e-3` deployment を使えます。
 
 **IMAGEGEN（画像生成）：**
 

@@ -120,6 +120,14 @@
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "GPT-Azure": {
+                "NAME": "GPT-Azure",
+                "FUNC_NAME": "generate_response_T_azure_openai",
+                "MODEL": "gpt-5.1",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 10000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
             }
         },
         "IMAGEGEN": {
@@ -127,6 +135,14 @@
             "GPT-Image": {
                 "NAME": "GPT-Image-1",
                 "FUNC_NAME": "generate_image_dalle",
+                "MODEL": "gpt-image-1",
+                "PARAMETER": {"size": "1024x1024", "quality": "high"},
+                "TOKENIZER": "",
+                "MEMORY": {"limit": 3000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "GPT-Image-Azure": {
+                "NAME": "GPT-Image-Azure",
+                "FUNC_NAME": "generate_image_azure_dalle",
                 "MODEL": "gpt-image-1",
                 "PARAMETER": {"size": "1024x1024", "quality": "high"},
                 "TOKENIZER": "",

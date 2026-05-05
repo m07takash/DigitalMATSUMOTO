@@ -5,7 +5,7 @@ import base64
 from dotenv import load_dotenv
 
 import openai
-from openai import OpenAI
+from openai import OpenAI, AzureOpenAI
 from google import genai
 from google.genai import types
 import anthropic
@@ -31,6 +31,10 @@ anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
 gemini_api_key = os.getenv("GEMINI_API_KEY")
 llama_api_key = os.getenv("LLAMA_API_KEY")
 xai_api_key = os.getenv("XAI_API_KEY")
+# Azure OpenAI Service（chat/image用）
+azure_openai_api_key = os.getenv("AZURE_OPENAI_API_KEY")
+azure_openai_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+azure_openai_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21")
 
 # LLMクライアントのシングルトン
 _clients = {}
@@ -39,6 +43,19 @@ def _get_openai_client(timeout=None):
     key = f"openai_{timeout}"
     if key not in _clients:
         _clients[key] = OpenAI(api_key=openai_api_key, timeout=timeout)
+    return _clients[key]
+
+def _get_azure_openai_client(timeout=None, api_version=None):
+    """Azure OpenAI Service クライアント。エージェント単位で api_version を上書き可能。"""
+    _api_version = api_version or azure_openai_api_version
+    key = f"azure_openai_{timeout}_{_api_version}"
+    if key not in _clients:
+        _clients[key] = AzureOpenAI(
+            api_key=azure_openai_api_key,
+            azure_endpoint=azure_openai_endpoint,
+            api_version=_api_version,
+            timeout=timeout,
+        )
     return _clients[key]
 
 def _get_gemini_client():
@@ -128,6 +145,46 @@ def generate_response_T_gpt(query, system_prompt, model, memories=[], image_path
     else:
         response = completion.choices[0].message.content
         yield str(prompt), response, completion
+
+# Azure OpenAI Service の実行（gpt-* on Azure）
+# MODEL には Azure 上の deployment 名を入れる。
+# PARAMETER に "api_version" を指定するとエージェント単位で API バージョン上書き可。
+def generate_response_T_azure_openai(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
+    params = dict(model.get("PARAMETER") or {})
+    _api_version = params.pop("api_version", None)
+    azure_client = _get_azure_openai_client(api_version=_api_version)
+
+    system_message = [{"role": "system", "content": system_prompt}]
+
+    memory_message = []
+    for memory in memories:
+        memory_message.append({"role": memory["role"], "content": memory["text"]})
+
+    image_message = []
+    for image_path in image_paths:
+        image_base64 = dmu.encode_image_file(image_path)
+        image_message.append({"type": "image_url", "image_url": {"url": f"data:{_get_image_mime(image_path)};base64,{image_base64}"}})
+
+    user_prompt = [{"type": "text", "text": query}] + image_message
+    user_message = [{"role": "user", "content": user_prompt}]
+    prompt = _sanitize_messages(system_message + memory_message + user_message)
+
+    completion = azure_client.chat.completions.create(
+        model=model["MODEL"],   # Azure ではここがdeployment名
+        **params,
+        messages=prompt,
+        stream=stream_mode,
+    )
+
+    if stream_mode:
+        for chunk_completion in completion:
+            if chunk_completion.choices:
+                response = chunk_completion.choices[0].delta.content
+                yield str(prompt), response, chunk_completion
+    else:
+        response = completion.choices[0].message.content
+        yield str(prompt), response, completion
+
 
 # OpenAIのResponses関数の実行
 def generate_response_T_gpt_response(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=False):
@@ -482,3 +539,40 @@ def generate_image_dalle(prompt, system_prompt, model, memories=[], image_paths=
     completion = img_files
 
     yield prompt_str, response, completion
+
+
+# Azure OpenAI Service の画像生成（DALL-E on Azure）
+def generate_image_azure_dalle(prompt, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
+    params = dict(model.get("PARAMETER") or {})
+    _api_version = params.pop("api_version", None)
+    azure_client = _get_azure_openai_client(api_version=_api_version)
+
+    system_message = [{"role": "system", "content": system_prompt}]
+    user_message = [{"role": "user", "content": prompt}]
+
+    memory_message = []
+    for memory in memories:
+        memory_message.append({"role": memory["role"], "content": memory["text"]})
+
+    prompt_str = json.dumps(_sanitize_messages(memory_message + user_message), ensure_ascii=False).replace("\n", "").replace("\\", "")
+
+    if "output_format" not in params:
+        params["output_format"] = "png"
+    completion = azure_client.images.generate(
+        model=model["MODEL"],   # Azureはdeployment名
+        prompt=prompt_str[:3000],
+        **params,
+    )
+
+    img_files = []
+    num = 0
+    ext = params.get("output_format", "png")
+    for i, d in enumerate(completion.data):
+        img_file = temp_folder_path + f"{num}_azure_dalle.{ext}"
+        with open(img_file, "wb") as f:
+            f.write(base64.b64decode(d.b64_json))
+        img_files.append(img_file)
+        num += 1
+
+    response = "画像を生成しました。"
+    yield prompt_str, response, img_files
