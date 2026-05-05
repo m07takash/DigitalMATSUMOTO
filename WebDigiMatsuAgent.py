@@ -560,6 +560,10 @@ def initialize_session_states():
         st.session_state.uploaded_files = []
     if 'file_uploader' not in st.session_state:
         st.session_state.file_uploader = st.file_uploader
+    if 'file_uploader_key' not in st.session_state:
+        # ファイルアップローダーのkeyに使うカウンター。実行完了時にインクリメントして
+        # ウィジェットを「新しいインスタンス」として扱わせ、添付ファイルをクリアする
+        st.session_state.file_uploader_key = 0
     if 'url_fetch_subpages' not in st.session_state:
         st.session_state.url_fetch_subpages = False
     if 'chat_history_visible_dict' not in st.session_state:
@@ -3504,8 +3508,13 @@ def main():
                 st.rerun()
 
     if st.session_state.session_user_id == st.session_state.user_id:
-        # ファイルアップローダー
-        uploaded_files = st.file_uploader("Attached Files:", type=["txt", "vtt", "csv", "json", "pdf", "md", "docx", "xlsx", "pptx", "jpg", "jpeg", "png", "mp3"], accept_multiple_files=True)
+        # ファイルアップローダー（実行完了後にkeyをincrementしてウィジェットを再生成→添付クリア）
+        uploaded_files = st.file_uploader(
+            "Attached Files:",
+            type=["txt", "vtt", "csv", "json", "pdf", "md", "docx", "xlsx", "pptx", "jpg", "jpeg", "png", "mp3"],
+            accept_multiple_files=True,
+            key=f"file_upload_{st.session_state.file_uploader_key}",
+        )
         st.session_state.uploaded_files = uploaded_files
         show_uploaded_files_widget(st.session_state.uploaded_files)
 
@@ -3667,6 +3676,9 @@ def main():
                     with open(uploaded_file_path, "wb") as f:
                         f.write(uploaded_file.getbuffer())
                     uploaded_contents.append(uploaded_file_path)
+                # 実行に取り込んだら WebUI 上の添付はリリース（次レンダーで空のアップローダーを再描画）
+                st.session_state.uploaded_files = []
+                st.session_state.file_uploader_key += 1
 
             # URL取得（入力中のhttp(s)リンクを自動検出しフェッチ）
             if dmuf.extract_urls(user_input):
