@@ -860,7 +860,7 @@ def _rag_explorer():
     # RAG Explorer用の全session_stateキー
     _RAG_STATE_KEYS = [
         "_rag_searched", "_rag_cached_data", "_rag_cached_type", "_rag_prev_collection",
-        "_rag_scatter_cache", "_rag_cluster_cache", "_rag_cluster_explanation",
+        "_rag_scatter_cache", "_rag_cluster_cache", "_rag_cluster_explanation", "_rag_cluster_names",
         "_rag_sensitivity", "_rag_sensitivity_explanation",
         "_rag_temporal", "_rag_temporal_explanation",
         "_rag_llm_response", "_rag_report",
@@ -1260,6 +1260,7 @@ def _rag_explorer():
         st.session_state._rag_scatter_cache = None
         st.session_state._rag_cluster_cache = None
         st.session_state._rag_cluster_explanation = None
+        st.session_state._rag_cluster_names = None
         st.session_state._rag_sensitivity = None
         st.session_state._rag_sensitivity_explanation = None
         st.session_state._rag_temporal = None
@@ -1421,16 +1422,34 @@ def _rag_explorer():
     # ===== ChromaDB用画面（以降は既存ロジック） =====
     _data_type = "ChromaDB"
 
+    # コレクション(DATA_NAME) → RAG_NAME のマップ（エージェントのKNOWLEDGE/BOOK由来）
+    _col_to_rag_name = {}
+    for _k in _agent_data.get("KNOWLEDGE", []) + _agent_data.get("BOOK", []):
+        _rag_name_v = _k.get("RAG_NAME", "")
+        if not _rag_name_v:
+            continue
+        for _d in _k.get("DATA", []):
+            _dn = _d.get("DATA_NAME", "")
+            if _dn:
+                _col_to_rag_name[_dn] = _rag_name_v
+
     # データ取得（キャッシュがあればそれを使う）
     if st.session_state.get("_rag_cached_data") is not None:
         df = st.session_state._rag_cached_data
         _data_type = st.session_state._rag_cached_type
+        # キャッシュにrag_nameがなければ補完
+        if "rag_name" not in df.columns and "_source" in df.columns:
+            df = df.copy()
+            df["rag_name"] = df["_source"].map(lambda s: _col_to_rag_name.get(s, s))
+            st.session_state._rag_cached_data = df
     else:
         _all_raw_data = []
         for _sel in _selected_list:
             _col_data = dmc.get_rag_collection_data(_sel)
+            _rn = _col_to_rag_name.get(_sel, _sel)
             for d in _col_data:
                 d["_source"] = _sel
+                d["rag_name"] = _rn
             _all_raw_data.extend(_col_data)
 
         if not _all_raw_data:
@@ -1548,6 +1567,8 @@ def _rag_explorer():
 
     # 散布図セクション（ChromaDBでvector_data_value_textがある場合のみ）
     _has_vectors = "vector_data_value_text" in df.columns and _data_type in ("ChromaDB", "Mixed")
+    # 視認性の良いマーカー候補
+    _MARKER_CHOICES = ["o", "s", "D", "^", "*", "P", "X", "v", "p", "h", "<", ">"]
     if _has_vectors and filtered_count >= 3:
         st.markdown("---")
         st.subheader("Scatter Plot")
@@ -1557,12 +1578,23 @@ def _rag_explorer():
         if _dim_method == "t-SNE":
             _dim_params["perplexity"] = _scatter_col2.number_input("Perplexity:", value=30, step=1, key="rag_tsne_perp")
 
-        # 色分け用カラム選択（categoryがあればデフォルトに）
-        _color_options = ["(none)"] + _filterable_cols
-        _color_default = 0
-        if "category" in _filterable_cols:
+        # 色分け用カラム選択（rag_nameを最上位に、categoryを次点デフォルトに）
+        _color_options = []
+        if "rag_name" in _filterable_cols:
+            _color_options.append("rag_name")
+        _color_options.append("(none)")
+        _color_options += [c for c in _filterable_cols if c != "rag_name"]
+        if "rag_name" in _color_options:
+            _color_default = _color_options.index("rag_name")
+        elif "category" in _color_options:
             _color_default = _color_options.index("category")
+        else:
+            _color_default = _color_options.index("(none)")
         _color_col = _scatter_col3.selectbox("Color By:", _color_options, index=_color_default, key="rag_color_by")
+
+        # マーカー(形)分け用カラム選択（指定時のみ形を変える）
+        _marker_options = ["(none)"] + [c for c in _filterable_cols if c != _color_col]
+        _marker_col = _scatter_col4.selectbox("Marker By:", _marker_options, index=0, key="rag_marker_by")
 
         # ドットサイズモード・生成ボタン
         _scatter_col5, _scatter_col6 = st.columns([1, 1])
@@ -1588,6 +1620,10 @@ def _rag_explorer():
             with st.spinner("次元削減を実行中..."):
                 try:
                     _df_reduced, _dim_info = dmva.reduce_dimensions(_df_for_scatter, method=_dim_method, params=_dim_params)
+                    # マーカー分け列を保持（df_reducedに無ければ補完）
+                    if _marker_col != "(none)" and _marker_col not in _df_reduced.columns and _marker_col in _df_for_scatter.columns:
+                        _mk_map = _df_for_scatter.set_index("id")[_marker_col]
+                        _df_reduced[_marker_col] = _df_reduced["id"].map(_mk_map)
 
                     # 結果をキャッシュ
                     st.session_state._rag_scatter_cache = {
@@ -1595,6 +1631,7 @@ def _rag_explorer():
                         "dim_info": _dim_info,
                         "dim_method": _dim_method,
                         "color_col": _color_col,
+                        "marker_col": _marker_col,
                         "size_mode": _size_mode,
                         "cat_color_map": _cat_color_map,
                         "selected": _selected,
@@ -1611,6 +1648,7 @@ def _rag_explorer():
             _dim_info = _scatter_cache["dim_info"]
             _sc_method = _scatter_cache["dim_method"]
             _sc_color = _scatter_cache["color_col"]
+            _sc_marker = _scatter_cache.get("marker_col", "(none)")
             _sc_size = _scatter_cache["size_mode"]
             _sc_cat_map = _scatter_cache["cat_color_map"]
             _sc_count = _scatter_cache["filtered_count"]
@@ -1631,17 +1669,47 @@ def _rag_explorer():
             import matplotlib.pyplot as plt
             fig, ax = plt.subplots(figsize=(10, 7))
 
+            # マーカー値→形のマップ
+            _marker_map = {}
+            if _sc_marker != "(none)" and _sc_marker in _df_reduced.columns:
+                _mk_vals = sorted(_df_reduced[_sc_marker].dropna().unique())
+                _marker_map = {v: _MARKER_CHOICES[i % len(_MARKER_CHOICES)] for i, v in enumerate(_mk_vals)}
+
             if _sc_color != "(none)" and _sc_color in _df_reduced.columns:
                 _categories = sorted(_df_reduced[_sc_color].dropna().unique())
-                for cat in _categories:
-                    _mask = _df_reduced[_sc_color] == cat
-                    _color = _sc_cat_map.get(cat, None)
-                    _s = _dot_sizes[_mask] if _dot_sizes is not None else None
-                    ax.scatter(_df_reduced.loc[_mask, "X1"], _df_reduced.loc[_mask, "X2"],
-                              color=_color, s=_s, alpha=0.7, label=str(cat)[:20])
+                # 色マップ（指定の無いカテゴリにはtab10からフォールバック）
+                _default_cmap = plt.cm.get_cmap("tab10", max(len(_categories), 1))
+                _color_map_full = {}
+                for i, cat in enumerate(_categories):
+                    _color_map_full[cat] = _sc_cat_map.get(cat) or _default_cmap(i)
+                if _marker_map:
+                    # 色×形の組み合わせで描画
+                    for cat in _categories:
+                        for mk_v, mk_sym in _marker_map.items():
+                            _mask = (_df_reduced[_sc_color] == cat) & (_df_reduced[_sc_marker] == mk_v)
+                            if not _mask.any():
+                                continue
+                            _s = _dot_sizes[_mask] if _dot_sizes is not None else None
+                            ax.scatter(_df_reduced.loc[_mask, "X1"], _df_reduced.loc[_mask, "X2"],
+                                      color=_color_map_full.get(cat), s=_s, alpha=0.7,
+                                      marker=mk_sym, label=f"{str(cat)[:20]} / {str(mk_v)[:14]}")
+                else:
+                    for cat in _categories:
+                        _mask = _df_reduced[_sc_color] == cat
+                        _s = _dot_sizes[_mask] if _dot_sizes is not None else None
+                        ax.scatter(_df_reduced.loc[_mask, "X1"], _df_reduced.loc[_mask, "X2"],
+                                  color=_color_map_full.get(cat), s=_s, alpha=0.7, label=str(cat)[:20])
                 ax.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=8)
             else:
-                ax.scatter(_df_reduced["X1"], _df_reduced["X2"], s=_dot_sizes, alpha=0.7)
+                if _marker_map:
+                    for mk_v, mk_sym in _marker_map.items():
+                        _mask = _df_reduced[_sc_marker] == mk_v
+                        _s = _dot_sizes[_mask] if _dot_sizes is not None else None
+                        ax.scatter(_df_reduced.loc[_mask, "X1"], _df_reduced.loc[_mask, "X2"],
+                                  s=_s, alpha=0.7, marker=mk_sym, label=str(mk_v)[:20])
+                    ax.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=8)
+                else:
+                    ax.scatter(_df_reduced["X1"], _df_reduced["X2"], s=_dot_sizes, alpha=0.7)
 
             ax.set_title(f"{_sc_method} - {_selected} ({_sc_count}件)\n{_dim_info}")
             ax.grid(True)
@@ -1714,39 +1782,82 @@ def _rag_explorer():
             _sens = _sens_cache
             st.caption(f"Query: **{_sens['query']}** | Top {len(_sens['ranking'])}")
 
-            # 感度分析対象のみの散布図
+            # 感度分析対象のみの散布図（基本色はScatter Plotと同じ・類似度でグラデーション）
             _sr = _sens["ranking"]
             if "X1" in _sr.columns and "X2" in _sr.columns:
                 import matplotlib
                 matplotlib.use("Agg")
                 import matplotlib.pyplot as plt
-                from matplotlib.colors import LinearSegmentedColormap
+                import matplotlib.colors as _mcolors
 
                 _df_all = _scatter_cache["df_reduced"]
+                _sc_color_s = _scatter_cache.get("color_col", "(none)")
+                _sc_marker_s = _scatter_cache.get("marker_col", "(none)")
+                _sc_cat_map_s = _scatter_cache.get("cat_color_map", {})
+
                 fig_sens_sc, ax_sens_sc = plt.subplots(figsize=(10, 7))
                 ax_sens_sc.scatter(_df_all["X1"], _df_all["X2"], color="lightgray", alpha=0.3, s=15)
 
-                # ボーナス未適用 → 青グラデ、ボーナス適用 → 緑グラデ
-                _blue_cmap = LinearSegmentedColormap.from_list("blue_v", ["#E8F0FE", "#1565C0", "#0D47A1"])
-                _green_cmap = LinearSegmentedColormap.from_list("green_v", ["#E8F5E9", "#2E7D32", "#1B5E20"])
+                # 色マップ（Scatter PlotのColor Byに合わせる）
+                _color_map_full_s = {}
+                if _sc_color_s != "(none)" and _sc_color_s in _df_all.columns:
+                    _cats_s = sorted(_df_all[_sc_color_s].dropna().unique())
+                    _default_cmap_s = plt.cm.get_cmap("tab10", max(len(_cats_s), 1))
+                    for i, cat in enumerate(_cats_s):
+                        _color_map_full_s[cat] = _sc_cat_map_s.get(cat) or _default_cmap_s(i)
 
-                _sr_normal = _sr[~_sr["bonus_applied"]]
-                _sr_bonus = _sr[_sr["bonus_applied"]]
+                # マーカーマップ
+                _marker_map_s = {}
+                if _sc_marker_s != "(none)" and _sc_marker_s in _df_all.columns:
+                    _mk_vals_s = sorted(_df_all[_sc_marker_s].dropna().unique())
+                    _marker_map_s = {v: _MARKER_CHOICES[i % len(_MARKER_CHOICES)] for i, v in enumerate(_mk_vals_s)}
 
+                # スコア → 透明度（高類似度＝濃い）
+                _score_min = _sr["score"].min() if not _sr["score"].empty else 0
                 _score_max = _sr["score"].max() if not _sr["score"].empty else 1
-                # 通常（青）
-                if not _sr_normal.empty:
-                    _inv_n = _score_max - _sr_normal["score"]
-                    ax_sens_sc.scatter(_sr_normal["X1"], _sr_normal["X2"], c=_inv_n,
-                                      cmap=_blue_cmap, alpha=0.9, s=60, edgecolors="black", linewidths=0.5,
-                                      label="Normal")
-                # ボーナス適用（緑）
-                if not _sr_bonus.empty:
-                    _inv_b = _score_max - _sr_bonus["score"]
-                    ax_sens_sc.scatter(_sr_bonus["X1"], _sr_bonus["X2"], c=_inv_b,
-                                      cmap=_green_cmap, alpha=0.9, s=60, edgecolors="black", linewidths=0.5,
-                                      marker="D", label="Bonus Applied")
-                ax_sens_sc.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=8)
+                _score_range = (_score_max - _score_min) if _score_max > _score_min else 1.0
+
+                def _alpha_for(score_v):
+                    norm = (score_v - _score_min) / _score_range
+                    return float(0.95 - 0.55 * norm)  # 0.40〜0.95
+
+                # 各点を個別に描画（色×形×αを反映）
+                for _, _row in _sr.iterrows():
+                    _x = _row.get("X1")
+                    _y = _row.get("X2")
+                    if pd.isna(_x) or pd.isna(_y):
+                        continue
+                    # 基本色
+                    if _color_map_full_s and _sc_color_s in _row.index and pd.notna(_row.get(_sc_color_s)):
+                        _base_rgb = _mcolors.to_rgb(_color_map_full_s.get(_row[_sc_color_s], "#1565C0"))
+                    else:
+                        _base_rgb = _mcolors.to_rgb("#1565C0")
+                    _alpha_v = _alpha_for(_row["score"])
+                    # マーカー（ボーナス適用は ◇ で強調）
+                    if _row.get("bonus_applied"):
+                        _mk = "D"
+                    elif _marker_map_s and _sc_marker_s in _row.index and pd.notna(_row.get(_sc_marker_s)):
+                        _mk = _marker_map_s.get(_row[_sc_marker_s], "o")
+                    else:
+                        _mk = "o"
+                    ax_sens_sc.scatter([_x], [_y], color=_base_rgb, alpha=_alpha_v, s=70,
+                                      edgecolors="black", linewidths=0.5, marker=_mk)
+
+                # 凡例（色＝Color By値、形＝Marker By値、Bonus）
+                _legend_handles = []
+                from matplotlib.lines import Line2D as _L2D
+                for cat, col in _color_map_full_s.items():
+                    _legend_handles.append(_L2D([0], [0], marker="o", linestyle="",
+                                                color=col, markersize=8, label=str(cat)[:20]))
+                for mk_v, mk_sym in _marker_map_s.items():
+                    _legend_handles.append(_L2D([0], [0], marker=mk_sym, linestyle="",
+                                                color="dimgray", markersize=8, label=str(mk_v)[:14]))
+                if _sr["bonus_applied"].any():
+                    _legend_handles.append(_L2D([0], [0], marker="D", linestyle="",
+                                                color="dimgray", markersize=8, label="Bonus Applied"))
+                if _legend_handles:
+                    ax_sens_sc.legend(handles=_legend_handles, loc="upper left",
+                                      bbox_to_anchor=(1, 1), fontsize=8)
                 ax_sens_sc.set_title(f"Sensitivity: \"{_sens['query']}\" (Top {len(_sr)})")
                 ax_sens_sc.grid(True)
                 st.pyplot(fig_sens_sc)
@@ -1818,7 +1929,7 @@ def _rag_explorer():
     if _scatter_cache and _scatter_cache.get("selected") == _selected:
         st.markdown("---")
         st.subheader("Clustering")
-        _cl_col1, _cl_col2, _cl_col3 = st.columns([1, 1, 1])
+        _cl_col1, _cl_col2, _cl_col3, _cl_col4 = st.columns([1, 1, 1, 1])
         _cl_method = _cl_col1.selectbox("Method:", ["K-Means", "DBSCAN", "Hierarchical"], key="rag_cl_method")
         _cl_params = {}
         if _cl_method in ["K-Means", "Hierarchical"]:
@@ -1832,6 +1943,10 @@ def _rag_explorer():
             _cl_params["min_samples"] = _cl_col3.number_input("min_samples:", value=_default_min_samples, min_value=2, step=1, key="rag_cl_min")
             _cl_params["eps"] = _cl_col2.number_input(f"eps (auto={_auto_eps}):", value=_auto_eps, min_value=0.1, step=0.5, format="%.2f", key="rag_cl_eps")
 
+        # マーカー(形)分け（指定時のみ形を変える）
+        _cl_marker_options = ["(none)"] + _filterable_cols
+        _cl_marker_col = _cl_col4.selectbox("Marker By:", _cl_marker_options, index=0, key="rag_cl_marker_by")
+
         _run_cluster = st.button("Run Clustering", key="rag_run_cluster")
 
         if _run_cluster:
@@ -1840,12 +1955,19 @@ def _rag_explorer():
             try:
                 _df_clustered, _cl_info = dmva.apply_clustering(_df_reduced, method=_cl_method, params=_cl_params)
                 _cl_summary = dmva.build_cluster_summary(_df_clustered)
+                # マーカー列を補完
+                if _cl_marker_col != "(none)" and _cl_marker_col not in _df_clustered.columns and _cl_marker_col in df.columns:
+                    _mk_map_cl = df.set_index("id")[_cl_marker_col]
+                    _df_clustered[_cl_marker_col] = _df_clustered["id"].map(_mk_map_cl)
                 st.session_state._rag_cluster_cache = {
                     "df_clustered": _df_clustered,
                     "cl_info": _cl_info,
                     "cl_summary": _cl_summary,
+                    "marker_col": _cl_marker_col,
                     "selected": _selected,
                 }
+                # 新規クラスタリング時は名前マップをリセット
+                st.session_state._rag_cluster_names = None
             except Exception as e:
                 st.warning(f"クラスタリングでエラーが発生しました: {e}")
                 st.session_state._rag_cluster_cache = None
@@ -1856,8 +1978,20 @@ def _rag_explorer():
             _df_clustered = _cluster_cache["df_clustered"]
             _cl_info = _cluster_cache["cl_info"]
             _cl_summary = _cluster_cache["cl_summary"]
+            _cl_marker_col_c = _cluster_cache.get("marker_col", "(none)")
 
             st.caption(f"**{_cl_info}**")
+
+            # クラスター名マップ（Explain Clusters実行後にセット）
+            _cl_names_map = st.session_state.get("_rag_cluster_names") or {}
+
+            def _cl_label(cl):
+                if cl < 0:
+                    return "Noise"
+                _nm = _cl_names_map.get(str(int(cl))) or _cl_names_map.get(int(cl))
+                if _nm:
+                    return f"C{int(cl)}: {str(_nm)[:10]}"
+                return f"Cluster {int(cl)}"
 
             # クラスター散布図
             import matplotlib
@@ -1865,21 +1999,39 @@ def _rag_explorer():
             import matplotlib.pyplot as plt
             fig_cl, ax_cl = plt.subplots(figsize=(10, 7))
             _cl_labels = sorted(_df_clustered["Cluster"].unique())
-            _cmap = plt.cm.get_cmap("tab10", len(_cl_labels))
+            _cmap = plt.cm.get_cmap("tab10", max(len(_cl_labels), 1))
+            # マーカーマップ
+            _cl_marker_map = {}
+            if _cl_marker_col_c != "(none)" and _cl_marker_col_c in _df_clustered.columns:
+                _mk_vals_cl = sorted(_df_clustered[_cl_marker_col_c].dropna().unique())
+                _cl_marker_map = {v: _MARKER_CHOICES[i % len(_MARKER_CHOICES)] for i, v in enumerate(_mk_vals_cl)}
+
             for i, cl in enumerate(_cl_labels):
-                _mask = _df_clustered["Cluster"] == cl
-                _label = f"Cluster {cl}" if cl >= 0 else "Noise"
                 _color = "gray" if cl < 0 else _cmap(i)
-                ax_cl.scatter(_df_clustered.loc[_mask, "X1"], _df_clustered.loc[_mask, "X2"],
-                              color=_color, alpha=0.7, label=_label)
+                if _cl_marker_map:
+                    for mk_v, mk_sym in _cl_marker_map.items():
+                        _mask = (_df_clustered["Cluster"] == cl) & (_df_clustered[_cl_marker_col_c] == mk_v)
+                        if not _mask.any():
+                            continue
+                        ax_cl.scatter(_df_clustered.loc[_mask, "X1"], _df_clustered.loc[_mask, "X2"],
+                                      color=_color, alpha=0.7, marker=mk_sym,
+                                      label=f"{_cl_label(cl)} / {str(mk_v)[:10]}")
+                else:
+                    _mask = _df_clustered["Cluster"] == cl
+                    ax_cl.scatter(_df_clustered.loc[_mask, "X1"], _df_clustered.loc[_mask, "X2"],
+                                  color=_color, alpha=0.7, label=_cl_label(cl))
             ax_cl.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=8)
             ax_cl.set_title(f"Clustering: {_cl_info}")
             ax_cl.grid(True)
             st.pyplot(fig_cl)
             plt.close(fig_cl)
 
-            # クラスター分布テーブル
+            # クラスター分布テーブル（命名済みなら名称列を追加）
             _cl_dist = _df_clustered.groupby("Cluster").size().reset_index(name="count").sort_values("Cluster")
+            if _cl_names_map:
+                _cl_dist["Name"] = _cl_dist["Cluster"].apply(
+                    lambda c: (_cl_names_map.get(str(int(c))) or _cl_names_map.get(int(c)) or ("Noise" if c < 0 else "")))
+                _cl_dist = _cl_dist[["Cluster", "Name", "count"]]
             st.dataframe(_cl_dist, hide_index=True, use_container_width=True)
 
             # 座標+Clusterを一覧に追加して差し替え
@@ -1901,20 +2053,47 @@ def _rag_explorer():
             _cl_engine = _explain_col2.selectbox("Explain Engine:", _cl_engine_list, key="rag_cl_engine") if _cl_engine_list else None
 
             if _explain_col1.button("Explain Clusters", key="rag_explain_cluster"):
+                import json as _json_cl
+                import re as _re_cl
                 _cl_agent_file = "agent_23DataAnalyst.json"
                 _cl_data = f"以下はRAGデータ「{_selected}」のクラスタリング結果です。\n\nクラスタリング手法: {_cl_info}\n{_cl_summary}"
+                # 命名指示（散布図の凡例用、10文字以内）
+                _ids_listed = sorted([int(c) for c in _df_clustered["Cluster"].unique() if c >= 0])
+                _name_instr = (
+                    "\n\n【追加指示: クラスター名】\n"
+                    f"上記の各クラスター（{_ids_listed}）に、内容を端的に表す日本語10文字以内のラベルを付けてください。\n"
+                    "応答の冒頭に、必ず次の形式のJSONブロックを1つだけ出力してください（コードフェンス必須）:\n"
+                    "```json\n{\"0\": \"ラベル1\", \"1\": \"ラベル2\"}\n```\n"
+                    "JSONブロックの後に、本来の3パートを続けてください。\n"
+                )
                 with st.spinner("クラスターを解説中..."):
                     try:
                         _agent = dma.DigiM_Agent(_cl_agent_file)
                         if _cl_engine and _cl_engine in _agent.agent.get("ENGINE", {}).get("LLM", {}):
                             _agent.agent["ENGINE"]["LLM"]["DEFAULT"] = _cl_engine
                         _template = _agent.set_prompt_template("Cluster Analyst")
-                        _prompt = f"{_template}\n{_cl_data}"
+                        _prompt = f"{_template}\n{_cl_data}{_name_instr}"
                         _response = ""
                         for _, chunk, _ in _agent.generate_response("LLM", _prompt, [], stream_mode=False):
                             if chunk:
                                 _response += chunk
-                        st.session_state._rag_cluster_explanation = _response
+                        # JSON部分を抽出してクラスター名マップに反映
+                        _names_parsed = {}
+                        _m = _re_cl.search(r"```json\s*(\{.*?\})\s*```", _response, _re_cl.DOTALL)
+                        if not _m:
+                            _m = _re_cl.search(r"(\{[^{}]*\})", _response, _re_cl.DOTALL)
+                        if _m:
+                            try:
+                                _raw = _json_cl.loads(_m.group(1))
+                                for k, v in _raw.items():
+                                    _names_parsed[str(k)] = str(v)[:10]
+                            except Exception:
+                                pass
+                        # 表示するresponseからJSONブロックを取り除く
+                        _display_resp = _re_cl.sub(r"```json\s*\{.*?\}\s*```\s*", "", _response, count=1, flags=_re_cl.DOTALL).strip()
+                        st.session_state._rag_cluster_explanation = _display_resp
+                        if _names_parsed:
+                            st.session_state._rag_cluster_names = _names_parsed
                     except Exception as e:
                         st.error(f"クラスター解説エラー: {e}")
 
@@ -1927,21 +2106,52 @@ def _rag_explorer():
     if _has_date and filtered_count >= 3:
         st.markdown("---")
         st.subheader("Temporal Analysis")
-        _temp_col1, _temp_col2 = st.columns([1, 1])
+        _temp_col1, _temp_col2, _temp_col3, _temp_col4 = st.columns([1, 1, 1, 1])
         _temp_period = _temp_col1.selectbox("Period:", ["month", "quarter", "year"], key="rag_temp_period")
         _temp_topn = _temp_col2.slider("Keywords per period:", min_value=3, max_value=20, value=7, key="rag_temp_topn")
+
+        # カテゴライズ列の選択（既定: category。それ以外も選択可）
+        _temp_cat_options = [c for c in _filterable_cols] or ["(none)"]
+        _temp_cat_default = _temp_cat_options.index("category") if "category" in _temp_cat_options else 0
+        _temp_cat_col = _temp_col3.selectbox("Category Column:", _temp_cat_options, index=_temp_cat_default, key="rag_temp_cat_col")
+
+        # 集計モード: 合計 / RAG_NAMEごと
+        _temp_mode_options = ["Total"]
+        if "rag_name" in df_filtered.columns and df_filtered["rag_name"].nunique() > 1:
+            _temp_mode_options.append("Per RAG_NAME")
+        _temp_mode = _temp_col4.selectbox("View Mode:", _temp_mode_options, index=0, key="rag_temp_mode")
 
         if st.button("Analyze Temporal", key="rag_run_temporal"):
             import DigiM_VAnalytics as dmva
             with st.spinner("時系列分析を実行中..."):
                 try:
+                    # 全体
                     _cat_pivot, _kw_df, _temp_summary = dmva.temporal_analysis(
-                        df_filtered, period=_temp_period, top_n_keywords=_temp_topn)
+                        df_filtered, period=_temp_period, top_n_keywords=_temp_topn,
+                        category_col=_temp_cat_col)
+                    # RAG_NAMEごと（指定時のみ）
+                    _per_rag = {}
+                    if _temp_mode == "Per RAG_NAME" and "rag_name" in df_filtered.columns:
+                        for _rn in sorted(df_filtered["rag_name"].dropna().unique()):
+                            _df_rn = df_filtered[df_filtered["rag_name"] == _rn]
+                            if len(_df_rn) < 1:
+                                continue
+                            _cp_rn, _kw_rn, _sum_rn = dmva.temporal_analysis(
+                                _df_rn, period=_temp_period, top_n_keywords=_temp_topn,
+                                category_col=_temp_cat_col)
+                            _per_rag[_rn] = {
+                                "cat_pivot": _cp_rn,
+                                "kw_df": _kw_rn,
+                                "summary": _sum_rn,
+                            }
                     st.session_state._rag_temporal = {
                         "cat_pivot": _cat_pivot,
                         "kw_df": _kw_df,
                         "summary": _temp_summary,
                         "period": _temp_period,
+                        "category_col": _temp_cat_col,
+                        "mode": _temp_mode,
+                        "per_rag": _per_rag,
                     }
                 except Exception as e:
                     st.warning(f"時系列分析でエラーが発生しました: {e}")
@@ -1949,27 +2159,29 @@ def _rag_explorer():
         # キャッシュから時系列分析結果を表示
         if st.session_state.get("_rag_temporal"):
             _temp = st.session_state._rag_temporal
+            _temp_cat_col_c = _temp.get("category_col", "category")
+            _temp_mode_c = _temp.get("mode", "Total")
+            _temp_period_c = _temp.get("period", "month")
 
-            # カテゴリ推移グラフ
-            if _temp["cat_pivot"] is not None and not _temp["cat_pivot"].empty:
-                st.markdown("**カテゴリ構成の推移:**")
-                import matplotlib
-                matplotlib.use("Agg")
-                import matplotlib.pyplot as plt
-                # category_mapの色を適用
-                _cat_color_map_t = {}
-                try:
-                    _cat_map_json_t = dmu.read_json_file("category_map.json", mst_folder_path)
-                    if not _cat_map_json_t:
-                        _cat_map_json_t = dmu.read_json_file("sample_category_map.json", mst_folder_path)
-                    _cat_color_map_t = _cat_map_json_t.get("CategoryColor", {})
-                except Exception:
-                    pass
-                _cp = _temp["cat_pivot"]
-                _colors = [_cat_color_map_t.get(c, None) for c in _cp.columns]
+            # category_mapの色を適用
+            import matplotlib
+            matplotlib.use("Agg")
+            import matplotlib.pyplot as plt
+            _cat_color_map_t = {}
+            try:
+                _cat_map_json_t = dmu.read_json_file("category_map.json", mst_folder_path)
+                if not _cat_map_json_t:
+                    _cat_map_json_t = dmu.read_json_file("sample_category_map.json", mst_folder_path)
+                _cat_color_map_t = _cat_map_json_t.get("CategoryColor", {})
+            except Exception:
+                pass
+
+            def _draw_temporal_pivot(_cp_df, _title):
+                _colors = [_cat_color_map_t.get(c, None) for c in _cp_df.columns]
                 fig_cat, ax_cat = plt.subplots(figsize=(12, 5))
-                _cp.plot(kind="bar", stacked=True, ax=ax_cat, color=_colors if all(_colors) else None, alpha=0.8)
-                ax_cat.set_title(f"Category Composition ({_temp['period']})")
+                _cp_df.plot(kind="bar", stacked=True, ax=ax_cat,
+                            color=_colors if all(_colors) else None, alpha=0.8)
+                ax_cat.set_title(_title)
                 ax_cat.set_ylabel("Count")
                 ax_cat.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=7)
                 plt.xticks(rotation=45, ha="right")
@@ -1977,10 +2189,31 @@ def _rag_explorer():
                 st.pyplot(fig_cat)
                 plt.close(fig_cat)
 
+            # 全体グラフ
+            if _temp["cat_pivot"] is not None and not _temp["cat_pivot"].empty:
+                st.markdown(f"**[{_temp_cat_col_c}]構成の推移 (Total):**")
+                _draw_temporal_pivot(_temp["cat_pivot"], f"{_temp_cat_col_c} Composition ({_temp_period_c}) - Total")
+
+            # RAG_NAMEごとのグラフ
+            if _temp_mode_c == "Per RAG_NAME":
+                _per_rag_c = _temp.get("per_rag", {}) or {}
+                for _rn, _v in _per_rag_c.items():
+                    _cp_rn = _v.get("cat_pivot")
+                    if _cp_rn is not None and not _cp_rn.empty:
+                        st.markdown(f"**[{_temp_cat_col_c}]構成の推移 - RAG: {_rn}:**")
+                        _draw_temporal_pivot(_cp_rn, f"{_temp_cat_col_c} Composition ({_temp_period_c}) - {_rn}")
+
             # キーワード推移テーブル
             if _temp["kw_df"] is not None and not _temp["kw_df"].empty:
-                st.markdown("**期間別キーワード:**")
+                st.markdown("**期間別キーワード (Total):**")
                 st.dataframe(_temp["kw_df"], hide_index=True, use_container_width=True, height=300)
+            if _temp_mode_c == "Per RAG_NAME":
+                _per_rag_c = _temp.get("per_rag", {}) or {}
+                for _rn, _v in _per_rag_c.items():
+                    _kw_rn = _v.get("kw_df")
+                    if _kw_rn is not None and not _kw_rn.empty:
+                        st.markdown(f"**期間別キーワード - RAG: {_rn}:**")
+                        st.dataframe(_kw_rn, hide_index=True, use_container_width=True, height=200)
 
             # LLMによる時系列解説
             _temp_explain_col1, _temp_explain_col2 = st.columns([1, 1])
@@ -1990,7 +2223,13 @@ def _rag_explorer():
 
             if _temp_explain_col1.button("Explain Trends", key="rag_explain_temporal"):
                 _cl_agent_file = "agent_23DataAnalyst.json"
-                _temp_prompt_data = f"以下はRAGデータ「{_selected}」の時系列分析結果です。\n各期間のキーワードから関心の変遷を読み取ってください。\n\n{_temp['summary']}"
+                _temp_prompt_data = f"以下はRAGデータ「{_selected}」の時系列分析結果です。\n各期間のキーワードから関心の変遷を読み取ってください。\n\n[Total]\n{_temp['summary']}"
+                if _temp_mode_c == "Per RAG_NAME":
+                    _per_rag_c = _temp.get("per_rag", {}) or {}
+                    for _rn, _v in _per_rag_c.items():
+                        _sum_rn = _v.get("summary", "")
+                        if _sum_rn:
+                            _temp_prompt_data += f"\n\n[RAG: {_rn}]\n{_sum_rn}"
                 with st.spinner("時系列の変遷を解説中..."):
                     try:
                         _agent = dma.DigiM_Agent(_cl_agent_file)
@@ -2076,54 +2315,135 @@ def _rag_explorer():
             _sc_m = _sc_cache["dim_method"]
             _sc_info = _sc_cache["dim_info"]
             _sc_color = _sc_cache["color_col"]
+            _sc_marker_r = _sc_cache.get("marker_col", "(none)")
             _sc_cat_map = _sc_cache.get("cat_color_map", {})
             fig_r, ax_r = plt.subplots(figsize=(10, 7))
+            _marker_map_r = {}
+            if _sc_marker_r != "(none)" and _sc_marker_r in _dfr.columns:
+                _mk_vals_r = sorted(_dfr[_sc_marker_r].dropna().unique())
+                _marker_map_r = {v: _MARKER_CHOICES[i % len(_MARKER_CHOICES)] for i, v in enumerate(_mk_vals_r)}
             if _sc_color != "(none)" and _sc_color in _dfr.columns:
-                for cat in sorted(_dfr[_sc_color].dropna().unique()):
-                    _m = _dfr[_sc_color] == cat
-                    ax_r.scatter(_dfr.loc[_m, "X1"], _dfr.loc[_m, "X2"], color=_sc_cat_map.get(cat), alpha=0.7, label=str(cat)[:20])
+                _cats_r = sorted(_dfr[_sc_color].dropna().unique())
+                _default_cmap_r = plt.cm.get_cmap("tab10", max(len(_cats_r), 1))
+                _color_map_full_r = {c: (_sc_cat_map.get(c) or _default_cmap_r(i)) for i, c in enumerate(_cats_r)}
+                if _marker_map_r:
+                    for cat in _cats_r:
+                        for mk_v, mk_sym in _marker_map_r.items():
+                            _m = (_dfr[_sc_color] == cat) & (_dfr[_sc_marker_r] == mk_v)
+                            if not _m.any():
+                                continue
+                            ax_r.scatter(_dfr.loc[_m, "X1"], _dfr.loc[_m, "X2"],
+                                        color=_color_map_full_r[cat], alpha=0.7, marker=mk_sym,
+                                        label=f"{str(cat)[:20]} / {str(mk_v)[:14]}")
+                else:
+                    for cat in _cats_r:
+                        _m = _dfr[_sc_color] == cat
+                        ax_r.scatter(_dfr.loc[_m, "X1"], _dfr.loc[_m, "X2"],
+                                    color=_color_map_full_r[cat], alpha=0.7, label=str(cat)[:20])
                 ax_r.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=8)
             else:
-                ax_r.scatter(_dfr["X1"], _dfr["X2"], alpha=0.7)
+                if _marker_map_r:
+                    for mk_v, mk_sym in _marker_map_r.items():
+                        _m = _dfr[_sc_marker_r] == mk_v
+                        ax_r.scatter(_dfr.loc[_m, "X1"], _dfr.loc[_m, "X2"], alpha=0.7, marker=mk_sym, label=str(mk_v)[:20])
+                    ax_r.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=8)
+                else:
+                    ax_r.scatter(_dfr["X1"], _dfr["X2"], alpha=0.7)
             ax_r.set_title(f"{_sc_m} ({_sc_info})")
             ax_r.grid(True)
             _report += _fig_to_md(fig_r) + "\n\n"
 
-        # 感度分析
+        # 感度分析（基本色はScatter Plotと同じ・類似度でグラデーション）
         _sens_c = st.session_state.get("_rag_sensitivity")
         if _sens_c and _sens_c.get("selected") == _selected:
             _report += f"## Sensitivity Analysis\n\nQuery: {_sens_c.get('query', '')}\n\n"
             _sr = _sens_c["ranking"]
             if "X1" in _sr.columns and _sc_cache:
-                _df_all = _sc_cache["df_reduced"]
-                from matplotlib.colors import LinearSegmentedColormap
-                _blue_cm = LinearSegmentedColormap.from_list("bv", ["#E8F0FE", "#1565C0", "#0D47A1"])
-                _green_cm = LinearSegmentedColormap.from_list("gv", ["#E8F5E9", "#2E7D32", "#1B5E20"])
+                import matplotlib.colors as _mcolors_r
+                from matplotlib.lines import Line2D as _L2D_r
+                _df_all_r = _sc_cache["df_reduced"]
+                _sc_color_rs = _sc_cache.get("color_col", "(none)")
+                _sc_marker_rs = _sc_cache.get("marker_col", "(none)")
+                _sc_cat_map_rs = _sc_cache.get("cat_color_map", {})
+                _color_map_full_rs = {}
+                if _sc_color_rs != "(none)" and _sc_color_rs in _df_all_r.columns:
+                    _cats_rs = sorted(_df_all_r[_sc_color_rs].dropna().unique())
+                    _default_cmap_rs = plt.cm.get_cmap("tab10", max(len(_cats_rs), 1))
+                    _color_map_full_rs = {c: (_sc_cat_map_rs.get(c) or _default_cmap_rs(i)) for i, c in enumerate(_cats_rs)}
+                _marker_map_rs = {}
+                if _sc_marker_rs != "(none)" and _sc_marker_rs in _df_all_r.columns:
+                    _mk_vals_rs = sorted(_df_all_r[_sc_marker_rs].dropna().unique())
+                    _marker_map_rs = {v: _MARKER_CHOICES[i % len(_MARKER_CHOICES)] for i, v in enumerate(_mk_vals_rs)}
+                _score_min_r = _sr["score"].min() if not _sr["score"].empty else 0
+                _score_max_r = _sr["score"].max() if not _sr["score"].empty else 1
+                _score_range_r = (_score_max_r - _score_min_r) if _score_max_r > _score_min_r else 1.0
                 fig_s, ax_s = plt.subplots(figsize=(10, 7))
-                ax_s.scatter(_df_all["X1"], _df_all["X2"], color="lightgray", alpha=0.3, s=15)
-                _score_max = _sr["score"].max() if not _sr["score"].empty else 1
-                _sr_n = _sr[~_sr["bonus_applied"]]
-                _sr_b = _sr[_sr["bonus_applied"]]
-                if not _sr_n.empty:
-                    ax_s.scatter(_sr_n["X1"], _sr_n["X2"], c=_score_max - _sr_n["score"], cmap=_blue_cm, alpha=0.9, s=60, edgecolors="black", linewidths=0.5)
-                if not _sr_b.empty:
-                    ax_s.scatter(_sr_b["X1"], _sr_b["X2"], c=_score_max - _sr_b["score"], cmap=_green_cm, alpha=0.9, s=60, edgecolors="black", linewidths=0.5, marker="D")
+                ax_s.scatter(_df_all_r["X1"], _df_all_r["X2"], color="lightgray", alpha=0.3, s=15)
+                for _, _row in _sr.iterrows():
+                    _x = _row.get("X1"); _y = _row.get("X2")
+                    if pd.isna(_x) or pd.isna(_y):
+                        continue
+                    if _color_map_full_rs and _sc_color_rs in _row.index and pd.notna(_row.get(_sc_color_rs)):
+                        _base = _mcolors_r.to_rgb(_color_map_full_rs.get(_row[_sc_color_rs], "#1565C0"))
+                    else:
+                        _base = _mcolors_r.to_rgb("#1565C0")
+                    _norm = (_row["score"] - _score_min_r) / _score_range_r
+                    _alpha_v = float(0.95 - 0.55 * _norm)
+                    if _row.get("bonus_applied"):
+                        _mk = "D"
+                    elif _marker_map_rs and _sc_marker_rs in _row.index and pd.notna(_row.get(_sc_marker_rs)):
+                        _mk = _marker_map_rs.get(_row[_sc_marker_rs], "o")
+                    else:
+                        _mk = "o"
+                    ax_s.scatter([_x], [_y], color=_base, alpha=_alpha_v, s=70,
+                                edgecolors="black", linewidths=0.5, marker=_mk)
+                _legend_h = []
+                for cat, col in _color_map_full_rs.items():
+                    _legend_h.append(_L2D_r([0], [0], marker="o", linestyle="", color=col, markersize=8, label=str(cat)[:20]))
+                for mk_v, mk_sym in _marker_map_rs.items():
+                    _legend_h.append(_L2D_r([0], [0], marker=mk_sym, linestyle="", color="dimgray", markersize=8, label=str(mk_v)[:14]))
+                if _sr["bonus_applied"].any():
+                    _legend_h.append(_L2D_r([0], [0], marker="D", linestyle="", color="dimgray", markersize=8, label="Bonus Applied"))
+                if _legend_h:
+                    ax_s.legend(handles=_legend_h, loc="upper left", bbox_to_anchor=(1, 1), fontsize=8)
                 ax_s.set_title(f"Sensitivity: \"{_sens_c['query']}\"")
                 ax_s.grid(True)
                 _report += _fig_to_md(fig_s) + "\n\n"
             if st.session_state.get("_rag_sensitivity_explanation"):
                 _report += st.session_state._rag_sensitivity_explanation + "\n\n"
 
-        # クラスタリング
+        # クラスタリング（マーカー＋クラスター名対応）
         _cl_c = st.session_state.get("_rag_cluster_cache")
         if _cl_c and _cl_c.get("selected") == _selected:
             _report += f"## Clustering\n\n{_cl_c.get('cl_info', '')}\n\n"
             _dfc = _cl_c["df_clustered"]
+            _cl_marker_col_r = _cl_c.get("marker_col", "(none)")
+            _cl_names_map_r = st.session_state.get("_rag_cluster_names") or {}
+            def _cl_label_r(cl):
+                if cl < 0:
+                    return "Noise"
+                _nm = _cl_names_map_r.get(str(int(cl))) or _cl_names_map_r.get(int(cl))
+                return f"C{int(cl)}: {str(_nm)[:10]}" if _nm else f"Cluster {int(cl)}"
             fig_c, ax_c = plt.subplots(figsize=(10, 7))
-            _cmap_c = plt.cm.get_cmap("tab10", len(_dfc["Cluster"].unique()))
-            for i, cl in enumerate(sorted(_dfc["Cluster"].unique())):
-                _m = _dfc["Cluster"] == cl
-                ax_c.scatter(_dfc.loc[_m, "X1"], _dfc.loc[_m, "X2"], color="gray" if cl < 0 else _cmap_c(i), alpha=0.7, label=f"Cluster {cl}" if cl >= 0 else "Noise")
+            _cl_labels_r = sorted(_dfc["Cluster"].unique())
+            _cmap_c = plt.cm.get_cmap("tab10", max(len(_cl_labels_r), 1))
+            _cl_marker_map_r = {}
+            if _cl_marker_col_r != "(none)" and _cl_marker_col_r in _dfc.columns:
+                _mk_vals_cl_r = sorted(_dfc[_cl_marker_col_r].dropna().unique())
+                _cl_marker_map_r = {v: _MARKER_CHOICES[i % len(_MARKER_CHOICES)] for i, v in enumerate(_mk_vals_cl_r)}
+            for i, cl in enumerate(_cl_labels_r):
+                _color = "gray" if cl < 0 else _cmap_c(i)
+                if _cl_marker_map_r:
+                    for mk_v, mk_sym in _cl_marker_map_r.items():
+                        _m = (_dfc["Cluster"] == cl) & (_dfc[_cl_marker_col_r] == mk_v)
+                        if not _m.any():
+                            continue
+                        ax_c.scatter(_dfc.loc[_m, "X1"], _dfc.loc[_m, "X2"], color=_color,
+                                    alpha=0.7, marker=mk_sym,
+                                    label=f"{_cl_label_r(cl)} / {str(mk_v)[:10]}")
+                else:
+                    _m = _dfc["Cluster"] == cl
+                    ax_c.scatter(_dfc.loc[_m, "X1"], _dfc.loc[_m, "X2"], color=_color, alpha=0.7, label=_cl_label_r(cl))
             ax_c.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=8)
             ax_c.set_title(f"Clustering: {_cl_c['cl_info']}")
             ax_c.grid(True)
@@ -2131,31 +2451,54 @@ def _rag_explorer():
             if st.session_state.get("_rag_cluster_explanation"):
                 _report += st.session_state._rag_cluster_explanation + "\n\n"
 
-        # 時系列分析
+        # 時系列分析（指定カテゴリ列・RAG_NAME別対応）
         _temp_c = st.session_state.get("_rag_temporal")
         if _temp_c:
             _report += "## Temporal Analysis\n\n"
-            if _temp_c.get("cat_pivot") is not None and not _temp_c["cat_pivot"].empty:
-                _cat_color_map_r = {}
-                try:
-                    _cm_j = dmu.read_json_file("category_map.json", mst_folder_path)
-                    if not _cm_j:
-                        _cm_j = dmu.read_json_file("sample_category_map.json", mst_folder_path)
-                    _cat_color_map_r = _cm_j.get("CategoryColor", {})
-                except Exception:
-                    pass
-                _cp = _temp_c["cat_pivot"]
-                _colors_r = [_cat_color_map_r.get(c) for c in _cp.columns]
+            _cat_color_map_r = {}
+            try:
+                _cm_j = dmu.read_json_file("category_map.json", mst_folder_path)
+                if not _cm_j:
+                    _cm_j = dmu.read_json_file("sample_category_map.json", mst_folder_path)
+                _cat_color_map_r = _cm_j.get("CategoryColor", {})
+            except Exception:
+                pass
+            _temp_cat_col_r = _temp_c.get("category_col", "category")
+            _temp_period_r = _temp_c.get("period", "month")
+            _temp_mode_r = _temp_c.get("mode", "Total")
+
+            def _draw_temporal_pivot_r(_cp_df, _title):
+                _colors_r = [_cat_color_map_r.get(c) for c in _cp_df.columns]
                 fig_t, ax_t = plt.subplots(figsize=(12, 5))
-                _cp.plot(kind="bar", stacked=True, ax=ax_t, color=_colors_r if all(_colors_r) else None, alpha=0.8)
-                ax_t.set_title(f"Category Composition ({_temp_c.get('period', 'month')})")
+                _cp_df.plot(kind="bar", stacked=True, ax=ax_t,
+                            color=_colors_r if all(_colors_r) else None, alpha=0.8)
+                ax_t.set_title(_title)
                 ax_t.set_ylabel("Count")
                 ax_t.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=7)
                 plt.xticks(rotation=45, ha="right")
                 plt.tight_layout()
-                _report += _fig_to_md(fig_t) + "\n\n"
+                return fig_t
+
+            if _temp_c.get("cat_pivot") is not None and not _temp_c["cat_pivot"].empty:
+                _fig_total = _draw_temporal_pivot_r(_temp_c["cat_pivot"],
+                                                   f"{_temp_cat_col_r} Composition ({_temp_period_r}) - Total")
+                _report += "### Total\n\n" + _fig_to_md(_fig_total) + "\n\n"
+            if _temp_mode_r == "Per RAG_NAME":
+                _per_rag_r = _temp_c.get("per_rag", {}) or {}
+                for _rn, _v in _per_rag_r.items():
+                    _cp_rn = _v.get("cat_pivot")
+                    if _cp_rn is not None and not _cp_rn.empty:
+                        _fig_rn = _draw_temporal_pivot_r(_cp_rn,
+                                                        f"{_temp_cat_col_r} Composition ({_temp_period_r}) - {_rn}")
+                        _report += f"### {_rn}\n\n" + _fig_to_md(_fig_rn) + "\n\n"
             if _temp_c.get("kw_df") is not None:
-                _report += _temp_c["kw_df"].to_markdown(index=False) + "\n\n"
+                _report += "**Total Keywords:**\n\n" + _temp_c["kw_df"].to_markdown(index=False) + "\n\n"
+            if _temp_mode_r == "Per RAG_NAME":
+                _per_rag_r = _temp_c.get("per_rag", {}) or {}
+                for _rn, _v in _per_rag_r.items():
+                    _kw_rn = _v.get("kw_df")
+                    if _kw_rn is not None and not _kw_rn.empty:
+                        _report += f"**Keywords - {_rn}:**\n\n" + _kw_rn.to_markdown(index=False) + "\n\n"
             if st.session_state.get("_rag_temporal_explanation"):
                 _report += st.session_state._rag_temporal_explanation + "\n\n"
 
@@ -2866,6 +3209,10 @@ def main():
                                     _cat_options = list(_cat_map.get("Category", {}).keys()) if _cat_map else ["未設定"]
                                     _default_cat = agent_communication.get("DEFAULT_CATEGORY") or _cat_options[0]
 
+                                    # セッション切替時に同じ(seq, sub_seq)で前セッションの下書きが残らないよう、
+                                    # ウィジェットキーに session_id を含める
+                                    _sid = st.session_state.session.session_id
+
                                     with st.chat_message("Feedback"):
                                         feedback = {}
                                         feedback["name"] = "Feedback"
@@ -2880,16 +3227,16 @@ def main():
                                                 feedback[fb_item] = v2.get("feedback", {}).get(fb_item, feedback[fb_item])
                                             feedback[fb_item]["saved_memo"] = feedback[fb_item]["memo"]
 
-                                            if st.checkbox(f"{fb_item}", key=f"feedback_{fb_item}_{k}_{k2}", value=feedback[fb_item]["visible"]):
-                                                feedback[fb_item]["memo"] = st.text_area("Memo:", key=f"feedback_{fb_item}_memo{k}_{k2}", value=feedback[fb_item]["memo"], height=100, label_visibility="collapsed")
+                                            if st.checkbox(f"{fb_item}", key=f"feedback_{_sid}_{fb_item}_{k}_{k2}", value=feedback[fb_item]["visible"]):
+                                                feedback[fb_item]["memo"] = st.text_area("Memo:", key=f"feedback_{_sid}_{fb_item}_memo{k}_{k2}", value=feedback[fb_item]["memo"], height=100, label_visibility="collapsed")
                                                 _cat_idx = _cat_options.index(feedback[fb_item].get("category", _default_cat)) if feedback[fb_item].get("category", _default_cat) in _cat_options else 0
-                                                feedback[fb_item]["category"] = st.selectbox("Category:", _cat_options, index=_cat_idx, key=f"feedback_{fb_item}_cat{k}_{k2}", label_visibility="collapsed")
+                                                feedback[fb_item]["category"] = st.selectbox("Category:", _cat_options, index=_cat_idx, key=f"feedback_{_sid}_{fb_item}_cat{k}_{k2}", label_visibility="collapsed")
                                                 feedback[fb_item]["visible"] = True
                                             else:
                                                 feedback[fb_item]["memo"] = ""
                                                 feedback[fb_item]["visible"] = False
 
-                                        if st.button("Feedback", key=f"feedback_btn{k}_{k2}"):
+                                        if st.button("Feedback", key=f"feedback_btn_{_sid}_{k}_{k2}"):
                                             for fb_item in agent_communication["FEEDBACK_ITEM_LIST"]:
                                                 if feedback[fb_item]["memo"]!=feedback[fb_item]["saved_memo"] and feedback[fb_item]["memo"]!="":
                                                     feedback[fb_item]["flg"] = True
