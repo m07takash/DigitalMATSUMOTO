@@ -58,6 +58,7 @@ RAG（ChromaDB）を組み合わせて動的に生成します。
 | `DigiM_FoundationModel.py` | LLM抽象化（マルチLLM対応） |
 | `DigiM_Agent.py` | エージェント設定管理（テンプレート + persona上書き対応） |
 | `DigiM_AgentPersona.py` | エージェントペルソナのマスタ（Excel/RDB） |
+| `DigiM_Auth.py` | ログインユーザーマスタ（JSON / RDB バックエンド切替） |
 | `DigiM_Tool.py` | ツール群（分析・履歴操作・ペルソナ統合等） |
 | `DigiM_Util.py` | 共通関数 |
 | `DigiM_Notion.py` | Notion API連携 |
@@ -199,6 +200,19 @@ cp system.env_sample system.env
 | `NOTION_VERSION` | Notion APIバージョン（`2022-06-28`） |
 | `NOTION_TOKEN` | Notionインテグレーショントークン |
 | `NOTION_MST_FILE` | NotionDB定義ファイル（`sample_notion_db.json`） |
+
+**オプション設定（Azure OpenAI Service）：**
+
+Azure 上の gpt-* / dall-e / gpt-image-* 等のデプロイをチャット・画像生成エンジンとして使う場合、および埋め込みベクトル化を Azure 経由で行う場合に設定します。
+
+| 変数 | 説明 |
+|------|------|
+| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI リソースのエンドポイントURL |
+| `AZURE_OPENAI_API_KEY` | APIキー |
+| `AZURE_OPENAI_API_VERSION` | チャット/画像エンジン用APIバージョン（既定 `2024-10-21`）。エージェント単位の上書きは `PARAMETER.api_version` |
+| `AZURE_OPENAI_EMBED_MODEL` | 埋め込み用デプロイ名（PostgreSQLベクトル化で使用） |
+
+エージェントJSONの `ENGINE.LLM` で `FUNC_NAME: "generate_response_T_azure_openai"`、`ENGINE.IMAGEGEN` で `"generate_image_azure_dalle"` を指定。`MODEL` には**Azure上のデプロイ名**を入れます。
 
 ### 5. 動作確認
 
@@ -788,6 +802,12 @@ WebUIのサイドバー **RAG Management → Page Index Export** から、既存
     "FUNC_NAME": "generate_image_gemini",
     "MODEL": "gemini-3.1-flash-image-preview",
     "PARAMETER": {"aspect_ratio": "1:1"}
+  },
+  "GPT-Image-Azure": {
+    "NAME": "GPT-Image-Azure",
+    "FUNC_NAME": "generate_image_azure_dalle",
+    "MODEL": "gpt-image-1",
+    "PARAMETER": {"size": "1024x1024", "quality": "high"}
   }
 }
 ```
@@ -796,6 +816,7 @@ WebUIのサイドバー **RAG Management → Page Index Export** から、既存
 |-----------|------|
 | `generate_image_dalle` | OpenAI DALL-E による画像生成 |
 | `generate_image_gemini` | Google Gemini による画像生成 |
+| `generate_image_azure_dalle` | Azure OpenAI Service 上の dall-e/gpt-image デプロイ |
 
 #### HABIT（振る舞いの切り替え）
 
