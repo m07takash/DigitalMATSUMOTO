@@ -327,8 +327,8 @@ def sensitivity_analysis(df, query_text, vector_col="vector_data_value_text", to
     return df_display.head(top_n), cluster_stats
 
 # RAG Explorer用: 時系列分析（期間ごとのキーワード+カテゴリ推移）
-def temporal_analysis(df, period="month", top_n_keywords=10, text_col="value_text"):
-    """create_dateで期間集約し、TF-IDFキーワード+カテゴリ構成を返す"""
+def temporal_analysis(df, period="month", top_n_keywords=10, text_col="value_text", category_col="category"):
+    """create_dateで期間集約し、TF-IDFキーワード+指定カラム構成を返す"""
     if "create_date" not in df.columns or text_col not in df.columns:
         return None, None, ""
 
@@ -347,11 +347,11 @@ def temporal_analysis(df, period="month", top_n_keywords=10, text_col="value_tex
         df_work["_period"] = df_work["_date"].dt.strftime("%Y-%m")
     periods = sorted(df_work["_period"].unique())
 
-    # カテゴリ推移（カテゴリがある場合）
+    # カテゴリ(指定カラム)推移
     category_pivot = None
-    if "category" in df_work.columns:
-        cat_cross = df_work.groupby(["_period", "category"]).size().reset_index(name="count")
-        category_pivot = cat_cross.pivot_table(index="_period", columns="category", values="count", fill_value=0)
+    if category_col and category_col in df_work.columns:
+        cat_cross = df_work.groupby(["_period", category_col]).size().reset_index(name="count")
+        category_pivot = cat_cross.pivot_table(index="_period", columns=category_col, values="count", fill_value=0)
         category_pivot = category_pivot.reindex(periods)
 
     # 期間ごとのTF-IDFキーワード抽出
