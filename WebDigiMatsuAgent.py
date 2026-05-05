@@ -1671,6 +1671,7 @@ def _rag_explorer():
             import matplotlib
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt
+            from matplotlib.lines import Line2D as _L2D_sc
             fig, ax = plt.subplots(figsize=(10, 7))
 
             # マーカー値→形のマップ
@@ -1679,41 +1680,54 @@ def _rag_explorer():
                 _mk_vals = sorted(_df_reduced[_sc_marker].dropna().unique())
                 _marker_map = {v: _MARKER_CHOICES[i % len(_MARKER_CHOICES)] for i, v in enumerate(_mk_vals)}
 
+            # 色マップ
+            _color_map_full = {}
             if _sc_color != "(none)" and _sc_color in _df_reduced.columns:
                 _categories = sorted(_df_reduced[_sc_color].dropna().unique())
-                # 色マップ（指定の無いカテゴリにはtab10からフォールバック）
                 _default_cmap = plt.cm.get_cmap("tab10", max(len(_categories), 1))
-                _color_map_full = {}
                 for i, cat in enumerate(_categories):
                     _color_map_full[cat] = _sc_cat_map.get(cat) or _default_cmap(i)
-                if _marker_map:
-                    # 色×形の組み合わせで描画
-                    for cat in _categories:
-                        for mk_v, mk_sym in _marker_map.items():
-                            _mask = (_df_reduced[_sc_color] == cat) & (_df_reduced[_sc_marker] == mk_v)
-                            if not _mask.any():
-                                continue
-                            _s = _dot_sizes[_mask] if _dot_sizes is not None else None
-                            ax.scatter(_df_reduced.loc[_mask, "X1"], _df_reduced.loc[_mask, "X2"],
-                                      color=_color_map_full.get(cat), s=_s, alpha=0.7,
-                                      marker=mk_sym, label=f"{str(cat)[:20]} / {str(mk_v)[:14]}")
-                else:
-                    for cat in _categories:
-                        _mask = _df_reduced[_sc_color] == cat
-                        _s = _dot_sizes[_mask] if _dot_sizes is not None else None
-                        ax.scatter(_df_reduced.loc[_mask, "X1"], _df_reduced.loc[_mask, "X2"],
-                                  color=_color_map_full.get(cat), s=_s, alpha=0.7, label=str(cat)[:20])
-                ax.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=8)
-            else:
-                if _marker_map:
+
+            # データ描画（凡例は後で別途プロキシで作成）
+            if _color_map_full and _marker_map:
+                for cat in _color_map_full.keys():
                     for mk_v, mk_sym in _marker_map.items():
-                        _mask = _df_reduced[_sc_marker] == mk_v
+                        _mask = (_df_reduced[_sc_color] == cat) & (_df_reduced[_sc_marker] == mk_v)
+                        if not _mask.any():
+                            continue
                         _s = _dot_sizes[_mask] if _dot_sizes is not None else None
                         ax.scatter(_df_reduced.loc[_mask, "X1"], _df_reduced.loc[_mask, "X2"],
-                                  s=_s, alpha=0.7, marker=mk_sym, label=str(mk_v)[:20])
-                    ax.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=8)
-                else:
-                    ax.scatter(_df_reduced["X1"], _df_reduced["X2"], s=_dot_sizes, alpha=0.7)
+                                  color=_color_map_full[cat], s=_s, alpha=0.7, marker=mk_sym)
+            elif _color_map_full:
+                for cat, col in _color_map_full.items():
+                    _mask = _df_reduced[_sc_color] == cat
+                    _s = _dot_sizes[_mask] if _dot_sizes is not None else None
+                    ax.scatter(_df_reduced.loc[_mask, "X1"], _df_reduced.loc[_mask, "X2"],
+                              color=col, s=_s, alpha=0.7)
+            elif _marker_map:
+                for mk_v, mk_sym in _marker_map.items():
+                    _mask = _df_reduced[_sc_marker] == mk_v
+                    _s = _dot_sizes[_mask] if _dot_sizes is not None else None
+                    ax.scatter(_df_reduced.loc[_mask, "X1"], _df_reduced.loc[_mask, "X2"],
+                              s=_s, alpha=0.7, marker=mk_sym)
+            else:
+                ax.scatter(_df_reduced["X1"], _df_reduced["X2"], s=_dot_sizes, alpha=0.7)
+
+            # 凡例（色と形を別々に表示）
+            _legend_handles = []
+            if _color_map_full:
+                _legend_handles.append(_L2D_sc([0], [0], linestyle="", label=f"〔{_sc_color}〕"))
+                for cat, col in _color_map_full.items():
+                    _legend_handles.append(_L2D_sc([0], [0], marker="o", linestyle="",
+                                                   color=col, markersize=8, label=str(cat)[:20]))
+            if _marker_map:
+                _legend_handles.append(_L2D_sc([0], [0], linestyle="", label=f"〔{_sc_marker}〕"))
+                for mk_v, mk_sym in _marker_map.items():
+                    _legend_handles.append(_L2D_sc([0], [0], marker=mk_sym, linestyle="",
+                                                   color="dimgray", markersize=8, label=str(mk_v)[:20]))
+            if _legend_handles:
+                ax.legend(handles=_legend_handles, loc="upper left",
+                          bbox_to_anchor=(1, 1), fontsize=8)
 
             ax.set_title(f"{_sc_method} - {_selected} ({_sc_count}件)\n{_dim_info}")
             ax.grid(True)
@@ -1850,12 +1864,16 @@ def _rag_explorer():
                 # 凡例（色＝Color By値、形＝Marker By値、Bonus）
                 _legend_handles = []
                 from matplotlib.lines import Line2D as _L2D
-                for cat, col in _color_map_full_s.items():
-                    _legend_handles.append(_L2D([0], [0], marker="o", linestyle="",
-                                                color=col, markersize=8, label=str(cat)[:20]))
-                for mk_v, mk_sym in _marker_map_s.items():
-                    _legend_handles.append(_L2D([0], [0], marker=mk_sym, linestyle="",
-                                                color="dimgray", markersize=8, label=str(mk_v)[:14]))
+                if _color_map_full_s:
+                    _legend_handles.append(_L2D([0], [0], linestyle="", label=f"〔{_sc_color_s}〕"))
+                    for cat, col in _color_map_full_s.items():
+                        _legend_handles.append(_L2D([0], [0], marker="o", linestyle="",
+                                                    color=col, markersize=8, label=str(cat)[:20]))
+                if _marker_map_s:
+                    _legend_handles.append(_L2D([0], [0], linestyle="", label=f"〔{_sc_marker_s}〕"))
+                    for mk_v, mk_sym in _marker_map_s.items():
+                        _legend_handles.append(_L2D([0], [0], marker=mk_sym, linestyle="",
+                                                    color="dimgray", markersize=8, label=str(mk_v)[:20]))
                 if _sr["bonus_applied"].any():
                     _legend_handles.append(_L2D([0], [0], marker="D", linestyle="",
                                                 color="dimgray", markersize=8, label="Bonus Applied"))
@@ -2001,30 +2019,44 @@ def _rag_explorer():
             import matplotlib
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt
+            from matplotlib.lines import Line2D as _L2D_cl
             fig_cl, ax_cl = plt.subplots(figsize=(10, 7))
             _cl_labels = sorted(_df_clustered["Cluster"].unique())
             _cmap = plt.cm.get_cmap("tab10", max(len(_cl_labels), 1))
+            _cl_color_map = {cl: ("gray" if cl < 0 else _cmap(i)) for i, cl in enumerate(_cl_labels)}
             # マーカーマップ
             _cl_marker_map = {}
             if _cl_marker_col_c != "(none)" and _cl_marker_col_c in _df_clustered.columns:
                 _mk_vals_cl = sorted(_df_clustered[_cl_marker_col_c].dropna().unique())
                 _cl_marker_map = {v: _MARKER_CHOICES[i % len(_MARKER_CHOICES)] for i, v in enumerate(_mk_vals_cl)}
 
-            for i, cl in enumerate(_cl_labels):
-                _color = "gray" if cl < 0 else _cmap(i)
+            # データ描画（凡例は後で別途プロキシで作成）
+            for cl in _cl_labels:
+                _color = _cl_color_map[cl]
                 if _cl_marker_map:
                     for mk_v, mk_sym in _cl_marker_map.items():
                         _mask = (_df_clustered["Cluster"] == cl) & (_df_clustered[_cl_marker_col_c] == mk_v)
                         if not _mask.any():
                             continue
                         ax_cl.scatter(_df_clustered.loc[_mask, "X1"], _df_clustered.loc[_mask, "X2"],
-                                      color=_color, alpha=0.7, marker=mk_sym,
-                                      label=f"{_cl_label(cl)} / {str(mk_v)[:10]}")
+                                      color=_color, alpha=0.7, marker=mk_sym)
                 else:
                     _mask = _df_clustered["Cluster"] == cl
                     ax_cl.scatter(_df_clustered.loc[_mask, "X1"], _df_clustered.loc[_mask, "X2"],
-                                  color=_color, alpha=0.7, label=_cl_label(cl))
-            ax_cl.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=8)
+                                  color=_color, alpha=0.7)
+
+            # 凡例（クラスターと形を別々に表示）
+            _cl_legend_handles = [_L2D_cl([0], [0], linestyle="", label="〔Cluster〕")]
+            for cl, col in _cl_color_map.items():
+                _cl_legend_handles.append(_L2D_cl([0], [0], marker="o", linestyle="",
+                                                  color=col, markersize=8, label=_cl_label(cl)))
+            if _cl_marker_map:
+                _cl_legend_handles.append(_L2D_cl([0], [0], linestyle="", label=f"〔{_cl_marker_col_c}〕"))
+                for mk_v, mk_sym in _cl_marker_map.items():
+                    _cl_legend_handles.append(_L2D_cl([0], [0], marker=mk_sym, linestyle="",
+                                                      color="dimgray", markersize=8, label=str(mk_v)[:20]))
+            ax_cl.legend(handles=_cl_legend_handles, loc="upper left",
+                         bbox_to_anchor=(1, 1), fontsize=8)
             ax_cl.set_title(f"Clustering: {_cl_info}")
             ax_cl.grid(True)
             st.pyplot(fig_cl)
@@ -2314,6 +2346,7 @@ def _rag_explorer():
         # 散布図
         _sc_cache = st.session_state.get("_rag_scatter_cache")
         if _sc_cache and _sc_cache.get("selected") == _selected:
+            from matplotlib.lines import Line2D as _L2D_rep
             _report += "## Scatter Plot\n\n"
             _dfr = _sc_cache["df_reduced"]
             _sc_m = _sc_cache["dim_method"]
@@ -2326,33 +2359,47 @@ def _rag_explorer():
             if _sc_marker_r != "(none)" and _sc_marker_r in _dfr.columns:
                 _mk_vals_r = sorted(_dfr[_sc_marker_r].dropna().unique())
                 _marker_map_r = {v: _MARKER_CHOICES[i % len(_MARKER_CHOICES)] for i, v in enumerate(_mk_vals_r)}
+            _color_map_full_r = {}
             if _sc_color != "(none)" and _sc_color in _dfr.columns:
                 _cats_r = sorted(_dfr[_sc_color].dropna().unique())
                 _default_cmap_r = plt.cm.get_cmap("tab10", max(len(_cats_r), 1))
                 _color_map_full_r = {c: (_sc_cat_map.get(c) or _default_cmap_r(i)) for i, c in enumerate(_cats_r)}
-                if _marker_map_r:
-                    for cat in _cats_r:
-                        for mk_v, mk_sym in _marker_map_r.items():
-                            _m = (_dfr[_sc_color] == cat) & (_dfr[_sc_marker_r] == mk_v)
-                            if not _m.any():
-                                continue
-                            ax_r.scatter(_dfr.loc[_m, "X1"], _dfr.loc[_m, "X2"],
-                                        color=_color_map_full_r[cat], alpha=0.7, marker=mk_sym,
-                                        label=f"{str(cat)[:20]} / {str(mk_v)[:14]}")
-                else:
-                    for cat in _cats_r:
-                        _m = _dfr[_sc_color] == cat
-                        ax_r.scatter(_dfr.loc[_m, "X1"], _dfr.loc[_m, "X2"],
-                                    color=_color_map_full_r[cat], alpha=0.7, label=str(cat)[:20])
-                ax_r.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=8)
-            else:
-                if _marker_map_r:
+
+            # データ描画（凡例は後で別途プロキシで作成）
+            if _color_map_full_r and _marker_map_r:
+                for cat in _color_map_full_r.keys():
                     for mk_v, mk_sym in _marker_map_r.items():
-                        _m = _dfr[_sc_marker_r] == mk_v
-                        ax_r.scatter(_dfr.loc[_m, "X1"], _dfr.loc[_m, "X2"], alpha=0.7, marker=mk_sym, label=str(mk_v)[:20])
-                    ax_r.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=8)
-                else:
-                    ax_r.scatter(_dfr["X1"], _dfr["X2"], alpha=0.7)
+                        _m = (_dfr[_sc_color] == cat) & (_dfr[_sc_marker_r] == mk_v)
+                        if not _m.any():
+                            continue
+                        ax_r.scatter(_dfr.loc[_m, "X1"], _dfr.loc[_m, "X2"],
+                                    color=_color_map_full_r[cat], alpha=0.7, marker=mk_sym)
+            elif _color_map_full_r:
+                for cat, col in _color_map_full_r.items():
+                    _m = _dfr[_sc_color] == cat
+                    ax_r.scatter(_dfr.loc[_m, "X1"], _dfr.loc[_m, "X2"], color=col, alpha=0.7)
+            elif _marker_map_r:
+                for mk_v, mk_sym in _marker_map_r.items():
+                    _m = _dfr[_sc_marker_r] == mk_v
+                    ax_r.scatter(_dfr.loc[_m, "X1"], _dfr.loc[_m, "X2"], alpha=0.7, marker=mk_sym)
+            else:
+                ax_r.scatter(_dfr["X1"], _dfr["X2"], alpha=0.7)
+
+            # 凡例（色と形を別々に表示）
+            _rep_legend_h = []
+            if _color_map_full_r:
+                _rep_legend_h.append(_L2D_rep([0], [0], linestyle="", label=f"〔{_sc_color}〕"))
+                for cat, col in _color_map_full_r.items():
+                    _rep_legend_h.append(_L2D_rep([0], [0], marker="o", linestyle="",
+                                                  color=col, markersize=8, label=str(cat)[:20]))
+            if _marker_map_r:
+                _rep_legend_h.append(_L2D_rep([0], [0], linestyle="", label=f"〔{_sc_marker_r}〕"))
+                for mk_v, mk_sym in _marker_map_r.items():
+                    _rep_legend_h.append(_L2D_rep([0], [0], marker=mk_sym, linestyle="",
+                                                  color="dimgray", markersize=8, label=str(mk_v)[:20]))
+            if _rep_legend_h:
+                ax_r.legend(handles=_rep_legend_h, loc="upper left",
+                            bbox_to_anchor=(1, 1), fontsize=8)
             ax_r.set_title(f"{_sc_m} ({_sc_info})")
             ax_r.grid(True)
             _report += _fig_to_md(fig_r) + "\n\n"
@@ -2402,10 +2449,14 @@ def _rag_explorer():
                     ax_s.scatter([_x], [_y], color=_base, alpha=_alpha_v, s=70,
                                 edgecolors="black", linewidths=0.5, marker=_mk)
                 _legend_h = []
-                for cat, col in _color_map_full_rs.items():
-                    _legend_h.append(_L2D_r([0], [0], marker="o", linestyle="", color=col, markersize=8, label=str(cat)[:20]))
-                for mk_v, mk_sym in _marker_map_rs.items():
-                    _legend_h.append(_L2D_r([0], [0], marker=mk_sym, linestyle="", color="dimgray", markersize=8, label=str(mk_v)[:14]))
+                if _color_map_full_rs:
+                    _legend_h.append(_L2D_r([0], [0], linestyle="", label=f"〔{_sc_color_rs}〕"))
+                    for cat, col in _color_map_full_rs.items():
+                        _legend_h.append(_L2D_r([0], [0], marker="o", linestyle="", color=col, markersize=8, label=str(cat)[:20]))
+                if _marker_map_rs:
+                    _legend_h.append(_L2D_r([0], [0], linestyle="", label=f"〔{_sc_marker_rs}〕"))
+                    for mk_v, mk_sym in _marker_map_rs.items():
+                        _legend_h.append(_L2D_r([0], [0], marker=mk_sym, linestyle="", color="dimgray", markersize=8, label=str(mk_v)[:20]))
                 if _sr["bonus_applied"].any():
                     _legend_h.append(_L2D_r([0], [0], marker="D", linestyle="", color="dimgray", markersize=8, label="Bonus Applied"))
                 if _legend_h:
@@ -2419,6 +2470,7 @@ def _rag_explorer():
         # クラスタリング（マーカー＋クラスター名対応）
         _cl_c = st.session_state.get("_rag_cluster_cache")
         if _cl_c and _cl_c.get("selected") == _selected:
+            from matplotlib.lines import Line2D as _L2D_clr
             _report += f"## Clustering\n\n{_cl_c.get('cl_info', '')}\n\n"
             _dfc = _cl_c["df_clustered"]
             _cl_marker_col_r = _cl_c.get("marker_col", "(none)")
@@ -2431,24 +2483,38 @@ def _rag_explorer():
             fig_c, ax_c = plt.subplots(figsize=(10, 7))
             _cl_labels_r = sorted(_dfc["Cluster"].unique())
             _cmap_c = plt.cm.get_cmap("tab10", max(len(_cl_labels_r), 1))
+            _cl_color_map_r = {cl: ("gray" if cl < 0 else _cmap_c(i)) for i, cl in enumerate(_cl_labels_r)}
             _cl_marker_map_r = {}
             if _cl_marker_col_r != "(none)" and _cl_marker_col_r in _dfc.columns:
                 _mk_vals_cl_r = sorted(_dfc[_cl_marker_col_r].dropna().unique())
                 _cl_marker_map_r = {v: _MARKER_CHOICES[i % len(_MARKER_CHOICES)] for i, v in enumerate(_mk_vals_cl_r)}
-            for i, cl in enumerate(_cl_labels_r):
-                _color = "gray" if cl < 0 else _cmap_c(i)
+
+            # データ描画（凡例は後で別途プロキシで作成）
+            for cl in _cl_labels_r:
+                _color = _cl_color_map_r[cl]
                 if _cl_marker_map_r:
                     for mk_v, mk_sym in _cl_marker_map_r.items():
                         _m = (_dfc["Cluster"] == cl) & (_dfc[_cl_marker_col_r] == mk_v)
                         if not _m.any():
                             continue
                         ax_c.scatter(_dfc.loc[_m, "X1"], _dfc.loc[_m, "X2"], color=_color,
-                                    alpha=0.7, marker=mk_sym,
-                                    label=f"{_cl_label_r(cl)} / {str(mk_v)[:10]}")
+                                    alpha=0.7, marker=mk_sym)
                 else:
                     _m = _dfc["Cluster"] == cl
-                    ax_c.scatter(_dfc.loc[_m, "X1"], _dfc.loc[_m, "X2"], color=_color, alpha=0.7, label=_cl_label_r(cl))
-            ax_c.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=8)
+                    ax_c.scatter(_dfc.loc[_m, "X1"], _dfc.loc[_m, "X2"], color=_color, alpha=0.7)
+
+            # 凡例（クラスターと形を別々に表示）
+            _cl_rep_legend_h = [_L2D_clr([0], [0], linestyle="", label="〔Cluster〕")]
+            for cl, col in _cl_color_map_r.items():
+                _cl_rep_legend_h.append(_L2D_clr([0], [0], marker="o", linestyle="",
+                                                 color=col, markersize=8, label=_cl_label_r(cl)))
+            if _cl_marker_map_r:
+                _cl_rep_legend_h.append(_L2D_clr([0], [0], linestyle="", label=f"〔{_cl_marker_col_r}〕"))
+                for mk_v, mk_sym in _cl_marker_map_r.items():
+                    _cl_rep_legend_h.append(_L2D_clr([0], [0], marker=mk_sym, linestyle="",
+                                                     color="dimgray", markersize=8, label=str(mk_v)[:20]))
+            ax_c.legend(handles=_cl_rep_legend_h, loc="upper left",
+                        bbox_to_anchor=(1, 1), fontsize=8)
             ax_c.set_title(f"Clustering: {_cl_c['cl_info']}")
             ax_c.grid(True)
             _report += _fig_to_md(fig_c) + "\n\n"
