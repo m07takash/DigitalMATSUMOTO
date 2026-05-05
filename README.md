@@ -725,7 +725,7 @@ WebUIのサイドバー **RAG Management → Page Index Export** から、既存
 | 項目 | 説明 |
 |------|------|
 | `SPEAKING_STYLE` | プロンプトテンプレートの `SPEAKING_STYLE` に定義された口調を指定 |
-| `CHARACTER` | `user/common/agent/character/` 配下のテキストファイル。経歴・価値観・一人称等の詳細な人格定義を記述 |
+| `CHARACTER` | `user/common/agent/character/` 配下のテキストファイル（**`.txt` または `.md`**）または直接記述。経歴・価値観・一人称等の詳細な人格定義 |
 | Big Five特性 | `Openness`（開放性）/ `Conscientiousness`（誠実性）/ `Extraversion`（外向性）/ `Agreeableness`（協調性）/ `Neuroticism`（神経症傾向）を 0.0〜1.0 で設定 |
 
 #### ENGINE（LLMエンジン設定）
