@@ -254,8 +254,9 @@ class DigiM_Agent:
             if 'CHARACTER' in self.personality:
                 character = self.personality["CHARACTER"]
                 if character:
-                    if character.strip().endswith(".txt"):
-                        character = dmu.read_text_file(character, character_folder_path)
+                    _ch = character.strip().lower()
+                    if _ch.endswith(".txt") or _ch.endswith(".md"):
+                        character = dmu.read_text_file(character.strip(), character_folder_path)
                     system_prompt += f"\n\nあなたのキャラクター設定:\n{character}"
 
         return system_prompt
