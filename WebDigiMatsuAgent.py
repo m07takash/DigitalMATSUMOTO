@@ -34,6 +34,13 @@ import DigiM_GeneUserDialog as dmgu
 import DigiM_VAnalytics as dmva
 import DigiM_DB_Export as dmdbe
 import DigiM_AgentPersona as dap
+import DigiM_UserMemoryScheduler as dmums
+
+# ユーザーメモリスケジューラ起動（USER_MEMORY_MID_SCHEDULE が "off" 以外で起動）
+try:
+    dmums.start()
+except Exception:
+    pass
 import DigiM_SupportEval as dmse
 import DigiM_UrlFetch as dmuf
 
@@ -136,6 +143,8 @@ if 'allowed_session_archive' not in st.session_state:
     st.session_state.allowed_session_archive = True
 if 'allowed_web_api' not in st.session_state:
     st.session_state.allowed_web_api = True
+if 'allowed_user_memory' not in st.session_state:
+    st.session_state.allowed_user_memory = True
 if 'allowed_support_eval' not in st.session_state:
     st.session_state.allowed_support_eval = True
 if 'eval_results_excel' not in st.session_state:
@@ -390,6 +399,7 @@ def user_allowed_parameter(allowded_dict):
     st.session_state.allowed_session_archive = allowded_dict.get("Session Archive", True)
     st.session_state.allowed_web_api = allowded_dict.get("Web API", True)
     st.session_state.allowed_support_eval = allowded_dict.get("Support Eval", True)
+    st.session_state.allowed_user_memory = allowded_dict.get("User Memory", True)
 
 # バックグラウンドタスク実行ヘルパー
 import threading as _threading
@@ -598,6 +608,20 @@ def refresh_session_states():
     st.session_state.web_user = dict(web_default_user)
     st.session_state.web_user["USER_ID"] = st.session_state.user_id
     st.session_state.sidebar_message = ""
+    # User Memory のセッション内一時状態をリセット
+    # - レビュー編集中の値や開閉状態は単純削除
+    # - 層チェックボックスは「マスタ保存値」に強制リセット（del だけだと Streamlit のウィジェット記憶で戻らないため）
+    for _k in list(st.session_state.keys()):
+        if _k.startswith("um_lbl_") or _k.startswith("um_stat_") or _k == "um_review_open":
+            del st.session_state[_k]
+    try:
+        import DigiM_UserMemorySetting as _dmus_reset
+        _master_layers = _dmus_reset.load_user_setting(st.session_state.user_id).get("layers", [])
+    except Exception:
+        _master_layers = []
+    for _l in ("long", "mid", "short"):
+        st.session_state[f"um_layer_{_l}"] = (_l in _master_layers)
+    st.session_state.user_memory_layers_now = list(_master_layers)
     st.session_state.display_name = st.session_state.default_agent
     st.session_state.agents = dma.get_display_agents(st.session_state.group_cd)
     st.session_state.agent_list = [a1["AGENT"] for a1 in st.session_state.agents]
@@ -2856,8 +2880,19 @@ def main():
                 if st.button("Update RAG Data", key="update_rag", disabled=bool(st.session_state._bg_task)):
                     def _rag_update():
                         dmc.generate_rag()
+                        # 旧UserDialog自動保存（互換維持）。auto_save_flg=Yで起動。
                         if cfg.user_dialog_auto_save_flg == "Y":
-                            dmgu.save_user_dialogs(st.session_state.web_service, st.session_state.web_user)
+                            try:
+                                dmgu.save_user_dialogs(st.session_state.web_service, st.session_state.web_user)
+                            except Exception:
+                                pass
+                        # 新UserMemory短期: 未保存セッションを自動処理
+                        if (os.getenv("USER_MEMORY_SHORT_AUTO_SAVE_FLG") or "N") == "Y":
+                            import DigiM_GeneUserMemory as _dmgum_rag
+                            try:
+                                _dmgum_rag.save_short_for_unsaved_sessions()
+                            except Exception:
+                                pass
                     _run_bg_task("rag", "RAGデータを更新中", _rag_update)
                     st.rerun()
 
@@ -2895,6 +2930,60 @@ def main():
                     if st.button("Save User Dialog", key="save_user_dialog"):
                         dmgu.save_user_dialogs(st.session_state.web_service, st.session_state.web_user)
                         st.session_state.sidebar_message = "ユーザーダイアログを保存しました"
+
+                # User Memory (backend display, manual update)
+                if st.session_state.allowed_user_memory:
+                    import DigiM_UserMemory as _dmum_admin
+                    import DigiM_UserMemorySetting as _dmus_admin
+                    import DigiM_GeneUserMemory as _dmgum_admin
+                    st.markdown("---")
+                    st.markdown("**User Memory (Admin)**")
+                    st.caption(
+                        f"backends: short={_dmum_admin.get_backend('short')} / "
+                        f"mid={_dmum_admin.get_backend('mid')} / "
+                        f"long={_dmum_admin.get_backend('long')}"
+                    )
+                    st.caption(
+                        f"system default layers: {', '.join(_dmum_admin.get_default_layers())}"
+                    )
+
+                    # Pick targets from user master (empty = all users)
+                    try:
+                        _user_master_for_um = load_user_master()
+                    except Exception:
+                        _user_master_for_um = {}
+                    _um_target_options = sorted(_user_master_for_um.keys())
+                    _um_target_users = st.multiselect(
+                        "Target User IDs (empty = all users)",
+                        _um_target_options, default=[], key="um_admin_target_users",
+                    )
+
+                    # Period: start date (calendar). Off = all periods
+                    _um_period_use = st.checkbox("Filter by start date", value=False, key="um_admin_period_use")
+                    _um_period_value = "all"
+                    if _um_period_use:
+                        _um_period_date = st.date_input(
+                            "Period (aggregate sessions on/after this date)",
+                            value=now_time.date(),
+                            key="um_admin_period_date",
+                        )
+                        _um_period_value = f"since_{_um_period_date.strftime('%Y-%m-%d')}"
+                    st.caption(f"period={_um_period_value}")
+
+                    # Unified update button: run Short → Mid → Long sequentially
+                    if st.button("Update User Memory (Short → Mid → Long)", key="um_update_all", disabled=bool(st.session_state._bg_task)):
+                        _per = _um_period_value
+                        _tgt_users = list(_um_target_users) if _um_target_users else None
+                        _svc = st.session_state.service_id
+                        def _um_pipeline():
+                            _dmgum_admin.update_user_memory_pipeline(
+                                target_user_ids=_tgt_users, period=_per, service_id=_svc,
+                            )
+                        _label = f"Updating User Memory (users={'all' if not _tgt_users else len(_tgt_users)} period={_per})"
+                        _run_bg_task("um_pipeline", _label, _um_pipeline)
+                        st.rerun()
+
+        # User Memory expander moved to the main area (below BOOK).
 
         # Web API管理
         if st.session_state.allowed_web_api:
@@ -3661,8 +3750,11 @@ def main():
 
             # Max Personas: Thinking Mode ON かつ Personas が選択されているときのみ表示
             if "Personas" in st.session_state.thinking_targets:
-                _system_setting = dmu.read_yaml_file("setting.yaml")
-                _default_max_p = int(_system_setting.get("MAX_PERSONAS", 3))
+                try:
+                    _yaml = dmu.read_yaml_file("setting.yaml")
+                    _default_max_p = int(_yaml.get("MAX_PERSONAS", 3))
+                except Exception:
+                    _default_max_p = 3
                 st.session_state.max_personas = st.number_input(
                     "Max Personas (Thinking時の上限)",
                     min_value=1, max_value=20,
@@ -3678,6 +3770,106 @@ def main():
                 st.session_state.book_selected = st.multiselect(
                     "BOOK", [item["RAG_NAME"] for item in _book_list]
                 )
+
+        # User Memory（メイン画面・BOOKの直下に配置。Allowed.User Memory=True で表示）
+        if st.session_state.allowed_user_memory:
+            import DigiM_UserMemory as _dmum
+            import DigiM_UserMemorySetting as _dmus
+            import DigiM_GeneUserMemory as _dmgum
+            _uid_for_um = st.session_state.user_id
+            _svc_for_um = st.session_state.service_id
+
+            with st.expander("User Memory", expanded=False):
+                _user_setting = _dmus.load_user_setting(_uid_for_um)
+                _active_layers = _dmus.resolve_active_layers(_uid_for_um)
+                st.caption(f"Active layers: {', '.join(_active_layers) if _active_layers else '(all off)'}")
+
+                # Layer On/Off (3列横並び) + Save Layer Setting
+                _checked_layers = _user_setting.get("layers", [])
+                _layer_cols = st.columns(3)
+                _new_layers = []
+                for _i, _l in enumerate(("long", "mid", "short")):
+                    _val = _layer_cols[_i].checkbox(_l, value=(_l in _checked_layers), key=f"um_layer_{_l}")
+                    if _val:
+                        _new_layers.append(_l)
+                # Save しなくてもこのセッション(次回チャット)では現在のチェック状態を即時反映
+                st.session_state.user_memory_layers_now = _new_layers
+                if st.button("Save Layer Setting", key="um_save_layers"):
+                    _dmus.save_user_setting(_uid_for_um, _new_layers)
+                    st.session_state.sidebar_message = "Layer setting saved."
+                    st.rerun()
+
+                # Review User Memory（任意で開く / 編集はバッファリングしてSaveで一括反映）
+                st.markdown("---")
+                if st.checkbox("Review User Memory", value=False, key="um_review_open"):
+                    _long_rec = _dmum.get_one("long", {"service_id": _svc_for_um, "user_id": _uid_for_um})
+                    if not _long_rec:
+                        st.caption("No long-term persona generated yet.")
+                    else:
+                        _field_labels = {
+                            "expertise": "Expertise", "recurring_interests": "Recurring interests",
+                            "values_principles": "Values / Principles", "constraints": "Constraints",
+                            "communication_style": "Communication style", "avoid_topics": "Avoid topics",
+                        }
+                        _status_options = ["Approved", "Pending", "Deleted"]
+                        _status_to_internal = {"Approved": "approved", "Pending": "pending", "Deleted": "deleted"}
+                        _internal_to_status = {v: k for k, v in _status_to_internal.items()}
+                        # 旧 'edited' も Approved として表示
+                        _internal_to_status["edited"] = "Approved"
+
+                        # Save button at the top
+                        if st.button("Save User Memory", key="um_review_save"):
+                            _updated = dict(_long_rec)
+                            for _field in _field_labels.keys():
+                                _items = _long_rec.get(_field) or []
+                                _new_items = []
+                                for _idx, _it in enumerate(_items):
+                                    if not isinstance(_it, dict):
+                                        continue
+                                    _new_label = st.session_state.get(f"um_lbl_{_field}_{_idx}", _it.get("label", ""))
+                                    _cur_internal = _it.get("status") or "pending"
+                                    _cur_disp = _internal_to_status.get(_cur_internal, "Pending")
+                                    _new_status_disp = st.session_state.get(f"um_stat_{_field}_{_idx}", _cur_disp)
+                                    _new_status = _status_to_internal.get(_new_status_disp, "pending")
+                                    _new_items.append({
+                                        "label": _new_label,
+                                        "confidence": float(_it.get("confidence") or 0.0),
+                                        "status": _new_status,
+                                        "evidence": _it.get("evidence") or [],
+                                    })
+                                _updated[_field] = _new_items
+                            _updated["last_reviewed"] = _dmum.now_ts()
+                            _dmum.upsert("long", _updated)
+                            st.session_state.sidebar_message = "User memory saved."
+                            st.rerun()
+
+                        st.markdown(f"**Role**: {_long_rec.get('role') or '(unset)'}")
+                        st.markdown(f"**Last reviewed**: {_long_rec.get('last_reviewed') or '(never)'}")
+
+                        # 各項目: text_input(ラベル上書き) + selectbox(ステータス)
+                        for _field, _label in _field_labels.items():
+                            _items = _long_rec.get(_field) or []
+                            if not _items:
+                                continue
+                            st.markdown(f"**{_label}**")
+                            for _idx, _it in enumerate(_items):
+                                if not isinstance(_it, dict):
+                                    continue
+                                _lbl = _it.get("label", "")
+                                _conf = float(_it.get("confidence") or 0.0)
+                                _cur_status = _internal_to_status.get(_it.get("status") or "pending", "Pending")
+                                if _cur_status not in _status_options:
+                                    _cur_status = "Pending"
+                                _c1, _c2, _c3 = st.columns([6, 2, 1])
+                                _c1.text_input(f"label_{_field}_{_idx}", value=_lbl, key=f"um_lbl_{_field}_{_idx}", label_visibility="collapsed")
+                                _c2.selectbox(
+                                    f"status_{_field}_{_idx}",
+                                    _status_options,
+                                    index=_status_options.index(_cur_status),
+                                    key=f"um_stat_{_field}_{_idx}",
+                                    label_visibility="collapsed",
+                                )
+                                _c3.markdown(f"<div style='padding-top:0.4em;color:#888;font-size:0.85em'>conf {_conf:.2f}</div>", unsafe_allow_html=True)
 
     # ファイルダウンローダー
     if st.session_state.allowed_download_md:
@@ -3802,6 +3994,9 @@ def main():
             execution["WEB_SEARCH_ENGINE"] = st.session_state.get("web_search_engine", "")
             execution["PRIVATE_MODE"] = st.session_state.private_mode
             execution["THINKING_MODE"] = st.session_state.thinking_mode
+            # User Memory: 現在のチェック状態を最優先（Save押下に関わらず即時反映）
+            if "user_memory_layers_now" in st.session_state:
+                execution["USER_MEMORY_LAYERS"] = list(st.session_state.user_memory_layers_now or [])
             _targets = st.session_state.thinking_targets if st.session_state.thinking_mode else []
             execution["THINKING_TARGETS"] = {
                 "habit": "Habit" in _targets,
@@ -3817,7 +4012,7 @@ def main():
             execution["_PRE_LOCKED"] = True
             # Phase 7: PersonaSelectorの上限をexecutionに注入
             execution["MAX_PERSONAS"] = int(st.session_state.get("max_personas", 3))
-            # 選択中のペルソナIDを実ペルソナdictに解決（ORG指定が無ければ空のまま）
+            # 選択中のペルソナIDを実ペルソナdictに解決
             _resolved_personas = []
             _selected_pids = list(st.session_state.get("selected_persona_ids") or [])
             if _selected_pids and st.session_state.get("selected_org"):
