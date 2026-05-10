@@ -68,10 +68,10 @@ RAG（ChromaDB）を組み合わせて動的に生成します。
 | `DigiM_VAnalytics.py` | 知識活用分析 |
 | `DigiM_GeneCommunication.py` | ユーザーフィードバック |
 | `DigiM_UserMemory.py` | ユーザーメモリ（短期/中期/長期）のストレージ抽象化（Excel/Notion/RDB） |
-| `DigiM_UserMemorySetting.py` | ユーザーメモリのOn/Off3階層解決（システム/ユーザー/セッション） |
-| `DigiM_UserMemoryBuilder.py` | ユーザーメモリの注入アイテム合成（プロンプト先頭にレイヤを差し込む） |
+| `DigiM_UserMemorySetting.py` | ユーザーメモリのOn/Off2階層解決（ユーザーマスタ/システム）。Layersは `users.json` の `Allowed["User Memory Layers"]` に保存 |
+| `DigiM_UserMemoryBuilder.py` | 「対話相手についての情報」コンテキスト合成（Knowledgeより前にプロンプト挿入）。短期はMeCab×タグ×時間ハイブリッド検索 |
 | `DigiM_UserMemoryScheduler.py` | 中期/長期更新の常駐スケジューラ（APScheduler） |
-| `DigiM_GeneUserMemory.py` | ユーザーメモリの生成・差分マージ・検証ループ更新 |
+| `DigiM_GeneUserMemory.py` | ユーザーメモリの生成・差分マージ・自動承認・検証ループ更新 |
 | `DigiM_GeneUserDialog.py` | （Deprecated）旧ユーザー対話保存。`DigiM_GeneUserMemory.py` への後方互換シム |
 | `DigiM_SupportEval.py` | サポートエージェントのパフォーマンス評価 |
 | `DigiM_Benchmark.py` | サポートエージェントの速度・出力比較ベンチマーク（CLI） |
@@ -173,8 +173,11 @@ cp system.env_sample system.env
 | `LOGIN_AUTH_METHOD` | `JSON` | ログイン認証方法。`JSON`: `USER_MST_FILE`を使用 / `RDB`: PostgreSQLの`digim_users`テーブルを使用（テーブルは初回アクセス時に自動作成） |
 | `AGENT_PERSONA_SOURCE` | `EXCEL` | エージェントペルソナのソース。`EXCEL`: `user/common/agent/persona_data/`配下のxlsx / `RDB`: `digim_agent_personas`テーブル / `BOTH`: マージ |
 | `USER_MEMORY_SHORT_BACKEND` / `MID_BACKEND` / `LONG_BACKEND` | `EXCEL` | ユーザーメモリ各層の保存先（EXCEL/NOTION/RDB）。詳細は「ユーザーメモリ（階層的ユーザー理解）」を参照 |
-| `USER_MEMORY_DEFAULT_LAYERS` | `long,mid,short` | ユーザーメモリのシステムデフォルト有効層 |
+| `USER_MEMORY_DEFAULT_LAYERS` | `long,mid,short` | ユーザーメモリのシステムデフォルト有効層（空文字 `""` で全Off） |
 | `USER_MEMORY_MID_SCHEDULE` | `off` | 中期/長期スケジューラの起動条件（off/monthly/weekly/daily/cron文字列） |
+| `USER_MEMORY_AUTO_APPROVE_THRESHOLD` | `0.8` | 長期項目をconfidenceで自動承認する閾値 |
+| `USER_MEMORY_LONG_MAX_CHARS_PER_FIELD` | `300` | 長期ペルソナ各フィールドの保持文字数上限 |
+| `USER_MEMORY_SHORT_MAX_CHARS` | `800` | 短期メモリ注入の合計文字数上限 |
 | `EMBEDDING_MODEL` | `text-embedding-3-large` | 埋め込みベクトルモデル |
 | `WEB_TITLE` | `Digital Twin` | WebUIのタイトル |
 | `WEB_DEFAULT_AGENT_FILE` | `agent_X0Sample.json` | WebUIのデフォルトエージェント |
@@ -358,7 +361,8 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
       "Book": true,
       "Download Md": true,
       "RAG Explorer": true,
-      "User Memory": true
+      "User Memory": true,
+      "User Memory Layers": ["long", "mid", "short"]
     }
   }
 }
@@ -389,6 +393,7 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
 | `Download Md` | Markdownダウンロード |
 | `RAG Explorer` | RAGデータ分析画面（後述） |
 | `User Memory` | ユーザーメモリ（階層的ユーザー理解）の表示・保存・検証ループ |
+| `User Memory Layers` | （bool以外。配列）このユーザーが有効化する層 `["long","mid","short"]` のサブセット。未設定なら `USER_MEMORY_DEFAULT_LAYERS` |
 
 > Adminグループのユーザーは `Allowed` の設定に関わらず全機能にアクセスできます。
 
@@ -1249,7 +1254,31 @@ GEMINI_API_KEY=Google GeminiのAPIキー（LLMと共用）
 
 #### 注入の流れ
 
-`DigiM_UserMemoryBuilder` が `DigiM_Execute.py` のメモリ取得直後にフックされ、有効化されている層を `memories_selected` の先頭に差し込みます。長期は3000トークン上限でトリムされ、毎回プロンプトに全文注入されます。
+`DigiM_UserMemoryBuilder.build_context_text()` で「対話相手についての情報」テキストを合成し、`DigiM_Execute.py` で **Knowledgeコンテキストの直前**にプロンプト先頭として挿入します。注入される構造:
+
+```
+# 対話相手について
+応答時の口調・関心・避けたい話題の参考にしてください。
+
+## 人物像             ← 長期(approvedのみ)
+・役割: ...
+・専門: ...
+・関心: ...
+・価値観: ...
+・制約: ...
+・口調/説明の好み: ...
+・避けたい話題: ...
+(summary_text 1500字以内)
+
+## 最近の傾向（period） ← 中期
+(要約段落 + 継続/新規/減退/変化)
+
+## 直近セッション      ← 短期(タグ×時間ハイブリッド検索)
+・[YYYY-MM-DD][topic] excerpt
+...
+```
+
+IMAGEGEN（画像生成）はプロンプト3000字制限を圧迫しないようスキップされます。
 
 #### 保存先（バックエンド）
 
@@ -1265,17 +1294,27 @@ USER_MEMORY_LONG_BACKEND="EXCEL"
 - **NOTION**: `NOTION_MST_FILE` で指定したJSONの `DigiM_UserMemory_Short` / `_Mid` / `_Long` キーで指定したNotionDBに保存
 - **RDB**: PostgreSQL の `digim_user_memory_<layer>` テーブルに保存（テーブルは初回アクセス時に自動作成）
 
-#### On/Offの3階層
+#### On/Offの2階層
 
-優先順は **セッション > ユーザー > システムデフォルト** です。
+優先順は **ユーザー > システムデフォルト** です。
 
 | 階層 | 格納先 | 内容 |
 |------|--------|------|
 | システムデフォルト | `system.env` の `USER_MEMORY_DEFAULT_LAYERS` | 全ユーザー初期値（例: `"long,mid,short"`） |
-| ユーザーマスタ | `user/<user_id>/user_memory_setting.json` | `override_allowed`（ユーザー自身がWebUIで変更できるか）/ `layers`（有効化する層） |
-| セッション一時 | `chat_history` の SETTING に保存 | このセッションだけの上書き。空リスト `[]` で全層Off |
+| ユーザーマスタ | `users.json` の `Allowed["User Memory Layers"]` | このユーザーの有効化する層リスト |
 
-`override_allowed` は管理者のみが変更可（WebUIサイドバー > **RAG Management > User Memory (Admin)** から切替）。それ以外のユーザーは表示はされるが編集不可で、システムデフォルトが適用されます。
+ユーザーが自分の `layers` を変更できるかは `users.json` の `Allowed["User Memory"]`（true/false）で制御します。`true` の場合のみメイン画面の BOOK 直下に **User Memory** expander が表示され、自由に層を編集・保存できます（保存先は同じ `Allowed["User Memory Layers"]`）。`false` または未設定のユーザーは UI が出ず、`User Memory Layers` を持っていればその設定、持っていなければシステムデフォルトが適用されます。チェックボックスの変更は **Save 押下に関わらずその会話で即時反映**され、Save を押すと `users.json` に永続保存されます。チャットセッションを切替えると保存値にリセットされます。
+
+ユーザーマスタの記述例:
+
+```json
+"RealMatsumoto": {
+  "Allowed": {
+    "User Memory": true,
+    "User Memory Layers": ["long", "mid", "short"]
+  }
+}
+```
 
 #### 中期/長期の更新スケジュール
 
@@ -1291,24 +1330,67 @@ USER_MEMORY_LONG_BACKEND="EXCEL"
 
 スケジュール起動時は、全ユーザーに対し当月の中期プロファイル更新 → 長期ペルソナへの差分マージを順に実行します。手動でも実行可能（後述）。
 
+#### 長期ペルソナのステータスと自動承認
+
+長期ペルソナの各項目は3つのステータスを持ちます:
+
+| ステータス | 意味 | コンテキスト含有 |
+|---|---|---|
+| **Approved** | 信頼できる（ユーザー承認済 or `confidence ≥ 閾値` で自動承認） | ✓ |
+| **Pending** | 未レビュー | ✗ |
+| **Deleted** | 不要（再提案も弾く） | ✗ |
+
+- マージ時に `confidence ≥ USER_MEMORY_AUTO_APPROVE_THRESHOLD`（デフォルト 0.8）の `pending` 項目は自動で `approved` に昇格
+- ユーザーがWebUIで `approved` にした項目は次回マージでも保護される（信頼度のみ最大値で更新）
+- `deleted` 項目は内部に保持され、LLMが同じラベルを再提案しても弾かれる
+- 各フィールド（expertise / recurring_interests 等）には `USER_MEMORY_LONG_MAX_CHARS_PER_FIELD`（デフォルト 300字）の合計文字数上限。Approvedを優先 → 同status内は confidence 降順で詰める
+
+#### 短期メモリの選定ロジック（タグ × 時間ハイブリッド）
+
+蓄積した短期データから、現在のユーザー入力に関連するものを選んで注入します（埋め込みベクトル不使用）:
+
+1. **MeCab** でユーザー入力から名詞を抽出
+2. 各短期レコードの `axis_tags`（タグ全文を保持）に対し、クエリ名詞の部分一致で「マッチタグ」を判定
+3. **マッチ群**: マッチタグ率 × (1 - α) + 時間スコア × α（α=`USER_MEMORY_SHORT_RECENCY_WEIGHT`）でランク
+4. **非マッチ群**: 時間スコアのみ（指数減衰、半減期=`USER_MEMORY_SHORT_RECENCY_HALF_LIFE_DAYS`）
+5. マッチ群を優先 → 余りを非マッチ群で埋める → 合計 `USER_MEMORY_SHORT_MAX_CHARS`（デフォルト 800字）まで詰める
+
+タグ自体は意味の単位として保持される（`対価と責任の関係` を `{対価, 責任, 関係}` に分解しない）ため、複合語の意味が消えません。
+
 #### WebUIでの操作
 
-**サイドバー > User Memory（全ユーザー）**
+**メイン画面 > User Memory expander（`Allowed.User Memory: true` のユーザー）**
+- BOOK の直下に配置、デフォルト畳み
 - 現在の有効層を表示
-- 層別On/Off（恒常設定）— 編集可否は `override_allowed` 次第
-- このセッションだけの一時上書き（チェックを全て外せばこのセッション全層Off）
-- 「ユーザー理解を確認する」チェックボックス展開で長期ペルソナの各項目に **承認 / 修正 / 削除** ボタン（検証ループ）
+- **Layer On/Off**（long/mid/short の3カラム横並びチェックボックス）
+  - チェックを変えると **Save 押下に関わらず** その会話で即時反映
+  - **Save Layer Setting** 押下で `users.json` の `Allowed["User Memory Layers"]` に永続保存
+  - チャットセッションを切替えると、ユーザーマスタ保存値にリセット
+- **Review User Memory** 展開で長期ペルソナの全項目を一覧表示
+  - 各項目: テキスト入力（ラベル上書き可能）+ ステータス select（Approved/Pending/Deleted）+ confidence
+  - 上部の **Save User Memory** ボタンで一括保存（編集は触っただけではDBに書き込まれない）
 
-**サイドバー > RAG Management > User Memory (Admin)（管理者のみ）**
+**サイドバー > RAG Management > User Memory（`RAG Management` かつ `User Memory` 権限）**
 - 各層のバックエンド表示
-- `Update Short Memory (UNSAVED sessions)` — 未保存セッションを一括処理
-- `Update Mid Profile` — Period（YYYY-MM or rolling_<N>d）と対象User IDを指定して中期を手動生成
-- `Update Long Persona` — 中期を元に長期ペルソナを差分マージ
-- ユーザー個別の `override_allowed` および層の編集
+- **Target User IDs**: ユーザーマスタからmultiselect（未選択=全ユーザー）
+- **Period**: チェックボックスON時にカレンダーで開始日を指定。指定日以降の短期だけを集約。チェックOFFなら全期間（`period="all"`）
+- **Update User Memory (Short → Mid → Long)**: 1ボタンでパイプライン実行
+  1. 対象ユーザーの未保存セッションから短期を生成
+  2. 短期を期間でフィルタして中期プロファイルを更新
+  3. 最新の中期から長期ペルソナを差分マージ（自動承認も適用）
 
-#### 効果ログ（注入の実績記録）
+#### 効果ログと Detail Information
 
-LLM呼び出し時に注入した層のIDが、各セッションの会話履歴 `response.reference.user_memory` に記録されます。VAnalyticsで注入率や検証ループの承認率を集計できます。
+- LLM呼び出し時に注入した層のIDが、各セッションの会話履歴 `response.reference.user_memory` に記録されます
+- 注入したコンテキスト全文は `prompt.user_memory_context` に保存されます
+- WebUIの **Detail Information** 内 `【ユーザーメモリ】` セクションで参照ID + 注入コンテキストを確認できます
+
+#### 短期メモリの生成入力
+
+短期メモリのLLM抽出時、以下を加味します:
+- セッションの会話履歴(`role=user`/`role=assistant`)
+- **ユーザーフィードバック**(`role=feedback` として末尾に付与) — 本人意思が最も強く出る情報として重視
+- **除外**: SETTING.FLG="N"（削除）/ MEMORY_FLG="N"（メモリ参照対象外）の seq、setting.memory_flg="N" の sub_seq
 
 #### 関連環境変数（system.env）
 
@@ -1317,10 +1399,15 @@ LLM呼び出し時に注入した層のIDが、各セッションの会話履歴
 | `USER_MEMORY_SHORT_BACKEND` | `EXCEL` | 短期の保存先（EXCEL/NOTION/RDB） |
 | `USER_MEMORY_MID_BACKEND` | `EXCEL` | 中期の保存先 |
 | `USER_MEMORY_LONG_BACKEND` | `EXCEL` | 長期の保存先 |
-| `USER_MEMORY_DEFAULT_LAYERS` | `long,mid,short` | システムデフォルトの有効層 |
+| `USER_MEMORY_DEFAULT_LAYERS` | `long,mid,short` | システムデフォルトの有効層（空文字 `""` 指定で全Off） |
 | `USER_MEMORY_SHORT_AUTO_SAVE_FLG` | `N` | `Y` で `Update RAG Data` 連動の短期自動更新を有効化 |
-| `USER_MEMORY_MID_SCHEDULE` | `off` | 中期/長期スケジューラ起動条件 |
+| `USER_MEMORY_MID_SCHEDULE` | `off` | 中期/長期スケジューラ起動条件（off/monthly/weekly/daily/cron） |
 | `USER_MEMORY_LONG_TOKEN_LIMIT` | `3000` | 長期注入時の上限トークン |
+| `USER_MEMORY_AUTO_APPROVE_THRESHOLD` | `0.8` | この confidence 以上の pending 項目を自動 approved に昇格 |
+| `USER_MEMORY_LONG_MAX_CHARS_PER_FIELD` | `300` | 長期ペルソナ各フィールドの label 合計文字数上限 |
+| `USER_MEMORY_SHORT_MAX_CHARS` | `800` | 短期コンテキスト挿入時の合計文字数上限 |
+| `USER_MEMORY_SHORT_RECENCY_WEIGHT` | `0.3` | 短期スコアリングで時間スコアに割く重み（マッチ率=1-この値） |
+| `USER_MEMORY_SHORT_RECENCY_HALF_LIFE_DAYS` | `30` | 短期の時間スコア半減期（日数） |
 
 ### バックグラウンドジョブの管理
 

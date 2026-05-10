@@ -31,7 +31,8 @@
       "Download Md": true,
       "Web API": true,
       "Support Eval": true,
-      "User Memory": true
+      "User Memory": true,
+      "User Memory Layers": ["long", "mid", "short"]
     }
   },
   "USER0003": {

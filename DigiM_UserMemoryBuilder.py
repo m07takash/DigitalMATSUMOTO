@@ -13,6 +13,7 @@
 注入元のIDは `user_memory_used` キー(リスト)としても返し、効果ログに使う。
 """
 import logging
+import math
 import os
 from datetime import datetime
 from pathlib import Path
@@ -29,6 +30,12 @@ if os.path.exists("system.env"):
     load_dotenv("system.env")
 
 LONG_TOKEN_LIMIT = int(os.getenv("USER_MEMORY_LONG_TOKEN_LIMIT") or "3000")
+# Short層: 合計文字数の上限(コンテキストに入る分量)
+SHORT_MAX_CHARS = int(os.getenv("USER_MEMORY_SHORT_MAX_CHARS") or "800")
+# Short層: スコア配分(タグマッチ率と時間スコアの重み)
+SHORT_RECENCY_WEIGHT = float(os.getenv("USER_MEMORY_SHORT_RECENCY_WEIGHT") or "0.3")
+# Short層: 時間スコアのハーフライフ(日数)。これくらい古いと時間スコアが半分になる目安
+SHORT_RECENCY_HALF_LIFE_DAYS = float(os.getenv("USER_MEMORY_SHORT_RECENCY_HALF_LIFE_DAYS") or "30")
 
 
 def _now_ts() -> str:
@@ -51,8 +58,9 @@ def _format_long(rec: dict) -> str:
     def _items_to_text(label, items):
         if not isinstance(items, list):
             return None
+        # Approved（旧editedも含む）のみコンテキストに含める。pending/deletedは除外。
         kept = [it.get("label", "").strip() for it in items
-                if isinstance(it, dict) and (it.get("status") not in ("deleted",)) and (it.get("label", "").strip())]
+                if isinstance(it, dict) and (it.get("status") in ("approved", "edited")) and (it.get("label", "").strip())]
         if not kept:
             return None
         return f"・{label}: " + "、".join(kept)
@@ -73,7 +81,7 @@ def _format_long(rec: dict) -> str:
     if summary:
         parts.append("")
         parts.append(summary)
-    text = "[ユーザー長期理解]\n" + "\n".join(parts)
+    text = "## 人物像\n" + "\n".join(parts)
     if len(text) > LONG_TOKEN_LIMIT:
         text = text[: LONG_TOKEN_LIMIT - 1] + "…"
     return text
@@ -82,7 +90,9 @@ def _format_long(rec: dict) -> str:
 def _format_mid(rec: dict) -> str:
     if not rec:
         return ""
-    parts = [f"[ユーザー中期理解 期間={rec.get('period', '')}]"]
+    period = (rec.get("period") or "").strip()
+    header = f"## 最近の傾向（{period}）" if period else "## 最近の傾向"
+    parts = [header]
     summary = (rec.get("summary_text") or "").strip()
     if summary:
         parts.append(summary)
@@ -98,20 +108,210 @@ def _format_mid(rec: dict) -> str:
     return "\n".join(parts)
 
 
-def _format_short(records: list, max_items: int = 5) -> str:
+def _extract_record_tags(rec: dict) -> list:
+    """axis_tags から平坦化したタグ語リストを返す。"""
+    tags = rec.get("axis_tags") or {}
+    if not isinstance(tags, dict):
+        return []
+    out = []
+    for axis_vals in tags.values():
+        if isinstance(axis_vals, list):
+            for t in axis_vals:
+                if isinstance(t, str) and t.strip():
+                    out.append(t.strip())
+    return out
+
+
+_mecab_tagger = None
+
+
+def _get_mecab():
+    global _mecab_tagger
+    if _mecab_tagger is None:
+        try:
+            import MeCab
+            _mecab_tagger = MeCab.Tagger()
+        except Exception as e:
+            logger.warning(f"[user_memory.builder] MeCab初期化失敗: {e}")
+            _mecab_tagger = False
+    return _mecab_tagger if _mecab_tagger else None
+
+
+def _tokenize_nouns(text: str) -> set:
+    """テキストから2文字以上の名詞を抽出。MeCab失敗時は空集合。"""
+    if not text:
+        return set()
+    tagger = _get_mecab()
+    if tagger is None:
+        return set()
+    nouns = set()
+    try:
+        parsed = tagger.parse(text)
+        for line in parsed.split("\n"):
+            if line in ("EOS", ""):
+                continue
+            parts = line.split("\t")
+            if len(parts) < 2:
+                continue
+            word = parts[0]
+            feat = parts[1] if len(parts) > 1 else ""
+            if "名詞" in feat and len(word) >= 2:
+                nouns.add(word.lower())
+    except Exception as e:
+        logger.warning(f"[user_memory.builder] MeCab解析失敗: {e}")
+    return nouns
+
+
+def _select_shorts_by_tags_and_recency(records: list, query_text: str, max_chars: int) -> list:
+    """axis_tagsの語彙を使ったタグマッチ × タイムスタンプ減衰で並べ替え、文字数で打ち切り。
+
+    query_text が空の場合は recency-only にフォールバック。
+    """
+    if not records:
+        return []
+    now = datetime.now()
+    half_life = max(SHORT_RECENCY_HALF_LIFE_DAYS, 1.0)
+
+    # 1. ユーザー入力から名詞を抽出(MeCab)。タグ側は分解せず原文のままマッチ判定する。
+    query_nouns = _tokenize_nouns(query_text) if query_text else set()
+    has_query = bool(query_nouns)
+
+    # 2. スコアリング: タグマッチ群と非マッチ群に分ける
+    matched_group = []
+    unmatched_group = []
+    for r in records:
+        # 時間減衰スコア
+        try:
+            ts = datetime.fromisoformat(str(r.get("create_date", "")).replace("Z", "").split(".")[0])
+            days_old = max(0.0, (now - ts).total_seconds() / 86400.0)
+            recency_score = 0.5 ** (days_old / half_life)
+        except Exception:
+            recency_score = 0.0
+
+        record_tags = _extract_record_tags(r)
+        match_count = 0
+        match_ratio = 0.0
+        if has_query and record_tags:
+            # タグ単位でマッチ判定: クエリ名詞がタグ全文に含まれていれば「マッチタグ」
+            matched_tag_count = 0
+            for t in record_tags:
+                t_lower = t.lower()
+                if any(n in t_lower for n in query_nouns):
+                    matched_tag_count += 1
+            match_count = matched_tag_count
+            match_ratio = match_count / len(record_tags)
+
+        if match_count > 0:
+            # マッチ群: マッチ率をベースに、時間スコアで微調整
+            combined = (1 - SHORT_RECENCY_WEIGHT) * match_ratio + SHORT_RECENCY_WEIGHT * recency_score
+            matched_group.append((combined, r))
+        else:
+            # 非マッチ群: 時間スコアのみ
+            unmatched_group.append((recency_score, r))
+
+    matched_group.sort(key=lambda x: -x[0])
+    unmatched_group.sort(key=lambda x: -x[0])
+    # マッチ群を優先、余りを非マッチ群で埋める
+    ordered = [r for _, r in matched_group] + [r for _, r in unmatched_group]
+
+    # 4. 文字数で詰める
+    selected = []
+    total_chars = 0
+    for r in ordered:
+        line = f"・[{r.get('create_date', '')[:10]}][{r.get('topic', '')[:30]}] {r.get('excerpt', '')[:200]}"
+        if total_chars + len(line) > max_chars:
+            continue
+        selected.append(r)
+        total_chars += len(line)
+    return selected
+
+
+def _format_short(records: list, query_text: str = "", max_chars: int = None) -> str:
     if not records:
         return ""
-    # 最新優先で max_items 件
-    sorted_rs = sorted(records, key=lambda r: r.get("create_date", ""), reverse=True)[:max_items]
-    parts = ["[ユーザー短期理解(直近セッション要点)]"]
-    for r in sorted_rs:
+    if max_chars is None:
+        max_chars = SHORT_MAX_CHARS
+    selected = _select_shorts_by_tags_and_recency(records, query_text, max_chars)
+    if not selected:
+        return ""
+    parts = ["## 直近セッション"]
+    for r in selected:
         parts.append(f"・[{r.get('create_date', '')[:10]}][{r.get('topic', '')[:30]}] {r.get('excerpt', '')[:200]}")
     return "\n".join(parts)
 
 
+def build_context_text(service_id: str, user_id: str, active_layers: list = None,
+                       query_text: str = "") -> tuple:
+    """active_layers に沿って「対話相手についての情報」コンテキスト文字列を返す。
+
+    Args:
+        query_text: ユーザーの現在の入力。Short層のタグマッチ検索に使用。
+                    空ならShort層は recency-only にフォールバック。
+
+    Returns: (context_text: str, used_ids: list)
+      context_text: プロンプト先頭(Knowledgeより前)に挿入する文字列。空なら ""。
+      used_ids:    効果ログ用の参照ID一覧。
+    """
+    if active_layers is None:
+        active_layers = dmus.resolve_active_layers(user_id)
+    parts = []
+    used_ids = []
+    if not user_id or not active_layers:
+        return "", used_ids
+
+    if "long" in active_layers:
+        try:
+            long_rec = dmum.get_one("long", {"service_id": service_id, "user_id": user_id})
+            if long_rec:
+                text = _format_long(long_rec)
+                if text:
+                    parts.append(text)
+                    used_ids.append(f"long:{user_id}")
+        except Exception as e:
+            logger.warning(f"[user_memory.builder] long失敗: {e}")
+
+    if "mid" in active_layers:
+        try:
+            mids = dmum.load_all("mid", service_id=service_id, user_id=user_id)
+            mids = [m for m in mids if (m.get("active") or "Y") == "Y"]
+            mids.sort(key=lambda r: r.get("generated_at", ""), reverse=True)
+            if mids:
+                mid_rec = mids[0]
+                text = _format_mid(mid_rec)
+                if text:
+                    parts.append(text)
+                    used_ids.append(f"mid:{mid_rec.get('id')}")
+        except Exception as e:
+            logger.warning(f"[user_memory.builder] mid失敗: {e}")
+
+    if "short" in active_layers:
+        try:
+            shorts = dmum.load_all("short", service_id=service_id, user_id=user_id)
+            shorts = [s for s in shorts if (s.get("active") or "Y") == "Y"]
+            text = _format_short(shorts, query_text=query_text)
+            if text:
+                parts.append(text)
+                # 取得実数を見たいので構築済みテキストの行数を数える(ヘッダ1行を除く)
+                used_count = max(0, text.count("\n") - 0)
+                used_ids.append(f"short:{user_id}:n={used_count}")
+        except Exception as e:
+            logger.warning(f"[user_memory.builder] short失敗: {e}")
+
+    if not parts:
+        return "", used_ids
+
+    body = "\n\n".join(parts)
+    context_text = (
+        "# 対話相手について\n"
+        "応答時の口調・関心・避けたい話題の参考にしてください。\n\n"
+        f"{body}\n\n"
+    )
+    return context_text, used_ids
+
+
 def build_memory_items(service_id: str, user_id: str, active_layers: list = None,
                       short_max_items: int = 5) -> tuple:
-    """active_layers に沿って memory 形式のアイテムを返す。
+    """[Deprecated] 旧API: memory 形式アイテムを返す（後方互換用）。
 
     Returns: (memory_items: list, used_ids: list)
     """
@@ -161,7 +361,7 @@ def build_memory_items(service_id: str, user_id: str, active_layers: list = None
         try:
             shorts = dmum.load_all("short", service_id=service_id, user_id=user_id)
             shorts = [s for s in shorts if (s.get("active") or "Y") == "Y"]
-            text = _format_short(shorts, max_items=short_max_items)
+            text = _format_short(shorts)
             if text:
                 items.append({
                     "role": "user", "type": "user_memory_short",
@@ -169,7 +369,7 @@ def build_memory_items(service_id: str, user_id: str, active_layers: list = None
                     "text": text, "vec_text": [], "similarity_prompt": 0,
                     "seq": "_um", "sub_seq": "short",
                 })
-                used_ids.append(f"short:{user_id}:n={min(len(shorts), short_max_items)}")
+                used_ids.append(f"short:{user_id}")
         except Exception as e:
             logger.warning(f"[user_memory.builder] short失敗: {e}")
 
