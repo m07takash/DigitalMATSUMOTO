@@ -162,19 +162,21 @@ def _tokenize_nouns(text: str) -> set:
     return nouns
 
 
-def _select_shorts_by_tags_and_recency(records: list, query_text: str, max_chars: int) -> list:
+def _select_shorts_by_tags_and_recency(records: list, query_text: str, max_chars: int) -> tuple:
     """axis_tagsの語彙を使ったタグマッチ × タイムスタンプ減衰で並べ替え、文字数で打ち切り。
 
     query_text が空の場合は recency-only にフォールバック。
+    Returns: (selected_records: list, query_keywords: list)
     """
     if not records:
-        return []
+        return [], []
     now = datetime.now()
     half_life = max(SHORT_RECENCY_HALF_LIFE_DAYS, 1.0)
 
     # 1. ユーザー入力から名詞を抽出(MeCab)。タグ側は分解せず原文のままマッチ判定する。
     query_nouns = _tokenize_nouns(query_text) if query_text else set()
     has_query = bool(query_nouns)
+    query_keywords = sorted(query_nouns)
 
     # 2. スコアリング: タグマッチ群と非マッチ群に分ける
     matched_group = []
@@ -223,21 +225,22 @@ def _select_shorts_by_tags_and_recency(records: list, query_text: str, max_chars
             continue
         selected.append(r)
         total_chars += len(line)
-    return selected
+    return selected, query_keywords
 
 
-def _format_short(records: list, query_text: str = "", max_chars: int = None) -> str:
+def _format_short(records: list, query_text: str = "", max_chars: int = None) -> tuple:
+    """Returns: (text: str, query_keywords: list)"""
     if not records:
-        return ""
+        return "", []
     if max_chars is None:
         max_chars = SHORT_MAX_CHARS
-    selected = _select_shorts_by_tags_and_recency(records, query_text, max_chars)
+    selected, query_keywords = _select_shorts_by_tags_and_recency(records, query_text, max_chars)
     if not selected:
-        return ""
+        return "", query_keywords
     parts = ["## 直近セッション"]
     for r in selected:
         parts.append(f"・[{r.get('create_date', '')[:10]}][{r.get('topic', '')[:30]}] {r.get('excerpt', '')[:200]}")
-    return "\n".join(parts)
+    return "\n".join(parts), query_keywords
 
 
 def build_context_text(service_id: str, user_id: str, active_layers: list = None,
@@ -248,16 +251,18 @@ def build_context_text(service_id: str, user_id: str, active_layers: list = None
         query_text: ユーザーの現在の入力。Short層のタグマッチ検索に使用。
                     空ならShort層は recency-only にフォールバック。
 
-    Returns: (context_text: str, used_ids: list)
+    Returns: (context_text: str, used_ids: list, meta: dict)
       context_text: プロンプト先頭(Knowledgeより前)に挿入する文字列。空なら ""。
       used_ids:    効果ログ用の参照ID一覧。
+      meta:        補助情報。例: {"short_keywords": [...]}（Short検索に使ったクエリ名詞）
     """
     if active_layers is None:
         active_layers = dmus.resolve_active_layers(user_id)
     parts = []
     used_ids = []
+    meta = {"short_keywords": []}
     if not user_id or not active_layers:
-        return "", used_ids
+        return "", used_ids, meta
 
     if "long" in active_layers:
         try:
@@ -288,7 +293,8 @@ def build_context_text(service_id: str, user_id: str, active_layers: list = None
         try:
             shorts = dmum.load_all("short", service_id=service_id, user_id=user_id)
             shorts = [s for s in shorts if (s.get("active") or "Y") == "Y"]
-            text = _format_short(shorts, query_text=query_text)
+            text, short_keywords = _format_short(shorts, query_text=query_text)
+            meta["short_keywords"] = list(short_keywords) if short_keywords else []
             if text:
                 parts.append(text)
                 # 取得実数を見たいので構築済みテキストの行数を数える(ヘッダ1行を除く)
@@ -298,7 +304,7 @@ def build_context_text(service_id: str, user_id: str, active_layers: list = None
             logger.warning(f"[user_memory.builder] short失敗: {e}")
 
     if not parts:
-        return "", used_ids
+        return "", used_ids, meta
 
     body = "\n\n".join(parts)
     context_text = (
@@ -306,7 +312,7 @@ def build_context_text(service_id: str, user_id: str, active_layers: list = None
         "応答時の口調・関心・避けたい話題の参考にしてください。\n\n"
         f"{body}\n\n"
     )
-    return context_text, used_ids
+    return context_text, used_ids, meta
 
 
 def build_memory_items(service_id: str, user_id: str, active_layers: list = None,

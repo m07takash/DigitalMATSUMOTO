@@ -1006,10 +1006,14 @@ class DigiMSession:
             # ユーザーメモリ（注入されたコンテキスト）を表示
             _um_ctx = chat_history_dict_seq.get("prompt", {}).get("user_memory_context") or ""
             _um_used = chat_history_dict_seq.get("response", {}).get("reference", {}).get("user_memory") or []
-            if _um_ctx or _um_used:
+            _um_meta = chat_history_dict_seq.get("prompt", {}).get("user_memory_meta") or {}
+            _um_keywords = _um_meta.get("short_keywords") or []
+            if _um_ctx or _um_used or _um_keywords:
                 chat_detail_info += "\n【ユーザーメモリ】\n"
                 if _um_used:
                     chat_detail_info += "参照ID：" + ", ".join(str(x) for x in _um_used) + "\n"
+                if _um_keywords:
+                    chat_detail_info += "Short検索キーワード：" + str(list(_um_keywords)) + "\n"
                 if _um_ctx:
                     chat_detail_info += _um_ctx + "\n"
 
