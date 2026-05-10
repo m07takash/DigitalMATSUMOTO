@@ -30,7 +30,8 @@
       "Book": true,
       "Download Md": true,
       "Web API": true,
-      "Support Eval": true
+      "Support Eval": true,
+      "User Memory": true
     }
   },
   "USER0003": {
@@ -51,7 +52,8 @@
       "Book": false,
       "Download Md": false,
       "Web API": false,
-      "Support Eval": false
+      "Support Eval": false,
+      "User Memory": false
     }
   }
 }

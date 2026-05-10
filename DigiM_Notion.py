@@ -45,7 +45,17 @@ def get_page(page_id):
 def get_title_by_id(pages, page_id, item):
     for page in pages:
         if page['id'] == page_id:
-            return page['properties'][item]['title'][0]['text']['content']
+            prop = page.get('properties', {}).get(item) or {}
+            title_arr = prop.get('title') or []
+            if not title_arr:
+                return ""
+            first = title_arr[0] or {}
+            text_obj = first.get('text') or {}
+            content = text_obj.get('content')
+            if content is not None:
+                return content
+            return first.get('plain_text', "") or ""
+    return ""
 
 # ページIDを指定して数値項目を取得
 def get_num_by_id(pages, page_id, item):

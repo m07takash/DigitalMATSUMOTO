@@ -67,7 +67,12 @@ RAG（ChromaDB）を組み合わせて動的に生成します。
 | `DigiM_DB_Export.py` | PostgreSQLエクスポート・ベクトル化 |
 | `DigiM_VAnalytics.py` | 知識活用分析 |
 | `DigiM_GeneCommunication.py` | ユーザーフィードバック |
-| `DigiM_GeneUserDialog.py` | ユーザー対話の保存 |
+| `DigiM_UserMemory.py` | ユーザーメモリ（短期/中期/長期）のストレージ抽象化（Excel/Notion/RDB） |
+| `DigiM_UserMemorySetting.py` | ユーザーメモリのOn/Off3階層解決（システム/ユーザー/セッション） |
+| `DigiM_UserMemoryBuilder.py` | ユーザーメモリの注入アイテム合成（プロンプト先頭にレイヤを差し込む） |
+| `DigiM_UserMemoryScheduler.py` | 中期/長期更新の常駐スケジューラ（APScheduler） |
+| `DigiM_GeneUserMemory.py` | ユーザーメモリの生成・差分マージ・検証ループ更新 |
+| `DigiM_GeneUserDialog.py` | （Deprecated）旧ユーザー対話保存。`DigiM_GeneUserMemory.py` への後方互換シム |
 | `DigiM_SupportEval.py` | サポートエージェントのパフォーマンス評価 |
 | `DigiM_Benchmark.py` | サポートエージェントの速度・出力比較ベンチマーク（CLI） |
 | `DigiM_JobRegistry.py` | バックグラウンドスレッドの登録・キャンセル（UIからの停止用） |
@@ -88,6 +93,7 @@ DigitalMATSUMOTO/
 │   │   ├── csv/                  # RAG用CSVデータ
 │   │   ├── csv/pageindex/        # Excel入力のページインデックス（Excel + 個別本文ファイル）
 │   │   ├── analytics/rag_explorer/ # RAG Explorer の保存セッション
+│   │   ├── user_memory/          # ユーザーメモリ（short/mid/long.xlsx 等の保存先）
 │   │   └── temp/                 # チャット添付・URL取得等の一時ファイル
 │   ├── session*/                 # セッションデータ（チャット履歴）
 │   └── archive/                  # セッションアーカイブ（ZIP）
@@ -166,6 +172,9 @@ cp system.env_sample system.env
 | `LOGIN_ENABLE_FLG` | `N` | ログイン認証の有効化（`Y` で有効） |
 | `LOGIN_AUTH_METHOD` | `JSON` | ログイン認証方法。`JSON`: `USER_MST_FILE`を使用 / `RDB`: PostgreSQLの`digim_users`テーブルを使用（テーブルは初回アクセス時に自動作成） |
 | `AGENT_PERSONA_SOURCE` | `EXCEL` | エージェントペルソナのソース。`EXCEL`: `user/common/agent/persona_data/`配下のxlsx / `RDB`: `digim_agent_personas`テーブル / `BOTH`: マージ |
+| `USER_MEMORY_SHORT_BACKEND` / `MID_BACKEND` / `LONG_BACKEND` | `EXCEL` | ユーザーメモリ各層の保存先（EXCEL/NOTION/RDB）。詳細は「ユーザーメモリ（階層的ユーザー理解）」を参照 |
+| `USER_MEMORY_DEFAULT_LAYERS` | `long,mid,short` | ユーザーメモリのシステムデフォルト有効層 |
+| `USER_MEMORY_MID_SCHEDULE` | `off` | 中期/長期スケジューラの起動条件（off/monthly/weekly/daily/cron文字列） |
 | `EMBEDDING_MODEL` | `text-embedding-3-large` | 埋め込みベクトルモデル |
 | `WEB_TITLE` | `Digital Twin` | WebUIのタイトル |
 | `WEB_DEFAULT_AGENT_FILE` | `agent_X0Sample.json` | WebUIのデフォルトエージェント |
@@ -348,7 +357,8 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
       "WEB Search": true,
       "Book": true,
       "Download Md": true,
-      "RAG Explorer": true
+      "RAG Explorer": true,
+      "User Memory": true
     }
   }
 }
@@ -378,6 +388,7 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
 | `Book` | Book（参考情報）機能 |
 | `Download Md` | Markdownダウンロード |
 | `RAG Explorer` | RAGデータ分析画面（後述） |
+| `User Memory` | ユーザーメモリ（階層的ユーザー理解）の表示・保存・検証ループ |
 
 > Adminグループのユーザーは `Allowed` の設定に関わらず全機能にアクセスできます。
 
@@ -1225,6 +1236,91 @@ GEMINI_API_KEY=Google GeminiのAPIキー（LLMと共用）
 | `BLOCKED_DOMAINS` | 拒否するドメイン（サブドメインも再帰的に拒否） |
 | `BLOCKLIST_FILE` | hosts形式または1行1ドメインの外部ブロックリストへのパス（StevenBlack/hosts、UT1 blacklists、Hagezi DNS blocklists 等） |
 | `BLOCKED_EXTENSIONS` | 取得を拒否する拡張子リスト |
+
+### ユーザーメモリ（階層的ユーザー理解）
+
+セッションを横断してユーザーの特徴や関心、価値観を蓄積し、以降のチャットへ自動的に文脈として注入する仕組みです。3層構造で、それぞれ異なる粒度・寿命を持ちます。
+
+| 層 | 単位 | 内容 | 生成タイミング |
+|----|------|------|---------------|
+| **短期** (`session_digest`) | 1セッション=1レコード | トピック / 発言抜粋 / 軸タグ（関心・価値観・制約・口調・感情）/ confidence | セッション終了時 or 手動 |
+| **中期** (`period_profile`) | 期間（YYYY-MM or rolling_<N>d） | 継続トピック / 新規関心 / 減退話題 / 態度の変化 / 要約段落 | 月次バッチ or 手動 |
+| **長期** (`persona_profile`) | 1ユーザー=1レコード | 役割 / 専門 / 関心 / 価値観 / 制約 / 口調 / 避けたい話題（各項目に confidence と status） | 中期更新時に差分マージ |
+
+#### 注入の流れ
+
+`DigiM_UserMemoryBuilder` が `DigiM_Execute.py` のメモリ取得直後にフックされ、有効化されている層を `memories_selected` の先頭に差し込みます。長期は3000トークン上限でトリムされ、毎回プロンプトに全文注入されます。
+
+#### 保存先（バックエンド）
+
+層ごとに **Excel / Notion / RDB** から個別に選択できます。`system.env` で指定:
+
+```env
+USER_MEMORY_SHORT_BACKEND="EXCEL"   # EXCEL/NOTION/RDB
+USER_MEMORY_MID_BACKEND="EXCEL"
+USER_MEMORY_LONG_BACKEND="EXCEL"
+```
+
+- **EXCEL**: `user/common/user_memory/<layer>.xlsx` に保存
+- **NOTION**: `NOTION_MST_FILE` で指定したJSONの `DigiM_UserMemory_Short` / `_Mid` / `_Long` キーで指定したNotionDBに保存
+- **RDB**: PostgreSQL の `digim_user_memory_<layer>` テーブルに保存（テーブルは初回アクセス時に自動作成）
+
+#### On/Offの3階層
+
+優先順は **セッション > ユーザー > システムデフォルト** です。
+
+| 階層 | 格納先 | 内容 |
+|------|--------|------|
+| システムデフォルト | `system.env` の `USER_MEMORY_DEFAULT_LAYERS` | 全ユーザー初期値（例: `"long,mid,short"`） |
+| ユーザーマスタ | `user/<user_id>/user_memory_setting.json` | `override_allowed`（ユーザー自身がWebUIで変更できるか）/ `layers`（有効化する層） |
+| セッション一時 | `chat_history` の SETTING に保存 | このセッションだけの上書き。空リスト `[]` で全層Off |
+
+`override_allowed` は管理者のみが変更可（WebUIサイドバー > **RAG Management > User Memory (Admin)** から切替）。それ以外のユーザーは表示はされるが編集不可で、システムデフォルトが適用されます。
+
+#### 中期/長期の更新スケジュール
+
+`system.env` の `USER_MEMORY_MID_SCHEDULE` で常駐スケジューラ（APScheduler）の起動条件を設定:
+
+| 値 | 動作 |
+|----|------|
+| `off` | スケジューラ停止（手動更新のみ） |
+| `monthly` | 毎月1日 03:00 |
+| `weekly` | 毎週月曜 03:00 |
+| `daily` | 毎日 03:00 |
+| 5フィールドのcron文字列（例: `"0 3 1 * *"`） | 任意のcronで起動 |
+
+スケジュール起動時は、全ユーザーに対し当月の中期プロファイル更新 → 長期ペルソナへの差分マージを順に実行します。手動でも実行可能（後述）。
+
+#### WebUIでの操作
+
+**サイドバー > User Memory（全ユーザー）**
+- 現在の有効層を表示
+- 層別On/Off（恒常設定）— 編集可否は `override_allowed` 次第
+- このセッションだけの一時上書き（チェックを全て外せばこのセッション全層Off）
+- 「ユーザー理解を確認する」チェックボックス展開で長期ペルソナの各項目に **承認 / 修正 / 削除** ボタン（検証ループ）
+
+**サイドバー > RAG Management > User Memory (Admin)（管理者のみ）**
+- 各層のバックエンド表示
+- `Update Short Memory (UNSAVED sessions)` — 未保存セッションを一括処理
+- `Update Mid Profile` — Period（YYYY-MM or rolling_<N>d）と対象User IDを指定して中期を手動生成
+- `Update Long Persona` — 中期を元に長期ペルソナを差分マージ
+- ユーザー個別の `override_allowed` および層の編集
+
+#### 効果ログ（注入の実績記録）
+
+LLM呼び出し時に注入した層のIDが、各セッションの会話履歴 `response.reference.user_memory` に記録されます。VAnalyticsで注入率や検証ループの承認率を集計できます。
+
+#### 関連環境変数（system.env）
+
+| 変数 | デフォルト | 説明 |
+|------|----------|------|
+| `USER_MEMORY_SHORT_BACKEND` | `EXCEL` | 短期の保存先（EXCEL/NOTION/RDB） |
+| `USER_MEMORY_MID_BACKEND` | `EXCEL` | 中期の保存先 |
+| `USER_MEMORY_LONG_BACKEND` | `EXCEL` | 長期の保存先 |
+| `USER_MEMORY_DEFAULT_LAYERS` | `long,mid,short` | システムデフォルトの有効層 |
+| `USER_MEMORY_SHORT_AUTO_SAVE_FLG` | `N` | `Y` で `Update RAG Data` 連動の短期自動更新を有効化 |
+| `USER_MEMORY_MID_SCHEDULE` | `off` | 中期/長期スケジューラ起動条件 |
+| `USER_MEMORY_LONG_TOKEN_LIMIT` | `3000` | 長期注入時の上限トークン |
 
 ### バックグラウンドジョブの管理
 

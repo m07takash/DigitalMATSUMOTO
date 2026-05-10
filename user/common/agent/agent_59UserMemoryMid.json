@@ -1,0 +1,48 @@
+{
+    "DISPLAY": false,
+    "DISPLAY_NAME": "ユーザーメモリ(中期)",
+    "NAME": "ユーザーメモリ中期集約",
+    "ACT": "短期メモリ群と既存中期プロファイルから、対象期間のユーザー像を要約する専用のAI",
+    "PERSONALITY": {},
+    "ENGINE": {
+        "LLM": {
+            "DEFAULT": "GPT-5-nano",
+            "GPT-5-nano": {
+                "NAME": "GPT-5-nano",
+                "FUNC_NAME": "generate_response_T_gpt",
+                "MODEL": "gpt-5-nano-2025-08-07",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {
+                    "limit": 12000,
+                    "role": "user",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "N"
+                }
+            }
+        }
+    },
+    "HABIT": {
+        "DEFAULT": {
+            "MAGIC_WORDS": [
+                ""
+            ],
+            "PRACTICE": "practice_14UserMemoryMid.json",
+            "ADD_KNOWLEDGE": []
+        }
+    },
+    "KNOWLEDGE": [],
+    "SKILL": {},
+    "COMMUNICATION": {
+        "ACTIVE": "N",
+        "SAVE_MODE": "CSV",
+        "SAVE_DB": "Communication",
+        "DEFAULT_CATEGORY": "Feedback",
+        "FEEDBACK_ITEM_LIST": [
+            "memo",
+            "comment"
+        ]
+    },
+    "SUPPORT_AGENT": {}
+}

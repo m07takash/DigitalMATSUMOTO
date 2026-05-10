@@ -13,6 +13,7 @@ MST_FOLDER: "user/common/mst/"
 RAG_FOLDER_DB: "user/common/rag/chromadb/"
 RAG_FOLDER_PAGES: "user/common/rag/pages/"
 RAG_DATA_CSV_FOLDER: "user/common/csv/"
+USER_MEMORY_FOLDER: "user/common/user_memory/"
 TEMP_FOLDER: "user/common/temp/"
 TEST_FOLDER: "test/"
 # エージェントペルソナの並列実行上限（複数ペルソナ同時送信時のThreadPoolExecutor max_workers）

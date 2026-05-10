@@ -14,6 +14,8 @@ import DigiM_Context as dmc
 import DigiM_Session as dms
 import DigiM_Tool as dmt
 import DigiM_JobRegistry as djr
+import DigiM_UserMemoryBuilder as dmumb
+import DigiM_UserMemorySetting as dmus
 
 # setting.yamlからフォルダパスなどを設定
 system_setting_dict = dmu.read_yaml_file("setting.yaml")
@@ -446,6 +448,22 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         memories_selected = future_memory.result() if future_memory else []
         intent_queries, intent_vecs, RAG_query_gene_log = future_intent.result()
         meta_searches, meta_search_log = future_meta.result()
+
+    # ユーザーメモリ層を memory 先頭に注入（On/Off は user_memory_override / ユーザー設定 / システムデフォルト で解決）
+    # IMAGEGEN は画像プロンプトが3000文字制限で詰まるためスキップ（実画像指示を押し出す事故を回避）
+    user_memory_used = []
+    if cfg["memory_use"] and model_type == "LLM":
+        try:
+            _svc_id = (service_info or {}).get("SERVICE_ID", "")
+            _usr_id = (user_info or {}).get("USER_ID", "")
+            _session_override = execution.get("USER_MEMORY_OVERRIDE")  # list or None
+            _active_layers = dmus.resolve_active_layers(_usr_id, session_override=_session_override)
+            if _active_layers:
+                _um_items, user_memory_used = dmumb.build_memory_items(_svc_id, _usr_id, _active_layers)
+                if _um_items:
+                    memories_selected = _um_items + memories_selected
+        except Exception as _um_err:
+            timestamp_log += f"[user_memory注入失敗: {_um_err}]" + str(datetime.now()) + "<br>"
     intent_dur = RAG_query_gene_log.get("duration_sec", "-") if RAG_query_gene_log else "-"
     meta_dur = meta_search_log.get("date", {}).get("duration_sec", "-") if meta_search_log else "-"
     timestamp_log += f"[08-10完了: メモリ/RAGクエリ({intent_dur}s)/メタ検索({meta_dur}s)]" + str(datetime.now()) + "<br>"
@@ -475,7 +493,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         "query": query, "user_query": user_query, "contents_context": contents_context,
         "web_context": web_context, "knowledge_context": knowledge_context,
         "prompt_template": prompt_template, "situation_prompt": situation_prompt,
-        "memories_selected": memories_selected
+        "memories_selected": memories_selected,
+        "user_memory_used": user_memory_used,
     }
 
     # LLMの実行
@@ -569,7 +588,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             "token": response_tokens,
             "text": response,
             "vec_file": response_vec_file,
-            "reference": {"memory": memory_ref, "knowledge_rag": knowledge_ref}
+            "reference": {"memory": memory_ref, "knowledge_rag": knowledge_ref,
+                          "user_memory": user_memory_used}
         }
 
         # 画像ログ (IMAGEGEN)
