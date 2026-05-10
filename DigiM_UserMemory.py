@@ -50,8 +50,16 @@ def get_backend(layer: str) -> str:
 
 
 def get_default_layers() -> list:
-    """デフォルトで有効な層リスト（system.envから）。"""
-    raw = os.getenv("USER_MEMORY_DEFAULT_LAYERS") or "long,mid,short"
+    """デフォルトで有効な層リスト（system.envから）。
+
+    USER_MEMORY_DEFAULT_LAYERS の挙動:
+      - 未設定 (None) → "long,mid,short" を適用
+      - 空文字列 ""    → 全層Off (空リストを返す)
+      - "long,mid"    → ["long", "mid"]
+    """
+    raw = os.getenv("USER_MEMORY_DEFAULT_LAYERS")
+    if raw is None:
+        raw = "long,mid,short"
     return [s.strip().lower() for s in raw.split(",") if s.strip().lower() in LAYERS]
 
 

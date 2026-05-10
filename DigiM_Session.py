@@ -1003,6 +1003,16 @@ class DigiMSession:
                         url_link = url.get("url") or ""
                         chat_detail_info += f"{url_title}({url_date}){url_link}\n"
 
+            # ユーザーメモリ（注入されたコンテキスト）を表示
+            _um_ctx = chat_history_dict_seq.get("prompt", {}).get("user_memory_context") or ""
+            _um_used = chat_history_dict_seq.get("response", {}).get("reference", {}).get("user_memory") or []
+            if _um_ctx or _um_used:
+                chat_detail_info += "\n【ユーザーメモリ】\n"
+                if _um_used:
+                    chat_detail_info += "参照ID：" + ", ".join(str(x) for x in _um_used) + "\n"
+                if _um_ctx:
+                    chat_detail_info += _um_ctx + "\n"
+
         return chat_detail_info
 
     # コンテンツファイルを保存する

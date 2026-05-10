@@ -449,21 +449,28 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         intent_queries, intent_vecs, RAG_query_gene_log = future_intent.result()
         meta_searches, meta_search_log = future_meta.result()
 
-    # ユーザーメモリ層を memory 先頭に注入（On/Off は user_memory_override / ユーザー設定 / システムデフォルト で解決）
-    # IMAGEGEN は画像プロンプトが3000文字制限で詰まるためスキップ（実画像指示を押し出す事故を回避）
+    # ユーザーメモリ層を「対話相手についての情報」コンテキストとして合成（後でクエリ先頭に挿入）
+    # IMAGEGEN は画像プロンプトが3000文字制限で詰まるためスキップ
+    # 優先順: execution["USER_MEMORY_LAYERS"] (UIの即時反映) > ユーザーマスタ > システムデフォルト
+    user_memory_context = ""
     user_memory_used = []
     if cfg["memory_use"] and model_type == "LLM":
         try:
             _svc_id = (service_info or {}).get("SERVICE_ID", "")
             _usr_id = (user_info or {}).get("USER_ID", "")
-            _session_override = execution.get("USER_MEMORY_OVERRIDE")  # list or None
-            _active_layers = dmus.resolve_active_layers(_usr_id, session_override=_session_override)
+            _override_layers = execution.get("USER_MEMORY_LAYERS")
+            if _override_layers is not None:
+                # UIから即時上書き（空リストでも尊重 = 全Off）
+                import DigiM_UserMemory as _dmum_local
+                _active_layers = [l for l in _override_layers if l in _dmum_local.LAYERS]
+            else:
+                _active_layers = dmus.resolve_active_layers(_usr_id)
             if _active_layers:
-                _um_items, user_memory_used = dmumb.build_memory_items(_svc_id, _usr_id, _active_layers)
-                if _um_items:
-                    memories_selected = _um_items + memories_selected
+                user_memory_context, user_memory_used = dmumb.build_context_text(
+                    _svc_id, _usr_id, _active_layers, query_text=user_query,
+                )
         except Exception as _um_err:
-            timestamp_log += f"[user_memory注入失敗: {_um_err}]" + str(datetime.now()) + "<br>"
+            timestamp_log += f"[user_memory合成失敗: {_um_err}]" + str(datetime.now()) + "<br>"
     intent_dur = RAG_query_gene_log.get("duration_sec", "-") if RAG_query_gene_log else "-"
     meta_dur = meta_search_log.get("date", {}).get("duration_sec", "-") if meta_search_log else "-"
     timestamp_log += f"[08-10完了: メモリ/RAGクエリ({intent_dur}s)/メタ検索({meta_dur}s)]" + str(datetime.now()) + "<br>"
@@ -486,7 +493,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     timestamp_log += "[12.プロンプトテンプレート設定]" + str(datetime.now()) + "<br>"
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
     if model_type == "LLM":
-        query = f'{knowledge_context}{prompt_template}{user_query}{situation_prompt}'
+        # 順序: 対話相手についての情報 → Knowledge → Template → User Query → Situation
+        query = f'{user_memory_context}{knowledge_context}{prompt_template}{user_query}{situation_prompt}'
     else:
         query = f'{prompt_template}{user_query}{situation_prompt}'
     output_reference["prompt"] = {
@@ -494,6 +502,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         "web_context": web_context, "knowledge_context": knowledge_context,
         "prompt_template": prompt_template, "situation_prompt": situation_prompt,
         "memories_selected": memories_selected,
+        "user_memory_context": user_memory_context,
         "user_memory_used": user_memory_used,
     }
 
@@ -580,6 +589,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             "meta_search": meta_search_log,
             "knowledge_rag": {"setting": agent.agent["KNOWLEDGE"]},
             "prompt_template": {"setting": prompt_temp_cd},
+            "user_memory_context": user_memory_context,
             "text": prompt
         }
         response_chat_dict = {
@@ -860,6 +870,8 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                     "_THINKING_LOG":     in_execution.get("_THINKING_LOG", {}),
                     "_THINKING_RESULT":  in_execution.get("_THINKING_RESULT", {}),
                     "_UNLOCK_ON_DIGEST": _is_last_chain,
+                    # User Memory: UI即時上書きを下流へ伝播（None=未指定なら下流が user master / system default にフォールバック）
+                    "USER_MEMORY_LAYERS": in_execution.get("USER_MEMORY_LAYERS"),
                     # マルチペルソナ並列実行用のフラグを下流のDigiMatsuExecuteへ伝播
                     "_SEQ_OVERRIDE":     in_execution.get("_SEQ_OVERRIDE"),
                     "_SUB_SEQ_START":    in_execution.get("_SUB_SEQ_START"),
