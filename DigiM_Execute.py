@@ -454,6 +454,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     # 優先順: execution["USER_MEMORY_LAYERS"] (UIの即時反映) > ユーザーマスタ > システムデフォルト
     user_memory_context = ""
     user_memory_used = []
+    user_memory_meta = {"short_keywords": []}
     if cfg["memory_use"] and model_type == "LLM":
         try:
             _svc_id = (service_info or {}).get("SERVICE_ID", "")
@@ -466,7 +467,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             else:
                 _active_layers = dmus.resolve_active_layers(_usr_id)
             if _active_layers:
-                user_memory_context, user_memory_used = dmumb.build_context_text(
+                user_memory_context, user_memory_used, user_memory_meta = dmumb.build_context_text(
                     _svc_id, _usr_id, _active_layers, query_text=user_query,
                 )
         except Exception as _um_err:
@@ -504,6 +505,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         "memories_selected": memories_selected,
         "user_memory_context": user_memory_context,
         "user_memory_used": user_memory_used,
+        "user_memory_meta": user_memory_meta,
     }
 
     # LLMの実行
@@ -590,6 +592,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             "knowledge_rag": {"setting": agent.agent["KNOWLEDGE"]},
             "prompt_template": {"setting": prompt_temp_cd},
             "user_memory_context": user_memory_context,
+            "user_memory_meta": user_memory_meta,
             "text": prompt
         }
         response_chat_dict = {
