@@ -1,5 +1,5 @@
 {
-    "NAME": "User Dialog",
+    "NAME": "User Memory Short",
     "CHAINS": [
         {
             "TYPE": "LLM",
@@ -7,7 +7,7 @@
                 "AGENT_FILE": "USER",
                 "OVERWRITE_ITEMS": {},
                 "ADD_KNOWLEDGE": [],
-                "PROMPT_TEMPLATE": "User Dialog",
+                "PROMPT_TEMPLATE": "User Memory Short",
                 "USER_INPUT": "USER",
                 "CONTENTS": "USER",
                 "SITUATION": "USER",

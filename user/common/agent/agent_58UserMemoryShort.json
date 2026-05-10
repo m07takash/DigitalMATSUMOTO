@@ -1,0 +1,48 @@
+{
+    "DISPLAY": false,
+    "DISPLAY_NAME": "ユーザーメモリ(短期)",
+    "NAME": "ユーザーメモリ短期抽出",
+    "ACT": "会話セッションからユーザーの特徴・関心・価値観・制約・口調・感情を構造化して抽出する専用のAI",
+    "PERSONALITY": {},
+    "ENGINE": {
+        "LLM": {
+            "DEFAULT": "GPT-5-nano",
+            "GPT-5-nano": {
+                "NAME": "GPT-5-nano",
+                "FUNC_NAME": "generate_response_T_gpt",
+                "MODEL": "gpt-5-nano-2025-08-07",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {
+                    "limit": 8000,
+                    "role": "user",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "Y"
+                }
+            }
+        }
+    },
+    "HABIT": {
+        "DEFAULT": {
+            "MAGIC_WORDS": [
+                ""
+            ],
+            "PRACTICE": "practice_13UserMemoryShort.json",
+            "ADD_KNOWLEDGE": []
+        }
+    },
+    "KNOWLEDGE": [],
+    "SKILL": {},
+    "COMMUNICATION": {
+        "ACTIVE": "N",
+        "SAVE_MODE": "CSV",
+        "SAVE_DB": "Communication",
+        "DEFAULT_CATEGORY": "Feedback",
+        "FEEDBACK_ITEM_LIST": [
+            "memo",
+            "comment"
+        ]
+    },
+    "SUPPORT_AGENT": {}
+}

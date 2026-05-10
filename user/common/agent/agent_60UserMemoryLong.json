@@ -1,24 +1,24 @@
 {
     "DISPLAY": false,
-    "DISPLAY_NAME": "ユーザーダイアログ",
-    "NAME": "ユーザーダイアログ",
-    "ACT": "会話セッションからユーザーの特徴的な主張を抽出する専用のAI",
+    "DISPLAY_NAME": "ユーザーメモリ(長期)",
+    "NAME": "ユーザーメモリ長期マージ",
+    "ACT": "既存の長期ペルソナと新しい中期プロファイルから、ユーザーの恒常的特徴を更新する専用のAI",
     "PERSONALITY": {},
     "ENGINE": {
         "LLM": {
-            "DEFAULT": "GPT-5-nano",
-            "GPT-5-nano": {
-                "NAME": "GPT-5-nano",
+            "DEFAULT": "GPT-5-mini",
+            "GPT-5-mini": {
+                "NAME": "GPT-5-mini",
                 "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5-nano-2025-08-07",
+                "MODEL": "gpt-5-mini",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {
-                    "limit": 8000,
+                    "limit": 12000,
                     "role": "user",
                     "priority": "latest",
                     "similarity_logic": "cosine",
-                    "digest": "Y"
+                    "digest": "N"
                 }
             }
         }
@@ -28,7 +28,7 @@
             "MAGIC_WORDS": [
                 ""
             ],
-            "PRACTICE": "practice_13UserDialog.json",
+            "PRACTICE": "practice_15UserMemoryLong.json",
             "ADD_KNOWLEDGE": []
         }
     },
