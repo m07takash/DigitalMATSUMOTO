@@ -1,5 +1,5 @@
 {
-    "NAME": "User Memory Short",
+    "NAME": "User Memory History",
     "CHAINS": [
         {
             "TYPE": "LLM",
@@ -7,7 +7,7 @@
                 "AGENT_FILE": "USER",
                 "OVERWRITE_ITEMS": {},
                 "ADD_KNOWLEDGE": [],
-                "PROMPT_TEMPLATE": "User Memory Short",
+                "PROMPT_TEMPLATE": "User Memory History",
                 "USER_INPUT": "USER",
                 "CONTENTS": "USER",
                 "SITUATION": "USER",

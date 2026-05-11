@@ -454,7 +454,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     # 優先順: execution["USER_MEMORY_LAYERS"] (UIの即時反映) > ユーザーマスタ > システムデフォルト
     user_memory_context = ""
     user_memory_used = []
-    user_memory_meta = {"short_keywords": []}
+    user_memory_meta = {"history_keywords": []}
     if cfg["memory_use"] and model_type == "LLM":
         try:
             _svc_id = (service_info or {}).get("SERVICE_ID", "")

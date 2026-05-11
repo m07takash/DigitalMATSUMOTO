@@ -1,5 +1,5 @@
 {
-    "NAME": "User Memory Mid",
+    "NAME": "User Memory Persona",
     "CHAINS": [
         {
             "TYPE": "LLM",
@@ -7,7 +7,7 @@
                 "AGENT_FILE": "USER",
                 "OVERWRITE_ITEMS": {},
                 "ADD_KNOWLEDGE": [],
-                "PROMPT_TEMPLATE": "User Memory Mid",
+                "PROMPT_TEMPLATE": "User Memory Persona",
                 "USER_INPUT": "USER",
                 "CONTENTS": "USER",
                 "SITUATION": "USER",
