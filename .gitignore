@@ -169,7 +169,7 @@ user/common/agent/*.json
 !user/common/agent/agent_1*Default*.json
 !user/common/agent/agent_2*.json
 !user/common/agent/agent_5*.json
-!user/common/agent/agent_60UserMemoryLong.json
+!user/common/agent/agent_60UserMemoryPersona.json
 user/common/agent/character/*.txt
 user/common/agent/character/*.md
 !user/common/agent/character/Sample.txt

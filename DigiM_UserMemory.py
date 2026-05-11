@@ -1,9 +1,9 @@
-"""ユーザーメモリ（短期/中期/長期）のストレージ抽象化。
+"""ユーザーメモリ（History/Nowaday/Persona）のストレージ抽象化。
 
 3つの層を扱う:
-  - short  (session_digest):    1セッション1レコード。終了時に生成。
-  - mid    (period_profile):    期間ごとに集約（月次 or rolling）。
-  - long   (persona_profile):   1ユーザー1レコード。差分マージで更新。
+  - history (session_digest):    1セッション1レコード。終了時に生成。
+  - nowaday (period_profile):    期間ごとに集約（月次 or rolling）。
+  - persona (persona_profile):   1ユーザー1レコード。差分マージで更新。
 
 各層ごとに保存先を選択できる:
   - "EXCEL":  user/common/user_memory/<layer>.xlsx
@@ -11,10 +11,10 @@
   - "RDB":    PostgreSQL (digim_user_memory_<layer>)
 
 system.env で層ごとに指定:
-  USER_MEMORY_SHORT_BACKEND, USER_MEMORY_MID_BACKEND, USER_MEMORY_LONG_BACKEND
-  USER_MEMORY_DEFAULT_LAYERS  (例: "long,mid,short")
+  USER_MEMORY_HISTORY_BACKEND, USER_MEMORY_NOWADAY_BACKEND, USER_MEMORY_PERSONA_BACKEND
+  USER_MEMORY_DEFAULT_LAYERS  (例: "persona,nowaday,history")
 
-長期は3000トークン上限で要約注入される前提（呼び出し側で制御）。
+Personaは USER_MEMORY_PERSONA_TOKEN_LIMIT で要約注入される前提（呼び出し側で制御）。
 """
 import json
 import logging
@@ -37,7 +37,7 @@ _setting = dmu.read_yaml_file("setting.yaml")
 _user_memory_folder = _setting.get("USER_MEMORY_FOLDER", "user/common/user_memory/")
 _mst_folder_path = _setting["MST_FOLDER"]
 
-LAYERS = ("short", "mid", "long")
+LAYERS = ("history", "nowaday", "persona")
 
 _NOTION_MST_FILE = os.getenv("NOTION_MST_FILE")
 
@@ -53,42 +53,42 @@ def get_default_layers() -> list:
     """デフォルトで有効な層リスト（system.envから）。
 
     USER_MEMORY_DEFAULT_LAYERS の挙動:
-      - 未設定 (None) → "long,mid,short" を適用
+      - 未設定 (None) → "persona,nowaday,history" を適用
       - 空文字列 ""    → 全層Off (空リストを返す)
-      - "long,mid"    → ["long", "mid"]
+      - "persona,nowaday"    → ["persona", "nowaday"]
     """
     raw = os.getenv("USER_MEMORY_DEFAULT_LAYERS")
     if raw is None:
-        raw = "long,mid,short"
+        raw = "persona,nowaday,history"
     return [s.strip().lower() for s in raw.split(",") if s.strip().lower() in LAYERS]
 
 
 # ---------- Schema ----------
 # 各層の論理スキーマ（excerpt列はテキスト、tags/list列はJSON）
-_SHORT_FIELDS = [
+_HISTORY_FIELDS = [
     "id", "service_id", "user_id", "session_id", "session_name",
     "create_date", "topic", "excerpt", "axis_tags",
     "confidence", "source_seq", "active",
 ]
-_MID_FIELDS = [
+_NOWADAY_FIELDS = [
     "id", "service_id", "user_id", "period",
     "generated_at", "recurring_topics", "emerging", "declining",
     "shifts", "evidence_session_ids", "summary_text", "token_count", "active",
 ]
-_LONG_FIELDS = [
+_PERSONA_FIELDS = [
     "service_id", "user_id", "generated_at", "last_reviewed",
     "role", "expertise", "recurring_interests", "values_principles",
     "constraints", "communication_style", "avoid_topics",
     "summary_text", "token_count",
 ]
-_FIELDS = {"short": _SHORT_FIELDS, "mid": _MID_FIELDS, "long": _LONG_FIELDS}
+_FIELDS = {"history": _HISTORY_FIELDS, "nowaday": _NOWADAY_FIELDS, "persona": _PERSONA_FIELDS}
 
 # JSON化対象の列
 _JSON_COLS = {
-    "short": {"axis_tags", "source_seq"},
-    "mid":   {"recurring_topics", "emerging", "declining", "shifts", "evidence_session_ids"},
-    "long":  {"expertise", "recurring_interests", "values_principles",
-              "constraints", "communication_style", "avoid_topics"},
+    "history": {"axis_tags", "source_seq"},
+    "nowaday": {"recurring_topics", "emerging", "declining", "shifts", "evidence_session_ids"},
+    "persona": {"expertise", "recurring_interests", "values_principles",
+                "constraints", "communication_style", "avoid_topics"},
 }
 
 
@@ -100,7 +100,7 @@ def _empty_record(layer: str) -> dict:
         rec["active"] = "Y"
     if "token_count" in rec:
         rec["token_count"] = 0
-    if layer == "short" and "confidence" in rec:
+    if layer == "history" and "confidence" in rec:
         rec["confidence"] = 0.0
     return rec
 
@@ -160,8 +160,8 @@ def _excel_save_all(layer: str, records: list):
 
 # ---------- RDB backend ----------
 _RDB_DDL = {
-    "short": """
-        CREATE TABLE IF NOT EXISTS digim_user_memory_short (
+    "history": """
+        CREATE TABLE IF NOT EXISTS digim_user_memory_history (
             id              TEXT PRIMARY KEY,
             service_id      TEXT,
             user_id         TEXT,
@@ -176,8 +176,8 @@ _RDB_DDL = {
             active          CHAR(1) DEFAULT 'Y'
         )
     """,
-    "mid": """
-        CREATE TABLE IF NOT EXISTS digim_user_memory_mid (
+    "nowaday": """
+        CREATE TABLE IF NOT EXISTS digim_user_memory_nowaday (
             id                    TEXT PRIMARY KEY,
             service_id            TEXT,
             user_id               TEXT,
@@ -194,8 +194,8 @@ _RDB_DDL = {
             UNIQUE(service_id, user_id, period)
         )
     """,
-    "long": """
-        CREATE TABLE IF NOT EXISTS digim_user_memory_long (
+    "persona": """
+        CREATE TABLE IF NOT EXISTS digim_user_memory_persona (
             service_id            TEXT,
             user_id               TEXT,
             generated_at          TIMESTAMP,
@@ -278,10 +278,10 @@ def _rdb_upsert(layer: str, rec: dict):
             placeholders.append("%s")
             values.append(v if v != "" else None)
 
-    if layer == "short":
+    if layer == "history":
         conflict_keys = "(session_id)"
         update_cols = [c for c in cols if c not in ("id", "session_id")]
-    elif layer == "mid":
+    elif layer == "nowaday":
         conflict_keys = "(service_id, user_id, period)"
         update_cols = [c for c in cols if c not in ("id", "service_id", "user_id", "period")]
     else:
@@ -334,7 +334,7 @@ def _to_notion_date(value) -> str:
 
 # ---------- NOTION backend ----------
 # 各層ごとにNotionDBを使う場合は NOTION_MST_FILE のキーから取得
-# NOTION_MST_FILE: { "DigiM_UserMemory_Short": "<db_id>", ... }
+# NOTION_MST_FILE: { "DigiM_UserMemory_History": "<db_id>", ... }
 def _notion_db_id(layer: str):
     if not _NOTION_MST_FILE:
         return None
@@ -423,11 +423,11 @@ def _notion_upsert(layer: str, rec: dict):
     pages = dmn.get_all_pages(db_id)
 
     # 一意キーでマッチング
-    if layer == "short":
+    if layer == "history":
         match_field = "session_id"
-    elif layer == "mid":
+    elif layer == "nowaday":
         match_field = "id"
-    else:  # long
+    else:  # persona
         match_field = "user_id"
 
     target_page_id = None
@@ -526,9 +526,9 @@ def upsert(layer: str, record: dict):
         return
     # EXCEL: 全件読込→差し替え→全件保存
     records = _excel_load_all(layer)
-    if layer == "short":
+    if layer == "history":
         match_field = "session_id"
-    elif layer == "mid":
+    elif layer == "nowaday":
         match_field = "id"
     else:
         match_field = "user_id"
@@ -566,11 +566,11 @@ def get_one(layer: str, key_filter: dict):
     return None
 
 
-def make_short_id(service_id: str, user_id: str, session_id: str) -> str:
+def make_history_id(service_id: str, user_id: str, session_id: str) -> str:
     return f"{service_id}__{user_id}__{session_id}"
 
 
-def make_mid_id(service_id: str, user_id: str, period: str) -> str:
+def make_nowaday_id(service_id: str, user_id: str, period: str) -> str:
     return f"{service_id}__{user_id}__{period}"
 
 

@@ -1,16 +1,11 @@
-"""ユーザーメモリ層を会話履歴メモリに注入する形式へ合成する。
+"""ユーザーメモリ層を「対話相手についての情報」コンテキストとして合成する。
 
 呼び出しフロー:
-    items = build_memory_items(service_id, user_id, active_layers)
-    memories_with_um = items + memories_selected
-    agent.generate_response(..., memories=memories_with_um, ...)
+    context_text, used_ids, meta = build_context_text(service_id, user_id, active_layers, query_text=...)
+    full_query = context_text + knowledge_context + prompt_template + user_query + ...
 
-返却するアイテムは既存 memory パイプラインの形式に合わせる:
-    {"role": "user"/"assistant", "type": ..., "timestamp": ..., "token": int,
-     "text": str, "vec_text": [], "similarity_prompt": 0,
-     "seq": "_um", "sub_seq": "<layer>"}
-
-注入元のIDは `user_memory_used` キー(リスト)としても返し、効果ログに使う。
+context_text はプロンプト先頭(Knowledgeの直前)に挿入される。
+History層は MeCab × タグ × タイムスタンプのハイブリッドで関連レコードを選定する。
 """
 import logging
 import math
@@ -29,13 +24,13 @@ logger = logging.getLogger(__name__)
 if os.path.exists("system.env"):
     load_dotenv("system.env")
 
-LONG_TOKEN_LIMIT = int(os.getenv("USER_MEMORY_LONG_TOKEN_LIMIT") or "3000")
-# Short層: 合計文字数の上限(コンテキストに入る分量)
-SHORT_MAX_CHARS = int(os.getenv("USER_MEMORY_SHORT_MAX_CHARS") or "800")
-# Short層: スコア配分(タグマッチ率と時間スコアの重み)
-SHORT_RECENCY_WEIGHT = float(os.getenv("USER_MEMORY_SHORT_RECENCY_WEIGHT") or "0.3")
-# Short層: 時間スコアのハーフライフ(日数)。これくらい古いと時間スコアが半分になる目安
-SHORT_RECENCY_HALF_LIFE_DAYS = float(os.getenv("USER_MEMORY_SHORT_RECENCY_HALF_LIFE_DAYS") or "30")
+PERSONA_TOKEN_LIMIT = int(os.getenv("USER_MEMORY_PERSONA_TOKEN_LIMIT") or "3000")
+# History層: 合計文字数の上限(コンテキストに入る分量)
+HISTORY_MAX_CHARS = int(os.getenv("USER_MEMORY_HISTORY_MAX_CHARS") or "800")
+# History層: スコア配分(タグマッチ率と時間スコアの重み)
+HISTORY_RECENCY_WEIGHT = float(os.getenv("USER_MEMORY_HISTORY_RECENCY_WEIGHT") or "0.3")
+# History層: 時間スコアのハーフライフ(日数)。これくらい古いと時間スコアが半分になる目安
+HISTORY_RECENCY_HALF_LIFE_DAYS = float(os.getenv("USER_MEMORY_HISTORY_RECENCY_HALF_LIFE_DAYS") or "30")
 
 
 def _now_ts() -> str:
@@ -47,7 +42,7 @@ def _approx_tokens(text: str) -> int:
     return len(text or "")
 
 
-def _format_long(rec: dict) -> str:
+def _format_persona(rec: dict) -> str:
     if not rec:
         return ""
     parts = []
@@ -82,12 +77,12 @@ def _format_long(rec: dict) -> str:
         parts.append("")
         parts.append(summary)
     text = "## 人物像\n" + "\n".join(parts)
-    if len(text) > LONG_TOKEN_LIMIT:
-        text = text[: LONG_TOKEN_LIMIT - 1] + "…"
+    if len(text) > PERSONA_TOKEN_LIMIT:
+        text = text[: PERSONA_TOKEN_LIMIT - 1] + "…"
     return text
 
 
-def _format_mid(rec: dict) -> str:
+def _format_nowaday(rec: dict) -> str:
     if not rec:
         return ""
     period = (rec.get("period") or "").strip()
@@ -162,7 +157,7 @@ def _tokenize_nouns(text: str) -> set:
     return nouns
 
 
-def _select_shorts_by_tags_and_recency(records: list, query_text: str, max_chars: int) -> tuple:
+def _select_histories_by_tags_and_recency(records: list, query_text: str, max_chars: int) -> tuple:
     """axis_tagsの語彙を使ったタグマッチ × タイムスタンプ減衰で並べ替え、文字数で打ち切り。
 
     query_text が空の場合は recency-only にフォールバック。
@@ -171,7 +166,7 @@ def _select_shorts_by_tags_and_recency(records: list, query_text: str, max_chars
     if not records:
         return [], []
     now = datetime.now()
-    half_life = max(SHORT_RECENCY_HALF_LIFE_DAYS, 1.0)
+    half_life = max(HISTORY_RECENCY_HALF_LIFE_DAYS, 1.0)
 
     # 1. ユーザー入力から名詞を抽出(MeCab)。タグ側は分解せず原文のままマッチ判定する。
     query_nouns = _tokenize_nouns(query_text) if query_text else set()
@@ -205,7 +200,7 @@ def _select_shorts_by_tags_and_recency(records: list, query_text: str, max_chars
 
         if match_count > 0:
             # マッチ群: マッチ率をベースに、時間スコアで微調整
-            combined = (1 - SHORT_RECENCY_WEIGHT) * match_ratio + SHORT_RECENCY_WEIGHT * recency_score
+            combined = (1 - HISTORY_RECENCY_WEIGHT) * match_ratio + HISTORY_RECENCY_WEIGHT * recency_score
             matched_group.append((combined, r))
         else:
             # 非マッチ群: 時間スコアのみ
@@ -228,13 +223,13 @@ def _select_shorts_by_tags_and_recency(records: list, query_text: str, max_chars
     return selected, query_keywords
 
 
-def _format_short(records: list, query_text: str = "", max_chars: int = None) -> tuple:
+def _format_history(records: list, query_text: str = "", max_chars: int = None) -> tuple:
     """Returns: (text: str, query_keywords: list)"""
     if not records:
         return "", []
     if max_chars is None:
-        max_chars = SHORT_MAX_CHARS
-    selected, query_keywords = _select_shorts_by_tags_and_recency(records, query_text, max_chars)
+        max_chars = HISTORY_MAX_CHARS
+    selected, query_keywords = _select_histories_by_tags_and_recency(records, query_text, max_chars)
     if not selected:
         return "", query_keywords
     parts = ["## 直近セッション"]
@@ -248,60 +243,59 @@ def build_context_text(service_id: str, user_id: str, active_layers: list = None
     """active_layers に沿って「対話相手についての情報」コンテキスト文字列を返す。
 
     Args:
-        query_text: ユーザーの現在の入力。Short層のタグマッチ検索に使用。
-                    空ならShort層は recency-only にフォールバック。
+        query_text: ユーザーの現在の入力。History層のタグマッチ検索に使用。
+                    空ならHistory層は recency-only にフォールバック。
 
     Returns: (context_text: str, used_ids: list, meta: dict)
       context_text: プロンプト先頭(Knowledgeより前)に挿入する文字列。空なら ""。
       used_ids:    効果ログ用の参照ID一覧。
-      meta:        補助情報。例: {"short_keywords": [...]}（Short検索に使ったクエリ名詞）
+      meta:        補助情報。例: {"history_keywords": [...]}（History検索に使ったクエリ名詞）
     """
     if active_layers is None:
         active_layers = dmus.resolve_active_layers(user_id)
     parts = []
     used_ids = []
-    meta = {"short_keywords": []}
+    meta = {"history_keywords": []}
     if not user_id or not active_layers:
         return "", used_ids, meta
 
-    if "long" in active_layers:
+    if "persona" in active_layers:
         try:
-            long_rec = dmum.get_one("long", {"service_id": service_id, "user_id": user_id})
-            if long_rec:
-                text = _format_long(long_rec)
+            persona_rec = dmum.get_one("persona", {"service_id": service_id, "user_id": user_id})
+            if persona_rec:
+                text = _format_persona(persona_rec)
                 if text:
                     parts.append(text)
-                    used_ids.append(f"long:{user_id}")
+                    used_ids.append(f"persona:{user_id}")
         except Exception as e:
-            logger.warning(f"[user_memory.builder] long失敗: {e}")
+            logger.warning(f"[user_memory.builder] persona失敗: {e}")
 
-    if "mid" in active_layers:
+    if "nowaday" in active_layers:
         try:
-            mids = dmum.load_all("mid", service_id=service_id, user_id=user_id)
-            mids = [m for m in mids if (m.get("active") or "Y") == "Y"]
-            mids.sort(key=lambda r: r.get("generated_at", ""), reverse=True)
-            if mids:
-                mid_rec = mids[0]
-                text = _format_mid(mid_rec)
+            nowadays = dmum.load_all("nowaday", service_id=service_id, user_id=user_id)
+            nowadays = [m for m in nowadays if (m.get("active") or "Y") == "Y"]
+            nowadays.sort(key=lambda r: r.get("generated_at", ""), reverse=True)
+            if nowadays:
+                nowaday_rec = nowadays[0]
+                text = _format_nowaday(nowaday_rec)
                 if text:
                     parts.append(text)
-                    used_ids.append(f"mid:{mid_rec.get('id')}")
+                    used_ids.append(f"nowaday:{nowaday_rec.get('id')}")
         except Exception as e:
-            logger.warning(f"[user_memory.builder] mid失敗: {e}")
+            logger.warning(f"[user_memory.builder] nowaday失敗: {e}")
 
-    if "short" in active_layers:
+    if "history" in active_layers:
         try:
-            shorts = dmum.load_all("short", service_id=service_id, user_id=user_id)
-            shorts = [s for s in shorts if (s.get("active") or "Y") == "Y"]
-            text, short_keywords = _format_short(shorts, query_text=query_text)
-            meta["short_keywords"] = list(short_keywords) if short_keywords else []
+            histories = dmum.load_all("history", service_id=service_id, user_id=user_id)
+            histories = [s for s in histories if (s.get("active") or "Y") == "Y"]
+            text, history_keywords = _format_history(histories, query_text=query_text)
+            meta["history_keywords"] = list(history_keywords) if history_keywords else []
             if text:
                 parts.append(text)
-                # 取得実数を見たいので構築済みテキストの行数を数える(ヘッダ1行を除く)
                 used_count = max(0, text.count("\n") - 0)
-                used_ids.append(f"short:{user_id}:n={used_count}")
+                used_ids.append(f"history:{user_id}:n={used_count}")
         except Exception as e:
-            logger.warning(f"[user_memory.builder] short失敗: {e}")
+            logger.warning(f"[user_memory.builder] history失敗: {e}")
 
     if not parts:
         return "", used_ids, meta
@@ -313,70 +307,3 @@ def build_context_text(service_id: str, user_id: str, active_layers: list = None
         f"{body}\n\n"
     )
     return context_text, used_ids, meta
-
-
-def build_memory_items(service_id: str, user_id: str, active_layers: list = None,
-                      short_max_items: int = 5) -> tuple:
-    """[Deprecated] 旧API: memory 形式アイテムを返す（後方互換用）。
-
-    Returns: (memory_items: list, used_ids: list)
-    """
-    if active_layers is None:
-        active_layers = dmus.resolve_active_layers(user_id)
-    items = []
-    used_ids = []
-    if not user_id:
-        return items, used_ids
-
-    if "long" in active_layers:
-        try:
-            long_rec = dmum.get_one("long", {"service_id": service_id, "user_id": user_id})
-            if long_rec:
-                text = _format_long(long_rec)
-                if text:
-                    items.append({
-                        "role": "user", "type": "user_memory_long",
-                        "timestamp": _now_ts(), "token": _approx_tokens(text),
-                        "text": text, "vec_text": [], "similarity_prompt": 0,
-                        "seq": "_um", "sub_seq": "long",
-                    })
-                    used_ids.append(f"long:{user_id}")
-        except Exception as e:
-            logger.warning(f"[user_memory.builder] long失敗: {e}")
-
-    if "mid" in active_layers:
-        try:
-            mids = dmum.load_all("mid", service_id=service_id, user_id=user_id)
-            mids = [m for m in mids if (m.get("active") or "Y") == "Y"]
-            mids.sort(key=lambda r: r.get("generated_at", ""), reverse=True)
-            if mids:
-                mid_rec = mids[0]
-                text = _format_mid(mid_rec)
-                if text:
-                    items.append({
-                        "role": "user", "type": "user_memory_mid",
-                        "timestamp": _now_ts(), "token": _approx_tokens(text),
-                        "text": text, "vec_text": [], "similarity_prompt": 0,
-                        "seq": "_um", "sub_seq": "mid",
-                    })
-                    used_ids.append(f"mid:{mid_rec.get('id')}")
-        except Exception as e:
-            logger.warning(f"[user_memory.builder] mid失敗: {e}")
-
-    if "short" in active_layers:
-        try:
-            shorts = dmum.load_all("short", service_id=service_id, user_id=user_id)
-            shorts = [s for s in shorts if (s.get("active") or "Y") == "Y"]
-            text = _format_short(shorts)
-            if text:
-                items.append({
-                    "role": "user", "type": "user_memory_short",
-                    "timestamp": _now_ts(), "token": _approx_tokens(text),
-                    "text": text, "vec_text": [], "similarity_prompt": 0,
-                    "seq": "_um", "sub_seq": "short",
-                })
-                used_ids.append(f"short:{user_id}")
-        except Exception as e:
-            logger.warning(f"[user_memory.builder] short失敗: {e}")
-
-    return items, used_ids

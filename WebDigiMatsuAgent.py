@@ -36,7 +36,7 @@ import DigiM_DB_Export as dmdbe
 import DigiM_AgentPersona as dap
 import DigiM_UserMemoryScheduler as dmums
 
-# ユーザーメモリスケジューラ起動（USER_MEMORY_MID_SCHEDULE が "off" 以外で起動）
+# ユーザーメモリスケジューラ起動（USER_MEMORY_NOWADAY_SCHEDULE が "off" 以外で起動）
 try:
     dmums.start()
 except Exception:
@@ -619,7 +619,7 @@ def refresh_session_states():
         _master_layers = _dmus_reset.load_user_setting(st.session_state.user_id).get("layers", [])
     except Exception:
         _master_layers = []
-    for _l in ("long", "mid", "short"):
+    for _l in ("persona", "nowaday", "history"):
         st.session_state[f"um_layer_{_l}"] = (_l in _master_layers)
     st.session_state.user_memory_layers_now = list(_master_layers)
     st.session_state.display_name = st.session_state.default_agent
@@ -2887,10 +2887,10 @@ def main():
                             except Exception:
                                 pass
                         # 新UserMemory短期: 未保存セッションを自動処理
-                        if (os.getenv("USER_MEMORY_SHORT_AUTO_SAVE_FLG") or "N") == "Y":
+                        if (os.getenv("USER_MEMORY_HISTORY_AUTO_SAVE_FLG") or "N") == "Y":
                             import DigiM_GeneUserMemory as _dmgum_rag
                             try:
-                                _dmgum_rag.save_short_for_unsaved_sessions()
+                                _dmgum_rag.save_history_for_unsaved_sessions()
                             except Exception:
                                 pass
                     _run_bg_task("rag", "RAGデータを更新中", _rag_update)
@@ -2939,9 +2939,9 @@ def main():
                     st.markdown("---")
                     st.markdown("**User Memory (Admin)**")
                     st.caption(
-                        f"backends: short={_dmum_admin.get_backend('short')} / "
-                        f"mid={_dmum_admin.get_backend('mid')} / "
-                        f"long={_dmum_admin.get_backend('long')}"
+                        f"backends: history={_dmum_admin.get_backend('history')} / "
+                        f"nowaday={_dmum_admin.get_backend('nowaday')} / "
+                        f"persona={_dmum_admin.get_backend('persona')}"
                     )
                     st.caption(
                         f"system default layers: {', '.join(_dmum_admin.get_default_layers())}"
@@ -2970,8 +2970,8 @@ def main():
                         _um_period_value = f"since_{_um_period_date.strftime('%Y-%m-%d')}"
                     st.caption(f"period={_um_period_value}")
 
-                    # Unified update button: run Short → Mid → Long sequentially
-                    if st.button("Update User Memory (Short → Mid → Long)", key="um_update_all", disabled=bool(st.session_state._bg_task)):
+                    # Unified update button: run History → Nowaday → Persona sequentially
+                    if st.button("Update User Memory (History → Nowaday → Persona)", key="um_update_all", disabled=bool(st.session_state._bg_task)):
                         _per = _um_period_value
                         _tgt_users = list(_um_target_users) if _um_target_users else None
                         _svc = st.session_state.service_id
@@ -3788,7 +3788,7 @@ def main():
                 _checked_layers = _user_setting.get("layers", [])
                 _layer_cols = st.columns(3)
                 _new_layers = []
-                for _i, _l in enumerate(("long", "mid", "short")):
+                for _i, _l in enumerate(("persona", "nowaday", "history")):
                     _val = _layer_cols[_i].checkbox(_l, value=(_l in _checked_layers), key=f"um_layer_{_l}")
                     if _val:
                         _new_layers.append(_l)
@@ -3802,9 +3802,9 @@ def main():
                 # Review User Memory（任意で開く / 編集はバッファリングしてSaveで一括反映）
                 st.markdown("---")
                 if st.checkbox("Review User Memory", value=False, key="um_review_open"):
-                    _long_rec = _dmum.get_one("long", {"service_id": _svc_for_um, "user_id": _uid_for_um})
-                    if not _long_rec:
-                        st.caption("No long-term persona generated yet.")
+                    _persona_rec = _dmum.get_one("persona", {"service_id": _svc_for_um, "user_id": _uid_for_um})
+                    if not _persona_rec:
+                        st.caption("No persona generated yet.")
                     else:
                         _field_labels = {
                             "expertise": "Expertise", "recurring_interests": "Recurring interests",
@@ -3819,9 +3819,9 @@ def main():
 
                         # Save button at the top
                         if st.button("Save User Memory", key="um_review_save"):
-                            _updated = dict(_long_rec)
+                            _updated = dict(_persona_rec)
                             for _field in _field_labels.keys():
-                                _items = _long_rec.get(_field) or []
+                                _items = _persona_rec.get(_field) or []
                                 _new_items = []
                                 for _idx, _it in enumerate(_items):
                                     if not isinstance(_it, dict):
@@ -3839,16 +3839,16 @@ def main():
                                     })
                                 _updated[_field] = _new_items
                             _updated["last_reviewed"] = _dmum.now_ts()
-                            _dmum.upsert("long", _updated)
+                            _dmum.upsert("persona", _updated)
                             st.session_state.sidebar_message = "User memory saved."
                             st.rerun()
 
-                        st.markdown(f"**Role**: {_long_rec.get('role') or '(unset)'}")
-                        st.markdown(f"**Last reviewed**: {_long_rec.get('last_reviewed') or '(never)'}")
+                        st.markdown(f"**Role**: {_persona_rec.get('role') or '(unset)'}")
+                        st.markdown(f"**Last reviewed**: {_persona_rec.get('last_reviewed') or '(never)'}")
 
                         # 各項目: text_input(ラベル上書き) + selectbox(ステータス)
                         for _field, _label in _field_labels.items():
-                            _items = _long_rec.get(_field) or []
+                            _items = _persona_rec.get(_field) or []
                             if not _items:
                                 continue
                             st.markdown(f"**{_label}**")

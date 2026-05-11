@@ -1,9 +1,9 @@
-"""ユーザーメモリ（短期/中期/長期）の生成パイプライン。
+"""ユーザーメモリ（History/Nowaday/Persona）の生成パイプライン。
 
 3つの層の責務:
-  - 短期: セッション終了時 / 任意タイミングで、そのセッションから1レコードを生成しupsert
-  - 中期: 期間内の短期レコードを集約し中期プロファイルを更新
-  - 長期: 既存長期ペルソナと新しい中期プロファイルをマージし長期ペルソナを更新
+  - History: セッション終了時 / 任意タイミングで、そのセッションから1レコードを生成しupsert
+  - Nowaday: 期間内のHistoryレコードを集約しNowadayプロファイルを更新
+  - Persona: 既存Personaと新しいNowadayプロファイルをマージしPersonaを更新
 
 LLMはユーザー設定済みの `agent_58/59/60` を呼び出す。
 
@@ -31,9 +31,9 @@ if os.path.exists("system.env"):
 _setting = dmu.read_yaml_file("setting.yaml")
 _practice_folder = _setting["PRACTICE_FOLDER"]
 
-SHORT_AGENT_FILE = "agent_58UserMemoryShort.json"
-MID_AGENT_FILE   = "agent_59UserMemoryMid.json"
-LONG_AGENT_FILE  = "agent_60UserMemoryLong.json"
+HISTORY_AGENT_FILE = "agent_58UserMemoryHistory.json"
+NOWADAY_AGENT_FILE = "agent_59UserMemoryNowaday.json"
+PERSONA_AGENT_FILE = "agent_60UserMemoryPersona.json"
 
 
 # ---------- LLM出力パース ----------
@@ -125,22 +125,22 @@ def _gather_session_dialog_text(session_id: str, model_name=None, tokenizer=None
     return json.dumps(rows, ensure_ascii=False)
 
 
-# ---------- 短期メモリ ----------
-def generate_short(service_id: str, user_id: str, session_id: str) -> dict:
-    """セッションから短期メモリレコードを生成しupsert。生成したレコードを返す。"""
+# ---------- History メモリ ----------
+def generate_history(service_id: str, user_id: str, session_id: str) -> dict:
+    """セッションからHistoryメモリレコードを生成しupsert。生成したレコードを返す。"""
     session = dms.DigiMSession(session_id)
     session_name = session.session_name or dms.get_session_name(session_id)
     create_date = dms.get_last_update_date(session_id)
     dialog_text = _gather_session_dialog_text(session_id)
     if not dialog_text or dialog_text == "[]":
-        logger.info(f"[user_memory.short] 会話履歴が空のためスキップ session={session_id}")
+        logger.info(f"[user_memory.history] 会話履歴が空のためスキップ session={session_id}")
         return {}
 
-    raw = _run_agent(SHORT_AGENT_FILE, "User Memory Short", dialog_text)
+    raw = _run_agent(HISTORY_AGENT_FILE, "User Memory History", dialog_text)
     parsed = _parse_json_safely(raw)
 
     rec = {
-        "id": dmum.make_short_id(service_id, user_id, session_id),
+        "id": dmum.make_history_id(service_id, user_id, session_id),
         "service_id": service_id,
         "user_id": user_id,
         "session_id": session_id,
@@ -153,16 +153,16 @@ def generate_short(service_id: str, user_id: str, session_id: str) -> dict:
         "source_seq": [],
         "active": "Y",
     }
-    dmum.upsert("short", rec)
+    dmum.upsert("history", rec)
     try:
         session.save_user_dialog_session("SAVED")
     except Exception:
         pass
-    logger.info(f"[user_memory.short] saved session={session_id} topic={rec['topic']!r}")
+    logger.info(f"[user_memory.history] saved session={session_id} topic={rec['topic']!r}")
     return rec
 
 
-# ---------- 中期メモリ ----------
+# ---------- Nowaday メモリ ----------
 def _resolve_period_window(period: str):
     """period から (start, end) のdatetime対を返す。
 
@@ -199,12 +199,12 @@ def _resolve_period_window(period: str):
     return None, None
 
 
-def _filter_shorts_by_period(shorts: list, period: str) -> list:
+def _filter_histories_by_period(histories: list, period: str) -> list:
     start, end = _resolve_period_window(period)
     if start is None:
-        return shorts
+        return histories
     out = []
-    for r in shorts:
+    for r in histories:
         try:
             cd = r.get("create_date") or ""
             ts = datetime.fromisoformat(str(cd).replace("Z", ""))
@@ -215,49 +215,49 @@ def _filter_shorts_by_period(shorts: list, period: str) -> list:
     return out
 
 
-def build_mid_profile(service_id: str, user_id: str, period: str) -> dict:
-    """指定期間の短期を集約して中期プロファイルをupsert。
+def build_nowaday_profile(service_id: str, user_id: str, period: str) -> dict:
+    """指定期間のHistoryを集約してNowadayプロファイルをupsert。
 
-    period: "YYYY-MM" or "rolling_<N>d"
+    period: "YYYY-MM" or "rolling_<N>d" or "since_YYYY-MM-DD" or "all"
     """
-    shorts_all = dmum.load_all("short", service_id=service_id, user_id=user_id)
-    shorts = _filter_shorts_by_period(shorts_all, period)
-    if not shorts:
-        logger.info(f"[user_memory.mid] 期間内の短期が0件 user={user_id} period={period}")
+    histories_all = dmum.load_all("history", service_id=service_id, user_id=user_id)
+    histories = _filter_histories_by_period(histories_all, period)
+    if not histories:
+        logger.info(f"[user_memory.nowaday] 期間内のHistoryが0件 user={user_id} period={period}")
         return {}
 
-    existing = dmum.get_one("mid", {
+    existing = dmum.get_one("nowaday", {
         "service_id": service_id, "user_id": user_id, "period": period,
     })
 
     payload = {
         "period": period,
-        "existing_mid_profile": {
+        "existing_nowaday_profile": {
             "recurring_topics": (existing or {}).get("recurring_topics") or [],
             "emerging": (existing or {}).get("emerging") or [],
             "declining": (existing or {}).get("declining") or [],
             "shifts": (existing or {}).get("shifts") or [],
             "summary_text": (existing or {}).get("summary_text") or "",
         },
-        "short_records": [
+        "history_records": [
             {
                 "session_id": s.get("session_id"),
                 "create_date": s.get("create_date"),
                 "topic": s.get("topic"),
                 "excerpt": s.get("excerpt"),
                 "axis_tags": s.get("axis_tags"),
-            } for s in shorts
+            } for s in histories
         ],
     }
-    raw = _run_agent(MID_AGENT_FILE, "User Memory Mid", json.dumps(payload, ensure_ascii=False))
+    raw = _run_agent(NOWADAY_AGENT_FILE, "User Memory Nowaday", json.dumps(payload, ensure_ascii=False))
     parsed = _parse_json_safely(raw)
     if not parsed:
-        logger.warning(f"[user_memory.mid] LLM出力パース失敗 user={user_id}")
+        logger.warning(f"[user_memory.nowaday] LLM出力パース失敗 user={user_id}")
         return {}
 
     summary = (parsed.get("summary_text") or "").strip()
     rec = {
-        "id": dmum.make_mid_id(service_id, user_id, period),
+        "id": dmum.make_nowaday_id(service_id, user_id, period),
         "service_id": service_id,
         "user_id": user_id,
         "period": period,
@@ -266,40 +266,40 @@ def build_mid_profile(service_id: str, user_id: str, period: str) -> dict:
         "emerging": parsed.get("emerging") or [],
         "declining": parsed.get("declining") or [],
         "shifts": parsed.get("shifts") or [],
-        "evidence_session_ids": [s.get("session_id") for s in shorts if s.get("session_id")],
+        "evidence_session_ids": [s.get("session_id") for s in histories if s.get("session_id")],
         "summary_text": summary,
         "token_count": len(summary),
         "active": "Y",
     }
-    dmum.upsert("mid", rec)
-    logger.info(f"[user_memory.mid] saved user={user_id} period={period} sources={len(shorts)}")
+    dmum.upsert("nowaday", rec)
+    logger.info(f"[user_memory.nowaday] saved user={user_id} period={period} sources={len(histories)}")
     return rec
 
 
-def build_mid_for_all_users(period: str) -> dict:
-    """全ユーザーの中期プロファイルを更新（短期に登場するuser_idを対象）。"""
-    shorts = dmum.load_all("short")
-    pairs = {(r.get("service_id", ""), r.get("user_id", "")) for r in shorts if r.get("user_id")}
+def build_nowaday_for_all_users(period: str) -> dict:
+    """全ユーザーのNowadayプロファイルを更新（Historyに登場するuser_idを対象）。"""
+    histories = dmum.load_all("history")
+    pairs = {(r.get("service_id", ""), r.get("user_id", "")) for r in histories if r.get("user_id")}
     done, errors = [], []
     for sid, uid in pairs:
         try:
-            rec = build_mid_profile(sid, uid, period)
+            rec = build_nowaday_profile(sid, uid, period)
             if rec:
                 done.append((sid, uid))
         except Exception as e:
-            logger.error(f"[user_memory.mid] {uid} で失敗: {e}")
+            logger.error(f"[user_memory.nowaday] {uid} で失敗: {e}")
             errors.append((sid, uid))
     return {"done": done, "errors": errors}
 
 
-# ---------- 長期メモリ ----------
-LONG_TOKEN_LIMIT = int(os.getenv("USER_MEMORY_LONG_TOKEN_LIMIT") or "3000")
+# ---------- Persona メモリ ----------
+PERSONA_TOKEN_LIMIT = int(os.getenv("USER_MEMORY_PERSONA_TOKEN_LIMIT") or "3000")
 # 雑な日本語近似: 1トークン≒1.5文字。安全側に倒し1トークン=1文字で扱う。
-LONG_CHAR_LIMIT = LONG_TOKEN_LIMIT
+PERSONA_CHAR_LIMIT = PERSONA_TOKEN_LIMIT
 # confidence がこの値以上のpending項目は自動でapprovedへ昇格
-LONG_AUTO_APPROVE_THRESHOLD = float(os.getenv("USER_MEMORY_AUTO_APPROVE_THRESHOLD") or "0.8")
+PERSONA_AUTO_APPROVE_THRESHOLD = float(os.getenv("USER_MEMORY_AUTO_APPROVE_THRESHOLD") or "0.8")
 # 各フィールド(expertise等)で保持する Approved + Pending ラベルの合計文字数上限
-LONG_MAX_CHARS_PER_FIELD = int(os.getenv("USER_MEMORY_LONG_MAX_CHARS_PER_FIELD") or "300")
+PERSONA_MAX_CHARS_PER_FIELD = int(os.getenv("USER_MEMORY_PERSONA_MAX_CHARS_PER_FIELD") or "300")
 # 有効ステータス: pending(未レビュー) / approved(承認済) / deleted(削除済)
 _VALID_STATUSES = ("pending", "approved", "deleted")
 
@@ -326,11 +326,11 @@ def _merge_persona_lists(existing: list, new: list, max_chars: int = None) -> li
     """existing(承認済はキープ) と new をラベル単位でマージし、confidence>=閾値は自動承認。
 
     保持上限は max_chars（Approved + Pending ラベルの合計文字数）。デフォルトは
-    LONG_MAX_CHARS_PER_FIELD。Approved を優先 → 同status内は confidence 降順で詰める。
+    PERSONA_MAX_CHARS_PER_FIELD。Approved を優先 → 同status内は confidence 降順で詰める。
     deletedは削除記憶として全て保持(集計対象外)。
     """
     if max_chars is None:
-        max_chars = LONG_MAX_CHARS_PER_FIELD
+        max_chars = PERSONA_MAX_CHARS_PER_FIELD
     if not isinstance(existing, list):
         existing = []
     if not isinstance(new, list):
@@ -370,7 +370,7 @@ def _merge_persona_lists(existing: list, new: list, max_chars: int = None) -> li
             }
     # 自動承認: pending かつ confidence >= 閾値 → approved
     for v in by_label.values():
-        if v["status"] == "pending" and v["confidence"] >= LONG_AUTO_APPROVE_THRESHOLD:
+        if v["status"] == "pending" and v["confidence"] >= PERSONA_AUTO_APPROVE_THRESHOLD:
             v["status"] = "approved"
     # deletedはマージ後も保持（再提案を弾く用途）
     items = list(by_label.values())
@@ -392,49 +392,49 @@ def _merge_persona_lists(existing: list, new: list, max_chars: int = None) -> li
     return visible_kept + deleted
 
 
-_LONG_LIST_FIELDS = (
+_PERSONA_LIST_FIELDS = (
     "expertise", "recurring_interests", "values_principles",
     "constraints", "communication_style", "avoid_topics",
 )
 
 
-def merge_long_persona(service_id: str, user_id: str, mid_profiles=None) -> dict:
-    """既存長期ペルソナと中期プロファイルをLLMでマージし、長期DBにupsert。
+def merge_persona(service_id: str, user_id: str, nowaday_profiles=None) -> dict:
+    """既存PersonaとNowadayプロファイルをLLMでマージし、Persona DBにupsert。
 
-    mid_profiles: list[dict]  指定がなければ最新の中期1件を使う。
+    nowaday_profiles: list[dict]  指定がなければ最新のNowaday 1件を使う。
     """
-    existing = dmum.get_one("long", {"service_id": service_id, "user_id": user_id}) or {}
-    if mid_profiles is None:
-        mids = dmum.load_all("mid", service_id=service_id, user_id=user_id)
-        mids.sort(key=lambda r: r.get("generated_at", ""), reverse=True)
-        mid_profiles = mids[:1]
+    existing = dmum.get_one("persona", {"service_id": service_id, "user_id": user_id}) or {}
+    if nowaday_profiles is None:
+        nowadays = dmum.load_all("nowaday", service_id=service_id, user_id=user_id)
+        nowadays.sort(key=lambda r: r.get("generated_at", ""), reverse=True)
+        nowaday_profiles = nowadays[:1]
 
     payload = {
-        "existing_long_persona": {k: existing.get(k) for k in _LONG_LIST_FIELDS} | {
+        "existing_persona": {k: existing.get(k) for k in _PERSONA_LIST_FIELDS} | {
             "role": existing.get("role", ""),
             "summary_text": existing.get("summary_text", ""),
         },
-        "mid_profiles": [
+        "nowaday_profiles": [
             {k: m.get(k) for k in (
                 "period", "recurring_topics", "emerging", "declining", "shifts", "summary_text"
-            )} for m in (mid_profiles or [])
+            )} for m in (nowaday_profiles or [])
         ],
     }
-    if not payload["mid_profiles"]:
-        logger.info(f"[user_memory.long] 中期プロファイルがないためスキップ user={user_id}")
+    if not payload["nowaday_profiles"]:
+        logger.info(f"[user_memory.persona] Nowadayプロファイルがないためスキップ user={user_id}")
         return {}
 
-    raw = _run_agent(LONG_AGENT_FILE, "User Memory Long", json.dumps(payload, ensure_ascii=False))
+    raw = _run_agent(PERSONA_AGENT_FILE, "User Memory Persona", json.dumps(payload, ensure_ascii=False))
     parsed = _parse_json_safely(raw)
     if not parsed:
-        logger.warning(f"[user_memory.long] LLM出力パース失敗 user={user_id}")
+        logger.warning(f"[user_memory.persona] LLM出力パース失敗 user={user_id}")
         return {}
 
     merged_lists = {}
-    for f in _LONG_LIST_FIELDS:
+    for f in _PERSONA_LIST_FIELDS:
         merged_lists[f] = _merge_persona_lists(existing.get(f) or [], parsed.get(f) or [])
 
-    summary = _trim_summary_text(parsed.get("summary_text") or "", LONG_CHAR_LIMIT)
+    summary = _trim_summary_text(parsed.get("summary_text") or "", PERSONA_CHAR_LIMIT)
 
     rec = {
         "service_id": service_id,
@@ -446,21 +446,21 @@ def merge_long_persona(service_id: str, user_id: str, mid_profiles=None) -> dict
         "token_count": len(summary),
     }
     rec.update(merged_lists)
-    dmum.upsert("long", rec)
-    logger.info(f"[user_memory.long] saved user={user_id} chars={len(summary)}")
+    dmum.upsert("persona", rec)
+    logger.info(f"[user_memory.persona] saved user={user_id} chars={len(summary)}")
     return rec
 
 
 # ---------- 検証ループ用 ----------
-def update_long_item_status(service_id: str, user_id: str, field: str, label: str, status: str, new_label: str = "") -> bool:
-    """長期ペルソナの1項目のstatusを更新（検証ループUIから呼ばれる）。
+def update_persona_item_status(service_id: str, user_id: str, field: str, label: str, status: str, new_label: str = "") -> bool:
+    """Personaの1項目のstatusを更新（検証ループUIから呼ばれる）。
 
     status: "approved" | "pending" | "deleted"  (旧 "edited" は "approved" として扱う)
     new_label: 指定があればラベルを差し替える。
     """
-    if field not in _LONG_LIST_FIELDS:
+    if field not in _PERSONA_LIST_FIELDS:
         return False
-    existing = dmum.get_one("long", {"service_id": service_id, "user_id": user_id}) or {}
+    existing = dmum.get_one("persona", {"service_id": service_id, "user_id": user_id}) or {}
     items = list(existing.get(field) or [])
     target_idx = None
     for i, it in enumerate(items):
@@ -477,11 +477,11 @@ def update_long_item_status(service_id: str, user_id: str, field: str, label: st
     # service_id/user_idがなければ補完
     existing.setdefault("service_id", service_id)
     existing.setdefault("user_id", user_id)
-    dmum.upsert("long", existing)
+    dmum.upsert("persona", existing)
     return True
 
 
-def save_short_for_unsaved_sessions(service_id: str = "", user_id: str = "") -> dict:
+def save_history_for_unsaved_sessions(service_id: str = "", user_id: str = "") -> dict:
     """全セッションのうち user_dialog 状態が UNSAVED のものを処理し、DISCARDのものはdelete。"""
     sessions = dms.get_session_list()
     saved, discarded, errors = [], [], []
@@ -500,68 +500,68 @@ def save_short_for_unsaved_sessions(service_id: str = "", user_id: str = "") -> 
             status = "UNSAVED"
         try:
             if status == "UNSAVED":
-                rec = generate_short(s.get("service_id", ""), s.get("user_id", ""), sid)
+                rec = generate_history(s.get("service_id", ""), s.get("user_id", ""), sid)
                 if rec:
                     saved.append(sid)
             elif status == "DISCARD":
-                dmum.delete("short", {"session_id": sid})
+                dmum.delete("history", {"session_id": sid})
                 discarded.append(sid)
         except Exception as e:
-            logger.error(f"[user_memory.short] {sid} で失敗: {e}")
+            logger.error(f"[user_memory.history] {sid} で失敗: {e}")
             errors.append(sid)
     return {"saved": saved, "discarded": discarded, "errors": errors}
 
 
 # ---------- 統合パイプライン ----------
 def update_user_memory_pipeline(target_user_ids=None, period: str = "all", service_id: str = "") -> dict:
-    """Short → Mid → Long を順に処理する統合パイプライン。
+    """History → Nowaday → Persona を順に処理する統合パイプライン。
 
     Args:
         target_user_ids: 対象ユーザーIDのリスト。None または空 → 全ユーザー
-        period: 中期/長期更新時の期間フィルタ。"all" or "since_YYYY-MM-DD" or 既存形式
-        service_id: 対象サービスID(短期側のセッション絞込みに使用)
+        period: Nowaday/Persona 更新時の期間フィルタ。"all" or "since_YYYY-MM-DD" or 既存形式
+        service_id: 対象サービスID(History側のセッション絞込みに使用)
 
-    Returns: {"short": {...}, "mid": [...], "long": [...], "errors": [...]}
+    Returns: {"history": {...}, "nowaday": [...], "persona": [...], "errors": [...]}
     """
-    result = {"short": {}, "mid": [], "long": [], "errors": []}
+    result = {"history": {}, "nowaday": [], "persona": [], "errors": []}
 
-    # 1. 短期: 対象ユーザー(または全ユーザー)のUNSAVEDセッションを処理
+    # 1. History: 対象ユーザー(または全ユーザー)のUNSAVEDセッションを処理
     if target_user_ids:
-        per_user_short = {"saved": [], "discarded": [], "errors": []}
+        per_user_history = {"saved": [], "discarded": [], "errors": []}
         for uid in target_user_ids:
-            r = save_short_for_unsaved_sessions(service_id=service_id, user_id=uid)
-            per_user_short["saved"].extend(r.get("saved", []))
-            per_user_short["discarded"].extend(r.get("discarded", []))
-            per_user_short["errors"].extend(r.get("errors", []))
-        result["short"] = per_user_short
+            r = save_history_for_unsaved_sessions(service_id=service_id, user_id=uid)
+            per_user_history["saved"].extend(r.get("saved", []))
+            per_user_history["discarded"].extend(r.get("discarded", []))
+            per_user_history["errors"].extend(r.get("errors", []))
+        result["history"] = per_user_history
     else:
-        result["short"] = save_short_for_unsaved_sessions(service_id=service_id)
+        result["history"] = save_history_for_unsaved_sessions(service_id=service_id)
 
-    # 2. 対象ユーザーリストの確定: 引数優先、無ければ短期DBに登場するユーザー
+    # 2. 対象ユーザーリストの確定: 引数優先、無ければ History DBに登場するユーザー
     if target_user_ids:
         users = [(service_id, uid) for uid in target_user_ids]
     else:
-        shorts = dmum.load_all("short")
+        histories = dmum.load_all("history")
         if service_id:
-            shorts = [r for r in shorts if r.get("service_id") == service_id]
-        users = sorted({(r.get("service_id", ""), r.get("user_id", "")) for r in shorts if r.get("user_id")})
+            histories = [r for r in histories if r.get("service_id") == service_id]
+        users = sorted({(r.get("service_id", ""), r.get("user_id", "")) for r in histories if r.get("user_id")})
 
-    # 3. 中期 → 長期 を各ユーザーで実行
+    # 3. Nowaday → Persona を各ユーザーで実行
     for sid, uid in users:
         try:
-            mid_rec = build_mid_profile(sid, uid, period or "all")
-            if mid_rec:
-                result["mid"].append((sid, uid))
+            nowaday_rec = build_nowaday_profile(sid, uid, period or "all")
+            if nowaday_rec:
+                result["nowaday"].append((sid, uid))
         except Exception as e:
-            logger.error(f"[user_memory.pipeline] mid失敗 {uid}: {e}")
-            result["errors"].append(("mid", uid, str(e)))
+            logger.error(f"[user_memory.pipeline] nowaday失敗 {uid}: {e}")
+            result["errors"].append(("nowaday", uid, str(e)))
             continue
         try:
-            long_rec = merge_long_persona(sid, uid)
-            if long_rec:
-                result["long"].append((sid, uid))
+            persona_rec = merge_persona(sid, uid)
+            if persona_rec:
+                result["persona"].append((sid, uid))
         except Exception as e:
-            logger.error(f"[user_memory.pipeline] long失敗 {uid}: {e}")
-            result["errors"].append(("long", uid, str(e)))
+            logger.error(f"[user_memory.pipeline] persona失敗 {uid}: {e}")
+            result["errors"].append(("persona", uid, str(e)))
 
     return result

@@ -1,8 +1,8 @@
 {
     "DISPLAY": false,
-    "DISPLAY_NAME": "ユーザーメモリ(短期)",
-    "NAME": "ユーザーメモリ短期抽出",
-    "ACT": "会話セッションからユーザーの特徴・関心・価値観・制約・口調・感情を構造化して抽出する専用のAI",
+    "DISPLAY_NAME": "ユーザーメモリ(Nowaday)",
+    "NAME": "ユーザーメモリNowaday集約",
+    "ACT": "History群と既存Nowadayプロファイルから、対象期間のユーザー像を要約する専用のAI",
     "PERSONALITY": {},
     "ENGINE": {
         "LLM": {
@@ -14,11 +14,11 @@
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {
-                    "limit": 8000,
+                    "limit": 12000,
                     "role": "user",
                     "priority": "latest",
                     "similarity_logic": "cosine",
-                    "digest": "Y"
+                    "digest": "N"
                 }
             }
         }
@@ -28,7 +28,7 @@
             "MAGIC_WORDS": [
                 ""
             ],
-            "PRACTICE": "practice_13UserMemoryShort.json",
+            "PRACTICE": "practice_14UserMemoryNowaday.json",
             "ADD_KNOWLEDGE": []
         }
     },

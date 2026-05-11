@@ -32,7 +32,7 @@
       "Web API": true,
       "Support Eval": true,
       "User Memory": true,
-      "User Memory Layers": ["long", "mid", "short"]
+      "User Memory Layers": ["persona", "nowaday", "history"]
     }
   },
   "USER0003": {

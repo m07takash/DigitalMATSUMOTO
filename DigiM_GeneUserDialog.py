@@ -18,7 +18,7 @@ def save_user_dialogs(service_info=None, user_info=None):
         logger.warning(f"[user_memory.shim] DigiM_GeneUserMemory読込失敗: {e}")
         return
     try:
-        result = dmgum.save_short_for_unsaved_sessions()
-        logger.info(f"[user_memory.shim] save_short result: {result}")
+        result = dmgum.save_history_for_unsaved_sessions()
+        logger.info(f"[user_memory.shim] save_history result: {result}")
     except Exception as e:
-        logger.error(f"[user_memory.shim] save_short_for_unsaved_sessions失敗: {e}")
+        logger.error(f"[user_memory.shim] save_history_for_unsaved_sessions失敗: {e}")

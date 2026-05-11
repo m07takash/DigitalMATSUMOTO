@@ -20,7 +20,8 @@ TEST_FOLDER: "test/"
 MAX_PARALLEL_PERSONAS: 4
 # Thinking Modeでpersonaを自動選定する際の最大人数（WebUI Max Personas入力の既定値）
 MAX_PERSONAS: 3
-WEB_SEARCH_DEFAULT: "Perplexity"
+# Web検索の既定のエージェント（OpenAI, Perplexity, Googleから選択）
+WEB_SEARCH_DEFAULT: "OpenAI"
 PERPLEXITY_URL: "https://api.perplexity.ai/chat/completions"
 PERPLEXITY_MODEL: "sonar"
 PERPLEXITY_SYSTEM_PROMPT: "Be precise and concise."

@@ -1,8 +1,8 @@
 {
     "DISPLAY": false,
-    "DISPLAY_NAME": "ユーザーメモリ(長期)",
-    "NAME": "ユーザーメモリ長期マージ",
-    "ACT": "既存の長期ペルソナと新しい中期プロファイルから、ユーザーの恒常的特徴を更新する専用のAI",
+    "DISPLAY_NAME": "ユーザーメモリ(Persona)",
+    "NAME": "ユーザーメモリPersonaマージ",
+    "ACT": "既存のPersonaと新しいNowadayプロファイルから、ユーザーの恒常的特徴を更新する専用のAI",
     "PERSONALITY": {},
     "ENGINE": {
         "LLM": {
@@ -28,7 +28,7 @@
             "MAGIC_WORDS": [
                 ""
             ],
-            "PRACTICE": "practice_15UserMemoryLong.json",
+            "PRACTICE": "practice_15UserMemoryPersona.json",
             "ADD_KNOWLEDGE": []
         }
     },
