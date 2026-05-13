@@ -163,6 +163,35 @@ def generate_history(service_id: str, user_id: str, session_id: str) -> dict:
 
 
 # ---------- Nowaday メモリ ----------
+# 1回のNowaday生成でLLMに渡す history_records 全体の最大文字数
+NOWADAY_INPUT_MAX_CHARS = int(os.getenv("USER_MEMORY_NOWADAY_MAX_CHARS") or "50000")
+
+
+def _trim_histories_by_chars(histories: list, max_chars: int) -> tuple:
+    """create_date降順に並べ、JSON化サイズの合計が max_chars 以内になるまで詰める。
+
+    Returns: (selected: list[最新→古い順], total_chars: int, dropped_count: int)
+    """
+    sorted_h = sorted(histories, key=lambda r: r.get("create_date") or "", reverse=True)
+    selected = []
+    total = 0
+    for r in sorted_h:
+        compact = json.dumps({
+            "session_id": r.get("session_id"),
+            "create_date": r.get("create_date"),
+            "topic": r.get("topic"),
+            "excerpt": r.get("excerpt"),
+            "axis_tags": r.get("axis_tags"),
+        }, ensure_ascii=False)
+        size = len(compact)
+        if total + size > max_chars and selected:
+            break
+        selected.append(r)
+        total += size
+    dropped = len(sorted_h) - len(selected)
+    return selected, total, dropped
+
+
 def _resolve_period_window(period: str):
     """period から (start, end) のdatetime対を返す。
 
@@ -226,6 +255,12 @@ def build_nowaday_profile(service_id: str, user_id: str, period: str) -> dict:
         logger.info(f"[user_memory.nowaday] 期間内のHistoryが0件 user={user_id} period={period}")
         return {}
 
+    # コンテキストウインドウ対策: 最新優先で文字数上限まで切り詰め、古い順に並べ直す
+    selected_desc, total_chars, dropped_count = _trim_histories_by_chars(histories, NOWADAY_INPUT_MAX_CHARS)
+    history_records_for_llm = list(reversed(selected_desc))
+    if dropped_count > 0:
+        logger.info(f"[user_memory.nowaday] history切り詰め user={user_id} period={period} kept={len(history_records_for_llm)} dropped={dropped_count} chars={total_chars}/{NOWADAY_INPUT_MAX_CHARS}")
+
     existing = dmum.get_one("nowaday", {
         "service_id": service_id, "user_id": user_id, "period": period,
     })
@@ -246,8 +281,9 @@ def build_nowaday_profile(service_id: str, user_id: str, period: str) -> dict:
                 "topic": s.get("topic"),
                 "excerpt": s.get("excerpt"),
                 "axis_tags": s.get("axis_tags"),
-            } for s in histories
+            } for s in history_records_for_llm
         ],
+        "truncated_older_count": dropped_count,
     }
     raw = _run_agent(NOWADAY_AGENT_FILE, "User Memory Nowaday", json.dumps(payload, ensure_ascii=False))
     parsed = _parse_json_safely(raw)
@@ -266,13 +302,13 @@ def build_nowaday_profile(service_id: str, user_id: str, period: str) -> dict:
         "emerging": parsed.get("emerging") or [],
         "declining": parsed.get("declining") or [],
         "shifts": parsed.get("shifts") or [],
-        "evidence_session_ids": [s.get("session_id") for s in histories if s.get("session_id")],
+        "evidence_session_ids": [s.get("session_id") for s in history_records_for_llm if s.get("session_id")],
         "summary_text": summary,
         "token_count": len(summary),
         "active": "Y",
     }
     dmum.upsert("nowaday", rec)
-    logger.info(f"[user_memory.nowaday] saved user={user_id} period={period} sources={len(histories)}")
+    logger.info(f"[user_memory.nowaday] saved user={user_id} period={period} sources={len(history_records_for_llm)}/{len(histories)}")
     return rec
 
 

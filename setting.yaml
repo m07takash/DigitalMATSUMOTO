@@ -16,6 +16,7 @@ RAG_DATA_CSV_FOLDER: "user/common/csv/"
 USER_MEMORY_FOLDER: "user/common/user_memory/"
 TEMP_FOLDER: "user/common/temp/"
 TEST_FOLDER: "test/"
+# ※ スケジュール設定は user/common/mst/scheduled_jobs.json に移管。WebUIの Scheduler メニューから編集してください。
 # エージェントペルソナの並列実行上限（複数ペルソナ同時送信時のThreadPoolExecutor max_workers）
 MAX_PARALLEL_PERSONAS: 4
 # Thinking Modeでpersonaを自動選定する際の最大人数（WebUI Max Personas入力の既定値）

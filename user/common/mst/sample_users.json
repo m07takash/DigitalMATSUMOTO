@@ -31,6 +31,7 @@
       "Download Md": true,
       "Web API": true,
       "Support Eval": true,
+      "Scheduler": true,
       "User Memory": true,
       "User Memory Layers": ["persona", "nowaday", "history"]
     }
@@ -54,6 +55,7 @@
       "Download Md": false,
       "Web API": false,
       "Support Eval": false,
+      "Scheduler": false,
       "User Memory": false
     }
   }

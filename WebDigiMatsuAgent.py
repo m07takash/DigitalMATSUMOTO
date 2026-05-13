@@ -34,11 +34,11 @@ import DigiM_GeneUserDialog as dmgu
 import DigiM_VAnalytics as dmva
 import DigiM_DB_Export as dmdbe
 import DigiM_AgentPersona as dap
-import DigiM_UserMemoryScheduler as dmums
+import DigiM_Scheduler as dmsch
 
-# ユーザーメモリスケジューラ起動（USER_MEMORY_NOWADAY_SCHEDULE が "off" 以外で起動）
+# バックグラウンドスケジューラ起動（setting.yaml の SCHEDULES に従う / "off" のみならスキップ）
 try:
-    dmums.start()
+    dmsch.start_all()
 except Exception:
     pass
 import DigiM_SupportEval as dmse
@@ -147,6 +147,8 @@ if 'allowed_user_memory' not in st.session_state:
     st.session_state.allowed_user_memory = True
 if 'allowed_support_eval' not in st.session_state:
     st.session_state.allowed_support_eval = True
+if 'allowed_scheduler' not in st.session_state:
+    st.session_state.allowed_scheduler = False
 if 'eval_results_excel' not in st.session_state:
     st.session_state.eval_results_excel = None
 if 'eval_summary' not in st.session_state:
@@ -400,6 +402,7 @@ def user_allowed_parameter(allowded_dict):
     st.session_state.allowed_web_api = allowded_dict.get("Web API", True)
     st.session_state.allowed_support_eval = allowded_dict.get("Support Eval", True)
     st.session_state.allowed_user_memory = allowded_dict.get("User Memory", True)
+    st.session_state.allowed_scheduler = allowded_dict.get("Scheduler", False)
 
 # バックグラウンドタスク実行ヘルパー
 import threading as _threading
@@ -2618,6 +2621,160 @@ def _rag_explorer():
         st.download_button("Download (.md)", data=st.session_state._rag_report.encode("utf-8"),
                           file_name=f"{_report_name}.md", mime="text/markdown", key="rag_dl_md")
 
+
+### Scheduler画面 ###
+def _scheduler_view():
+    """汎用スケジュール管理画面。ジョブ一覧 + 追加/編集 + Run Now + Reload。"""
+    import DigiM_Scheduler as _dmsch
+    import DigiM_ScheduledJobs as _dmsj
+
+    st.subheader("Scheduler")
+    st.caption("バックグラウンドジョブの登録・編集・即時実行。設定変更後は **Reload Schedulers** で反映してください。")
+
+    # 制御行
+    _ctl1, _ctl2, _ctl3 = st.columns([1, 1, 4])
+    if _ctl1.button("Reload Schedulers", key="sch_reload"):
+        try:
+            _r = _dmsch.reload()
+            st.session_state.sidebar_message = f"Reloaded. started={_r.get('started')}"
+        except Exception as e:
+            st.session_state.sidebar_message = f"Reload failed: {e}"
+        st.rerun()
+    if _ctl2.button("Add New Job", key="sch_add_new"):
+        st.session_state._sch_edit_id = "__new__"
+        st.rerun()
+
+    _status = _dmsch.get_status()
+    _ctl3.caption(f"scheduler running: **{_status.get('running')}** / active job_ids: {_status.get('active_job_ids')}")
+
+    st.markdown("---")
+
+    # 一覧
+    _jobs = _dmsj.load_all()
+    if not _jobs:
+        st.info("ジョブはまだ登録されていません。**Add New Job** から追加してください。")
+    for _j in _jobs:
+        _jid = _j.get("job_id")
+        _label = f"**{_j.get('name') or '(no name)'}** — `{_j.get('kind')}` / cron=`{_j.get('cron')}` / enabled={_j.get('enabled')}"
+        with st.expander(_label, expanded=False):
+            _col1, _col2 = st.columns(2)
+            _col1.write(f"job_id: `{_jid}`")
+            _col1.write(f"owner: `{_j.get('owner_user_id')}`")
+            _col1.write(f"last_run: `{_j.get('last_run') or '-'}`")
+            _status_val = _j.get("last_status") or "-"
+            _col2.write(f"last_status: **{_status_val}**")
+            if _j.get("last_session_id"):
+                _col2.write(f"last_session_id: `{_j.get('last_session_id')}`")
+            if _j.get("kind") == "agent_run":
+                _p = _j.get("params") or {}
+                _col2.write(f"agent: `{_p.get('agent_file')}` / engine=`{_p.get('engine') or '(default)'}`")
+                if _p.get("user_input"):
+                    st.text_area("user_input", value=_p.get("user_input"), height=80, disabled=True, key=f"sch_view_ui_{_jid}")
+
+            if _j.get("last_status") == "error" and _j.get("last_error"):
+                with st.expander("Error log", expanded=False):
+                    st.code(_j.get("last_error"))
+
+            _ba, _bb, _bc, _bd = st.columns(4)
+            if _ba.button("Edit", key=f"sch_edit_{_jid}"):
+                st.session_state._sch_edit_id = _jid
+                st.rerun()
+            if _bb.button("Run Now", key=f"sch_run_{_jid}"):
+                _res = _dmsch.run_now(_jid)
+                if _res.get("ok"):
+                    st.session_state.sidebar_message = f"Run completed: {_jid}"
+                else:
+                    st.session_state.sidebar_message = f"Run failed: {_res.get('error')}"
+                st.rerun()
+            if _bc.button(("Disable" if _j.get("enabled") else "Enable"), key=f"sch_toggle_{_jid}"):
+                _new = dict(_j); _new["enabled"] = not _j.get("enabled")
+                _dmsj.upsert(_new)
+                st.session_state.sidebar_message = "Updated (Reloadで反映)"
+                st.rerun()
+            if _bd.button("Delete", key=f"sch_del_{_jid}"):
+                _dmsj.delete(_jid)
+                st.session_state.sidebar_message = f"Deleted: {_jid}"
+                st.rerun()
+
+    # 編集フォーム
+    _edit_id = st.session_state.get("_sch_edit_id")
+    if _edit_id:
+        st.markdown("---")
+        _is_new = (_edit_id == "__new__")
+        _existing = {} if _is_new else (_dmsj.get(_edit_id) or {})
+        st.markdown("### " + ("Add New Job" if _is_new else f"Edit Job: `{_edit_id}`"))
+
+        _name = st.text_input("Name", value=_existing.get("name", ""), key="sch_f_name")
+        _kinds = ["rag_update", "user_memory_nowaday", "agent_run"]
+        _kind_idx = _kinds.index(_existing.get("kind", "rag_update")) if _existing.get("kind") in _kinds else 0
+        _kind = st.selectbox("Kind", _kinds, index=_kind_idx, key="sch_f_kind")
+        _cron = st.text_input(
+            "Cron",
+            value=_existing.get("cron", "off"),
+            help='"off" / "daily"(03:00) / "weekly"(月03:00) / "monthly"(1日03:00) / 5フィールドcron(例: "0 3 1 * *")',
+            key="sch_f_cron",
+        )
+        _enabled = st.checkbox("Enabled", value=bool(_existing.get("enabled", False)), key="sch_f_enabled")
+
+        # agent_run の追加パラメータ
+        _params = dict(_existing.get("params") or {})
+        if _kind == "agent_run":
+            st.markdown("**Agent Run Params**")
+            _agent_files = [a["FILE"] for a in (st.session_state.get("agents") or [])]
+            _cur_agent = _params.get("agent_file") or (_agent_files[0] if _agent_files else "")
+            if _agent_files:
+                _idx = _agent_files.index(_cur_agent) if _cur_agent in _agent_files else 0
+                _agent_file = st.selectbox("Agent File", _agent_files, index=_idx, key="sch_f_agent")
+            else:
+                _agent_file = st.text_input("Agent File", value=_cur_agent, key="sch_f_agent_txt")
+            _engine = st.text_input("Engine (LLM key in agent JSON, empty=default)", value=_params.get("engine", ""), key="sch_f_engine")
+            _user_input = st.text_area("Prompt (user_input)", value=_params.get("user_input", ""), height=120, key="sch_f_userinput")
+
+            _exec = dict(_params.get("execution") or {})
+            st.markdown("**Execution flags**")
+            _ec1, _ec2, _ec3 = st.columns(3)
+            _exec["MEMORY_USE"]      = _ec1.checkbox("MEMORY_USE", value=bool(_exec.get("MEMORY_USE", True)), key="sch_f_e_memuse")
+            _exec["MEMORY_SAVE"]     = _ec1.checkbox("MEMORY_SAVE", value=bool(_exec.get("MEMORY_SAVE", True)), key="sch_f_e_memsave")
+            _exec["RAG_QUERY_GENE"]  = _ec1.checkbox("RAG_QUERY_GENE", value=bool(_exec.get("RAG_QUERY_GENE", True)), key="sch_f_e_rag")
+            _exec["WEB_SEARCH"]      = _ec2.checkbox("WEB_SEARCH", value=bool(_exec.get("WEB_SEARCH", False)), key="sch_f_e_web")
+            _exec["META_SEARCH"]     = _ec2.checkbox("META_SEARCH", value=bool(_exec.get("META_SEARCH", True)), key="sch_f_e_meta")
+            _exec["THINKING_MODE"]   = _ec2.checkbox("THINKING_MODE", value=bool(_exec.get("THINKING_MODE", False)), key="sch_f_e_think")
+            _exec["MAGIC_WORD_USE"]  = _ec3.checkbox("MAGIC_WORD_USE", value=bool(_exec.get("MAGIC_WORD_USE", False)), key="sch_f_e_magic")
+            _exec["PRIVATE_MODE"]    = _ec3.checkbox("PRIVATE_MODE", value=bool(_exec.get("PRIVATE_MODE", False)), key="sch_f_e_priv")
+            _exec["SAVE_DIGEST"]     = _ec3.checkbox("SAVE_DIGEST", value=bool(_exec.get("SAVE_DIGEST", True)), key="sch_f_e_dig")
+
+            _params = {
+                "agent_file": _agent_file,
+                "engine": _engine,
+                "user_input": _user_input,
+                "execution": _exec,
+            }
+        else:
+            _params = {}
+
+        _bs, _bc = st.columns(2)
+        if _bs.button("Save", key="sch_f_save"):
+            _doc = {
+                "job_id": "" if _is_new else _edit_id,
+                "name": _name,
+                "kind": _kind,
+                "cron": _cron,
+                "enabled": _enabled,
+                "owner_user_id": st.session_state.get("web_user", {}).get("USER_ID", ""),
+                "params": _params,
+            }
+            try:
+                _saved = _dmsj.upsert(_doc)
+                st.session_state._sch_edit_id = None
+                st.session_state.sidebar_message = f"Saved: {_saved.get('job_id')} (Reloadで反映)"
+            except Exception as e:
+                st.session_state.sidebar_message = f"Save failed: {e}"
+            st.rerun()
+        if _bc.button("Cancel", key="sch_f_cancel"):
+            st.session_state._sch_edit_id = None
+            st.rerun()
+
+
 ### Streamlit画面 ###
 def main():
     # セッションステートを初期化
@@ -2650,9 +2807,14 @@ def main():
                     st.rerun()
 
         # メインビュー切り替え
+        _view_options = ["Chat"]
         if st.session_state.allowed_rag_explorer:
-            _view_options = ["Chat", "RAG Explorer"]
-            _view_index = _view_options.index(st.session_state.get("main_view", "Chat")) if st.session_state.get("main_view", "Chat") in _view_options else 0
+            _view_options.append("RAG Explorer")
+        if st.session_state.allowed_scheduler:
+            _view_options.append("Scheduler")
+        if len(_view_options) > 1:
+            _current = st.session_state.get("main_view", "Chat")
+            _view_index = _view_options.index(_current) if _current in _view_options else 0
             st.session_state.main_view = st.radio("View:", _view_options, index=_view_index, horizontal=True, label_visibility="collapsed")
         else:
             st.session_state.main_view = "Chat"
@@ -2983,6 +3145,8 @@ def main():
                         _run_bg_task("um_pipeline", _label, _um_pipeline)
                         st.rerun()
 
+        # スケジュール管理は別メニュー(Scheduler)に移管。RAG Management からは触れません。
+
         # User Memory expander moved to the main area (below BOOK).
 
         # Web API管理
@@ -3192,6 +3356,9 @@ def main():
     # メインエリアの画面切り替え
     if st.session_state.get("main_view") == "RAG Explorer":
         _rag_explorer()
+        return
+    if st.session_state.get("main_view") == "Scheduler":
+        _scheduler_view()
         return
 
     # チャットセッション名の設定

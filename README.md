@@ -70,7 +70,8 @@ RAG（ChromaDB）を組み合わせて動的に生成します。
 | `DigiM_UserMemory.py` | ユーザーメモリ（History/Nowaday/Persona）のストレージ抽象化（Excel/Notion/RDB） |
 | `DigiM_UserMemorySetting.py` | ユーザーメモリのOn/Off2階層解決（ユーザーマスタ/システム）。Layersは `users.json` の `Allowed["User Memory Layers"]` に保存 |
 | `DigiM_UserMemoryBuilder.py` | 「対話相手についての情報」コンテキスト合成（Knowledgeより前にプロンプト挿入）。HistoryはMeCab×タグ×時間ハイブリッド検索 |
-| `DigiM_UserMemoryScheduler.py` | Nowaday/Persona更新の常駐スケジューラ（APScheduler） |
+| `DigiM_Scheduler.py` | バックグラウンドスケジューラ（APScheduler / 複数ジョブ対応 / 再起動なしReload可能） |
+| `DigiM_ScheduledJobs.py` | スケジュールジョブのマスタCRUD（`user/common/mst/scheduled_jobs.json`の読み書き・実行結果記録） |
 | `DigiM_GeneUserMemory.py` | ユーザーメモリの生成・差分マージ・自動承認・検証ループ更新 |
 | `DigiM_GeneUserDialog.py` | （Deprecated）旧ユーザー対話保存。`DigiM_GeneUserMemory.py` への後方互換シム |
 | `DigiM_SupportEval.py` | サポートエージェントのパフォーマンス評価 |
@@ -174,7 +175,6 @@ cp system.env_sample system.env
 | `AGENT_PERSONA_SOURCE` | `EXCEL` | エージェントペルソナのソース。`EXCEL`: `user/common/agent/persona_data/`配下のxlsx / `RDB`: `digim_agent_personas`テーブル / `BOTH`: マージ |
 | `USER_MEMORY_HISTORY_BACKEND` / `NOWADAY_BACKEND` / `PERSONA_BACKEND` | `EXCEL` | ユーザーメモリ各層の保存先（EXCEL/NOTION/RDB）。詳細は「ユーザーメモリ（階層的ユーザー理解）」を参照 |
 | `USER_MEMORY_DEFAULT_LAYERS` | `persona,nowaday,history` | ユーザーメモリのシステムデフォルト有効層（空文字 `""` で全Off） |
-| `USER_MEMORY_NOWADAY_SCHEDULE` | `off` | Nowaday/Personaスケジューラの起動条件（off/monthly/weekly/daily/cron文字列） |
 | `USER_MEMORY_AUTO_APPROVE_THRESHOLD` | `0.8` | Persona項目をconfidenceで自動承認する閾値 |
 | `USER_MEMORY_PERSONA_MAX_CHARS_PER_FIELD` | `300` | Persona各フィールドの保持文字数上限 |
 | `USER_MEMORY_HISTORY_MAX_CHARS` | `800` | Historyメモリ注入の合計文字数上限 |
@@ -361,6 +361,7 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
       "Book": true,
       "Download Md": true,
       "RAG Explorer": true,
+      "Scheduler": false,
       "User Memory": true,
       "User Memory Layers": ["persona", "nowaday", "history"]
     }
@@ -392,6 +393,7 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
 | `Book` | Book（参考情報）機能 |
 | `Download Md` | Markdownダウンロード |
 | `RAG Explorer` | RAGデータ分析画面（後述） |
+| `Scheduler` | スケジュール管理画面（バックグラウンドジョブの登録・編集・即時実行） |
 | `User Memory` | ユーザーメモリ（階層的ユーザー理解）の表示・保存・検証ループ |
 | `User Memory Layers` | （bool以外。配列）このユーザーが有効化する層 `["persona","nowaday","history"]` のサブセット。未設定なら `USER_MEMORY_DEFAULT_LAYERS` |
 
@@ -1316,19 +1318,25 @@ USER_MEMORY_PERSONA_BACKEND="EXCEL"
 }
 ```
 
-#### Nowaday/Persona の更新スケジュール
+#### バックグラウンドスケジューラ（汎用ジョブ管理）
 
-`system.env` の `USER_MEMORY_NOWADAY_SCHEDULE` で常駐スケジューラ（APScheduler）の起動条件を設定:
+汎用スケジューラは **Scheduler メニュー**（WebUI上部、Chat / RAG Explorer の隣）から管理します。ジョブは `user/common/mst/scheduled_jobs.json` に保存され、Streamlit再起動なしで **Reload Schedulers** ボタンから反映できます。
 
-| 値 | 動作 |
-|----|------|
-| `off` | スケジューラ停止（手動更新のみ） |
-| `monthly` | 毎月1日 03:00 |
-| `weekly` | 毎週月曜 03:00 |
-| `daily` | 毎日 03:00 |
-| 5フィールドのcron文字列（例: `"0 3 1 * *"`） | 任意のcronで起動 |
+**ジョブの種類 (`kind`):**
 
-スケジュール起動時は、全ユーザーに対し当月のNowadayプロファイル更新 → Personaへの差分マージを順に実行します。手動でも実行可能（後述）。
+| kind | 内容 |
+|------|------|
+| `rag_update` | `DigiM_Context.generate_rag()` を呼んでRAGデータを再ベクトル化（`USER_MEMORY_HISTORY_AUTO_SAVE_FLG=Y` の場合は併せて未保存セッションのHistoryも自動保存）。セッションは作成されない。 |
+| `user_memory_nowaday` | 全ユーザーに対し当月のNowadayプロファイル更新 → Personaへの差分マージを順に実行。セッションは作成されない。 |
+| `agent_run` | 指定のエージェント・プロンプト・実行モードでエージェント実行。実行ごとに **所有者ユーザー** で新規セッションを発番（service_id=`Scheduler`、session_id=`SCH<日時>`、名前=`[Scheduler] <ジョブ名>`）し、応答はチャット履歴として通常通り保存。 |
+
+**cron書式:** `"off"` / `"daily"`(03:00) / `"weekly"`(月03:00) / `"monthly"`(1日03:00) / 5フィールドのcron文字列（例: `"0 3 1 * *"`）
+
+**最終実行の記録:** `agent_run` 以外はセッションを残さず、ジョブ行に `last_run` / `last_status` / `last_error` のみが記録されます（エラー時は Error log expander で表示）。`agent_run` のみ `last_session_id` も保存されるので、当該セッションをチャット履歴から開いて応答を確認できます。
+
+**権限:** Scheduler メニューは `Allowed["Scheduler"] = true` のユーザーのみアクセス可能（`users.json` / `sample_users.json` で設定）。所有者ユーザー（`owner_user_id`）は保存時のログインユーザーが自動セットされ、`agent_run` 実行時のセッションに紐付きます。
+
+**WebUI操作:** ジョブごとに **Edit** / **Run Now**（即時1回実行）/ **Enable/Disable** / **Delete**。ジョブ追加は **Add New Job** から、cron変更後は **Reload Schedulers** で稼働中スケジューラに反映。APScheduler 未インストール環境では cron 起動はスキップされますが Run Now による手動実行は可能。
 
 #### Personaのステータスと自動承認
 
@@ -1401,7 +1409,7 @@ HistoryメモリのLLM抽出時、以下を加味します:
 | `USER_MEMORY_PERSONA_BACKEND` | `EXCEL` | Personaの保存先 |
 | `USER_MEMORY_DEFAULT_LAYERS` | `persona,nowaday,history` | システムデフォルトの有効層（空文字 `""` 指定で全Off） |
 | `USER_MEMORY_HISTORY_AUTO_SAVE_FLG` | `N` | `Y` で `Update RAG Data` 連動のHistory自動更新を有効化 |
-| `USER_MEMORY_NOWADAY_SCHEDULE` | `off` | Nowaday/Personaスケジューラ起動条件（off/monthly/weekly/daily/cron） |
+| `USER_MEMORY_NOWADAY_MAX_CHARS` | `50000` | Nowaday生成時にLLMへ渡す history_records 全体の最大文字数。超過分は古いHistoryから切り捨て、`truncated_older_count` で件数を告知 |
 | `USER_MEMORY_PERSONA_TOKEN_LIMIT` | `3000` | Persona注入時の上限トークン |
 | `USER_MEMORY_AUTO_APPROVE_THRESHOLD` | `0.8` | この confidence 以上の pending 項目を自動 approved に昇格 |
 | `USER_MEMORY_PERSONA_MAX_CHARS_PER_FIELD` | `300` | Persona各フィールドの label 合計文字数上限 |
