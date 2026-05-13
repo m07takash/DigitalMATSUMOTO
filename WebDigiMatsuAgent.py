@@ -3770,6 +3770,7 @@ def main():
                                                                     rag_rank_df = pd.read_csv(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_csv"])
                                                                     if 'category_color' in rag_rank_df.columns:
                                                                         display_items = ["id", "title", "create_date", "X1", "X2", "category_color", "category_sum", "category", "db", "value_text"]
+                                                                        display_items = [c for c in display_items if c in rag_rank_df.columns]
                                                                     else:
                                                                         display_items = ["id", "title", "create_date", "X1", "X2", "value_text"]
                                                                     rag_rank_df = rag_rank_df[display_items]
@@ -3806,6 +3807,7 @@ def main():
                                                                 rag_rank_df = pd.read_csv(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_csv"])
                                                                 if 'category_color' in rag_rank_df.columns:
                                                                     display_items = ["id", "title", "create_date", "X1", "X2", "category_color", "category_sum", "category", "db", "value_text"]
+                                                                    display_items = [c for c in display_items if c in rag_rank_df.columns]
                                                                 else:
                                                                     display_items = ["id", "title", "create_date", "X1", "X2", "value_text"]
                                                                 rag_rank_df = rag_rank_df[display_items]
