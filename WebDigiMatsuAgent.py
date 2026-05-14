@@ -3849,8 +3849,9 @@ def main():
                 st.session_state.web_search = True
                 _ws_default = dmu.read_yaml_file("setting.yaml").get("WEB_SEARCH_DEFAULT", "Perplexity")
                 _ws_engines = list(dmt.WEB_SEARCH_ENGINES.keys())
-                _ws_idx = _ws_engines.index(_ws_default) if _ws_default in _ws_engines else 0
-                st.session_state.web_search_engine = _ws_col2.selectbox("Engine:", _ws_engines, index=_ws_idx, label_visibility="collapsed")
+                if "web_search_engine" not in st.session_state or st.session_state.web_search_engine not in _ws_engines:
+                    st.session_state.web_search_engine = _ws_default if _ws_default in _ws_engines else _ws_engines[0]
+                _ws_col2.selectbox("Engine:", _ws_engines, key="web_search_engine", label_visibility="collapsed")
             else:
                 st.session_state.web_search = False
 
