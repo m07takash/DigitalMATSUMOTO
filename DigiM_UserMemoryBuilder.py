@@ -33,6 +33,36 @@ HISTORY_RECENCY_WEIGHT = float(os.getenv("USER_MEMORY_HISTORY_RECENCY_WEIGHT") o
 HISTORY_RECENCY_HALF_LIFE_DAYS = float(os.getenv("USER_MEMORY_HISTORY_RECENCY_HALF_LIFE_DAYS") or "30")
 
 
+# ---------- 感情語彙 (Plutchik) と表示用日本語 ----------
+_PLUTCHIK_JA = {
+    "joy": "喜び", "trust": "信頼", "fear": "恐れ", "surprise": "驚き",
+    "sadness": "悲しみ", "disgust": "嫌悪", "anger": "怒り", "anticipation": "期待",
+    "love": "愛", "submission": "服従", "awe": "畏怖", "disapproval": "不満",
+    "remorse": "後悔", "contempt": "軽蔑", "aggressiveness": "攻撃性", "optimism": "楽観",
+}
+_BIG5_JA = {
+    "openness": "開放性", "conscientiousness": "誠実性", "extraversion": "外向性",
+    "agreeableness": "協調性", "neuroticism": "神経症傾向",
+}
+
+
+def _emotion_label(key: str) -> str:
+    return _PLUTCHIK_JA.get((key or "").strip().lower(), key)
+
+
+def _emotions_to_text(emotions) -> str:
+    if not isinstance(emotions, list) or not emotions:
+        return ""
+    labels = [_emotion_label(e) for e in emotions]
+    # 重複除外（順序保持）
+    seen, out = set(), []
+    for l in labels:
+        if l and l not in seen:
+            seen.add(l)
+            out.append(l)
+    return "、".join(out)
+
+
 def _now_ts() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
 
@@ -72,6 +102,24 @@ def _format_persona(rec: dict) -> str:
         if line:
             parts.append(line)
 
+    # Big5: approvedのみコンテキストに含める。各特性はスコア(0-1)を日本語で表示。
+    big5 = rec.get("big5") or {}
+    if isinstance(big5, dict) and big5:
+        big5_parts = []
+        for trait_key, ja in _BIG5_JA.items():
+            it = big5.get(trait_key) or {}
+            if not isinstance(it, dict):
+                continue
+            if (it.get("status") or "").strip().lower() not in ("approved", "edited"):
+                continue
+            try:
+                score = float(it.get("score") or 0.5)
+            except (TypeError, ValueError):
+                score = 0.5
+            big5_parts.append(f"{ja}={score:.2f}")
+        if big5_parts:
+            parts.append("・Big5: " + "、".join(big5_parts))
+
     summary = (rec.get("summary_text") or "").strip()
     if summary:
         parts.append("")
@@ -100,20 +148,86 @@ def _format_nowaday(rec: dict) -> str:
         v = rec.get(key)
         if isinstance(v, list) and v:
             parts.append(f"・{label}: " + "、".join(str(x) for x in v))
+
+    # 感情傾向(Plutchik): 強度0.2以上の基本感情のみ。降順で表示。
+    basic = rec.get("basic_emotions") or {}
+    if isinstance(basic, dict) and basic:
+        items = []
+        for k, v in basic.items():
+            try:
+                f = float(v)
+            except (TypeError, ValueError):
+                continue
+            if f >= 0.2:
+                items.append((k, f))
+        if items:
+            items.sort(key=lambda x: -x[1])
+            parts.append("・基本感情: " + "、".join(f"{_emotion_label(k)}({v:.1f})" for k, v in items))
+
+    secondary = rec.get("secondary_emotions") or []
+    if isinstance(secondary, list) and secondary:
+        labels = [_emotion_label(s) for s in secondary if isinstance(s, str)]
+        labels = [l for l in labels if l]
+        if labels:
+            parts.append("・二次感情: " + "、".join(labels))
     return "\n".join(parts)
 
 
 def _extract_record_tags(rec: dict) -> list:
-    """axis_tags から平坦化したタグ語リストを返す。"""
+    """axis_tags + emotions(Plutchik英語キー＋日本語) から平坦化したタグ語リストを返す。"""
     tags = rec.get("axis_tags") or {}
-    if not isinstance(tags, dict):
-        return []
     out = []
-    for axis_vals in tags.values():
-        if isinstance(axis_vals, list):
-            for t in axis_vals:
-                if isinstance(t, str) and t.strip():
-                    out.append(t.strip())
+    if isinstance(tags, dict):
+        for axis_vals in tags.values():
+            if isinstance(axis_vals, list):
+                for t in axis_vals:
+                    if isinstance(t, str) and t.strip():
+                        out.append(t.strip())
+    emotions = rec.get("emotions") or []
+    if isinstance(emotions, list):
+        for e in emotions:
+            if not isinstance(e, str):
+                continue
+            key = e.strip().lower()
+            if not key:
+                continue
+            out.append(key)
+            ja = _PLUTCHIK_JA.get(key)
+            if ja:
+                out.append(ja)
+    return out
+
+
+# クエリテキストから Plutchik 感情を拾うための日本語キーワード辞書（部分一致）
+_JA_EMOTION_LOOKUP = {
+    "joy": ["喜び", "うれし", "嬉し", "楽し", "ハッピー"],
+    "trust": ["信頼", "安心", "頼れ"],
+    "fear": ["恐れ", "怖", "不安", "心配"],
+    "surprise": ["驚き", "びっくり", "意外"],
+    "sadness": ["悲しみ", "悲し", "つら", "辛", "寂し"],
+    "disgust": ["嫌悪", "嫌い", "うんざり"],
+    "anger": ["怒り", "イライラ", "腹立", "ムカ"],
+    "anticipation": ["期待", "楽しみ", "ワクワク"],
+    "love": ["愛", "好き", "大好"],
+    "submission": ["服従"],
+    "awe": ["畏怖", "畏敬"],
+    "disapproval": ["不満", "不承知"],
+    "remorse": ["後悔"],
+    "contempt": ["軽蔑"],
+    "aggressiveness": ["攻撃"],
+    "optimism": ["楽観"],
+}
+
+
+def _detect_query_emotions(query_text: str) -> set:
+    """クエリ文に含まれる感情キーワードから Plutchik 感情キーを推定。"""
+    if not query_text:
+        return set()
+    text = query_text
+    out = set()
+    for key, words in _JA_EMOTION_LOOKUP.items():
+        if any(w in text for w in words):
+            out.add(key)
     return out
 
 
@@ -168,10 +282,19 @@ def _select_histories_by_tags_and_recency(records: list, query_text: str, max_ch
     now = datetime.now()
     half_life = max(HISTORY_RECENCY_HALF_LIFE_DAYS, 1.0)
 
-    # 1. ユーザー入力から名詞を抽出(MeCab)。タグ側は分解せず原文のままマッチ判定する。
+    # 1. ユーザー入力から名詞を抽出(MeCab) + 感情キーワード検出。タグ側は分解せず原文マッチ。
     query_nouns = _tokenize_nouns(query_text) if query_text else set()
-    has_query = bool(query_nouns)
-    query_keywords = sorted(query_nouns)
+    query_emotions = _detect_query_emotions(query_text) if query_text else set()
+    # 感情キー(英)と日本語訳の両方を検索語に混ぜる
+    query_emotion_words = set()
+    for k in query_emotions:
+        query_emotion_words.add(k)
+        ja = _PLUTCHIK_JA.get(k)
+        if ja:
+            query_emotion_words.add(ja.lower())
+    query_terms = query_nouns | query_emotion_words
+    has_query = bool(query_terms)
+    query_keywords = sorted(query_terms)
 
     # 2. スコアリング: タグマッチ群と非マッチ群に分ける
     matched_group = []
@@ -189,11 +312,11 @@ def _select_histories_by_tags_and_recency(records: list, query_text: str, max_ch
         match_count = 0
         match_ratio = 0.0
         if has_query and record_tags:
-            # タグ単位でマッチ判定: クエリ名詞がタグ全文に含まれていれば「マッチタグ」
+            # タグ単位でマッチ判定: クエリ語(名詞 + 感情語)がタグ全文に含まれていれば「マッチタグ」
             matched_tag_count = 0
             for t in record_tags:
                 t_lower = t.lower()
-                if any(n in t_lower for n in query_nouns):
+                if any(n in t_lower for n in query_terms):
                     matched_tag_count += 1
             match_count = matched_tag_count
             match_ratio = match_count / len(record_tags)
@@ -215,12 +338,20 @@ def _select_histories_by_tags_and_recency(records: list, query_text: str, max_ch
     selected = []
     total_chars = 0
     for r in ordered:
-        line = f"・[{r.get('create_date', '')[:10]}][{r.get('topic', '')[:30]}] {r.get('excerpt', '')[:200]}"
+        line = _history_line(r)
         if total_chars + len(line) > max_chars:
             continue
         selected.append(r)
         total_chars += len(line)
     return selected, query_keywords
+
+
+def _history_line(r: dict) -> str:
+    base = f"・[{r.get('create_date', '')[:10]}][{r.get('topic', '')[:30]}] {r.get('excerpt', '')[:200]}"
+    emo_text = _emotions_to_text(r.get("emotions") or [])
+    if emo_text:
+        return base + f"（感情: {emo_text}）"
+    return base
 
 
 def _format_history(records: list, query_text: str = "", max_chars: int = None) -> tuple:
@@ -234,7 +365,7 @@ def _format_history(records: list, query_text: str = "", max_chars: int = None) 
         return "", query_keywords
     parts = ["## 直近セッション"]
     for r in selected:
-        parts.append(f"・[{r.get('create_date', '')[:10]}][{r.get('topic', '')[:30]}] {r.get('excerpt', '')[:200]}")
+        parts.append(_history_line(r))
     return "\n".join(parts), query_keywords
 
 

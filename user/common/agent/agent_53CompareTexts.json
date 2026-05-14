@@ -34,7 +34,7 @@
     },
     "KNOWLEDGE": [],
     "SKILL": {},
-    "COMMUNICATION": {
+    "FEEDBACK": {
         "ACTIVE": "N",
         "SAVE_MODE": "CSV",
         "SAVE_DB": "Communication",

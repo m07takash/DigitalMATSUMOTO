@@ -36,6 +36,88 @@ NOWADAY_AGENT_FILE = "agent_59UserMemoryNowaday.json"
 PERSONA_AGENT_FILE = "agent_60UserMemoryPersona.json"
 
 
+# ---------- 感情語彙 (Plutchik) / Big5 トレイト ----------
+PLUTCHIK_PRIMARY = (
+    "joy", "trust", "fear", "surprise",
+    "sadness", "disgust", "anger", "anticipation",
+)
+PLUTCHIK_SECONDARY = (
+    "love", "submission", "awe", "disapproval",
+    "remorse", "contempt", "aggressiveness", "optimism",
+)
+_PLUTCHIK_ALL = set(PLUTCHIK_PRIMARY) | set(PLUTCHIK_SECONDARY)
+
+BIG5_TRAITS = (
+    "openness", "conscientiousness", "extraversion", "agreeableness", "neuroticism",
+)
+
+
+def _filter_plutchik_emotions(items):
+    """LLM出力の emotions リストを Plutchik 語彙のみに正規化。重複・大小も整える。"""
+    if not isinstance(items, list):
+        return []
+    out, seen = [], set()
+    for it in items:
+        if not isinstance(it, str):
+            continue
+        key = it.strip().lower()
+        if key in _PLUTCHIK_ALL and key not in seen:
+            seen.add(key)
+            out.append(key)
+    return out
+
+
+def _clip01(v, default=0.0):
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return float(default)
+    if f < 0.0:
+        return 0.0
+    if f > 1.0:
+        return 1.0
+    return f
+
+
+def _normalize_basic_emotions(d):
+    """basic_emotions を 8キーの dict[float 0..1] に強制。"""
+    if not isinstance(d, dict):
+        d = {}
+    return {k: _clip01(d.get(k), 0.0) for k in PLUTCHIK_PRIMARY}
+
+
+def _normalize_secondary_emotions(items):
+    """secondary_emotions を Plutchik 二次感情の英語キーのみに絞る。"""
+    if not isinstance(items, list):
+        return []
+    out, seen = [], set()
+    for it in items:
+        if not isinstance(it, str):
+            continue
+        k = it.strip().lower()
+        if k in PLUTCHIK_SECONDARY and k not in seen:
+            seen.add(k)
+            out.append(k)
+    return out
+
+
+def _normalize_big5(d):
+    """big5 を {trait: {score, confidence, status}} に正規化。"""
+    if not isinstance(d, dict):
+        d = {}
+    out = {}
+    for trait in BIG5_TRAITS:
+        item = d.get(trait) or {}
+        if not isinstance(item, dict):
+            item = {}
+        out[trait] = {
+            "score":      _clip01(item.get("score"), 0.5),
+            "confidence": _clip01(item.get("confidence"), 0.0),
+            "status":     _normalize_status(item.get("status")),
+        }
+    return out
+
+
 # ---------- LLM出力パース ----------
 def _strip_json_fences(text: str) -> str:
     if not text:
@@ -149,6 +231,7 @@ def generate_history(service_id: str, user_id: str, session_id: str) -> dict:
         "topic": (parsed.get("topic") or "")[:120],
         "excerpt": (parsed.get("excerpt") or "")[:600],
         "axis_tags": parsed.get("axis_tags") or {},
+        "emotions": _filter_plutchik_emotions(parsed.get("emotions") or []),
         "confidence": float(parsed.get("confidence") or 0.0),
         "source_seq": [],
         "active": "Y",
@@ -281,6 +364,7 @@ def build_nowaday_profile(service_id: str, user_id: str, period: str) -> dict:
                 "topic": s.get("topic"),
                 "excerpt": s.get("excerpt"),
                 "axis_tags": s.get("axis_tags"),
+                "emotions": s.get("emotions") or [],
             } for s in history_records_for_llm
         ],
         "truncated_older_count": dropped_count,
@@ -302,6 +386,8 @@ def build_nowaday_profile(service_id: str, user_id: str, period: str) -> dict:
         "emerging": parsed.get("emerging") or [],
         "declining": parsed.get("declining") or [],
         "shifts": parsed.get("shifts") or [],
+        "basic_emotions": _normalize_basic_emotions(parsed.get("basic_emotions")),
+        "secondary_emotions": _normalize_secondary_emotions(parsed.get("secondary_emotions")),
         "evidence_session_ids": [s.get("session_id") for s in history_records_for_llm if s.get("session_id")],
         "summary_text": summary,
         "token_count": len(summary),
@@ -434,6 +520,47 @@ _PERSONA_LIST_FIELDS = (
 )
 
 
+def _merge_big5(existing: dict, new: dict) -> dict:
+    """既存Persona.big5(approvedは保護) と LLM出力の big5 をトレイト単位でマージ。
+
+    - approved: スコアは保持。confidence のみ上振れたら更新。
+    - pending : 新値で上書き。confidence>=閾値で自動approvedへ昇格。
+    - 欠損トレイトは中央(0.5)で補完。
+    """
+    existing = existing if isinstance(existing, dict) else {}
+    new = new if isinstance(new, dict) else {}
+    out = {}
+    for trait in BIG5_TRAITS:
+        cur = existing.get(trait) or {}
+        nxt = new.get(trait) or {}
+        if not isinstance(cur, dict):
+            cur = {}
+        if not isinstance(nxt, dict):
+            nxt = {}
+        cur_status = _normalize_status(cur.get("status"))
+        if cur_status == "approved":
+            score = _clip01(cur.get("score"), 0.5)
+            conf = max(_clip01(cur.get("confidence"), 0.0), _clip01(nxt.get("confidence"), 0.0))
+            status = "approved"
+        elif cur_status == "deleted":
+            score = _clip01(cur.get("score"), 0.5)
+            conf = _clip01(cur.get("confidence"), 0.0)
+            status = "deleted"
+        else:
+            if nxt:
+                score = _clip01(nxt.get("score"), _clip01(cur.get("score"), 0.5))
+                conf = _clip01(nxt.get("confidence"), _clip01(cur.get("confidence"), 0.0))
+                status = "pending"
+            else:
+                score = _clip01(cur.get("score"), 0.5)
+                conf = _clip01(cur.get("confidence"), 0.0)
+                status = cur_status or "pending"
+        if status == "pending" and conf >= PERSONA_AUTO_APPROVE_THRESHOLD:
+            status = "approved"
+        out[trait] = {"score": score, "confidence": conf, "status": status}
+    return out
+
+
 def merge_persona(service_id: str, user_id: str, nowaday_profiles=None) -> dict:
     """既存PersonaとNowadayプロファイルをLLMでマージし、Persona DBにupsert。
 
@@ -449,10 +576,12 @@ def merge_persona(service_id: str, user_id: str, nowaday_profiles=None) -> dict:
         "existing_persona": {k: existing.get(k) for k in _PERSONA_LIST_FIELDS} | {
             "role": existing.get("role", ""),
             "summary_text": existing.get("summary_text", ""),
+            "big5": existing.get("big5") or {},
         },
         "nowaday_profiles": [
             {k: m.get(k) for k in (
-                "period", "recurring_topics", "emerging", "declining", "shifts", "summary_text"
+                "period", "recurring_topics", "emerging", "declining", "shifts",
+                "basic_emotions", "secondary_emotions", "summary_text"
             )} for m in (nowaday_profiles or [])
         ],
     }
@@ -470,6 +599,8 @@ def merge_persona(service_id: str, user_id: str, nowaday_profiles=None) -> dict:
     for f in _PERSONA_LIST_FIELDS:
         merged_lists[f] = _merge_persona_lists(existing.get(f) or [], parsed.get(f) or [])
 
+    merged_big5 = _merge_big5(existing.get("big5") or {}, parsed.get("big5") or {})
+
     summary = _trim_summary_text(parsed.get("summary_text") or "", PERSONA_CHAR_LIMIT)
 
     rec = {
@@ -478,6 +609,7 @@ def merge_persona(service_id: str, user_id: str, nowaday_profiles=None) -> dict:
         "generated_at": dmum.now_ts(),
         "last_reviewed": existing.get("last_reviewed", ""),
         "role": parsed.get("role") or existing.get("role", ""),
+        "big5": merged_big5,
         "summary_text": summary,
         "token_count": len(summary),
     }
@@ -601,3 +733,217 @@ def update_user_memory_pipeline(target_user_ids=None, period: str = "all", servi
             result["errors"].append(("persona", uid, str(e)))
 
     return result
+
+
+# ---------- バックフィル ----------
+# 既存レコードに後追いで感情(Plutchik) / Big5 を埋める。本番パイプラインの
+# generate_history / build_nowaday_profile / merge_persona は対話全文や全Historyから
+# 作り直すのに対し、こちらは既存レコードの圧縮済み出力(topic/excerpt/summary/list)から
+# 抜けているフィールドだけを埋める「狭い」プロンプトを使う。
+_BACKFILL_HISTORY_PROMPT = """以下の対話セッション要点(topic / excerpt / axis_tags)から、ユーザーが示した特徴的な感情をプルチックの感情の輪に基づいて推定し、英語キーのリストで出力してください。
+
+候補(英語キーで返答):
+- 基本8感情: joy, trust, fear, surprise, sadness, disgust, anger, anticipation
+- 二次感情(隣接ダイアド): love(joy+trust), submission(trust+fear), awe(fear+surprise), disapproval(surprise+sadness), remorse(sadness+disgust), contempt(disgust+anger), aggressiveness(anger+anticipation), optimism(anticipation+joy)
+
+【入力】
+{payload}
+
+出力はJSONのみ。該当なしは空配列:
+{{"emotions": ["joy", "..."]}}
+"""
+
+_BACKFILL_NOWADAY_PROMPT = """以下のNowadayプロファイル要点(summary_text/recurring_topics/emerging/declining/shifts)から、対象期間にユーザーから感じ取れる感情傾向を推定し、JSONで出力してください。
+
+【入力】
+{payload}
+
+出力(JSONのみ):
+{{
+  "basic_emotions": {{
+    "joy": 0.0, "trust": 0.0, "fear": 0.0, "surprise": 0.0,
+    "sadness": 0.0, "disgust": 0.0, "anger": 0.0, "anticipation": 0.0
+  }},
+  "secondary_emotions": ["love/submission/awe/disapproval/remorse/contempt/aggressiveness/optimism のうち発生しているものを英語キーで列挙(なければ空配列)"]
+}}
+
+ルール:
+- basic_emotions は 8キー固定、各値 0.0〜1.0。出現していない感情は 0.0。
+- 推測は控えめに、要点から無理なく読み取れる範囲で。"""
+
+_BACKFILL_PERSONA_PROMPT = """以下のPersona(role/summary_text/各種リスト)から、ユーザーのビッグファイブ(Five Factor Model)の5特性を推定し、JSONで出力してください。
+
+【入力】
+{payload}
+
+出力(JSONのみ):
+{{
+  "big5": {{
+    "openness":          {{"score": 0.5, "confidence": 0.0, "status": "pending"}},
+    "conscientiousness": {{"score": 0.5, "confidence": 0.0, "status": "pending"}},
+    "extraversion":      {{"score": 0.5, "confidence": 0.0, "status": "pending"}},
+    "agreeableness":     {{"score": 0.5, "confidence": 0.0, "status": "pending"}},
+    "neuroticism":       {{"score": 0.5, "confidence": 0.0, "status": "pending"}}
+  }}
+}}
+
+ルール:
+- score は 0.0〜1.0 (0.5が中央)。
+- confidence は抽出根拠の十分さを 0.0〜1.0 で。Persona summary や承認済みリストが具体的であるほど高く。
+- status は "pending" を出力(システムが自動でapprovedへ昇格させます)。"""
+
+
+def _backfill_one(prompt_template: str, payload: dict) -> dict:
+    raw = _run_agent(HISTORY_AGENT_FILE, "No Template",
+                     prompt_template.format(payload=json.dumps(payload, ensure_ascii=False)))
+    return _parse_json_safely(raw) or {}
+
+
+def backfill_history_record(rec: dict, dry_run: bool = False) -> dict:
+    """1件のHistoryレコードに emotions が無ければLLMで推定して埋める。"""
+    if rec.get("emotions"):
+        return {"action": "skip_existing", "session_id": rec.get("session_id")}
+    parsed = _backfill_one(_BACKFILL_HISTORY_PROMPT, {
+        "topic": rec.get("topic", ""),
+        "excerpt": rec.get("excerpt", ""),
+        "axis_tags": rec.get("axis_tags") or {},
+    })
+    emotions = _filter_plutchik_emotions(parsed.get("emotions") or [])
+    rec["emotions"] = emotions
+    if dry_run:
+        return {"action": "dry_run", "session_id": rec.get("session_id"), "emotions": emotions}
+    dmum.upsert("history", rec)
+    return {"action": "saved", "session_id": rec.get("session_id"), "emotions": emotions}
+
+
+def backfill_nowaday_record(rec: dict, dry_run: bool = False) -> dict:
+    """1件のNowadayレコードに basic_emotions / secondary_emotions を埋める。"""
+    has_basic = isinstance(rec.get("basic_emotions"), dict) and any(
+        (v or 0) > 0 for v in (rec.get("basic_emotions") or {}).values()
+    )
+    has_secondary = bool(rec.get("secondary_emotions"))
+    if has_basic and has_secondary:
+        return {"action": "skip_existing", "id": rec.get("id")}
+    parsed = _backfill_one(_BACKFILL_NOWADAY_PROMPT, {
+        "period": rec.get("period", ""),
+        "summary_text": rec.get("summary_text", ""),
+        "recurring_topics": rec.get("recurring_topics") or [],
+        "emerging": rec.get("emerging") or [],
+        "declining": rec.get("declining") or [],
+        "shifts": rec.get("shifts") or [],
+    })
+    rec["basic_emotions"] = _normalize_basic_emotions(parsed.get("basic_emotions"))
+    rec["secondary_emotions"] = _normalize_secondary_emotions(parsed.get("secondary_emotions"))
+    if dry_run:
+        return {"action": "dry_run", "id": rec.get("id"),
+                "basic_emotions": rec["basic_emotions"], "secondary_emotions": rec["secondary_emotions"]}
+    dmum.upsert("nowaday", rec)
+    return {"action": "saved", "id": rec.get("id"),
+            "basic_emotions": rec["basic_emotions"], "secondary_emotions": rec["secondary_emotions"]}
+
+
+def backfill_persona_record(rec: dict, dry_run: bool = False) -> dict:
+    """1件のPersonaレコードに big5 を埋める(既存approvedは保護)。"""
+    big5 = rec.get("big5") or {}
+    has_any = isinstance(big5, dict) and any(
+        isinstance(big5.get(t), dict) and (big5[t].get("confidence") or 0) > 0 for t in BIG5_TRAITS
+    )
+    if has_any:
+        return {"action": "skip_existing", "user_id": rec.get("user_id")}
+    parsed = _backfill_one(_BACKFILL_PERSONA_PROMPT, {
+        "role": rec.get("role", ""),
+        "summary_text": rec.get("summary_text", ""),
+        "expertise": rec.get("expertise") or [],
+        "recurring_interests": rec.get("recurring_interests") or [],
+        "values_principles": rec.get("values_principles") or [],
+        "constraints": rec.get("constraints") or [],
+        "communication_style": rec.get("communication_style") or [],
+        "avoid_topics": rec.get("avoid_topics") or [],
+    })
+    merged = _merge_big5(rec.get("big5") or {}, parsed.get("big5") or {})
+    rec["big5"] = merged
+    if dry_run:
+        return {"action": "dry_run", "user_id": rec.get("user_id"), "big5": merged}
+    dmum.upsert("persona", rec)
+    return {"action": "saved", "user_id": rec.get("user_id"), "big5": merged}
+
+
+def _ensure_backfill_schema(layer: str):
+    """Notionバックエンド時のみ、新フィールドのプロパティをDBに追加。"""
+    if dmum.get_backend(layer) != "NOTION":
+        logger.info(f"[user_memory.backfill][{layer}] backend={dmum.get_backend(layer)} schema check skipped")
+        return
+    result = dmum.ensure_notion_schema(layer)
+    if result.get("added"):
+        logger.info(f"[user_memory.backfill][{layer}] Notion properties added: {list(result['added'].keys())}")
+
+
+def backfill_user_memory(layer_filter: str = "", user_filter: str = "",
+                         ensure_schema: bool = True, dry_run: bool = False) -> dict:
+    """全(or指定)層の既存レコードに感情/Big5を後追いで埋める。
+
+    Args:
+        layer_filter: "history" / "nowaday" / "persona" / 空(=全層)
+        user_filter:  user_id で対象を絞る
+        ensure_schema: Notionバックエンド時にDBプロパティを自動追加
+        dry_run: 保存せずLLM結果のみ表示
+    """
+    layers = ("history", "nowaday", "persona") if not layer_filter else (layer_filter,)
+    if ensure_schema:
+        for lyr in layers:
+            _ensure_backfill_schema(lyr)
+
+    summary = {}
+    for lyr in layers:
+        records = dmum.load_all(lyr)
+        if user_filter:
+            records = [r for r in records if r.get("user_id") == user_filter]
+        logger.info(f"[user_memory.backfill][{lyr}] {len(records)} records (user_filter={user_filter or 'all'})")
+        per_record_fn = {
+            "history": backfill_history_record,
+            "nowaday": backfill_nowaday_record,
+            "persona": backfill_persona_record,
+        }[lyr]
+        results = []
+        for rec in records:
+            try:
+                res = per_record_fn(rec, dry_run=dry_run)
+                logger.info(f"[user_memory.backfill][{lyr}] {res.get('action')} "
+                            f"{res.get('session_id') or res.get('id') or res.get('user_id')}")
+                results.append(res)
+            except Exception as e:
+                logger.exception(f"[user_memory.backfill][{lyr}] record failed: {e}")
+                results.append({"action": "error", "error": str(e)})
+        summary[lyr] = {
+            "total": len(records),
+            "saved": sum(1 for r in results if r.get("action") == "saved"),
+            "skipped": sum(1 for r in results if r.get("action") == "skip_existing"),
+            "dry_run": sum(1 for r in results if r.get("action") == "dry_run"),
+            "errors": sum(1 for r in results if r.get("action") == "error"),
+        }
+    return summary
+
+
+# ---------- CLI ----------
+# 既存レコードへの感情/Big5バックフィル用エントリ。
+#   python3 DigiM_GeneUserMemory.py --backfill
+#   python3 DigiM_GeneUserMemory.py --backfill --layer history --user RealMatsumoto
+#   python3 DigiM_GeneUserMemory.py --backfill --dry-run
+if __name__ == "__main__":
+    import argparse
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+    parser = argparse.ArgumentParser(description="User memory utilities (backfill, etc.)")
+    parser.add_argument("--backfill", action="store_true", help="既存レコードに感情/Big5を後追いで埋める")
+    parser.add_argument("--layer", choices=("history", "nowaday", "persona"), default="")
+    parser.add_argument("--user", default="", help="user_id で対象を絞る")
+    parser.add_argument("--no-schema", action="store_true", help="Notionスキーマ自動追加をスキップ")
+    parser.add_argument("--dry-run", action="store_true", help="LLM呼び出しのみで保存しない")
+    args = parser.parse_args()
+    if args.backfill:
+        result = backfill_user_memory(
+            layer_filter=args.layer, user_filter=args.user,
+            ensure_schema=not args.no_schema, dry_run=args.dry_run,
+        )
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        parser.print_help()

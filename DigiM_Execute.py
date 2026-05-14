@@ -572,7 +572,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             "agent_file": agent_file,
             "name": agent.name,
             "engine": agent.agent["ENGINE"][model_type],
-            "communication": agent.agent["COMMUNICATION"],
+            "feedback": agent.agent["FEEDBACK"],
             "persona_id": getattr(agent, "persona_id", "") or "",
             "persona_name": getattr(agent, "persona_name", "") or "",
         }

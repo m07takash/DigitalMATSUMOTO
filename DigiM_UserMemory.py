@@ -68,34 +68,51 @@ def get_default_layers() -> list:
 _HISTORY_FIELDS = [
     "id", "service_id", "user_id", "session_id", "session_name",
     "create_date", "topic", "excerpt", "axis_tags",
+    "emotions",
     "confidence", "source_seq", "active",
 ]
 _NOWADAY_FIELDS = [
     "id", "service_id", "user_id", "period",
     "generated_at", "recurring_topics", "emerging", "declining",
-    "shifts", "evidence_session_ids", "summary_text", "token_count", "active",
+    "shifts", "basic_emotions", "secondary_emotions",
+    "evidence_session_ids", "summary_text", "token_count", "active",
 ]
 _PERSONA_FIELDS = [
     "service_id", "user_id", "generated_at", "last_reviewed",
     "role", "expertise", "recurring_interests", "values_principles",
     "constraints", "communication_style", "avoid_topics",
+    "big5",
     "summary_text", "token_count",
 ]
 _FIELDS = {"history": _HISTORY_FIELDS, "nowaday": _NOWADAY_FIELDS, "persona": _PERSONA_FIELDS}
 
 # JSON化対象の列
 _JSON_COLS = {
-    "history": {"axis_tags", "source_seq"},
-    "nowaday": {"recurring_topics", "emerging", "declining", "shifts", "evidence_session_ids"},
+    "history": {"axis_tags", "source_seq", "emotions"},
+    "nowaday": {"recurring_topics", "emerging", "declining", "shifts",
+                "evidence_session_ids", "basic_emotions", "secondary_emotions"},
     "persona": {"expertise", "recurring_interests", "values_principles",
-                "constraints", "communication_style", "avoid_topics"},
+                "constraints", "communication_style", "avoid_topics", "big5"},
 }
+
+# JSONカラムの「空のとき」のデフォルト形(辞書 or 配列)。指定なしは [] 扱い。
+_JSON_DEFAULTS = {
+    "nowaday": {"basic_emotions": dict},
+    "persona": {"big5": dict},
+}
+
+
+def _json_default_for(layer: str, col: str):
+    t = (_JSON_DEFAULTS.get(layer) or {}).get(col)
+    if t is dict:
+        return {}
+    return []
 
 
 def _empty_record(layer: str) -> dict:
     rec = {f: "" for f in _FIELDS[layer]}
     for c in _JSON_COLS[layer]:
-        rec[c] = []
+        rec[c] = _json_default_for(layer, c)
     if "active" in rec:
         rec["active"] = "Y"
     if "token_count" in rec:
@@ -111,11 +128,14 @@ def _normalize_record(layer: str, rec: dict) -> dict:
     base.update({k: v for k, v in (rec or {}).items() if k in base})
     for c in _JSON_COLS[layer]:
         v = base.get(c)
+        default = _json_default_for(layer, c)
         if isinstance(v, str):
             try:
-                base[c] = json.loads(v) if v else []
+                base[c] = json.loads(v) if v else default
             except Exception:
-                base[c] = []
+                base[c] = default
+        elif v is None:
+            base[c] = default
     return base
 
 
@@ -151,7 +171,10 @@ def _excel_save_all(layer: str, records: list):
         for col in _FIELDS[layer]:
             v = rec.get(col, "")
             if col in _JSON_COLS[layer]:
-                v = json.dumps(v, ensure_ascii=False) if v else "[]"
+                if v:
+                    v = json.dumps(v, ensure_ascii=False)
+                else:
+                    v = json.dumps(_json_default_for(layer, col), ensure_ascii=False)
             out[col] = v
         rows.append(out)
     df = pd.DataFrame(rows, columns=_FIELDS[layer])
@@ -171,6 +194,7 @@ _RDB_DDL = {
             topic           TEXT,
             excerpt         TEXT,
             axis_tags       JSONB,
+            emotions        JSONB,
             confidence      DOUBLE PRECISION,
             source_seq      JSONB,
             active          CHAR(1) DEFAULT 'Y'
@@ -187,6 +211,8 @@ _RDB_DDL = {
             emerging              JSONB,
             declining             JSONB,
             shifts                JSONB,
+            basic_emotions        JSONB,
+            secondary_emotions    JSONB,
             evidence_session_ids  JSONB,
             summary_text          TEXT,
             token_count           INTEGER,
@@ -207,6 +233,7 @@ _RDB_DDL = {
             constraints           JSONB,
             communication_style   JSONB,
             avoid_topics          JSONB,
+            big5                  JSONB,
             summary_text          TEXT,
             token_count           INTEGER,
             PRIMARY KEY(service_id, user_id)
@@ -273,7 +300,7 @@ def _rdb_upsert(layer: str, rec: dict):
         v = rec.get(c)
         if c in _JSON_COLS[layer]:
             placeholders.append("%s::jsonb")
-            values.append(json.dumps(v or [], ensure_ascii=False))
+            values.append(json.dumps(v if v else _json_default_for(layer, c), ensure_ascii=False))
         else:
             placeholders.append("%s")
             values.append(v if v != "" else None)
@@ -374,6 +401,76 @@ def _notion_fetch_db_schema(db_id: str) -> dict:
         return {}
 
 
+def _notion_add_properties(db_id: str, new_props: dict) -> dict:
+    """NotionDBに新規プロパティを追加する。new_props: {prop_name: type_str}.
+
+    既存のプロパティはこのPATCHでは触れない(部分更新)。type_strは rich_text/number/checkbox/date/select 等。
+    Returns: 実際に追加したプロパティ名 → 型 のdict (既に存在したものはスキップ)。
+    """
+    import os
+    import requests
+    notion_token = os.getenv("NOTION_TOKEN")
+    notion_version = os.getenv("NOTION_VERSION") or "2022-06-28"
+    headers = {
+        "Authorization": f"Bearer {notion_token}",
+        "Notion-Version": notion_version,
+        "Content-Type": "application/json",
+    }
+    existing = _notion_fetch_db_schema(db_id)
+    to_add = {name: t for name, t in new_props.items() if name not in existing}
+    if not to_add:
+        return {}
+    payload_props = {}
+    for name, t in to_add.items():
+        if t == "rich_text":
+            payload_props[name] = {"rich_text": {}}
+        elif t == "number":
+            payload_props[name] = {"number": {"format": "number"}}
+        elif t == "checkbox":
+            payload_props[name] = {"checkbox": {}}
+        elif t == "date":
+            payload_props[name] = {"date": {}}
+        elif t == "select":
+            payload_props[name] = {"select": {}}
+        else:
+            payload_props[name] = {"rich_text": {}}  # 不明な型は rich_text にフォールバック
+    body = {"properties": payload_props}
+    try:
+        r = requests.patch(
+            f"https://api.notion.com/v1/databases/{db_id}",
+            headers=headers, json=body, timeout=30,
+        )
+        if r.status_code != 200:
+            logger.warning(f"[user_memory] Notionプロパティ追加失敗 {db_id}: {r.status_code} {r.text[:200]}")
+            return {}
+        return to_add
+    except Exception as e:
+        logger.warning(f"[user_memory] Notionプロパティ追加例外 {db_id}: {e}")
+        return {}
+
+
+def ensure_notion_schema(layer: str) -> dict:
+    """指定layerのNotionDBに、現在のスキーマ(_FIELDS[layer])から欠けているプロパティを追加。
+
+    既存のプロパティ型はそのまま尊重し、欠けているもののみ rich_text として追加する。
+    JSON_COLS の列も rich_text（JSON文字列を格納するため）。
+    Returns: {"added": {...}, "skipped_existing": [...], "db_id": "..."}
+    """
+    db_id = _notion_db_id(layer)
+    if not db_id:
+        return {"added": {}, "skipped_existing": [], "db_id": None,
+                "error": "NotionDB未設定"}
+    existing = _notion_fetch_db_schema(db_id)
+    needed = {col: "rich_text" for col in _FIELDS[layer]}
+    missing = {name: t for name, t in needed.items() if name not in existing}
+    added = _notion_add_properties(db_id, missing) if missing else {}
+    return {
+        "added": added,
+        "skipped_existing": [c for c in _FIELDS[layer] if c in existing],
+        "db_id": db_id,
+    }
+
+
 def _notion_load_all(layer: str) -> list:
     db_id = _notion_db_id(layer)
     if not db_id:
@@ -391,10 +488,11 @@ def _notion_load_all(layer: str) -> list:
                 if ptype == "rich_text" or ptype == "title":
                     raw = _notion_property_text(props[col])
                     if col in _JSON_COLS[layer]:
+                        default = _json_default_for(layer, col)
                         try:
-                            rec[col] = json.loads(raw) if raw else []
+                            rec[col] = json.loads(raw) if raw else default
                         except Exception:
-                            rec[col] = []
+                            rec[col] = default
                     else:
                         rec[col] = raw
                 elif ptype == "number":

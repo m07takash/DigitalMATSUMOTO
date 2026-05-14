@@ -60,7 +60,7 @@ def get_feedback_data(fb_k, memo, category, k1, k2, v2, service_id, user_id):
     return fb_data
 
 # CSVファイルへの保存
-def save_communication_csv(fb_data, save_db, field_map):
+def save_feedback_csv(fb_data, save_db, field_map):
     fieldnames = [f["name"] for f in field_map]
     date_keys = {f["key"] for f in field_map if f["type"] == "date"}
 
@@ -106,7 +106,7 @@ def save_communication_csv(fb_data, save_db, field_map):
         writer.writerows(records)
 
 # Notionデータベースへの保存
-def save_communication_notion(fb_data, save_db, field_map):
+def save_feedback_notion(fb_data, save_db, field_map):
     notion_db_mst_file_path = str(Path(mst_folder_path) / notion_db_mst_file)
     notion_db_mst = dmu.read_json_file(notion_db_mst_file_path)
     if save_db not in notion_db_mst:
@@ -140,13 +140,13 @@ def save_communication_notion(fb_data, save_db, field_map):
             dmn.update_notion_chk(page_id, prop_name, bool(val))
 
 # フィードバックデータの保存
-def create_communication_data(session_id, agent_file):
+def create_feedback_data(session_id, agent_file):
     session = dms.DigiMSession(session_id)
     agent = dma.DigiM_Agent(agent_file)
-    save_mode = agent.communication["SAVE_MODE"]
-    save_db = agent.communication["SAVE_DB"]
-    default_category = agent.communication["DEFAULT_CATEGORY"]
-    field_map = agent.communication.get("FIELD_MAP", DEFAULT_FIELD_MAP)
+    save_mode = agent.feedback["SAVE_MODE"]
+    save_db = agent.feedback["SAVE_DB"]
+    default_category = agent.feedback["DEFAULT_CATEGORY"]
+    field_map = agent.feedback.get("FIELD_MAP", DEFAULT_FIELD_MAP)
 
     service_id = ""
     user_id = ""
@@ -167,8 +167,8 @@ def create_communication_data(session_id, agent_file):
                             category = fb_v.get("category", default_category)
                             fb_data = get_feedback_data(fb_k, fb_v["memo"], category, k1, k2, v2, service_id, user_id)
                             if save_mode == "Notion":
-                                save_communication_notion(fb_data, save_db, field_map)
+                                save_feedback_notion(fb_data, save_db, field_map)
                             else:
-                                save_communication_csv(fb_data, save_db, field_map)
+                                save_feedback_csv(fb_data, save_db, field_map)
                             v2["feedback"][fb_k]["flg"]=False
                     session.set_feedback_history(k1, k2, v2["feedback"])
