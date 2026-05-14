@@ -429,7 +429,7 @@
         "DEPT_CODE": [],
         "EMP_CODE": ["emp001"]
     },
-    "COMMUNICATION": {
+    "FEEDBACK": {
         "ACTIVE": "Y",
         "SAVE_MODE": "CSV",
         "SAVE_DB": "Sample00_Communication",

@@ -159,7 +159,7 @@
     },
     "KNOWLEDGE": [],
     "SKILL": {},
-    "COMMUNICATION": {},
+    "FEEDBACK": {},
     "SUPPORT_AGENT": {
         "DIALOG_DIGEST": "agent_51DialogDigest.json",
         "ART_CRITICS": "agent_52ArtCritic.json",

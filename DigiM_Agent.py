@@ -132,7 +132,7 @@ def ext_generate_pureLLM(agent_file, query, memories_selected=[], prompt_temp_cd
 
 # persona dict（DigiM_AgentPersona.load_personasの戻り）からエージェントデータを上書き。
 # 上書き対象: NAME / ACT / PERSONALITY（character_text/character_fileを含む） / HABIT（フィルタ） / KNOWLEDGE（フィルタ） / DEFINE_CODE
-# 不変:       ENGINE / SUPPORT_AGENT / BOOK / SKILL / COMMUNICATION / GROUP / ORG / PERSONA_FILES
+# 不変:       ENGINE / SUPPORT_AGENT / BOOK / SKILL / FEEDBACK / GROUP / ORG / PERSONA_FILES
 def _apply_persona(agent_data, persona):
     if not persona:
         return agent_data
@@ -213,7 +213,7 @@ class DigiM_Agent:
         self.habit = self.agent['HABIT']
         self.knowledge = self.agent["KNOWLEDGE"]
         self.skill = self.agent["SKILL"]
-        self.communication = self.agent["COMMUNICATION"]
+        self.feedback = self.agent["FEEDBACK"]
         self.support_agent = self.agent["SUPPORT_AGENT"]
         self.define_code = self.agent["DEFINE_CODE"] if "DEFINE_CODE" in self.agent else {}
         self.book = self.agent["BOOK"] if "BOOK" in self.agent else []

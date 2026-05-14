@@ -11,7 +11,7 @@ import DigiM_Execute as dme
 import DigiM_Tool as dmt
 import DigiM_Util as dmu
 import DigiM_Agent as dma
-import DigiM_GeneCommunication as dmgc
+import DigiM_GeneFeedback as dmgf
 
 # system.envファイルをロードして環境変数を設定
 load_dotenv("system.env")
@@ -244,7 +244,7 @@ async def get_feedback_config(agent_file: str):
         agent = dma.DigiM_Agent(agent_file)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Agent file not found: {agent_file}")
-    comm = agent.communication
+    comm = agent.feedback
     if comm.get("ACTIVE") != "Y":
         return {"active": False, "message": "Feedback is disabled for this agent"}
     # カテゴリ選択肢を取得
@@ -291,7 +291,7 @@ async def post_feedback(data: FeedbackData):
         agent = dma.DigiM_Agent(agent_file)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail=f"Agent file not found: {agent_file}")
-    comm = agent.communication
+    comm = agent.feedback
     if comm.get("ACTIVE") != "Y":
         raise HTTPException(status_code=400, detail=f"Feedback is disabled for agent: {agent_file}")
     allowed_items = set(comm.get("FEEDBACK_ITEM_LIST", []))
@@ -304,7 +304,7 @@ async def post_feedback(data: FeedbackData):
     try:
         session = dms.DigiMSession(session_id)
         session.set_feedback_history(data.seq, data.sub_seq, data.feedbacks)
-        dmgc.create_communication_data(session_id, agent_file)
+        dmgf.create_feedback_data(session_id, agent_file)
         return {"status": "ok", "session_id": session_id, "seq": data.seq, "sub_seq": data.sub_seq}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

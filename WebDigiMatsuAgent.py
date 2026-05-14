@@ -29,7 +29,7 @@ import DigiM_Agent as dma
 import DigiM_Context as dmc
 import DigiM_Util as dmu
 import DigiM_Tool as dmt
-import DigiM_GeneCommunication as dmgc
+import DigiM_GeneFeedback as dmgf
 import DigiM_GeneUserDialog as dmgu
 import DigiM_VAnalytics as dmva
 import DigiM_DB_Export as dmdbe
@@ -3526,14 +3526,14 @@ def main():
 
                     if v2["setting"]["type"] in ["LLM","IMAGEGEN"]:
                         if st.session_state.allowed_feedback:
-                            if "communication" in v2["setting"]:
-                                agent_communication = v2["setting"]["communication"]
+                            if "feedback" in v2["setting"]:
+                                agent_feedback = v2["setting"]["feedback"]
 
-                                if agent_communication["ACTIVE"] == "Y":
+                                if agent_feedback["ACTIVE"] == "Y":
                                     # カテゴリ選択肢を取得
                                     _cat_map = dmu.read_json_file("category_map.json", mst_folder_path)
                                     _cat_options = list(_cat_map.get("Category", {}).keys()) if _cat_map else ["未設定"]
-                                    _default_cat = agent_communication.get("DEFAULT_CATEGORY") or _cat_options[0]
+                                    _default_cat = agent_feedback.get("DEFAULT_CATEGORY") or _cat_options[0]
 
                                     # セッション切替時に同じ(seq, sub_seq)で前セッションの下書きが残らないよう、
                                     # ウィジェットキーに session_id を含める
@@ -3543,7 +3543,7 @@ def main():
                                         feedback = {}
                                         feedback["name"] = "Feedback"
 
-                                        for fb_item in agent_communication["FEEDBACK_ITEM_LIST"]:
+                                        for fb_item in agent_feedback["FEEDBACK_ITEM_LIST"]:
                                             feedback[fb_item] = {}
                                             feedback[fb_item]["visible"] = False
                                             feedback[fb_item]["flg"] = False
@@ -3563,7 +3563,7 @@ def main():
                                                 feedback[fb_item]["visible"] = False
 
                                         if st.button("Feedback", key=f"feedback_btn_{_sid}_{k}_{k2}"):
-                                            for fb_item in agent_communication["FEEDBACK_ITEM_LIST"]:
+                                            for fb_item in agent_feedback["FEEDBACK_ITEM_LIST"]:
                                                 if feedback[fb_item]["memo"]!=feedback[fb_item]["saved_memo"] and feedback[fb_item]["memo"]!="":
                                                     feedback[fb_item]["flg"] = True
                                                 if feedback[fb_item]["memo"]=="":
@@ -3571,7 +3571,7 @@ def main():
 
                                             if any(k != "name" for k in fb_item):
                                                 st.session_state.session.set_feedback_history(k, k2, feedback)
-                                                dmgc.create_communication_data(st.session_state.session.session_id, v2["setting"]["agent_file"])
+                                                dmgf.create_feedback_data(st.session_state.session.session_id, v2["setting"]["agent_file"])
                                                 st.session_state.sidebar_message = f"フィードバックを保存しました({k}_{k2})"
                                                 st.rerun()
                                             else:
