@@ -50,6 +50,12 @@ class InputData(BaseModel):
     web_search_engine: Optional[str] = None
     private_mode: Optional[bool] = None
     thinking_mode: Optional[bool] = None
+    # ユーザーメモリ（対話相手についての情報）
+    #   user_memory_layers を指定するとそれを最優先（["persona","nowaday","history"] のサブセット / [] で全Off）
+    #   未指定で user_memory=True なら全層ON、False なら全Off
+    #   どちらも未指定なら users.json / USER_MEMORY_DEFAULT_LAYERS に従う（従来動作）
+    user_memory: Optional[bool] = None
+    user_memory_layers: Optional[List[str]] = None
     # その他の実行設定（上記以外を直接渡す場合）
     execution: Dict[str, Any] = {}
 
@@ -157,6 +163,19 @@ async def run(data: InputData):
     for key, val in _flag_map.items():
         if val is not None:
             execution[key] = val
+
+    # ユーザーメモリの有効/無効指定（Execute側は execution["USER_MEMORY_LAYERS"] を最優先で見る）
+    #   未設定なら従来どおり users.json / USER_MEMORY_DEFAULT_LAYERS にフォールバック
+    _valid_layers = ("persona", "nowaday", "history")
+    if data.user_memory_layers is not None:
+        execution["USER_MEMORY_LAYERS"] = [
+            l.strip().lower() for l in data.user_memory_layers
+            if isinstance(l, str) and l.strip().lower() in _valid_layers
+        ]
+    elif data.user_memory is True:
+        execution["USER_MEMORY_LAYERS"] = list(_valid_layers)
+    elif data.user_memory is False:
+        execution["USER_MEMORY_LAYERS"] = []
 
     try:
         result = exec_function(
