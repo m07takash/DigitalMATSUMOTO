@@ -228,6 +228,9 @@ test/*
 backup/
 *.zip
 
+# Startup script (環境依存。startup.sh_sample をコピーして使う)
+startup.sh
+
 # nohup
 nohup.out
 
