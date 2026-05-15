@@ -82,7 +82,8 @@ def _resolve_contents(contents_setting, in_contents, results):
 
 # B-4: RAG検索用クエリ生成フェーズ（C-1での並列化フック）
 def _build_intent_queries(service_info, user_info, session_id, session_name, support_agent,
-                          user_query, memories_selected, situation_prompt, query_vec, RAG_query_gene, rag_query_hint=""):
+                          user_query, memories_selected, situation_prompt, query_vec, RAG_query_gene,
+                          rag_query_hint="", user_memory_context=""):
     """RAG検索用クエリ(意図)を生成し、追加クエリ・ベクトル・ログを返す"""
     if not (RAG_query_gene and "RAG_QUERY_GENERATOR" in support_agent):
         return [], [], {}
@@ -90,7 +91,10 @@ def _build_intent_queries(service_info, user_info, session_id, session_name, sup
     # Thinkingからのヒントがあればクエリに付加
     _query = user_query
     if rag_query_hint:
-        _query = user_query + "\n\n【RAG検索のヒント】\n" + rag_query_hint
+        _query = _query + "\n\n【RAG検索のヒント】\n" + rag_query_hint
+    # ユーザーメモリが有効なら対話相手の人物像も検索クエリ生成の文脈に含める
+    if user_memory_context:
+        _query = _query + "\n\n" + user_memory_context.strip()
     add_info = {"Memories_Selected": memories_selected, "Situation": situation_prompt, "QueryVecs": [query_vec]}
     agent_file = support_agent["RAG_QUERY_GENERATOR"]
     _, _, response, model_name, prompt_tokens, response_tokens = dmt.RAG_query_generator(
@@ -417,39 +421,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     memory_digest = agent.agent["ENGINE"][model_type]["MEMORY"]["digest"]
     support_agent = agent.agent["SUPPORT_AGENT"]
 
-    need_intent = cfg["RAG_query_gene"] and "RAG_QUERY_GENERATOR" in support_agent
-    need_meta = cfg["meta_search"] and "EXTRACT_DATE" in support_agent
-    if need_intent or need_meta:
-        session.save_status_message("RAG検索クエリの作成を開始")
-        yield service_info, user_info, "[STATUS]RAG検索クエリの作成を開始", [], []
-
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        # メモリ取得を並列起動
-        future_memory = None
-        if cfg["memory_use"]:
-            future_memory = executor.submit(
-                session.get_memory, query_vec, model_name, tokenizer, memory_limit_tokens,
-                memory_role, memory_priority, cfg["memory_similarity"],
-                memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
-        # RAGクエリ生成を並列起動（Thinkingのヒントがあれば渡す）
-        # Include Query等で user_input にペルソナ前回応答などのプレフィックスが付いている場合、
-        # rag_query_text（=元のユーザー入力）が渡されていればRAG/メタ検索はそちらを使う。
-        _rag_input_text = rag_query_text if rag_query_text else user_query
-        _thinking_result = execution.get("_THINKING_RESULT", {})
-        _rag_query_hint = _thinking_result.get("rag_query_hint", "")
-        future_intent = executor.submit(
-            _build_intent_queries, service_info, user_info, session_id, session_name,
-            support_agent, _rag_input_text, [], situation_prompt, query_vec, cfg["RAG_query_gene"], _rag_query_hint)
-        # メタ検索を並列起動
-        future_meta = executor.submit(
-            _build_meta_searches, service_info, user_info, session_id, session_name,
-            support_agent, _rag_input_text, [], situation_prompt, query_vec, cfg["meta_search"])
-
-        memories_selected = future_memory.result() if future_memory else []
-        intent_queries, intent_vecs, RAG_query_gene_log = future_intent.result()
-        meta_searches, meta_search_log = future_meta.result()
-
-    # ユーザーメモリ層を「対話相手についての情報」コンテキストとして合成（後でクエリ先頭に挿入）
+    # ユーザーメモリ層を「対話相手についての情報」コンテキストとして合成。
+    # RAGクエリ生成より前に作るのは、生成時の入力テキストにもユーザーメモリを含めるため。
     # IMAGEGEN は画像プロンプトが3000文字制限で詰まるためスキップ
     # 優先順: execution["USER_MEMORY_LAYERS"] (UIの即時反映) > ユーザーマスタ > システムデフォルト
     user_memory_context = ""
@@ -472,6 +445,40 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                 )
         except Exception as _um_err:
             timestamp_log += f"[user_memory合成失敗: {_um_err}]" + str(datetime.now()) + "<br>"
+
+    need_intent = cfg["RAG_query_gene"] and "RAG_QUERY_GENERATOR" in support_agent
+    need_meta = cfg["meta_search"] and "EXTRACT_DATE" in support_agent
+    if need_intent or need_meta:
+        session.save_status_message("RAG検索クエリの作成を開始")
+        yield service_info, user_info, "[STATUS]RAG検索クエリの作成を開始", [], []
+
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        # メモリ取得を並列起動
+        future_memory = None
+        if cfg["memory_use"]:
+            future_memory = executor.submit(
+                session.get_memory, query_vec, model_name, tokenizer, memory_limit_tokens,
+                memory_role, memory_priority, cfg["memory_similarity"],
+                memory_similarity_logic, memory_digest, seq_limit, sub_seq_limit)
+        # RAGクエリ生成を並列起動（Thinkingのヒントがあれば渡す）
+        # Include Query等で user_input にペルソナ前回応答などのプレフィックスが付いている場合、
+        # rag_query_text（=元のユーザー入力）が渡されていればRAG/メタ検索はそちらを使う。
+        _rag_input_text = rag_query_text if rag_query_text else user_query
+        _thinking_result = execution.get("_THINKING_RESULT", {})
+        _rag_query_hint = _thinking_result.get("rag_query_hint", "")
+        future_intent = executor.submit(
+            _build_intent_queries, service_info, user_info, session_id, session_name,
+            support_agent, _rag_input_text, [], situation_prompt, query_vec, cfg["RAG_query_gene"],
+            _rag_query_hint, user_memory_context)
+        # メタ検索を並列起動
+        future_meta = executor.submit(
+            _build_meta_searches, service_info, user_info, session_id, session_name,
+            support_agent, _rag_input_text, [], situation_prompt, query_vec, cfg["meta_search"])
+
+        memories_selected = future_memory.result() if future_memory else []
+        intent_queries, intent_vecs, RAG_query_gene_log = future_intent.result()
+        meta_searches, meta_search_log = future_meta.result()
+
     intent_dur = RAG_query_gene_log.get("duration_sec", "-") if RAG_query_gene_log else "-"
     meta_dur = meta_search_log.get("date", {}).get("duration_sec", "-") if meta_search_log else "-"
     timestamp_log += f"[08-10完了: メモリ/RAGクエリ({intent_dur}s)/メタ検索({meta_dur}s)]" + str(datetime.now()) + "<br>"
