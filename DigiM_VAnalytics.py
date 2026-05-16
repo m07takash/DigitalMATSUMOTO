@@ -625,3 +625,192 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
     }
 
     return result
+
+
+# ===== Knowledge Explorer 再構成用ヘルパー =====
+
+# Trend用ストップワード（temporal_analysisと同等。名詞TF-IDF抽出用）
+TEMPORAL_STOP_WORDS = [
+    "こと", "もの", "ため", "それ", "これ", "あれ", "ここ", "そこ", "どこ",
+    "よう", "ところ", "とき", "なか", "うち", "ほう", "わけ", "はず", "つもり",
+    "ほか", "まま", "あと", "とおり", "せい", "おかげ", "くせ",
+    "人", "自分", "相手", "方", "さん", "たち", "みんな", "皆",
+    "今", "前", "後", "上", "下", "中", "内", "外", "間", "先", "次", "最初", "最後",
+    "場合", "必要", "可能", "重要", "大切", "意味", "問題", "結果", "状況", "状態",
+    "全体", "部分", "一部", "一つ", "一方", "両方", "以上", "以下", "程度",
+    "感じ", "形", "点", "面", "側", "度", "回", "件", "個", "本", "種", "数",
+    "目", "手", "力", "気", "声", "話", "言葉", "名前", "時間", "日", "月", "年",
+    "的", "性", "化", "用", "系", "式", "型", "版", "別", "向け",
+    "対応", "実行", "実現", "実施", "実装", "利用", "活用", "使用", "導入", "設定",
+    "確認", "理解", "認識", "判断", "検討", "議論", "説明", "表現", "表示", "提供",
+    "作成", "生成", "構築", "開発", "設計", "管理", "運用", "処理", "変更", "更新",
+    "追加", "削除", "取得", "選択", "指定", "定義", "評価", "分析", "比較", "改善",
+    "影響", "関係", "関連", "連携", "統合", "機能", "役割", "目的", "効果", "価値",
+    "情報", "データ", "内容", "対象", "範囲", "条件", "基準", "観点", "視点", "傾向",
+    "こちら", "そちら", "あちら", "どちら",
+]
+
+# 日本語フォント（ワードクラウド用）。無ければNone（英数のみ）
+IPA_FONT_PATH = "/usr/share/fonts/opentype/ipaexfont-gothic/ipaexg.ttf"
+
+
+# Knowledge Explorer(Overall)用: Total + Categoryカラム値ごとにクラスタリング
+def cluster_by_category(df, category_col=None, method="K-Means", params={}, min_rows=3):
+    """Total と Categoryカラム値ごとに apply_clustering を実行する。
+    返り値: {"_total": (df_clustered, info, summary),
+             "<カテゴリ値>": (df_clustered, info, summary), ...}
+    データが僅少な値はスキップ。"""
+    results = {}
+    try:
+        _dft, _it = apply_clustering(df, method=method, params=params)
+        results["_total"] = (_dft, _it, build_cluster_summary(_dft))
+    except Exception as e:
+        results["_total"] = (None, f"error: {e}", "")
+
+    if category_col and category_col in df.columns:
+        _need = min_rows
+        if method != "DBSCAN":
+            _need = max(min_rows, int(params.get("n_clusters", 2)))
+        for val in sorted(df[category_col].dropna().unique()):
+            sub = df[df[category_col] == val]
+            if len(sub) < _need:
+                continue
+            try:
+                _dfc, _ic = apply_clustering(sub, method=method, params=params)
+                results[str(val)] = (_dfc, _ic, build_cluster_summary(_dfc))
+            except Exception as e:
+                results[str(val)] = (None, f"error: {e}", "")
+    return results
+
+
+# Knowledge Explorer(Trend)用: Categoryカラム値×Period のキーワード頻度（ワードクラウド用）
+def temporal_keywords_by_category(df, category_col=None, period="month",
+                                  top_n=30, text_col="value_text"):
+    """返り値:
+      periods: [期間ラベル...]（昇順）
+      by_cat: {カテゴリ値: {期間: {語: 重み}}}
+      no_period_rags: {rag_name: 件数}  # create_dateが解釈不能な行
+    """
+    if "create_date" not in df.columns or text_col not in df.columns:
+        return [], {}, {}
+    w = df.copy()
+    w["_date"] = pd.to_datetime(w["create_date"], errors="coerce")
+
+    # 期間情報なし（create_date解釈不能）の集計
+    no_period_rags = {}
+    _np = w[w["_date"].isna()]
+    if not _np.empty:
+        _rc = "rag_name" if "rag_name" in _np.columns else ("db" if "db" in _np.columns else None)
+        if _rc:
+            no_period_rags = _np[_rc].fillna("(unknown)").astype(str).value_counts().to_dict()
+        else:
+            no_period_rags = {"(all)": int(len(_np))}
+
+    w = w.dropna(subset=["_date"])
+    if w.empty:
+        return [], {}, no_period_rags
+
+    if period == "year":
+        w["_period"] = w["_date"].dt.strftime("%Y")
+    elif period == "quarter":
+        w["_period"] = w["_date"].dt.to_period("Q").astype(str)
+    else:
+        w["_period"] = w["_date"].dt.strftime("%Y-%m")
+    periods = sorted(w["_period"].unique())
+
+    has_cat = bool(category_col) and category_col in w.columns
+    cats = sorted(w[category_col].dropna().unique()) if has_cat else ["(all)"]
+
+    by_cat = {}
+    for cv in cats:
+        sub = w[w[category_col] == cv] if has_cat else w
+        per_text = sub.groupby("_period")[text_col].apply(
+            lambda x: " ".join(x.dropna().astype(str))).to_dict()
+        texts = [t for t in per_text.values() if t and t.strip()]
+        if not texts:
+            continue
+        try:
+            vec = dmu.fit_tfidf(texts, stop_words=TEMPORAL_STOP_WORDS, grammer=('名詞',))
+        except Exception:
+            continue
+        pmap = {}
+        for p in periods:
+            t = per_text.get(p, "")
+            if not t.strip():
+                continue
+            try:
+                _, top_pairs, _ = dmu.get_tfidf_list(t, vec, top_n)
+                freq = {str(_w): float(_s) for _w, _s in top_pairs if _s and float(_s) > 0}
+                if freq:
+                    pmap[p] = freq
+            except Exception:
+                continue
+        if pmap:
+            by_cat[str(cv)] = pmap
+    return periods, by_cat, no_period_rags
+
+
+# Knowledge Explorer(Topic)用: Categoryカラム値ごとの件数/スコア統計（総合チャート用）
+def topic_category_stats(ranking_df, category_col):
+    """sensitivity_analysisのranking(df)からCategory値別の
+    count / score合計 / 平均 / 最大 を返す（scoreは小さいほど関連が強い）。"""
+    if ranking_df is None or getattr(ranking_df, "empty", True):
+        return None
+    if "score" not in ranking_df.columns:
+        return None
+    if not category_col or category_col not in ranking_df.columns:
+        return None
+    g = ranking_df.groupby(category_col)["score"].agg(
+        count="count", score_sum="sum", score_avg="mean", score_max="max").reset_index()
+    g = g.rename(columns={category_col: "category"})
+    return g.sort_values("count", ascending=False).reset_index(drop=True)
+
+
+# Knowledge Explorer(Topic)用: Periodごとの件数/スコア統計（Total/RAG NAME別の総合チャート用）
+def topic_period_stats(ranking_df, period="month"):
+    """sensitivity_analysisのranking(df)からPeriod別の
+    count / score合計 / 平均 / 最大 を返す（scoreは小さいほど関連が強い）。"""
+    if ranking_df is None or getattr(ranking_df, "empty", True):
+        return None
+    if "score" not in ranking_df.columns or "create_date" not in ranking_df.columns:
+        return None
+    w = ranking_df.copy()
+    w["_date"] = pd.to_datetime(w["create_date"], errors="coerce")
+    w = w.dropna(subset=["_date"])
+    if w.empty:
+        return None
+    if period == "year":
+        w["_period"] = w["_date"].dt.strftime("%Y")
+    elif period == "quarter":
+        w["_period"] = w["_date"].dt.to_period("Q").astype(str)
+    else:
+        w["_period"] = w["_date"].dt.strftime("%Y-%m")
+    g = w.groupby("_period")["score"].agg(
+        count="count", score_sum="sum", score_avg="mean", score_max="max").reset_index()
+    g = g.rename(columns={"_period": "period"})
+    return g.sort_values("period").reset_index(drop=True)
+
+
+# Knowledge Explorer用: 頻度辞書からワードクラウドのmatplotlib figを生成
+def make_wordcloud_figure(freq_dict, title="", width=360, height=260):
+    """{語:重み} からワードクラウドのfigを返す。日本語フォント指定。空ならNone。"""
+    if not freq_dict:
+        return None
+    try:
+        from wordcloud import WordCloud
+    except Exception:
+        return None
+    _font = IPA_FONT_PATH if os.path.exists(IPA_FONT_PATH) else None
+    try:
+        wc = WordCloud(font_path=_font, background_color="white",
+                       width=width, height=height, prefer_horizontal=0.95,
+                       colormap="tab10").generate_from_frequencies(freq_dict)
+    except Exception:
+        return None
+    fig, ax = plt.subplots(figsize=(width / 100.0, height / 100.0))
+    ax.imshow(wc, interpolation="bilinear")
+    ax.axis("off")
+    if title:
+        ax.set_title(title, fontsize=10)
+    fig.tight_layout(pad=0.2)
+    return fig
