@@ -3145,6 +3145,73 @@ def _user_memory_explorer():
                         st.rerun()
 
 
+### Support Agent Test画面 ###
+def _support_agent_test():
+    """サポートエージェント評価（旧サイドバー Support Eval をメインビューへ移設）。"""
+    st.subheader("Support Agent Test")
+
+    _agent_file = st.session_state.get("agent_file", "")
+    _eval_targets = {}
+    if _agent_file:
+        try:
+            _eval_targets = dmse.get_support_targets(_agent_file)
+        except Exception:
+            pass
+
+    st.caption(f"対象エージェント: {_agent_file or '(未選択)'}")
+    if not _eval_targets:
+        st.info("選択中エージェントにサポートエージェントが未設定です。")
+        return
+
+    _target_options = {v["label"]: k for k, v in _eval_targets.items()}
+    _target_options["両方"] = "both"
+    _selected_label = st.selectbox("対象", list(_target_options.keys()), key="eval_target_select")
+    _selected_target = _target_options[_selected_label]
+
+    _all_engines = []
+    for k, v in _eval_targets.items():
+        if _selected_target in ("both", k):
+            _all_engines.extend(v["engines"])
+    _all_engines = list(dict.fromkeys(_all_engines))
+    _selected_engines = st.multiselect("エンジン", _all_engines, default=_all_engines, key="eval_engines")
+
+    _num_questions = st.number_input("質問数", min_value=1, max_value=20, value=3, key="eval_num_q")
+    _default_questions = "AIガバナンスについてどう思う？\n最近読んだ本で面白かったのは？\n自己紹介してください"
+    _questions_text = st.text_area("質問（改行区切り）", value=_default_questions,
+                                   height=120, key="eval_questions")
+    _questions = [q.strip() for q in _questions_text.strip().split("\n") if q.strip()][:_num_questions]
+
+    if st.button("評価実行", key="run_support_eval", disabled=bool(st.session_state._bg_task)):
+        if not _selected_engines:
+            st.warning("エンジンを選択してください")
+        elif not _questions:
+            st.warning("質問を入力してください")
+        else:
+            _eval_af = _agent_file
+            _eval_tgt = _selected_target
+            _eval_eng = list(_selected_engines)
+            _eval_qs = list(_questions)
+            def _run_eval():
+                _results, _summary, _excel = dmse.run_eval_for_ui(
+                    _eval_af, _eval_tgt, _eval_eng, _eval_qs)
+                st.session_state.eval_results_excel = _excel
+                st.session_state.eval_summary = _summary
+            _run_bg_task("eval", "サポートエージェント評価を実行中", _run_eval)
+            st.rerun()
+
+    if st.session_state.eval_summary:
+        st.dataframe(pd.DataFrame(st.session_state.eval_summary), hide_index=True)
+
+    if st.session_state.eval_results_excel:
+        st.download_button(
+            label="結果Excel",
+            data=st.session_state.eval_results_excel,
+            file_name=f"support_eval_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="download_eval_excel"
+        )
+
+
 ### Streamlit画面 ###
 def main():
     # セッションステートを初期化
@@ -3182,6 +3249,8 @@ def main():
             _view_options.append("Knowledge Explorer")
         if st.session_state.allowed_user_memory_explorer:
             _view_options.append("User Memory Explorer")
+        if st.session_state.allowed_support_eval:
+            _view_options.append("Support Agent Test")
         if st.session_state.allowed_scheduler:
             _view_options.append("Scheduler")
         if len(_view_options) > 1:
@@ -3571,77 +3640,7 @@ def main():
                         except Exception as e:
                             st.error(f"Health Check Failed: {e}")
 
-        # サポートエージェント評価
-        if st.session_state.allowed_support_eval:
-            eval_expander = st.expander("Support Eval")
-            with eval_expander:
-                # 現在のエージェントのサポートエージェント情報を取得
-                _agent_file = st.session_state.get("agent_file", "")
-                _eval_targets = {}
-                if _agent_file:
-                    try:
-                        _eval_targets = dmse.get_support_targets(_agent_file)
-                    except Exception:
-                        pass
-
-                if not _eval_targets:
-                    st.info("サポートエージェント未設定")
-                else:
-                    # 評価対象の選択
-                    _target_options = {v["label"]: k for k, v in _eval_targets.items()}
-                    _target_options["両方"] = "both"
-                    _selected_label = st.selectbox("対象", list(_target_options.keys()), key="eval_target_select")
-                    _selected_target = _target_options[_selected_label]
-
-                    # エンジン一覧の取得（選択対象に応じて）
-                    _all_engines = []
-                    for k, v in _eval_targets.items():
-                        if _selected_target in ("both", k):
-                            _all_engines.extend(v["engines"])
-                    _all_engines = list(dict.fromkeys(_all_engines))
-                    _selected_engines = st.multiselect("エンジン", _all_engines, default=_all_engines, key="eval_engines")
-
-                    # 質問数
-                    _num_questions = st.number_input("質問数", min_value=1, max_value=20, value=3, key="eval_num_q")
-
-                    # 質問入力（テキストエリア）
-                    _default_questions = "AIガバナンスについてどう思う？\n最近読んだ本で面白かったのは？\n自己紹介してください"
-                    _questions_text = st.text_area("質問（改行区切り）", value=_default_questions,
-                                                   height=80, key="eval_questions")
-                    _questions = [q.strip() for q in _questions_text.strip().split("\n") if q.strip()][:_num_questions]
-
-                    # 実行（バックグラウンド）
-                    if st.button("評価実行", key="run_support_eval", disabled=bool(st.session_state._bg_task)):
-                        if not _selected_engines:
-                            st.warning("エンジンを選択してください")
-                        elif not _questions:
-                            st.warning("質問を入力してください")
-                        else:
-                            _eval_af = _agent_file
-                            _eval_tgt = _selected_target
-                            _eval_eng = list(_selected_engines)
-                            _eval_qs = list(_questions)
-                            def _run_eval():
-                                _results, _summary, _excel = dmse.run_eval_for_ui(
-                                    _eval_af, _eval_tgt, _eval_eng, _eval_qs)
-                                st.session_state.eval_results_excel = _excel
-                                st.session_state.eval_summary = _summary
-                            _run_bg_task("eval", "サポートエージェント評価を実行中", _run_eval)
-                            st.rerun()
-
-                    # 結果サマリー表示
-                    if st.session_state.eval_summary:
-                        st.dataframe(pd.DataFrame(st.session_state.eval_summary), hide_index=True)
-
-                    # Excelダウンロード
-                    if st.session_state.eval_results_excel:
-                        st.download_button(
-                            label="結果Excel",
-                            data=st.session_state.eval_results_excel,
-                            file_name=f"support_eval_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key="download_eval_excel"
-                        )
+        # サポートエージェント評価は メインビューの「Support Agent Test」へ移設
 
         # バックグラウンドタスクモニター
         if st.session_state._bg_task:
@@ -3738,6 +3737,9 @@ def main():
         return
     if st.session_state.get("main_view") == "User Memory Explorer":
         _user_memory_explorer()
+        return
+    if st.session_state.get("main_view") == "Support Agent Test":
+        _support_agent_test()
         return
     if st.session_state.get("main_view") == "Scheduler":
         _scheduler_view()
