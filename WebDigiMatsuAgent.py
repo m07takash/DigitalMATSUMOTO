@@ -119,8 +119,8 @@ if 'group_cd' not in st.session_state:
     st.session_state.group_cd = "All"
 if 'allowed_rag_management' not in st.session_state:
     st.session_state.allowed_rag_management = True
-if 'allowed_rag_explorer' not in st.session_state:
-    st.session_state.allowed_rag_explorer = True
+if 'allowed_knowledge_explorer' not in st.session_state:
+    st.session_state.allowed_knowledge_explorer = True
 if 'allowed_exec_setting' not in st.session_state:
     st.session_state.allowed_exec_setting = True
 if 'allowed_rag_setting' not in st.session_state:
@@ -388,7 +388,7 @@ def ensure_login():
 # ユーザーの利用可能な画面機能の設定
 def user_allowed_parameter(allowded_dict):
     st.session_state.allowed_rag_management = allowded_dict.get("RAG Management", True)
-    st.session_state.allowed_rag_explorer = allowded_dict.get("RAG Explorer", True)
+    st.session_state.allowed_knowledge_explorer = allowded_dict.get("Knowledge Explorer", True)
     st.session_state.allowed_exec_setting = allowded_dict.get("Exec Setting", True)
     st.session_state.allowed_rag_setting = allowded_dict.get("RAG Setting", True)
     st.session_state.allowed_feedback = allowded_dict.get("Feedback", True)
@@ -882,13 +882,13 @@ def ak_line(ak_dict):
     )
     return line
 
-### RAG Explorer画面 ###
-def _rag_explorer():
+### Knowledge Explorer画面 ###
+def _knowledge_explorer():
     import fnmatch
 
-    _ANALYTICS_BASE = "user/common/analytics/rag_explorer/"
+    _ANALYTICS_BASE = "user/common/analytics/knowledge_explorer/"
 
-    # RAG Explorer用の全session_stateキー
+    # Knowledge Explorer用の全session_stateキー
     _RAG_STATE_KEYS = [
         "_rag_searched", "_rag_cached_data", "_rag_cached_type", "_rag_prev_collection",
         "_rag_scatter_cache", "_rag_cluster_cache", "_rag_cluster_explanation", "_rag_cluster_names",
@@ -905,7 +905,7 @@ def _rag_explorer():
     ]
 
     def _save_analysis_session(collection_name):
-        """全RAG Explorer状態をフォルダに保存する"""
+        """全Knowledge Explorer状態をフォルダに保存する"""
         import pickle
         _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         _folder = os.path.join(_ANALYTICS_BASE, f"analytics{_ts}")
@@ -1017,14 +1017,14 @@ def _rag_explorer():
                     _agent_data = dmu.read_json_file(_agent_file, agent_folder_path)
                     _add_knowledge = _agent_data.get("BOOK", [])
 
-                _session_id = "RAG_EXPLORER_" + dms.set_new_session_id()
+                _session_id = "KNOWLEDGE_EXPLORER_" + dms.set_new_session_id()
                 # analyticsフォルダ内にセッションを作成
                 _analytics_folder = st.session_state.get("_rag_analytics_folder", "")
                 if not _analytics_folder:
                     _analytics_folder = os.path.join(_ANALYTICS_BASE, f"analytics{datetime.now().strftime('%Y%m%d_%H%M%S')}")
                     st.session_state._rag_analytics_folder = _analytics_folder
                 _session_base = os.path.join(_analytics_folder, _session_id)
-                _tmp_session = dms.DigiMSession(_session_id, "RAG Explorer", base_path=_session_base)
+                _tmp_session = dms.DigiMSession(_session_id, "Knowledge Explorer", base_path=_session_base)
                 _tmp_session.save_status("LOCKED")
                 _exec["_SESSION_BASE_PATH"] = _session_base
 
@@ -1034,7 +1034,7 @@ def _rag_explorer():
                         _output_ref = {}
                         for _, _, chunk, _, _oref in dme.DigiMatsuExecute(
                                 st.session_state.web_service, st.session_state.web_user,
-                                _session_id, "RAG Explorer", _agent_file, "LLM",
+                                _session_id, "Knowledge Explorer", _agent_file, "LLM",
                                 1, _user_input, [], {}, {}, _add_knowledge, "No Template", _exec):
                             if chunk and not chunk.startswith("[STATUS]"):
                                 _response += chunk
@@ -1144,7 +1144,7 @@ def _rag_explorer():
                                 def _run_cmp():
                                     _, _, cmp_resp, cmp_model, _, cmp_know_ref = _dmva_cmp.genLLMAgentSimple(
                                         st.session_state.web_service, st.session_state.web_user,
-                                        _sid, "RAG Explorer", _cmp_file, model_type="LLM", sub_seq=1,
+                                        _sid, "Knowledge Explorer", _cmp_file, model_type="LLM", sub_seq=1,
                                         query=_orig_query, import_contents=[], situation=_orig_situation,
                                         overwrite_items=_cmp_overwrite, prompt_temp_cd=_orig_template,
                                         seq_limit="1", sub_seq_limit="0")
@@ -1160,7 +1160,7 @@ def _rag_explorer():
                                         "response": cmp_resp, "diff": round(cmp_diff, 3),
                                         "compare_text": cmp_text, "compare_model": cmp_text_model,
                                         "knowledge_rag": cmp_know_ref}
-                                _run_bg_task("compare", f"比較分析を実行中(RAG Explorer)", _run_cmp)
+                                _run_bg_task("compare", f"比較分析を実行中(Knowledge Explorer)", _run_cmp)
                                 st.rerun()
 
                     # Compare結果表示
@@ -1190,7 +1190,7 @@ def _rag_explorer():
                             if ak_col1.button("Analytics Results - Knowledge Utility", key=f"{key_prefix}_ak_run", disabled=bool(st.session_state._bg_task)):
                                 import DigiM_VAnalytics as _dmva_ak
                                 _ref_ts = _v2.get("prompt", {}).get("timestamp", str(datetime.now()))
-                                _ak_title = f"RAGExplorer_{_sid}"
+                                _ak_title = f"KnowledgeExplorer_{_sid}"
                                 # analytics個別フォルダに保存（なければ一時的に作成）
                                 _ak_folder = st.session_state.get("_rag_analytics_folder", "")
                                 if not _ak_folder:
@@ -1200,7 +1200,7 @@ def _rag_explorer():
                                 def _run_ak():
                                     _r = _dmva_ak.analytics_knowledge(_agent_file, _ref_ts, _ak_title, _ak_refs, _ak_folder, _ak_mode, _ak_dim)
                                     st.session_state[f"_{key_prefix}_ak_result"] = _r
-                                _run_bg_task("knowledge", "知識活用性を分析中(RAG Explorer)", _run_ak)
+                                _run_bg_task("knowledge", "知識活用性を分析中(Knowledge Explorer)", _run_ak)
                                 st.rerun()
 
                             if st.session_state.get(f"_{key_prefix}_ak_result"):
@@ -1220,7 +1220,7 @@ def _rag_explorer():
 
         return _result["response"]
 
-    st.subheader("RAG Explorer")
+    st.subheader("Knowledge Explorer")
 
     # サイドバーからの読み込みリクエストを処理
     if st.session_state.get("_rag_load_folder"):
@@ -1415,7 +1415,7 @@ def _rag_explorer():
         st.subheader("Export Report")
         if st.button("Generate Report", key="rag_pi_gen_report"):
             _now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            _report = f"# RAG Explorer {_now}\n\n"
+            _report = f"# Knowledge Explorer {_now}\n\n"
             _report += f"**分析実施日:** {_now}\n\n"
             _report += f"**ページ数:** {total_count}\n\n"
             _report += "## Page Tree\n\n"
@@ -1444,7 +1444,7 @@ def _rag_explorer():
                 st.warning(f"セッション保存エラー: {e}")
 
         if st.session_state.get("_rag_report"):
-            _report_name = f"RAG_Explorer_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            _report_name = f"Knowledge_Explorer_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             st.download_button("Download (.md)", data=st.session_state._rag_report.encode("utf-8"),
                               file_name=f"{_report_name}.md", mime="text/markdown", key="rag_pi_dl_md")
 
@@ -2366,7 +2366,7 @@ def _rag_explorer():
             return f"![chart](data:image/png;base64,{b64})"
 
         _now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        _report = f"# RAG Explorer {_now}\n\n"
+        _report = f"# Knowledge Explorer {_now}\n\n"
         _report += f"**対象データ:** {_selected}\n\n"
         _report += f"**データ件数:** フィルタ後 {filtered_count}件 / 全体 {total_count}件\n\n"
 
@@ -2617,7 +2617,7 @@ def _rag_explorer():
             st.warning(f"セッション保存エラー: {e}")
 
     if st.session_state.get("_rag_report"):
-        _report_name = f"RAG_Explorer_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        _report_name = f"Knowledge_Explorer_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         st.download_button("Download (.md)", data=st.session_state._rag_report.encode("utf-8"),
                           file_name=f"{_report_name}.md", mime="text/markdown", key="rag_dl_md")
 
@@ -2808,8 +2808,8 @@ def main():
 
         # メインビュー切り替え
         _view_options = ["Chat"]
-        if st.session_state.allowed_rag_explorer:
-            _view_options.append("RAG Explorer")
+        if st.session_state.allowed_knowledge_explorer:
+            _view_options.append("Knowledge Explorer")
         if st.session_state.allowed_scheduler:
             _view_options.append("Scheduler")
         if len(_view_options) > 1:
@@ -2882,7 +2882,7 @@ def main():
         side_col1, side_col2 = st.columns(2)
 
         # 新しいセッションを発番（IDを指定して、新規にセッションリフレッシュ）
-        if st.session_state.get("main_view") == "RAG Explorer":
+        if st.session_state.get("main_view") == "Knowledge Explorer":
             if side_col1.button("New Analysis", key="new_analysis_sidebar"):
                 for _k in list(st.session_state.keys()):
                     if _k.startswith("_rag_"):
@@ -3336,10 +3336,10 @@ def main():
                     st.warning(f"セッション {sid} の描画でエラーのためスキップしました: {e}")
                     continue
 
-        # RAG Explorer用: 保存済み分析セッション一覧
-        elif st.session_state.get("main_view", "Chat") == "RAG Explorer":
+        # Knowledge Explorer用: 保存済み分析セッション一覧
+        elif st.session_state.get("main_view", "Chat") == "Knowledge Explorer":
             st.markdown("----")
-            _analytics_base = "user/common/analytics/rag_explorer/"
+            _analytics_base = "user/common/analytics/knowledge_explorer/"
             if os.path.exists(_analytics_base):
                 _saved_folders = sorted(
                     [f for f in os.listdir(_analytics_base) if os.path.isdir(os.path.join(_analytics_base, f)) and f != ".gitkeep"],
@@ -3354,8 +3354,8 @@ def main():
                             st.rerun()
 
     # メインエリアの画面切り替え
-    if st.session_state.get("main_view") == "RAG Explorer":
-        _rag_explorer()
+    if st.session_state.get("main_view") == "Knowledge Explorer":
+        _knowledge_explorer()
         return
     if st.session_state.get("main_view") == "Scheduler":
         _scheduler_view()

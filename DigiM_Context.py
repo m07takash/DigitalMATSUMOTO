@@ -155,7 +155,7 @@ def get_rag_list():
     rest = sorted(existing - set(result))
     return result + rest
 
-# RAGコレクションのメタデータ一覧を取得（RAG Explorer用）
+# RAGコレクションのメタデータ一覧を取得（Knowledge Explorer用）
 def get_rag_collection_data(collection_name):
     """ChromaDBコレクションの全メタデータをリスト[dict]で返す"""
     db_client = get_chroma_client()
@@ -173,7 +173,7 @@ def get_rag_collection_data(collection_name):
         data.append(row)
     return data
 
-# PageIndexのメタデータ一覧を取得（RAG Explorer用）
+# PageIndexのメタデータ一覧を取得（Knowledge Explorer用）
 def get_page_index_list():
     """pages/ 配下の全PageIndexデータセットを返す"""
     result = {}
