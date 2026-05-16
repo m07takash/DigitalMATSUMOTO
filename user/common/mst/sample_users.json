@@ -19,7 +19,7 @@
     "Allowed": {
       "Session Archive": true,
       "RAG Management": true,
-      "RAG Explorer": true,
+      "Knowledge Explorer": true,
       "Exec Setting": true,
       "RAG Setting": true,
       "Feedback": true,

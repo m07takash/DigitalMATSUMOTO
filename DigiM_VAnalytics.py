@@ -173,7 +173,7 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
 
     return scatter_plot_file_category, scatter_plot_file_ref, scatter_plot_file_csv
 
-# RAG Explorer用: ベクトルデータの次元削減（散布図座標を返す）
+# Knowledge Explorer用: ベクトルデータの次元削減（散布図座標を返す）
 def reduce_dimensions(df, vector_col="vector_data_value_text", method="PCA", params={}):
     """DataFrameのベクトルカラムを2次元に削減し、X1/X2カラムを追加して返す。infoテキストも返す。"""
     vectors_raw = df[vector_col].tolist()
@@ -209,7 +209,7 @@ def reduce_dimensions(df, vector_col="vector_data_value_text", method="PCA", par
     df_result["X2"] = emb[:, 1]
     return df_result, info_text
 
-# RAG Explorer用: DBSCANのeps自動推定（k-距離法）
+# Knowledge Explorer用: DBSCANのeps自動推定（k-距離法）
 def estimate_dbscan_eps(df, k=5):
     """X1/X2座標のk番目近傍距離から最適なepsを推定する"""
     from sklearn.neighbors import NearestNeighbors
@@ -232,7 +232,7 @@ def estimate_dbscan_eps(df, k=5):
     eps = max(eps, float(np.percentile(k_distances, 10)))
     return round(eps, 2)
 
-# RAG Explorer用: クラスタリング実行
+# Knowledge Explorer用: クラスタリング実行
 def apply_clustering(df, method="K-Means", params={}):
     """X1/X2座標を使ってクラスタリングし、Cluster列を追加して返す。info文字列も返す。"""
     coords = df[["X1", "X2"]].values
@@ -284,7 +284,7 @@ def build_cluster_summary(df, text_col="value_text", max_samples=5):
                 summary_lines.append(f"  - {str(s)[:120]}")
     return "\n".join(summary_lines)
 
-# RAG Explorer用: 感度分析（入力テキストに対する全チャンクのコサイン距離+期間ボーナス）
+# Knowledge Explorer用: 感度分析（入力テキストに対する全チャンクのコサイン距離+期間ボーナス）
 def sensitivity_analysis(df, query_text, vector_col="vector_data_value_text", top_n=20,
                          date_from=None, date_to=None, date_bonus=0.0):
     """入力テキストをembed→全チャンクとcosine距離を計算→期間ボーナス適用→スコアでランキング"""
@@ -326,7 +326,7 @@ def sensitivity_analysis(df, query_text, vector_col="vector_data_value_text", to
 
     return df_display.head(top_n), cluster_stats
 
-# RAG Explorer用: 時系列分析（期間ごとのキーワード+カテゴリ推移）
+# Knowledge Explorer用: 時系列分析（期間ごとのキーワード+カテゴリ推移）
 def temporal_analysis(df, period="month", top_n_keywords=10, text_col="value_text", category_col="category"):
     """create_dateで期間集約し、TF-IDFキーワード+指定カラム構成を返す"""
     if "create_date" not in df.columns or text_col not in df.columns:
