@@ -318,12 +318,15 @@ def _filter_histories_by_period(histories: list, period: str) -> list:
     out = []
     for r in histories:
         try:
-            cd = r.get("create_date") or ""
-            ts = datetime.fromisoformat(str(cd).replace("Z", ""))
+            cd = str(r.get("create_date") or "").strip().replace("Z", "+00:00")
+            ts = datetime.fromisoformat(cd)
+            # Notion等はタイムゾーン付き(+00:00)。ウィンドウはnaiveなので揃える
+            if ts.tzinfo is not None:
+                ts = ts.replace(tzinfo=None)
+            if start <= ts < end:
+                out.append(r)
         except Exception:
             continue
-        if start <= ts < end:
-            out.append(r)
     return out
 
 
@@ -344,9 +347,11 @@ def build_nowaday_profile(service_id: str, user_id: str, period: str) -> dict:
     if dropped_count > 0:
         logger.info(f"[user_memory.nowaday] history切り詰め user={user_id} period={period} kept={len(history_records_for_llm)} dropped={dropped_count} chars={total_chars}/{NOWADAY_INPUT_MAX_CHARS}")
 
-    existing = dmum.get_one("nowaday", {
-        "service_id": service_id, "user_id": user_id, "period": period,
-    })
+    # 増分シード: 同 service/user/period の最新スナップショット（履歴方式のため複数あり得る）
+    _same = [m for m in dmum.load_all("nowaday", service_id=service_id, user_id=user_id)
+             if (m.get("period") or "") == period and (m.get("active") or "Y") == "Y"]
+    _same.sort(key=lambda r: r.get("generated_at") or "", reverse=True)
+    existing = _same[0] if _same else None
 
     payload = {
         "period": period,
@@ -376,12 +381,14 @@ def build_nowaday_profile(service_id: str, user_id: str, period: str) -> dict:
         return {}
 
     summary = (parsed.get("summary_text") or "").strip()
+    _gen = dmum.now_ts()
+    _gen_compact = _gen.replace("-", "").replace(":", "").replace(" ", "_")
     rec = {
-        "id": dmum.make_nowaday_id(service_id, user_id, period),
+        "id": dmum.make_nowaday_id(service_id, user_id, period, _gen_compact),
         "service_id": service_id,
         "user_id": user_id,
         "period": period,
-        "generated_at": dmum.now_ts(),
+        "generated_at": _gen,
         "recurring_topics": parsed.get("recurring_topics") or [],
         "emerging": parsed.get("emerging") or [],
         "declining": parsed.get("declining") or [],
