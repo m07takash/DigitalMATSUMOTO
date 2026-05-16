@@ -902,6 +902,10 @@ def _knowledge_explorer():
         "_rag_pi_sensitivity",
         "_rag_loaded_collection", "_rag_loaded_type",
         "_rag_analytics_folder",
+        # 再構成(Overall/Trend/Topic)で追加。既存キーはリネーム不可(pkl復元互換)
+        "_rag_cluster_expl_history", "_rag_cluster_expl_sel",
+        "_rag_trend", "_rag_trend_expl_history", "_rag_trend_expl_sel",
+        "_rag_topic", "_rag_topic_expl_history", "_rag_topic_expl_sel",
     ]
 
     def _save_analysis_session(collection_name):
@@ -1298,6 +1302,17 @@ def _knowledge_explorer():
         st.session_state._rag_temporal_explanation = None
         st.session_state._rag_llm_response = None
         st.session_state._rag_report = None
+        st.session_state._rag_cluster_expl_history = None
+        st.session_state._rag_cluster_expl_sel = None
+        st.session_state._rag_trend = None
+        st.session_state._rag_trend_expl_history = None
+        st.session_state._rag_trend_expl_sel = None
+        st.session_state._rag_topic = None
+        st.session_state._rag_topic_expl_history = None
+        st.session_state._rag_topic_expl_sel = None
+        st.session_state._rag_df_display = None
+        st.session_state._rag_filterable_cols = None
+        st.session_state._rag_disp_sig = None
 
     # 読み込み済みセッションがある場合、Collection未選択でも続行
     if not _selected_list:
@@ -1450,8 +1465,19 @@ def _knowledge_explorer():
 
         return  # PageIndexはここで終了（以降のChromaDB用処理をスキップ）
 
-    # ===== ChromaDB用画面（以降は既存ロジック） =====
+    # ===== ChromaDB用画面（Overall / Trend / Topic / Ask Agent 構成） =====
+    import DigiM_VAnalytics as dmva
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.lines import Line2D as _L2D
+    import base64 as _b64
+    import io as _io
+    import json as _json
+    import re as _re
+
     _data_type = "ChromaDB"
+    _MARKER_CHOICES = ["o", "s", "D", "^", "*", "P", "X", "v", "p", "h", "<", ">"]
 
     # コレクション(DATA_NAME) → RAG_NAME のマップ（エージェントのKNOWLEDGE/BOOK由来）
     _col_to_rag_name = {}
@@ -1468,7 +1494,6 @@ def _knowledge_explorer():
     if st.session_state.get("_rag_cached_data") is not None:
         df = st.session_state._rag_cached_data
         _data_type = st.session_state._rag_cached_type
-        # キャッシュにrag_nameがなければ補完
         if "rag_name" not in df.columns and "_source" in df.columns:
             df = df.copy()
             df["rag_name"] = df["_source"].map(lambda s: _col_to_rag_name.get(s, s))
@@ -1482,1133 +1507,788 @@ def _knowledge_explorer():
                 d["_source"] = _sel
                 d["rag_name"] = _rn
             _all_raw_data.extend(_col_data)
-
         if not _all_raw_data:
             st.warning("データが0件です")
             return
-
-        # PageIndexとChromaDBが混在する場合はMixed
         _has_pi = any(s.startswith("[PageIndex]") for s in _selected_list)
         _has_db = any(not s.startswith("[PageIndex]") for s in _selected_list)
         if _has_pi and _has_db:
             _data_type = "Mixed"
         elif _has_pi:
             _data_type = "PageIndex"
-
         df = pd.DataFrame(_all_raw_data)
         st.session_state._rag_cached_data = df
         st.session_state._rag_cached_type = _data_type
 
     total_count = len(df)
 
-    # ベクトルデータ列は表示から除外
-    _exclude_cols = [c for c in df.columns if "vector_data" in c]
-    df_display = df.drop(columns=_exclude_cols, errors="ignore")
-
-    # リスト型カラムを文字列に変換（tags等）
-    for c in df_display.columns:
-        if df_display[c].apply(lambda x: isinstance(x, list)).any():
-            df_display[c] = df_display[c].apply(lambda x: ", ".join(str(i) for i in x) if isinstance(x, list) else x)
-
-    # フィルタ可能なカラムを事前計算
-    _filterable_cols = [c for c in df_display.columns if df_display[c].dtype == "object" and df_display[c].nunique() < 100]
-
-    # フィルタセクション
-    _has_date = "create_date" in df_display.columns
-    if _has_date:
-        _filter_col1, _filter_col2, _filter_col3 = st.columns(3)
+    # df_display / filterable をキャッシュ（毎回のlist→str変換コストを回避: 操作性改善）
+    _disp_sig = (id(df), len(df), tuple(df.columns))
+    if st.session_state.get("_rag_disp_sig") == _disp_sig and st.session_state.get("_rag_df_display") is not None:
+        df_display = st.session_state._rag_df_display
+        _filterable_cols = st.session_state._rag_filterable_cols
     else:
-        _filter_col1, _filter_col2, _filter_col3 = st.columns(3)
-    _filter_column = _filter_col1.selectbox("Filter Column:", ["(none)"] + _filterable_cols, key="rag_filter_col")
+        _exclude_cols = [c for c in df.columns if "vector_data" in c]
+        df_display = df.drop(columns=_exclude_cols, errors="ignore")
+        for c in df_display.columns:
+            if df_display[c].apply(lambda x: isinstance(x, list)).any():
+                df_display[c] = df_display[c].apply(lambda x: ", ".join(str(i) for i in x) if isinstance(x, list) else x)
+        _filterable_cols = [c for c in df_display.columns if df_display[c].dtype == "object" and df_display[c].nunique() < 100]
+        st.session_state._rag_df_display = df_display
+        st.session_state._rag_filterable_cols = _filterable_cols
+        st.session_state._rag_disp_sig = _disp_sig
+
+    _has_date = "create_date" in df_display.columns
+    _has_vectors = "vector_data_value_text" in df.columns and _data_type in ("ChromaDB", "Mixed")
+    _has_rag = "rag_name" in df_display.columns
+    _priority_cols = ["id", "db", "rag_name", "title", "create_date", "category", "Cluster", "X1", "X2", "key_text", "value_text"]
+    _cat_color_map = {}
+    try:
+        _cmj = dmu.read_json_file("category_map.json", mst_folder_path) or dmu.read_json_file("sample_category_map.json", mst_folder_path)
+        _cat_color_map = (_cmj or {}).get("CategoryColor", {})
+    except Exception:
+        _cat_color_map = {}
+
+    def _order_cols(_dfx):
+        _ep = [c for c in _priority_cols if c in _dfx.columns]
+        _rm = sorted([c for c in _dfx.columns if c not in _priority_cols])
+        return _dfx[_ep + _rm]
+
+    def _png(fig):
+        """figをPNGバイト列にして閉じる（再描画コスト回避のため計算時に1度だけ生成）"""
+        buf = _io.BytesIO()
+        fig.savefig(buf, format="png", dpi=140, bbox_inches="tight")
+        plt.close(fig)
+        return buf.getvalue()
+
+    def _b64img(_pb):
+        return f"![chart](data:image/png;base64,{_b64.b64encode(_pb).decode()})"
+
+    def _rag_list(_dfx):
+        if "rag_name" in _dfx.columns:
+            return sorted(_dfx["rag_name"].dropna().astype(str).unique().tolist())
+        return []
+
+    def _scatter_png(_dfx, _color_col, _marker_col, _size_mode, _title):
+        _dot = None
+        if _size_mode == "Newer=Larger" and "create_date" in _dfx.columns:
+            _d = pd.to_datetime(_dfx["create_date"], errors="coerce")
+            if _d.notna().any():
+                _mn = _d.min().timestamp()
+                _mx = _d.max().timestamp()
+                _rg = _mx - _mn if _mx > _mn else 1
+                _dot = _d.apply(lambda x: 10 + 190 * ((x.timestamp() - _mn) / _rg) if pd.notna(x) else 10).values
+        fig, ax = plt.subplots(figsize=(9, 6))
+        _mk = {}
+        if _marker_col != "(none)" and _marker_col in _dfx.columns:
+            _mv = sorted(_dfx[_marker_col].dropna().unique())
+            _mk = {v: _MARKER_CHOICES[i % len(_MARKER_CHOICES)] for i, v in enumerate(_mv)}
+        _cm = {}
+        if _color_col != "(none)" and _color_col in _dfx.columns:
+            _cs = sorted(_dfx[_color_col].dropna().unique())
+            _dc = plt.cm.get_cmap("tab10", max(len(_cs), 1))
+            for i, c in enumerate(_cs):
+                _cm[c] = _cat_color_map.get(c) or _dc(i)
+        if _cm and _mk:
+            for c in _cm:
+                for mv, ms in _mk.items():
+                    _m = (_dfx[_color_col] == c) & (_dfx[_marker_col] == mv)
+                    if not _m.any():
+                        continue
+                    _s = _dot[_m.values] if _dot is not None else None
+                    ax.scatter(_dfx.loc[_m, "X1"], _dfx.loc[_m, "X2"], color=_cm[c], s=_s, alpha=0.7, marker=ms)
+        elif _cm:
+            for c, col in _cm.items():
+                _m = _dfx[_color_col] == c
+                _s = _dot[_m.values] if _dot is not None else None
+                ax.scatter(_dfx.loc[_m, "X1"], _dfx.loc[_m, "X2"], color=col, s=_s, alpha=0.7)
+        elif _mk:
+            for mv, ms in _mk.items():
+                _m = _dfx[_marker_col] == mv
+                _s = _dot[_m.values] if _dot is not None else None
+                ax.scatter(_dfx.loc[_m, "X1"], _dfx.loc[_m, "X2"], s=_s, alpha=0.7, marker=ms)
+        else:
+            ax.scatter(_dfx["X1"], _dfx["X2"], s=_dot, alpha=0.7)
+        _lh = []
+        if _cm:
+            _lh.append(_L2D([0], [0], linestyle="", label=f"〔{_color_col}〕"))
+            for c, col in _cm.items():
+                _lh.append(_L2D([0], [0], marker="o", linestyle="", color=col, markersize=8, label=str(c)[:20]))
+        if _mk:
+            _lh.append(_L2D([0], [0], linestyle="", label=f"〔{_marker_col}〕"))
+            for mv, ms in _mk.items():
+                _lh.append(_L2D([0], [0], marker=ms, linestyle="", color="dimgray", markersize=8, label=str(mv)[:20]))
+        if _lh:
+            ax.legend(handles=_lh, loc="upper left", bbox_to_anchor=(1, 1), fontsize=8)
+        ax.set_title(_title)
+        ax.grid(True)
+        return _png(fig)
+
+    def _build_cluster_cmap(_labels):
+        _l = sorted(_labels)
+        _cm = plt.cm.get_cmap("tab10", max(len(_l), 1))
+        return {cl: ("gray" if cl < 0 else _cm(i)) for i, cl in enumerate(_l)}
+
+    def _cluster_png(_dfc, _names_map, _title, _cmap_fixed=None):
+        """_cmap_fixed を渡すと（Total基準の）固定色でプロット（RAG NAME間で色を統一）"""
+        fig, ax = plt.subplots(figsize=(8, 6))
+        _present = sorted(_dfc["Cluster"].unique())
+        _cc = _cmap_fixed if _cmap_fixed else _build_cluster_cmap(_present)
+
+        def _lab(cl):
+            if cl < 0:
+                return "Noise"
+            _nm = (_names_map or {}).get(str(int(cl))) or (_names_map or {}).get(int(cl))
+            return f"C{int(cl)}: {str(_nm)[:10]}" if _nm else f"Cluster {int(cl)}"
+        for cl in _present:
+            _m = _dfc["Cluster"] == cl
+            ax.scatter(_dfc.loc[_m, "X1"], _dfc.loc[_m, "X2"], color=_cc.get(cl, "gray"), alpha=0.7)
+        _lh = [_L2D([0], [0], linestyle="", label="〔Cluster〕")]
+        for cl in _present:
+            _lh.append(_L2D([0], [0], marker="o", linestyle="", color=_cc.get(cl, "gray"), markersize=8, label=_lab(cl)))
+        ax.legend(handles=_lh, loc="upper left", bbox_to_anchor=(1, 1), fontsize=8)
+        ax.set_title(_title)
+        ax.grid(True)
+        return _png(fig)
+
+    def _agent_engine_selectors(label, kp):
+        _c1, _c2 = st.columns([1, 1])
+        _al = st.session_state.agent_list
+        _ai = 0
+        _da = next((a for a in _al if "Analyst" in a), None)
+        if _da:
+            _ai = _al.index(_da)
+        elif st.session_state.get("agent_id") in _al:
+            _ai = _al.index(st.session_state.agent_id)
+        _ag = _c1.selectbox(f"{label} Agent:", _al, index=_ai, key=f"{kp}_expl_agent")
+        _af = next((a["FILE"] for a in st.session_state.agents if a["AGENT"] == _ag), None)
+        _el = []
+        if _af:
+            try:
+                _aj = dmu.read_json_file(_af, agent_folder_path)
+                _el = [e for e in _aj.get("ENGINE", {}).get("LLM", {}).keys() if e != "DEFAULT"]
+            except Exception:
+                _el = []
+        _eng = _c2.selectbox(f"{label} Engine:", _el, key=f"{kp}_expl_engine") if _el else None
+        return _af, _ag, _eng
+
+    def _explanation_block(state_base, template_name, fallback_agent, ctx_builder, label, kp, postprocess=None):
+        """解説: エージェント+エンジン選択→複数回実行→ドロップダウンで1件表示。表示中テキストを返す。"""
+        _hk = f"{state_base}_history"
+        _sk = f"{state_base}_sel"
+        st.markdown(f"**{label}の解説:**")
+        _af, _ag, _eng = _agent_engine_selectors(label, kp)
+        if st.button(f"Explain {label}", key=f"{kp}_expl_run"):
+            _ctx = ctx_builder()
+            if not _ctx:
+                st.warning("解説対象のデータがありません。先に分析を実行してください。")
+            else:
+                _use_af = _af or fallback_agent
+                with st.spinner(f"{label}を解説中..."):
+                    try:
+                        _agent = dma.DigiM_Agent(_use_af)
+                        if _eng and _eng in _agent.agent.get("ENGINE", {}).get("LLM", {}):
+                            _agent.agent["ENGINE"]["LLM"]["DEFAULT"] = _eng
+                        try:
+                            _tmpl = _agent.set_prompt_template(template_name)
+                        except Exception:
+                            _tmpl = ""
+                        _resp = ""
+                        for _, _ch, _ in _agent.generate_response("LLM", f"{_tmpl}\n{_ctx}", [], stream_mode=False):
+                            if _ch:
+                                _resp += _ch
+                        _disp = _resp
+                        if postprocess:
+                            try:
+                                _disp = postprocess(_resp)
+                            except Exception:
+                                _disp = _resp
+                        _entry = {
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "agent": _ag, "engine": _eng or "(default)", "response": _disp,
+                        }
+                        _h = (st.session_state.get(_hk) or []) + [_entry]
+                        st.session_state[_hk] = _h
+                        st.session_state[_sk] = len(_h) - 1
+                    except Exception as e:
+                        st.error(f"{label}解説エラー: {e}")
+        _h = st.session_state.get(_hk) or []
+        if not _h:
+            return ""
+        _sel = st.session_state.get(_sk)
+        if _sel is None or _sel >= len(_h) or _sel < 0:
+            _sel = len(_h) - 1
+        _sel = st.selectbox(
+            f"{label} 解説履歴:", list(range(len(_h))), index=_sel,
+            format_func=lambda i: f"[{i+1}/{len(_h)}] {_h[i]['timestamp']} / {_h[i]['agent']} / {_h[i]['engine']}",
+            key=f"{kp}_expl_sel")
+        st.session_state[_sk] = _sel
+        st.markdown(_h[_sel]["response"])
+        return _h[_sel]["response"]
+
+    def _extra_filter_ui(_base_df, kp, with_period=True):
+        """Overall範囲内での追加絞り込み: RAG NAME / Collection / 期間。(df_sub, 説明文)を返す"""
+        _sub = _base_df.copy()
+        _desc = []
+        _c1, _c2, _c3 = st.columns([1, 1, 1])
+        if "rag_name" in _sub.columns:
+            _ro = sorted(_sub["rag_name"].dropna().astype(str).unique().tolist())
+            _rs = _c1.multiselect("RAG NAME:", _ro, default=[], key=f"{kp}_f_rag")
+            if _rs:
+                _sub = _sub[_sub["rag_name"].astype(str).isin(_rs)]
+                _desc.append(f"RAG={','.join(_rs)}")
+        _cf = "db" if "db" in _sub.columns else ("_source" if "_source" in _sub.columns else None)
+        if _cf:
+            _co = sorted(_sub[_cf].dropna().astype(str).unique().tolist())
+            _cs2 = _c2.multiselect("Collection:", _co, default=[], key=f"{kp}_f_col")
+            if _cs2:
+                _sub = _sub[_sub[_cf].astype(str).isin(_cs2)]
+                _desc.append(f"Col={','.join(_cs2)}")
+        if with_period and "create_date" in _sub.columns:
+            _dp = pd.to_datetime(_sub["create_date"], errors="coerce").dropna()
+            if not _dp.empty:
+                _mn = _dp.min().date()
+                _mx = _dp.max().date()
+                _pv = _c3.date_input("Period From/To:", value=(_mn, _mx), min_value=_mn, max_value=_mx, key=f"{kp}_f_period")
+                if isinstance(_pv, (list, tuple)) and len(_pv) == 2:
+                    _pf, _pt = _pv
+                    _dd = pd.to_datetime(_sub["create_date"], errors="coerce")
+                    _sub = _sub[(_dd >= pd.Timestamp(_pf)) & (_dd <= pd.Timestamp(_pt) + pd.Timedelta(days=1))]
+                    _desc.append(f"{_pf}〜{_pt}")
+        return _sub, (" / ".join(_desc) if _desc else "絞り込みなし")
+
+    # =========================================================
+    # 1. Overall
+    # =========================================================
+    st.markdown("---")
+    st.subheader("Overall")
+
+    _fc1, _fc2, _fc3 = st.columns(3)
+    _filter_column = _fc1.selectbox("Filter Column:", ["(none)"] + _filterable_cols, key="rag_filter_col")
     _filter_values = []
     if _filter_column != "(none)":
-        _unique_vals = sorted(df_display[_filter_column].dropna().unique().tolist())
-        _filter_values = _filter_col2.multiselect("Filter Value:", _unique_vals, key="rag_filter_val")
-    _search_text = _filter_col3.text_input("Text Search:", value="", placeholder="ワイルドカード * 対応", key="rag_search_text")
+        _uv = sorted(df_display[_filter_column].dropna().unique().tolist())
+        _filter_values = _fc2.multiselect("Filter Value:", _uv, key="rag_filter_val")
+    _search_text = _fc3.text_input("Text Search:", value="", placeholder="ワイルドカード * 対応", key="rag_search_text")
 
-    # Privateフラグ除外
     _exclude_private = False
     if "private" in df_display.columns:
         _exclude_private = st.checkbox("Exclude Private Data", value=True, key="rag_exclude_private")
 
-    # 日付範囲フィルタ（create_dateがある場合）
     _date_from = None
     _date_to = None
     if _has_date:
-        from datetime import date as _date_type
-        _dates_parsed = pd.to_datetime(df_display["create_date"], errors="coerce").dropna()
-        if not _dates_parsed.empty:
-            _min_date = _dates_parsed.min().date()
-            _max_date = _dates_parsed.max().date()
-            _date_col1, _date_col2 = st.columns(2)
-            _date_from = _date_col1.date_input("Date From:", value=_min_date, min_value=_min_date, max_value=_max_date, key="rag_date_from")
-            _date_to = _date_col2.date_input("Date To:", value=_max_date, min_value=_min_date, max_value=_max_date, key="rag_date_to")
+        _dpall = pd.to_datetime(df_display["create_date"], errors="coerce").dropna()
+        if not _dpall.empty:
+            _mind = _dpall.min().date()
+            _maxd = _dpall.max().date()
+            _dc1, _dc2 = st.columns(2)
+            _date_from = _dc1.date_input("Date From:", value=_mind, min_value=_mind, max_value=_maxd, key="rag_date_from")
+            _date_to = _dc2.date_input("Date To:", value=_maxd, min_value=_mind, max_value=_maxd, key="rag_date_to")
 
-    # グループ集計・検索ボタン
-    _action_col1, _action_col2, _action_col3 = st.columns([1, 1, 1])
-    _group_by = _action_col1.selectbox("Group By:", ["(none)"] + _filterable_cols, key="rag_group_by")
-    _do_search = _action_col3.button("Search", key="rag_do_search", type="primary")
+    _s1, _s2, _s3, _s4 = st.columns([1, 1, 1, 1])
+    _dim_method = _s1.radio("Dimension Reduction:", ["PCA", "t-SNE"], index=0, horizontal=True, key="rag_dim_method")
+    _dim_params = {}
+    if _dim_method == "t-SNE":
+        _dim_params["perplexity"] = _s2.number_input("Perplexity:", value=30, step=1, key="rag_tsne_perp")
+    _color_options = (["rag_name"] if "rag_name" in _filterable_cols else []) + ["(none)"] + [c for c in _filterable_cols if c != "rag_name"]
+    if "rag_name" in _color_options:
+        _cdef = _color_options.index("rag_name")
+    elif "category" in _color_options:
+        _cdef = _color_options.index("category")
+    else:
+        _cdef = _color_options.index("(none)")
+    _color_col = _s3.selectbox("Color By:", _color_options, index=_cdef, key="rag_color_by")
+    _marker_col = _s4.selectbox("Marker By:", ["(none)"] + [c for c in _filterable_cols if c != _color_col], index=0, key="rag_marker_by")
+    _s5, _s6 = st.columns([1, 1])
+    _size_mode = _s5.radio("Dot Size:", ["Uniform", "Newer=Larger"], index=0, horizontal=True, key="rag_dot_size")
+    _do_search = _s6.button("Search & Plot", key="rag_do_search", type="primary")
 
-    # 検索実行時にフラグを保持
     if _do_search:
         st.session_state._rag_searched = True
+        st.session_state._rag_scatter_cache = None
     if not st.session_state.get("_rag_searched", False):
-        st.caption(f"**{_data_type}** | Total: **{total_count}** 件 | 検索条件を指定して **Search** を押してください（指定なしで全件表示）")
+        st.caption(f"**{_data_type}** | Total: **{total_count}** 件 | 条件を指定して **Search & Plot** を押してください（指定なしで全件）")
         return
 
-    # フィルタ適用
     df_filtered = df_display.copy()
     if _exclude_private and "private" in df_filtered.columns:
         df_filtered = df_filtered[df_filtered["private"] != True]
     if _filter_column != "(none)" and _filter_values:
         df_filtered = df_filtered[df_filtered[_filter_column].isin(_filter_values)]
     if _date_from is not None and _date_to is not None and _has_date:
-        _df_dates = pd.to_datetime(df_filtered["create_date"], errors="coerce")
-        _mask_date = (_df_dates >= pd.Timestamp(_date_from)) & (_df_dates <= pd.Timestamp(_date_to) + pd.Timedelta(days=1))
-        df_filtered = df_filtered[_mask_date]
+        _dd = pd.to_datetime(df_filtered["create_date"], errors="coerce")
+        df_filtered = df_filtered[(_dd >= pd.Timestamp(_date_from)) & (_dd <= pd.Timestamp(_date_to) + pd.Timedelta(days=1))]
     if _search_text:
-        _pattern = _search_text if "*" in _search_text else f"*{_search_text}*"
-        _mask = df_filtered.apply(
-            lambda row: any(fnmatch.fnmatch(str(v).lower(), _pattern.lower()) for v in row), axis=1)
-        df_filtered = df_filtered[_mask]
-
-    # カラム順序の整理
-    _priority_cols = ["id", "db", "title", "create_date", "category", "X1", "X2", "key_text", "value_text"]
-    _existing_priority = [c for c in _priority_cols if c in df_filtered.columns]
-    _remaining = sorted([c for c in df_filtered.columns if c not in _priority_cols])
-    df_filtered = df_filtered[_existing_priority + _remaining]
-
+        _pat = _search_text if "*" in _search_text else f"*{_search_text}*"
+        df_filtered = df_filtered[df_filtered.apply(
+            lambda r: any(fnmatch.fnmatch(str(v).lower(), _pat.lower()) for v in r), axis=1)]
+    df_filtered = _order_cols(df_filtered)
     filtered_count = len(df_filtered)
     st.caption(f"**{_data_type}** | Total: **{total_count}** 件 | Filtered: **{filtered_count}** 件")
 
-    # グループ集計
-    if _group_by != "(none)":
-        _group_df = df_filtered.groupby(_group_by).size().reset_index(name="count").sort_values("count", ascending=False)
-        _action_col2.dataframe(_group_df, hide_index=True, use_container_width=True)
-
-    # データテーブル（散布図生成後は座標付きに差し替え）
-    _df_with_coords = df_filtered
-    _table_placeholder = st.empty()
-    _table_placeholder.dataframe(df_filtered, hide_index=True, use_container_width=True, height=400)
-
-    # CSVダウンロード（散布図生成後に座標付きCSVに差し替え）
-    _csv_placeholder = st.empty()
-    _csv_data = df_filtered.to_csv(index=False).encode("utf-8-sig")
-    _csv_placeholder.download_button("CSV Download", data=_csv_data, file_name=f"rag_{_selected}.csv", mime="text/csv", key="rag_csv_dl")
-
-    # 散布図セクション（ChromaDBでvector_data_value_textがある場合のみ）
-    _has_vectors = "vector_data_value_text" in df.columns and _data_type in ("ChromaDB", "Mixed")
-    # 視認性の良いマーカー候補
-    _MARKER_CHOICES = ["o", "s", "D", "^", "*", "P", "X", "v", "p", "h", "<", ">"]
-    if _has_vectors and filtered_count >= 3:
-        st.markdown("---")
-        st.subheader("Scatter Plot")
-        _scatter_col1, _scatter_col2, _scatter_col3, _scatter_col4 = st.columns([1, 1, 1, 1])
-        _dim_method = _scatter_col1.radio("Dimension Reduction:", ["PCA", "t-SNE"], index=0, horizontal=True, key="rag_dim_method")
-        _dim_params = {}
-        if _dim_method == "t-SNE":
-            _dim_params["perplexity"] = _scatter_col2.number_input("Perplexity:", value=30, step=1, key="rag_tsne_perp")
-
-        # 色分け用カラム選択（rag_nameを最上位に、categoryを次点デフォルトに）
-        _color_options = []
-        if "rag_name" in _filterable_cols:
-            _color_options.append("rag_name")
-        _color_options.append("(none)")
-        _color_options += [c for c in _filterable_cols if c != "rag_name"]
-        if "rag_name" in _color_options:
-            _color_default = _color_options.index("rag_name")
-        elif "category" in _color_options:
-            _color_default = _color_options.index("category")
-        else:
-            _color_default = _color_options.index("(none)")
-        _color_col = _scatter_col3.selectbox("Color By:", _color_options, index=_color_default, key="rag_color_by")
-
-        # マーカー(形)分け用カラム選択（指定時のみ形を変える）
-        _marker_options = ["(none)"] + [c for c in _filterable_cols if c != _color_col]
-        _marker_col = _scatter_col4.selectbox("Marker By:", _marker_options, index=0, key="rag_marker_by")
-
-        # ドットサイズモード・生成ボタン
-        _scatter_col5, _scatter_col6 = st.columns([1, 1])
-        _size_mode = _scatter_col5.radio("Dot Size:", ["Uniform", "Newer=Larger"], index=0, horizontal=True, key="rag_dot_size")
-        _gen_scatter = _scatter_col6.button("Generate Scatter", key="rag_gen_scatter")
-
-        if _gen_scatter:
-            import DigiM_VAnalytics as dmva
-
-            # category_mapから色定義を読み込み
-            _cat_color_map = {}
+    if _do_search and _has_vectors and filtered_count >= 3:
+        _dfs = df[df["id"].isin(df_filtered["id"])].copy()
+        with st.spinner("次元削減＋散布図を生成中..."):
             try:
-                _cat_map_json = dmu.read_json_file("category_map.json", mst_folder_path)
-                if not _cat_map_json:
-                    _cat_map_json = dmu.read_json_file("sample_category_map.json", mst_folder_path)
-                _cat_color_map = _cat_map_json.get("CategoryColor", {})
-            except Exception:
-                pass
+                _dfr, _dinfo = dmva.reduce_dimensions(_dfs, method=_dim_method, params=_dim_params)
+                if _marker_col != "(none)" and _marker_col not in _dfr.columns and _marker_col in _dfs.columns:
+                    _dfr[_marker_col] = _dfr["id"].map(_dfs.set_index("id")[_marker_col])
+                _ttl = f"{_dim_method} - {_selected} ({filtered_count}件)\n{_dinfo}"
+                _png_total = _scatter_png(_dfr, _color_col, _marker_col, _size_mode, _ttl)
+                _png_rag = {}
+                for _rn in _rag_list(_dfr):
+                    _sr = _dfr[_dfr["rag_name"].astype(str) == _rn]
+                    if len(_sr) >= 1:
+                        _png_rag[_rn] = _scatter_png(_sr, _color_col, _marker_col, _size_mode, f"{_dim_method} - {_rn} ({len(_sr)}件)")
+                st.session_state._rag_scatter_cache = {
+                    "df_reduced": _dfr, "dim_info": _dinfo, "dim_method": _dim_method,
+                    "color_col": _color_col, "marker_col": _marker_col, "size_mode": _size_mode,
+                    "selected": _selected, "filtered_count": filtered_count,
+                    "png_total": _png_total, "png_rag": _png_rag,
+                }
+            except Exception as e:
+                st.warning(f"散布図の生成でエラー: {e}")
+                st.session_state._rag_scatter_cache = None
 
-            # フィルタ済みデータ（ベクトル付き）
-            _df_for_scatter = df[df["id"].isin(df_filtered["id"])].copy()
+    _scc = st.session_state.get("_rag_scatter_cache")
+    _has_scatter = bool(_scc and _scc.get("selected") == _selected)
 
-            with st.spinner("次元削減を実行中..."):
-                try:
-                    _df_reduced, _dim_info = dmva.reduce_dimensions(_df_for_scatter, method=_dim_method, params=_dim_params)
-                    # マーカー分け列を保持（df_reducedに無ければ補完）
-                    if _marker_col != "(none)" and _marker_col not in _df_reduced.columns and _marker_col in _df_for_scatter.columns:
-                        _mk_map = _df_for_scatter.set_index("id")[_marker_col]
-                        _df_reduced[_marker_col] = _df_reduced["id"].map(_mk_map)
+    if _has_scatter:
+        st.markdown("**Scatter Plot (Total):**")
+        st.image(_scc["png_total"])
+        if _scc.get("png_rag"):
+            st.markdown("**Scatter Plot (RAG NAMEごと):**")
+            for _rn, _pb in _scc["png_rag"].items():
+                st.image(_pb)
+        _dfr = _scc["df_reduced"]
+        _df_show = _order_cols(df_filtered.merge(_dfr.set_index("id")[["X1", "X2"]], left_on="id", right_index=True, how="left"))
+    else:
+        if _has_vectors and filtered_count < 3:
+            st.info("散布図にはフィルタ後3件以上が必要です")
+        elif not _has_vectors:
+            st.info("ベクトルデータが無いため散布図はスキップしました")
+        _df_show = df_filtered
 
-                    # 結果をキャッシュ
-                    st.session_state._rag_scatter_cache = {
-                        "df_reduced": _df_reduced,
-                        "dim_info": _dim_info,
-                        "dim_method": _dim_method,
-                        "color_col": _color_col,
-                        "marker_col": _marker_col,
-                        "size_mode": _size_mode,
-                        "cat_color_map": _cat_color_map,
-                        "selected": _selected,
-                        "filtered_count": filtered_count,
-                    }
-                except Exception as e:
-                    st.warning(f"散布図の生成でエラーが発生しました: {e}")
-                    st.session_state._rag_scatter_cache = None
+    st.markdown("**Data 一覧（座標はTotal基準）:**")
+    st.dataframe(_df_show, hide_index=True, use_container_width=True, height=380)
+    st.download_button("CSV Download", data=_df_show.to_csv(index=False).encode("utf-8-sig"),
+                       file_name=f"rag_{_selected}.csv", mime="text/csv", key="rag_csv_dl")
 
-        # キャッシュがあれば散布図を表示
-        _scatter_cache = st.session_state.get("_rag_scatter_cache")
-        if _scatter_cache and _scatter_cache.get("selected") == _selected:
-            _df_reduced = _scatter_cache["df_reduced"]
-            _dim_info = _scatter_cache["dim_info"]
-            _sc_method = _scatter_cache["dim_method"]
-            _sc_color = _scatter_cache["color_col"]
-            _sc_marker = _scatter_cache.get("marker_col", "(none)")
-            _sc_size = _scatter_cache["size_mode"]
-            _sc_cat_map = _scatter_cache["cat_color_map"]
-            _sc_count = _scatter_cache["filtered_count"]
-
-            # ドットサイズ計算
-            _dot_sizes = None
-            if _sc_size == "Newer=Larger" and "create_date" in _df_reduced.columns:
-                _dates = pd.to_datetime(_df_reduced["create_date"], errors="coerce")
-                if _dates.notna().any():
-                    _min_ts = _dates.min().timestamp()
-                    _max_ts = _dates.max().timestamp()
-                    _range = _max_ts - _min_ts if _max_ts > _min_ts else 1
-                    _dot_sizes = _dates.apply(lambda d: 10 + 190 * ((d.timestamp() - _min_ts) / _range) if pd.notna(d) else 10).values
-
-            # 散布図描画
-            import matplotlib
-            matplotlib.use("Agg")
-            import matplotlib.pyplot as plt
-            from matplotlib.lines import Line2D as _L2D_sc
-            fig, ax = plt.subplots(figsize=(10, 7))
-
-            # マーカー値→形のマップ
-            _marker_map = {}
-            if _sc_marker != "(none)" and _sc_marker in _df_reduced.columns:
-                _mk_vals = sorted(_df_reduced[_sc_marker].dropna().unique())
-                _marker_map = {v: _MARKER_CHOICES[i % len(_MARKER_CHOICES)] for i, v in enumerate(_mk_vals)}
-
-            # 色マップ
-            _color_map_full = {}
-            if _sc_color != "(none)" and _sc_color in _df_reduced.columns:
-                _categories = sorted(_df_reduced[_sc_color].dropna().unique())
-                _default_cmap = plt.cm.get_cmap("tab10", max(len(_categories), 1))
-                for i, cat in enumerate(_categories):
-                    _color_map_full[cat] = _sc_cat_map.get(cat) or _default_cmap(i)
-
-            # データ描画（凡例は後で別途プロキシで作成）
-            if _color_map_full and _marker_map:
-                for cat in _color_map_full.keys():
-                    for mk_v, mk_sym in _marker_map.items():
-                        _mask = (_df_reduced[_sc_color] == cat) & (_df_reduced[_sc_marker] == mk_v)
-                        if not _mask.any():
-                            continue
-                        _s = _dot_sizes[_mask] if _dot_sizes is not None else None
-                        ax.scatter(_df_reduced.loc[_mask, "X1"], _df_reduced.loc[_mask, "X2"],
-                                  color=_color_map_full[cat], s=_s, alpha=0.7, marker=mk_sym)
-            elif _color_map_full:
-                for cat, col in _color_map_full.items():
-                    _mask = _df_reduced[_sc_color] == cat
-                    _s = _dot_sizes[_mask] if _dot_sizes is not None else None
-                    ax.scatter(_df_reduced.loc[_mask, "X1"], _df_reduced.loc[_mask, "X2"],
-                              color=col, s=_s, alpha=0.7)
-            elif _marker_map:
-                for mk_v, mk_sym in _marker_map.items():
-                    _mask = _df_reduced[_sc_marker] == mk_v
-                    _s = _dot_sizes[_mask] if _dot_sizes is not None else None
-                    ax.scatter(_df_reduced.loc[_mask, "X1"], _df_reduced.loc[_mask, "X2"],
-                              s=_s, alpha=0.7, marker=mk_sym)
-            else:
-                ax.scatter(_df_reduced["X1"], _df_reduced["X2"], s=_dot_sizes, alpha=0.7)
-
-            # 凡例（色と形を別々に表示）
-            _legend_handles = []
-            if _color_map_full:
-                _legend_handles.append(_L2D_sc([0], [0], linestyle="", label=f"〔{_sc_color}〕"))
-                for cat, col in _color_map_full.items():
-                    _legend_handles.append(_L2D_sc([0], [0], marker="o", linestyle="",
-                                                   color=col, markersize=8, label=str(cat)[:20]))
-            if _marker_map:
-                _legend_handles.append(_L2D_sc([0], [0], linestyle="", label=f"〔{_sc_marker}〕"))
-                for mk_v, mk_sym in _marker_map.items():
-                    _legend_handles.append(_L2D_sc([0], [0], marker=mk_sym, linestyle="",
-                                                   color="dimgray", markersize=8, label=str(mk_v)[:20]))
-            if _legend_handles:
-                ax.legend(handles=_legend_handles, loc="upper left",
-                          bbox_to_anchor=(1, 1), fontsize=8)
-
-            ax.set_title(f"{_sc_method} - {_selected} ({_sc_count}件)\n{_dim_info}")
-            ax.grid(True)
-            st.pyplot(fig)
-            plt.close(fig)
-
-            # 座標を一覧に追加して差し替え
-            _coord_map = _df_reduced.set_index("id")[["X1", "X2"]]
-            _df_with_coords = df_filtered.copy()
-            _df_with_coords = _df_with_coords.merge(_coord_map, left_on="id", right_index=True, how="left")
-            _existing_priority = [c for c in _priority_cols if c in _df_with_coords.columns]
-            _remaining = sorted([c for c in _df_with_coords.columns if c not in _priority_cols])
-            _df_with_coords = _df_with_coords[_existing_priority + _remaining]
-            _table_placeholder.dataframe(_df_with_coords, hide_index=True, use_container_width=True, height=400)
-            _csv_data = _df_with_coords.to_csv(index=False).encode("utf-8-sig")
-            _csv_placeholder.download_button("CSV Download", data=_csv_data, file_name=f"rag_{_selected}.csv", mime="text/csv", key="rag_csv_dl_updated")
-
-    # ===== 感度分析セクション（散布図キャッシュがある場合のみ） =====
-    _scatter_cache = st.session_state.get("_rag_scatter_cache")
-    if _scatter_cache and _scatter_cache.get("selected") == _selected:
-        st.markdown("---")
-        st.subheader("Sensitivity Analysis")
-        _sens_query = st.text_input("Query:", placeholder="キーワードや文章を入力して知識の反応を分析", key="rag_sens_query")
-
-        # 期間ボーナス設定
-        _sens_has_date = "create_date" in df.columns
-        _sens_date_from = None
-        _sens_date_to = None
-        _sens_bonus = 0.0
-        if _sens_has_date:
-            _dates_for_sens = pd.to_datetime(df_filtered["create_date"], errors="coerce").dropna()
-            if not _dates_for_sens.empty:
-                _s_min = _dates_for_sens.min().date()
-                _s_max = _dates_for_sens.max().date()
-                _sb_col1, _sb_col2, _sb_col3 = st.columns([1, 1, 1])
-                _sens_date_from = _sb_col1.date_input("Bonus From:", value=_s_min, min_value=_s_min, max_value=_s_max, key="rag_sens_dfrom")
-                _sens_date_to = _sb_col2.date_input("Bonus To:", value=_s_max, min_value=_s_min, max_value=_s_max, key="rag_sens_dto")
-                _sens_bonus = _sb_col3.number_input("Bonus (0=off):", value=0.0, min_value=0.0, max_value=1.0, step=0.1, format="%.1f", key="rag_sens_bonus")
-
-        _sens_top_n = st.slider("Top N:", min_value=5, max_value=50, value=20, key="rag_sens_topn")
-
-        if _sens_query and st.button("Analyze Sensitivity", key="rag_run_sens"):
-            import DigiM_VAnalytics as dmva
-            _df_for_sens = df[df["id"].isin(df_filtered["id"])].copy()
-            _df_reduced_sens = _scatter_cache["df_reduced"]
-            _coord_sens = _df_reduced_sens.set_index("id")[["X1", "X2"]]
-            _df_for_sens = _df_for_sens.merge(_coord_sens, left_on="id", right_index=True, how="left")
-            _cl_cache = st.session_state.get("_rag_cluster_cache")
-            if _cl_cache and _cl_cache.get("selected") == _selected and "Cluster" in _cl_cache["df_clustered"].columns:
-                _cl_map = _cl_cache["df_clustered"].set_index("id")[["Cluster"]]
-                _df_for_sens = _df_for_sens.merge(_cl_map, left_on="id", right_index=True, how="left")
-
-            with st.spinner("類似度を計算中..."):
-                try:
-                    _sens_ranking, _sens_cluster_stats = dmva.sensitivity_analysis(
-                        _df_for_sens, _sens_query, top_n=_sens_top_n,
-                        date_from=_sens_date_from, date_to=_sens_date_to, date_bonus=_sens_bonus)
-                    st.session_state._rag_sensitivity = {
-                        "ranking": _sens_ranking,
-                        "cluster_stats": _sens_cluster_stats,
-                        "query": _sens_query,
-                        "selected": _selected,
-                    }
-                except Exception as e:
-                    st.warning(f"感度分析でエラーが発生しました: {e}")
-
-        # キャッシュから感度分析結果を表示
-        _sens_cache = st.session_state.get("_rag_sensitivity")
-        if _sens_cache and _sens_cache.get("selected") == _selected:
-            _sens = _sens_cache
-            st.caption(f"Query: **{_sens['query']}** | Top {len(_sens['ranking'])}")
-
-            # 感度分析対象のみの散布図（基本色はScatter Plotと同じ・類似度でグラデーション）
-            _sr = _sens["ranking"]
-            if "X1" in _sr.columns and "X2" in _sr.columns:
-                import matplotlib
-                matplotlib.use("Agg")
-                import matplotlib.pyplot as plt
-                import matplotlib.colors as _mcolors
-
-                _df_all = _scatter_cache["df_reduced"]
-                _sc_color_s = _scatter_cache.get("color_col", "(none)")
-                _sc_marker_s = _scatter_cache.get("marker_col", "(none)")
-                _sc_cat_map_s = _scatter_cache.get("cat_color_map", {})
-
-                fig_sens_sc, ax_sens_sc = plt.subplots(figsize=(10, 7))
-                ax_sens_sc.scatter(_df_all["X1"], _df_all["X2"], color="lightgray", alpha=0.3, s=15)
-
-                # 色マップ（Scatter PlotのColor Byに合わせる）
-                _color_map_full_s = {}
-                if _sc_color_s != "(none)" and _sc_color_s in _df_all.columns:
-                    _cats_s = sorted(_df_all[_sc_color_s].dropna().unique())
-                    _default_cmap_s = plt.cm.get_cmap("tab10", max(len(_cats_s), 1))
-                    for i, cat in enumerate(_cats_s):
-                        _color_map_full_s[cat] = _sc_cat_map_s.get(cat) or _default_cmap_s(i)
-
-                # マーカーマップ
-                _marker_map_s = {}
-                if _sc_marker_s != "(none)" and _sc_marker_s in _df_all.columns:
-                    _mk_vals_s = sorted(_df_all[_sc_marker_s].dropna().unique())
-                    _marker_map_s = {v: _MARKER_CHOICES[i % len(_MARKER_CHOICES)] for i, v in enumerate(_mk_vals_s)}
-
-                # スコア → 透明度（高類似度＝濃い）
-                _score_min = _sr["score"].min() if not _sr["score"].empty else 0
-                _score_max = _sr["score"].max() if not _sr["score"].empty else 1
-                _score_range = (_score_max - _score_min) if _score_max > _score_min else 1.0
-
-                def _alpha_for(score_v):
-                    norm = (score_v - _score_min) / _score_range
-                    return float(0.95 - 0.55 * norm)  # 0.40〜0.95
-
-                # 各点を個別に描画（色×形×αを反映）
-                for _, _row in _sr.iterrows():
-                    _x = _row.get("X1")
-                    _y = _row.get("X2")
-                    if pd.isna(_x) or pd.isna(_y):
-                        continue
-                    # 基本色
-                    if _color_map_full_s and _sc_color_s in _row.index and pd.notna(_row.get(_sc_color_s)):
-                        _base_rgb = _mcolors.to_rgb(_color_map_full_s.get(_row[_sc_color_s], "#1565C0"))
-                    else:
-                        _base_rgb = _mcolors.to_rgb("#1565C0")
-                    _alpha_v = _alpha_for(_row["score"])
-                    # マーカー（ボーナス適用は ◇ で強調）
-                    if _row.get("bonus_applied"):
-                        _mk = "D"
-                    elif _marker_map_s and _sc_marker_s in _row.index and pd.notna(_row.get(_sc_marker_s)):
-                        _mk = _marker_map_s.get(_row[_sc_marker_s], "o")
-                    else:
-                        _mk = "o"
-                    ax_sens_sc.scatter([_x], [_y], color=_base_rgb, alpha=_alpha_v, s=70,
-                                      edgecolors="black", linewidths=0.5, marker=_mk)
-
-                # 凡例（色＝Color By値、形＝Marker By値、Bonus）
-                _legend_handles = []
-                from matplotlib.lines import Line2D as _L2D
-                if _color_map_full_s:
-                    _legend_handles.append(_L2D([0], [0], linestyle="", label=f"〔{_sc_color_s}〕"))
-                    for cat, col in _color_map_full_s.items():
-                        _legend_handles.append(_L2D([0], [0], marker="o", linestyle="",
-                                                    color=col, markersize=8, label=str(cat)[:20]))
-                if _marker_map_s:
-                    _legend_handles.append(_L2D([0], [0], linestyle="", label=f"〔{_sc_marker_s}〕"))
-                    for mk_v, mk_sym in _marker_map_s.items():
-                        _legend_handles.append(_L2D([0], [0], marker=mk_sym, linestyle="",
-                                                    color="dimgray", markersize=8, label=str(mk_v)[:20]))
-                if _sr["bonus_applied"].any():
-                    _legend_handles.append(_L2D([0], [0], marker="D", linestyle="",
-                                                color="dimgray", markersize=8, label="Bonus Applied"))
-                if _legend_handles:
-                    ax_sens_sc.legend(handles=_legend_handles, loc="upper left",
-                                      bbox_to_anchor=(1, 1), fontsize=8)
-                ax_sens_sc.set_title(f"Sensitivity: \"{_sens['query']}\" (Top {len(_sr)})")
-                ax_sens_sc.grid(True)
-                st.pyplot(fig_sens_sc)
-                plt.close(fig_sens_sc)
-
-            # クラスター別平均スコア
-            if _sens["cluster_stats"] is not None:
-                st.markdown("**クラスター別 平均スコア:**")
-                import matplotlib
-                matplotlib.use("Agg")
-                import matplotlib.pyplot as plt
-                _cs = _sens["cluster_stats"]
-                fig_sens, ax_sens = plt.subplots(figsize=(8, 3))
-                ax_sens.barh([f"Cluster {int(c)}" if c >= 0 else "Noise" for c in _cs["Cluster"]],
-                             _cs["avg_score"], color="steelblue", alpha=0.8)
-                ax_sens.set_xlabel("Avg Score (lower = more relevant)")
-                ax_sens.invert_yaxis()
-                ax_sens.grid(axis="x", alpha=0.3)
-                st.pyplot(fig_sens)
-                plt.close(fig_sens)
-
-            # スコアランキング
-            st.markdown("**スコアランキング:**")
-            _display_cols = ["score", "cos_distance", "bonus_applied", "id", "title", "category", "value_text"]
-            if "Cluster" in _sr.columns:
-                _display_cols.insert(5, "Cluster")
-            _display_cols = [c for c in _display_cols if c in _sr.columns]
-            st.dataframe(_sr[_display_cols], hide_index=True, use_container_width=True, height=300)
-
-            # LLMによる感度分析解説
-            _sens_exp_col1, _sens_exp_col2 = st.columns([1, 1])
-            _sens_engine_list = list(dmu.read_json_file("agent_23DataAnalyst.json", agent_folder_path).get("ENGINE", {}).get("LLM", {}).keys())
-            _sens_engine_list = [e for e in _sens_engine_list if e != "DEFAULT"]
-            _sens_engine = _sens_exp_col2.selectbox("Engine:", _sens_engine_list, key="rag_sens_engine") if _sens_engine_list else None
-
-            if _sens_exp_col1.button("Explain Sensitivity", key="rag_explain_sens"):
-                _sens_agent_file = "agent_23DataAnalyst.json"
-                # 上位データのサマリー構築
-                _sens_summary = f"クエリ: {_sens['query']}\n\n上位{len(_sr)}件のデータ:\n"
-                for _, row in _sr.head(10).iterrows():
-                    _bonus_mark = " [Bonus]" if row.get("bonus_applied") else ""
-                    _title = row.get("title", "")
-                    _cat = row.get("category", "")
-                    _score = row.get("score", "")
-                    _dist = row.get("cos_distance", "")
-                    _text = str(row.get("value_text", ""))[:80]
-                    _sens_summary += f"  score={_score}, cos_dist={_dist}{_bonus_mark} [{_cat}] {_title}: {_text}\n"
-                with st.spinner("感度分析を解説中..."):
-                    try:
-                        _agent = dma.DigiM_Agent(_sens_agent_file)
-                        if _sens_engine and _sens_engine in _agent.agent.get("ENGINE", {}).get("LLM", {}):
-                            _agent.agent["ENGINE"]["LLM"]["DEFAULT"] = _sens_engine
-                        _template = _agent.set_prompt_template("Sensitivity Analyst")
-                        _prompt = f"{_template}\n{_sens_summary}"
-                        _response = ""
-                        for _, chunk, _ in _agent.generate_response("LLM", _prompt, [], stream_mode=False):
-                            if chunk:
-                                _response += chunk
-                        st.session_state._rag_sensitivity_explanation = _response
-                    except Exception as e:
-                        st.error(f"感度分析解説エラー: {e}")
-
-            if st.session_state.get("_rag_sensitivity_explanation"):
-                st.markdown("**感度分析の解説:**")
-                st.markdown(st.session_state._rag_sensitivity_explanation)
-
-    # クラスタリングセクション（散布図キャッシュがある場合のみ）
-    _scatter_cache = st.session_state.get("_rag_scatter_cache")
-    if _scatter_cache and _scatter_cache.get("selected") == _selected:
-        st.markdown("---")
-        st.subheader("Clustering")
-        _cl_col1, _cl_col2, _cl_col3, _cl_col4 = st.columns([1, 1, 1, 1])
-        _cl_method = _cl_col1.selectbox("Method:", ["K-Means", "DBSCAN", "Hierarchical"], key="rag_cl_method")
+    # ---- Clustering（Totalで定義したクラスターをRAG NAMEへ適用） ----
+    if _has_scatter:
+        st.markdown("####  Clustering")
+        _cl1, _cl2, _cl3 = st.columns([1, 1, 1])
+        _cl_method = _cl1.selectbox("Method:", ["K-Means", "DBSCAN", "Hierarchical"], key="rag_cl_method")
         _cl_params = {}
         if _cl_method in ["K-Means", "Hierarchical"]:
-            _cl_params["n_clusters"] = _cl_col2.number_input("Clusters:", value=5, min_value=2, max_value=20, step=1, key="rag_cl_k")
+            _cl_params["n_clusters"] = _cl2.number_input("Clusters:", value=5, min_value=2, max_value=20, step=1, key="rag_cl_k")
         elif _cl_method == "DBSCAN":
-            # eps自動推定値をデフォルトに
-            import DigiM_VAnalytics as _dmva_eps
-            _default_min_samples = 5
-            _df_for_eps = _scatter_cache["df_reduced"]
-            _auto_eps = _dmva_eps.estimate_dbscan_eps(_df_for_eps, k=_default_min_samples)
-            _cl_params["min_samples"] = _cl_col3.number_input("min_samples:", value=_default_min_samples, min_value=2, step=1, key="rag_cl_min")
-            _cl_params["eps"] = _cl_col2.number_input(f"eps (auto={_auto_eps}):", value=_auto_eps, min_value=0.1, step=0.5, format="%.2f", key="rag_cl_eps")
+            _aeps = dmva.estimate_dbscan_eps(_scc["df_reduced"], k=5)
+            _cl_params["min_samples"] = _cl3.number_input("min_samples:", value=5, min_value=2, step=1, key="rag_cl_min")
+            _cl_params["eps"] = _cl2.number_input(f"eps (auto={_aeps}):", value=_aeps, min_value=0.1, step=0.5, format="%.2f", key="rag_cl_eps")
 
-        # マーカー(形)分け（指定時のみ形を変える）
-        _cl_marker_options = ["(none)"] + _filterable_cols
-        _cl_marker_col = _cl_col4.selectbox("Marker By:", _cl_marker_options, index=0, key="rag_cl_marker_by")
-
-        _run_cluster = st.button("Run Clustering", key="rag_run_cluster")
-
-        if _run_cluster:
-            import DigiM_VAnalytics as dmva
-            _df_reduced = _scatter_cache["df_reduced"]
-            try:
-                _df_clustered, _cl_info = dmva.apply_clustering(_df_reduced, method=_cl_method, params=_cl_params)
-                _cl_summary = dmva.build_cluster_summary(_df_clustered)
-                # マーカー列を補完
-                if _cl_marker_col != "(none)" and _cl_marker_col not in _df_clustered.columns and _cl_marker_col in df.columns:
-                    _mk_map_cl = df.set_index("id")[_cl_marker_col]
-                    _df_clustered[_cl_marker_col] = _df_clustered["id"].map(_mk_map_cl)
-                st.session_state._rag_cluster_cache = {
-                    "df_clustered": _df_clustered,
-                    "cl_info": _cl_info,
-                    "cl_summary": _cl_summary,
-                    "marker_col": _cl_marker_col,
-                    "selected": _selected,
-                }
-                # 新規クラスタリング時は名前マップをリセット
-                st.session_state._rag_cluster_names = None
-            except Exception as e:
-                st.warning(f"クラスタリングでエラーが発生しました: {e}")
-                st.session_state._rag_cluster_cache = None
-
-        # キャッシュからクラスタリング結果を表示
-        _cluster_cache = st.session_state.get("_rag_cluster_cache")
-        if _cluster_cache and _cluster_cache.get("selected") == _selected:
-            _df_clustered = _cluster_cache["df_clustered"]
-            _cl_info = _cluster_cache["cl_info"]
-            _cl_summary = _cluster_cache["cl_summary"]
-            _cl_marker_col_c = _cluster_cache.get("marker_col", "(none)")
-
-            st.caption(f"**{_cl_info}**")
-
-            # クラスター名マップ（Explain Clusters実行後にセット）
-            _cl_names_map = st.session_state.get("_rag_cluster_names") or {}
-
-            def _cl_label(cl):
-                if cl < 0:
-                    return "Noise"
-                _nm = _cl_names_map.get(str(int(cl))) or _cl_names_map.get(int(cl))
-                if _nm:
-                    return f"C{int(cl)}: {str(_nm)[:10]}"
-                return f"Cluster {int(cl)}"
-
-            # クラスター散布図
-            import matplotlib
-            matplotlib.use("Agg")
-            import matplotlib.pyplot as plt
-            from matplotlib.lines import Line2D as _L2D_cl
-            fig_cl, ax_cl = plt.subplots(figsize=(10, 7))
-            _cl_labels = sorted(_df_clustered["Cluster"].unique())
-            _cmap = plt.cm.get_cmap("tab10", max(len(_cl_labels), 1))
-            _cl_color_map = {cl: ("gray" if cl < 0 else _cmap(i)) for i, cl in enumerate(_cl_labels)}
-            # マーカーマップ
-            _cl_marker_map = {}
-            if _cl_marker_col_c != "(none)" and _cl_marker_col_c in _df_clustered.columns:
-                _mk_vals_cl = sorted(_df_clustered[_cl_marker_col_c].dropna().unique())
-                _cl_marker_map = {v: _MARKER_CHOICES[i % len(_MARKER_CHOICES)] for i, v in enumerate(_mk_vals_cl)}
-
-            # データ描画（凡例は後で別途プロキシで作成）
-            for cl in _cl_labels:
-                _color = _cl_color_map[cl]
-                if _cl_marker_map:
-                    for mk_v, mk_sym in _cl_marker_map.items():
-                        _mask = (_df_clustered["Cluster"] == cl) & (_df_clustered[_cl_marker_col_c] == mk_v)
-                        if not _mask.any():
-                            continue
-                        ax_cl.scatter(_df_clustered.loc[_mask, "X1"], _df_clustered.loc[_mask, "X2"],
-                                      color=_color, alpha=0.7, marker=mk_sym)
-                else:
-                    _mask = _df_clustered["Cluster"] == cl
-                    ax_cl.scatter(_df_clustered.loc[_mask, "X1"], _df_clustered.loc[_mask, "X2"],
-                                  color=_color, alpha=0.7)
-
-            # 凡例（クラスターと形を別々に表示）
-            _cl_legend_handles = [_L2D_cl([0], [0], linestyle="", label="〔Cluster〕")]
-            for cl, col in _cl_color_map.items():
-                _cl_legend_handles.append(_L2D_cl([0], [0], marker="o", linestyle="",
-                                                  color=col, markersize=8, label=_cl_label(cl)))
-            if _cl_marker_map:
-                _cl_legend_handles.append(_L2D_cl([0], [0], linestyle="", label=f"〔{_cl_marker_col_c}〕"))
-                for mk_v, mk_sym in _cl_marker_map.items():
-                    _cl_legend_handles.append(_L2D_cl([0], [0], marker=mk_sym, linestyle="",
-                                                      color="dimgray", markersize=8, label=str(mk_v)[:20]))
-            ax_cl.legend(handles=_cl_legend_handles, loc="upper left",
-                         bbox_to_anchor=(1, 1), fontsize=8)
-            ax_cl.set_title(f"Clustering: {_cl_info}")
-            ax_cl.grid(True)
-            st.pyplot(fig_cl)
-            plt.close(fig_cl)
-
-            # クラスター分布テーブル（命名済みなら名称列を追加）
-            _cl_dist = _df_clustered.groupby("Cluster").size().reset_index(name="count").sort_values("Cluster")
-            if _cl_names_map:
-                _cl_dist["Name"] = _cl_dist["Cluster"].apply(
-                    lambda c: (_cl_names_map.get(str(int(c))) or _cl_names_map.get(int(c)) or ("Noise" if c < 0 else "")))
-                _cl_dist = _cl_dist[["Cluster", "Name", "count"]]
-            st.dataframe(_cl_dist, hide_index=True, use_container_width=True)
-
-            # 座標+Clusterを一覧に追加して差し替え
-            _coord_cl_map = _df_clustered.set_index("id")[["X1", "X2", "Cluster"]]
-            _df_with_coords = df_filtered.copy()
-            _df_with_coords = _df_with_coords.merge(_coord_cl_map, left_on="id", right_index=True, how="left")
-            _priority_with_cluster = ["id", "db", "title", "create_date", "category", "Cluster", "X1", "X2", "key_text", "value_text"]
-            _existing_priority = [c for c in _priority_with_cluster if c in _df_with_coords.columns]
-            _remaining = sorted([c for c in _df_with_coords.columns if c not in _priority_with_cluster])
-            _df_with_coords = _df_with_coords[_existing_priority + _remaining]
-            _table_placeholder.dataframe(_df_with_coords, hide_index=True, use_container_width=True, height=400)
-            _csv_data = _df_with_coords.to_csv(index=False).encode("utf-8-sig")
-            _csv_placeholder.download_button("CSV Download", data=_csv_data, file_name=f"rag_{_selected}_clustered.csv", mime="text/csv", key="rag_csv_dl_clustered")
-
-            # LLMによるクラスター解説（散布図+一覧の下に表示）
-            _explain_col1, _explain_col2 = st.columns([1, 1])
-            _cl_engine_list = list(dmu.read_json_file("agent_23DataAnalyst.json", agent_folder_path).get("ENGINE", {}).get("LLM", {}).keys())
-            _cl_engine_list = [e for e in _cl_engine_list if e != "DEFAULT"]
-            _cl_engine = _explain_col2.selectbox("Explain Engine:", _cl_engine_list, key="rag_cl_engine") if _cl_engine_list else None
-
-            if _explain_col1.button("Explain Clusters", key="rag_explain_cluster"):
-                import json as _json_cl
-                import re as _re_cl
-                _cl_agent_file = "agent_23DataAnalyst.json"
-                _cl_data = f"以下はRAGデータ「{_selected}」のクラスタリング結果です。\n\nクラスタリング手法: {_cl_info}\n{_cl_summary}"
-                # 命名指示（散布図の凡例用、10文字以内）
-                _ids_listed = sorted([int(c) for c in _df_clustered["Cluster"].unique() if c >= 0])
-                _name_instr = (
-                    "\n\n【追加指示: クラスター名】\n"
-                    f"上記の各クラスター（{_ids_listed}）に、内容を端的に表す日本語10文字以内のラベルを付けてください。\n"
-                    "応答の冒頭に、必ず次の形式のJSONブロックを1つだけ出力してください（コードフェンス必須）:\n"
-                    "```json\n{\"0\": \"ラベル1\", \"1\": \"ラベル2\"}\n```\n"
-                    "JSONブロックの後に、本来の3パートを続けてください。\n"
-                )
-                with st.spinner("クラスターを解説中..."):
-                    try:
-                        _agent = dma.DigiM_Agent(_cl_agent_file)
-                        if _cl_engine and _cl_engine in _agent.agent.get("ENGINE", {}).get("LLM", {}):
-                            _agent.agent["ENGINE"]["LLM"]["DEFAULT"] = _cl_engine
-                        _template = _agent.set_prompt_template("Cluster Analyst")
-                        _prompt = f"{_template}\n{_cl_data}{_name_instr}"
-                        _response = ""
-                        for _, chunk, _ in _agent.generate_response("LLM", _prompt, [], stream_mode=False):
-                            if chunk:
-                                _response += chunk
-                        # JSON部分を抽出してクラスター名マップに反映
-                        _names_parsed = {}
-                        _m = _re_cl.search(r"```json\s*(\{.*?\})\s*```", _response, _re_cl.DOTALL)
-                        if not _m:
-                            _m = _re_cl.search(r"(\{[^{}]*\})", _response, _re_cl.DOTALL)
-                        if _m:
-                            try:
-                                _raw = _json_cl.loads(_m.group(1))
-                                for k, v in _raw.items():
-                                    _names_parsed[str(k)] = str(v)[:10]
-                            except Exception:
-                                pass
-                        # 表示するresponseからJSONブロックを取り除く
-                        _display_resp = _re_cl.sub(r"```json\s*\{.*?\}\s*```\s*", "", _response, count=1, flags=_re_cl.DOTALL).strip()
-                        st.session_state._rag_cluster_explanation = _display_resp
-                        if _names_parsed:
-                            st.session_state._rag_cluster_names = _names_parsed
-                    except Exception as e:
-                        st.error(f"クラスター解説エラー: {e}")
-
-            # キャッシュからクラスター解説を表示
-            if st.session_state.get("_rag_cluster_explanation"):
-                st.markdown("**クラスター解説:**")
-                st.markdown(st.session_state._rag_cluster_explanation)
-
-    # ===== 時系列分析セクション（create_dateがある場合のみ） =====
-    if _has_date and filtered_count >= 3:
-        st.markdown("---")
-        st.subheader("Temporal Analysis")
-        _temp_col1, _temp_col2, _temp_col3, _temp_col4 = st.columns([1, 1, 1, 1])
-        _temp_period = _temp_col1.selectbox("Period:", ["month", "quarter", "year"], key="rag_temp_period")
-        _temp_topn = _temp_col2.slider("Keywords per period:", min_value=3, max_value=20, value=7, key="rag_temp_topn")
-
-        # カテゴライズ列の選択（既定: category。それ以外も選択可）
-        _temp_cat_options = [c for c in _filterable_cols] or ["(none)"]
-        _temp_cat_default = _temp_cat_options.index("category") if "category" in _temp_cat_options else 0
-        _temp_cat_col = _temp_col3.selectbox("Category Column:", _temp_cat_options, index=_temp_cat_default, key="rag_temp_cat_col")
-
-        # 集計モード: 合計 / RAG_NAMEごと
-        _temp_mode_options = ["Total"]
-        if "rag_name" in df_filtered.columns and df_filtered["rag_name"].nunique() > 1:
-            _temp_mode_options.append("Per RAG_NAME")
-        _temp_mode = _temp_col4.selectbox("View Mode:", _temp_mode_options, index=0, key="rag_temp_mode")
-
-        if st.button("Analyze Temporal", key="rag_run_temporal"):
-            import DigiM_VAnalytics as dmva
-            with st.spinner("時系列分析を実行中..."):
+        if st.button("Run Clustering", key="rag_run_cluster"):
+            _dfr = _scc["df_reduced"]
+            _scope = _dfr[_dfr["id"].isin(df_filtered["id"])].copy()
+            with st.spinner("クラスタリング中..."):
                 try:
-                    # 全体
-                    _cat_pivot, _kw_df, _temp_summary = dmva.temporal_analysis(
-                        df_filtered, period=_temp_period, top_n_keywords=_temp_topn,
-                        category_col=_temp_cat_col)
-                    # RAG_NAMEごと（指定時のみ）
-                    _per_rag = {}
-                    if _temp_mode == "Per RAG_NAME" and "rag_name" in df_filtered.columns:
-                        for _rn in sorted(df_filtered["rag_name"].dropna().unique()):
-                            _df_rn = df_filtered[df_filtered["rag_name"] == _rn]
-                            if len(_df_rn) < 1:
+                    # Totalのみクラスタリング。RAG NAMEはTotalのクラスター割当をそのまま流用
+                    _dft, _info = dmva.apply_clustering(_scope, method=_cl_method, params=_cl_params)
+                    _cmap_fixed = _build_cluster_cmap(_dft["Cluster"].unique())
+                    _png_t = _cluster_png(_dft, None, f"Clustering (Total): {_info}", _cmap_fixed)
+                    _png_by = {}
+                    _rag_dist = {}
+                    if "rag_name" in _dft.columns:
+                        for _rn in sorted(_dft["rag_name"].dropna().astype(str).unique()):
+                            _sub = _dft[_dft["rag_name"].astype(str) == _rn]
+                            if _sub.empty:
                                 continue
-                            _cp_rn, _kw_rn, _sum_rn = dmva.temporal_analysis(
-                                _df_rn, period=_temp_period, top_n_keywords=_temp_topn,
-                                category_col=_temp_cat_col)
-                            _per_rag[_rn] = {
-                                "cat_pivot": _cp_rn,
-                                "kw_df": _kw_rn,
-                                "summary": _sum_rn,
-                            }
-                    st.session_state._rag_temporal = {
-                        "cat_pivot": _cat_pivot,
-                        "kw_df": _kw_df,
-                        "summary": _temp_summary,
-                        "period": _temp_period,
-                        "category_col": _temp_cat_col,
-                        "mode": _temp_mode,
-                        "per_rag": _per_rag,
+                            _png_by[_rn] = _cluster_png(_sub, None, f"Clustering [RAG: {_rn}]（Total基準色）", _cmap_fixed)
+                            _rag_dist[_rn] = {str(int(k)): int(v) for k, v in
+                                              _sub["Cluster"].value_counts().sort_index().items()}
+                    st.session_state._rag_cluster_cache = {
+                        "results": True, "selected": _selected, "method": _cl_method, "info": _info,
+                        "total_df": _dft[["id", "Cluster", "X1", "X2"]].copy(),
+                        "total_summary": dmva.build_cluster_summary(_dft),
+                        "labels": sorted([int(c) for c in _dft["Cluster"].unique()]),
+                        "rag_dist": _rag_dist, "png_total": _png_t, "png_by_rag": _png_by,
+                    }
+                    st.session_state._rag_cluster_names = None
+                except Exception as e:
+                    st.warning(f"クラスタリングでエラー: {e}")
+                    st.session_state._rag_cluster_cache = None
+
+        _clc = st.session_state.get("_rag_cluster_cache")
+        if _clc and _clc.get("selected") == _selected and _clc.get("results"):
+            _names = st.session_state.get("_rag_cluster_names") or {}
+            _tdf = _clc.get("total_df")
+            st.caption(f"**Total: {_clc.get('info','')}**")
+            _pt = _clc.get("png_total")
+            if _names and _tdf is not None:
+                _pt = _cluster_png(_tdf, _names, f"Clustering (Total): {_clc.get('info','')}",
+                                   _build_cluster_cmap(_clc.get("labels") or _tdf["Cluster"].unique()))
+            if _pt is not None:
+                st.image(_pt)
+            if _tdf is not None:
+                _cd = _tdf.groupby("Cluster").size().reset_index(name="count").sort_values("Cluster")
+                st.dataframe(_cd, hide_index=True, use_container_width=True)
+                _dfm = df_filtered.merge(_tdf.set_index("id")[["X1", "X2", "Cluster"]], left_on="id", right_index=True, how="left")
+                st.dataframe(_order_cols(_dfm), hide_index=True, use_container_width=True, height=280)
+            _by = _clc.get("png_by_rag") or {}
+            if _by:
+                st.markdown("**RAG NAMEごと（Totalで定義したクラスター色を適用・横2列）:**")
+                _items = list(_by.items())
+                for _i in range(0, len(_items), 2):
+                    _row = _items[_i:_i + 2]
+                    _cols = st.columns(len(_row))
+                    for _j, (_cv, _pb) in enumerate(_row):
+                        _cols[_j].image(_pb, caption=f"RAG: {_cv}")
+
+            def _cl_ctx():
+                _cc = st.session_state.get("_rag_cluster_cache")
+                if not _cc or not _cc.get("results"):
+                    return ""
+                _txt = ("RAGデータ「" + _selected + "」のクラスタリング結果です。\n"
+                        f"[Total クラスタリング: {_cc.get('info','')}]\n{_cc.get('total_summary','')}\n")
+                _rd = _cc.get("rag_dist") or {}
+                if _rd:
+                    _txt += "\n[RAG_NAMEごとに含まれるクラスター（クラスタ番号=件数）]\n"
+                    for _rn, _dist in _rd.items():
+                        _txt += f"  {_rn}: " + ", ".join(f"C{k}={v}" for k, v in _dist.items()) + "\n"
+                _ids = [c for c in (_cc.get("labels") or []) if c >= 0]
+                _txt += (f"\n対象クラスター番号: {_ids}\n"
+                         "まずTotalで定義された各クラスターの特徴を解説し、"
+                         "続いて各RAG_NAMEがどのクラスターを含むかを踏まえて解説してください。")
+                return _txt
+
+            def _cl_post(resp):
+                _m = _re.search(r"```json\s*(\{.*?\})\s*```", resp, _re.DOTALL) or _re.search(r"(\{[^{}]*\})", resp, _re.DOTALL)
+                if _m:
+                    try:
+                        _raw = _json.loads(_m.group(1))
+                        st.session_state._rag_cluster_names = {str(k): str(v)[:10] for k, v in _raw.items()}
+                    except Exception:
+                        pass
+                return _re.sub(r"```json\s*\{.*?\}\s*```\s*", "", resp, count=1, flags=_re.DOTALL).strip()
+
+            _cl_disp = _explanation_block("_rag_cluster_expl", "Cluster Analyst KE", "agent_23DataAnalyst.json",
+                                          _cl_ctx, "Clustering", "rag_cl", postprocess=_cl_post)
+            st.session_state._rag_cluster_explanation = _cl_disp
+
+    # =========================================================
+    # 2. Trend
+    # =========================================================
+    st.markdown("---")
+    st.subheader("Trend")
+    if not _has_date:
+        st.info("create_date が無いため Trend は利用できません")
+    else:
+        _df_trend, _trend_desc = _extra_filter_ui(df_filtered, "rag_trend")
+        st.caption(f"対象: {_trend_desc} | {len(_df_trend)}件")
+        _t1, _t2, _t3 = st.columns([1, 1, 1])
+        _tr_period = _t1.selectbox("Period:", ["month", "quarter", "year"], index=0, key="rag_trend_period")
+        _tr_topn = _t2.slider("Keywords/period:", min_value=3, max_value=20, value=7, key="rag_trend_topn")
+        _tr_cat_opts = _filterable_cols or ["(none)"]
+        _tr_cat_def = _tr_cat_opts.index("category") if "category" in _tr_cat_opts else 0
+        _tr_cat_col = _t3.selectbox("Category Column (棒グラフ内訳のみ):", _tr_cat_opts, index=_tr_cat_def, key="rag_trend_cat")
+
+        if st.button("Analyze Trend", key="rag_run_trend"):
+            with st.spinner("Trend分析中..."):
+                try:
+                    _groups = [("Total", _df_trend)]
+                    for _rn in _rag_list(_df_trend):
+                        _groups.append((_rn, _df_trend[_df_trend["rag_name"].astype(str) == _rn]))
+                    _gres = []
+                    _no_period = {}
+                    for _gn, _gd in _groups:
+                        _cp, _kw, _sm = dmva.temporal_analysis(_gd, period=_tr_period,
+                                                               top_n_keywords=_tr_topn, category_col=_tr_cat_col)
+                        _per, _bck, _nop = dmva.temporal_keywords_by_category(
+                            _gd, category_col=None, period=_tr_period, top_n=30)
+                        if _nop:
+                            for _k2, _v2 in _nop.items():
+                                _no_period[f"{_gn}:{_k2}" if _gn != "Total" else _k2] = _v2
+                        _wcmap = _bck.get("(all)", {})
+                        # 棒グラフ(構成推移)
+                        _bar_png = None
+                        if _cp is not None and not _cp.empty:
+                            _cols = [_cat_color_map.get(c) for c in _cp.columns]
+                            figb, axb = plt.subplots(figsize=(11, 4))
+                            _cp.plot(kind="bar", stacked=True, ax=axb,
+                                     color=_cols if all(_cols) else None, alpha=0.85)
+                            axb.set_title(f"{_tr_cat_col} 構成推移 ({_tr_period}) - {_gn}")
+                            axb.set_ylabel("Count")
+                            axb.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=7)
+                            plt.xticks(rotation=45, ha="right")
+                            plt.tight_layout()
+                            _bar_png = _png(figb)
+                        # ワードクラウド(Period降順)
+                        _wc_list = []
+                        for _p in sorted(_per, reverse=True):
+                            _fr = _wcmap.get(_p)
+                            if not _fr:
+                                continue
+                            _wf = dmva.make_wordcloud_figure(_fr, title=str(_p), width=320, height=220)
+                            if _wf is not None:
+                                _wc_list.append((str(_p), _png(_wf)))
+                        # キーワード表(Period降順)
+                        _kw_rows = []
+                        if _kw is not None and not _kw.empty:
+                            _kw_rows = _kw.sort_values("period", ascending=False).to_dict(orient="records")
+                        _gres.append({"name": _gn, "bar_png": _bar_png, "wc": _wc_list,
+                                      "kw_rows": _kw_rows, "summary": _sm or ""})
+                    st.session_state._rag_trend = {
+                        "groups": _gres, "no_period": _no_period, "period": _tr_period,
+                        "category_col": _tr_cat_col, "desc": _trend_desc,
                     }
                 except Exception as e:
-                    st.warning(f"時系列分析でエラーが発生しました: {e}")
+                    st.warning(f"Trend分析でエラー: {e}")
 
-        # キャッシュから時系列分析結果を表示
-        if st.session_state.get("_rag_temporal"):
-            _temp = st.session_state._rag_temporal
-            _temp_cat_col_c = _temp.get("category_col", "category")
-            _temp_mode_c = _temp.get("mode", "Total")
-            _temp_period_c = _temp.get("period", "month")
+        _tr = st.session_state.get("_rag_trend")
+        if _tr and _tr.get("groups"):
+            if _tr.get("no_period"):
+                st.warning("期間情報(create_date)が無いRAGデータ: "
+                           + ", ".join(f"{k}: {v}件" for k, v in _tr["no_period"].items())
+                           + "（時間に関わる情報がありません）")
+            for _g in _tr["groups"]:
+                st.markdown(f"##### [{_g['name']}]")
+                if _g.get("bar_png") is not None:
+                    st.image(_g["bar_png"])
+                if _g.get("kw_rows"):
+                    st.dataframe(pd.DataFrame(_g["kw_rows"]), hide_index=True, use_container_width=True, height=180)
+                _wc = _g.get("wc") or []
+                if _wc:
+                    for _i in range(0, len(_wc), 4):
+                        _chunk = _wc[_i:_i + 4]
+                        _cols = st.columns(4)
+                        for _j, (_pl, _pb) in enumerate(_chunk):
+                            _cols[_j].image(_pb, caption=_pl)
 
-            # category_mapの色を適用
-            import matplotlib
-            matplotlib.use("Agg")
-            import matplotlib.pyplot as plt
-            _cat_color_map_t = {}
-            try:
-                _cat_map_json_t = dmu.read_json_file("category_map.json", mst_folder_path)
-                if not _cat_map_json_t:
-                    _cat_map_json_t = dmu.read_json_file("sample_category_map.json", mst_folder_path)
-                _cat_color_map_t = _cat_map_json_t.get("CategoryColor", {})
-            except Exception:
-                pass
+            def _tr_ctx():
+                _t = st.session_state.get("_rag_trend")
+                if not _t or not _t.get("groups"):
+                    return ""
+                _x = f"RAGデータ「{_selected}」の期間別キーワード集計です（Total と各RAG_NAME）。\n"
+                for _g in _t["groups"]:
+                    if _g.get("summary"):
+                        _x += f"\n[{_g['name']}]\n{_g['summary']}\n"
+                return _x
 
-            def _draw_temporal_pivot(_cp_df, _title):
-                _colors = [_cat_color_map_t.get(c, None) for c in _cp_df.columns]
-                fig_cat, ax_cat = plt.subplots(figsize=(12, 5))
-                _cp_df.plot(kind="bar", stacked=True, ax=ax_cat,
-                            color=_colors if all(_colors) else None, alpha=0.8)
-                ax_cat.set_title(_title)
-                ax_cat.set_ylabel("Count")
-                ax_cat.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=7)
-                plt.xticks(rotation=45, ha="right")
-                plt.tight_layout()
-                st.pyplot(fig_cat)
-                plt.close(fig_cat)
+            _tr_disp = _explanation_block("_rag_trend_expl", "Trend Analyst", "agent_23DataAnalyst.json",
+                                          _tr_ctx, "Trend", "rag_trend")
+            st.session_state._rag_temporal_explanation = _tr_disp
 
-            # 全体グラフ
-            if _temp["cat_pivot"] is not None and not _temp["cat_pivot"].empty:
-                st.markdown(f"**[{_temp_cat_col_c}]構成の推移 (Total):**")
-                _draw_temporal_pivot(_temp["cat_pivot"], f"{_temp_cat_col_c} Composition ({_temp_period_c}) - Total")
+    # =========================================================
+    # 3. Topic
+    # =========================================================
+    st.markdown("---")
+    st.subheader("Topic")
+    if not _has_scatter:
+        st.info("先に Overall で Search & Plot（散布図生成）を実行してください")
+    else:
+        _df_topic, _topic_desc = _extra_filter_ui(df_filtered, "rag_topic")
+        st.caption(f"対象: {_topic_desc} | {len(_df_topic)}件")
+        _topic_query = st.text_input("Query:", placeholder="キーワードや文章を入力して知識の反応を分析", key="rag_topic_query")
+        _p1, _p2, _p3 = st.columns([1, 1, 1])
+        _tp_period = _p1.selectbox("Period:", ["month", "quarter", "year"], index=0, key="rag_topic_period")
+        _tp_topn = _p2.slider("Top N:", min_value=5, max_value=100, value=30, key="rag_topic_topn")
+        _tp_bonus = _p3.number_input("Date Bonus (0=off):", value=0.0, min_value=0.0, max_value=1.0,
+                                     step=0.1, format="%.1f", key="rag_topic_bonus")
+        _tp_bf = _tp_bt = None
+        if _tp_bonus > 0 and "create_date" in _df_topic.columns:
+            _bdp = pd.to_datetime(_df_topic["create_date"], errors="coerce").dropna()
+            if not _bdp.empty:
+                _bmin = _bdp.min().date()
+                _bmax = _bdp.max().date()
+                _bv = st.date_input("Bonus Period From/To:", value=(_bmin, _bmax),
+                                    min_value=_bmin, max_value=_bmax, key="rag_topic_bonus_period")
+                if isinstance(_bv, (list, tuple)) and len(_bv) == 2:
+                    _tp_bf, _tp_bt = _bv
 
-            # RAG_NAMEごとのグラフ
-            if _temp_mode_c == "Per RAG_NAME":
-                _per_rag_c = _temp.get("per_rag", {}) or {}
-                for _rn, _v in _per_rag_c.items():
-                    _cp_rn = _v.get("cat_pivot")
-                    if _cp_rn is not None and not _cp_rn.empty:
-                        st.markdown(f"**[{_temp_cat_col_c}]構成の推移 - RAG: {_rn}:**")
-                        _draw_temporal_pivot(_cp_rn, f"{_temp_cat_col_c} Composition ({_temp_period_c}) - {_rn}")
+        if _topic_query and st.button("Analyze Topic", key="rag_run_topic"):
+            _dfr = _scc["df_reduced"]
+            _dfsens = df[df["id"].isin(_df_topic["id"])].copy()
+            _dfsens = _dfsens.merge(_dfr.set_index("id")[["X1", "X2"]], left_on="id", right_index=True, how="left")
+            with st.spinner("類似度を計算中..."):
+                try:
+                    _rank, _ = dmva.sensitivity_analysis(
+                        _dfsens, _topic_query, top_n=max(_tp_topn, len(_dfsens)),
+                        date_from=_tp_bf, date_to=_tp_bt, date_bonus=_tp_bonus)
+                    _grp = [("Total", _rank)]
+                    for _rn in _rag_list(_rank):
+                        _grp.append((_rn, _rank[_rank["rag_name"].astype(str) == _rn]))
+                    _tgres = []
+                    for _gn, _gr in _grp:
+                        _gr_top = _gr.head(_tp_topn)
+                        # 件数(棒)+スコア(折れ線: sum/avg/max) by Period
+                        _pst = dmva.topic_period_stats(_gr, period=_tp_period)
+                        _chart_png = None
+                        if _pst is not None and not _pst.empty:
+                            _xs = _pst["period"].astype(str).tolist()
+                            figc, axc = plt.subplots(figsize=(11, 4))
+                            axc.bar(_xs, _pst["count"], color="steelblue", alpha=0.75, label="count")
+                            axc.set_ylabel("Count")
+                            axc.set_xticks(range(len(_xs)))
+                            axc.set_xticklabels(_xs, rotation=45, ha="right")
+                            ax2 = axc.twinx()
+                            ax2.plot(_xs, _pst["score_sum"], color="crimson", marker="o", label="score sum")
+                            ax2.plot(_xs, _pst["score_avg"], color="darkorange", marker="s", label="score avg")
+                            ax2.plot(_xs, _pst["score_max"], color="green", marker="^", label="score max")
+                            ax2.set_ylabel("Score (小さいほど関連強)")
+                            _l1, _b1 = axc.get_legend_handles_labels()
+                            _l2, _b2 = ax2.get_legend_handles_labels()
+                            axc.legend(_l1 + _l2, _b1 + _b2, loc="upper left", bbox_to_anchor=(1.07, 1), fontsize=8)
+                            axc.set_title(f"件数 & 類似スコア ({_tp_period}) - {_gn}")
+                            plt.tight_layout()
+                            _chart_png = _png(figc)
+                        # 散布図: その母集団(gray) + 選択(スコアで濃淡)
+                        _pop = _dfr[_dfr["id"].isin(_gr["id"])] if _gn != "Total" else _dfr[_dfr["id"].isin(_rank["id"])]
+                        _sc_png = None
+                        if "X1" in _gr.columns:
+                            figt, axt = plt.subplots(figsize=(9, 6))
+                            axt.scatter(_pop["X1"], _pop["X2"], color="lightgray", alpha=0.3, s=12)
+                            _smin = _gr_top["score"].min() if not _gr_top.empty else 0
+                            _smax = _gr_top["score"].max() if not _gr_top.empty else 1
+                            _srng = (_smax - _smin) if _smax > _smin else 1.0
+                            for _, _rw in _gr_top.iterrows():
+                                if pd.isna(_rw.get("X1")) or pd.isna(_rw.get("X2")):
+                                    continue
+                                _a = float(0.95 - 0.55 * ((_rw["score"] - _smin) / _srng))
+                                _mk = "D" if _rw.get("bonus_applied") else "o"
+                                axt.scatter([_rw["X1"]], [_rw["X2"]], color="#1565C0", alpha=_a, s=70,
+                                            edgecolors="black", linewidths=0.5, marker=_mk)
+                            axt.set_title(f"Topic: \"{_topic_query}\" [{_gn}] (Top {len(_gr_top)})")
+                            axt.grid(True)
+                            _sc_png = _png(figt)
+                        _cols_t = [c for c in ["score", "cos_distance", "bonus_applied", "id", "rag_name",
+                                               "title", "create_date", "X1", "X2", "value_text"] if c in _gr_top.columns]
+                        _tgres.append({"name": _gn, "chart_png": _chart_png, "scatter_png": _sc_png,
+                                       "rows": _gr_top[_cols_t].to_dict(orient="records"),
+                                       "cols": _cols_t, "n": len(_gr)})
+                    st.session_state._rag_topic = {
+                        "groups": _tgres, "query": _topic_query, "selected": _selected,
+                        "desc": _topic_desc, "period": _tp_period,
+                    }
+                except Exception as e:
+                    st.warning(f"Topic分析でエラー: {e}")
 
-            # キーワード推移テーブル
-            if _temp["kw_df"] is not None and not _temp["kw_df"].empty:
-                st.markdown("**期間別キーワード (Total):**")
-                st.dataframe(_temp["kw_df"], hide_index=True, use_container_width=True, height=300)
-            if _temp_mode_c == "Per RAG_NAME":
-                _per_rag_c = _temp.get("per_rag", {}) or {}
-                for _rn, _v in _per_rag_c.items():
-                    _kw_rn = _v.get("kw_df")
-                    if _kw_rn is not None and not _kw_rn.empty:
-                        st.markdown(f"**期間別キーワード - RAG: {_rn}:**")
-                        st.dataframe(_kw_rn, hide_index=True, use_container_width=True, height=200)
+        _tp = st.session_state.get("_rag_topic")
+        if _tp and _tp.get("selected") == _selected and _tp.get("groups"):
+            st.caption(f"Query: **{_tp['query']}** | {_tp.get('desc','')}")
+            for _g in _tp["groups"]:
+                st.markdown(f"##### [{_g['name']}] （{_g['n']}件中 上位{len(_g['rows'])}）")
+                if _g.get("chart_png") is not None:
+                    st.image(_g["chart_png"])
+                if _g.get("scatter_png") is not None:
+                    st.image(_g["scatter_png"])
+                if _g.get("rows"):
+                    st.dataframe(pd.DataFrame(_g["rows"]), hide_index=True, use_container_width=True, height=240)
 
-            # LLMによる時系列解説
-            _temp_explain_col1, _temp_explain_col2 = st.columns([1, 1])
-            _temp_engine_list = list(dmu.read_json_file("agent_23DataAnalyst.json", agent_folder_path).get("ENGINE", {}).get("LLM", {}).keys())
-            _temp_engine_list = [e for e in _temp_engine_list if e != "DEFAULT"]
-            _temp_engine = _temp_explain_col2.selectbox("Engine:", _temp_engine_list, key="rag_temp_engine") if _temp_engine_list else None
+            def _tp_ctx():
+                _t = st.session_state.get("_rag_topic")
+                if not _t or not _t.get("groups"):
+                    return ""
+                _x = (f"クエリ「{_t['query']}」に対する知識の反応(類似度)分析です。\n"
+                      "Total全体と各RAG_NAMEそれぞれについて、この入力に反応しそうな知識の特徴・傾向を"
+                      "分かりやすく語ってください。\n")
+                for _g in _t["groups"]:
+                    _x += f"\n\n[{_g['name']}] 上位{len(_g['rows'])}件:\n"
+                    for _r in _g["rows"][:12]:
+                        _x += f"  score={_r.get('score','')} {_r.get('title','')}: {str(_r.get('value_text',''))[:80]}\n"
+                return _x
 
-            if _temp_explain_col1.button("Explain Trends", key="rag_explain_temporal"):
-                _cl_agent_file = "agent_23DataAnalyst.json"
-                _temp_prompt_data = f"以下はRAGデータ「{_selected}」の時系列分析結果です。\n各期間のキーワードから関心の変遷を読み取ってください。\n\n[Total]\n{_temp['summary']}"
-                if _temp_mode_c == "Per RAG_NAME":
-                    _per_rag_c = _temp.get("per_rag", {}) or {}
-                    for _rn, _v in _per_rag_c.items():
-                        _sum_rn = _v.get("summary", "")
-                        if _sum_rn:
-                            _temp_prompt_data += f"\n\n[RAG: {_rn}]\n{_sum_rn}"
-                with st.spinner("時系列の変遷を解説中..."):
-                    try:
-                        _agent = dma.DigiM_Agent(_cl_agent_file)
-                        if _temp_engine and _temp_engine in _agent.agent.get("ENGINE", {}).get("LLM", {}):
-                            _agent.agent["ENGINE"]["LLM"]["DEFAULT"] = _temp_engine
-                        _template = _agent.set_prompt_template("Temporal Analyst")
-                        _prompt = f"{_template}\n{_temp_prompt_data}"
-                        _response = ""
-                        for _, chunk, _ in _agent.generate_response("LLM", _prompt, [], stream_mode=False):
-                            if chunk:
-                                _response += chunk
-                        st.session_state._rag_temporal_explanation = _response
-                    except Exception as e:
-                        st.error(f"時系列解説エラー: {e}")
+            _tp_disp = _explanation_block("_rag_topic_expl", "Sensitivity Analyst", "agent_23DataAnalyst.json",
+                                          _tp_ctx, "Topic", "rag_topic")
+            st.session_state._rag_sensitivity_explanation = _tp_disp
 
-            if st.session_state.get("_rag_temporal_explanation"):
-                st.markdown("**時系列の変遷:**")
-                st.markdown(st.session_state._rag_temporal_explanation)
-
-    # Ask Agent（ChromaDB用 - 全分析結果をコンテキストに含める）
+    # =========================================================
+    # 4. Ask Agent
+    # =========================================================
+    st.markdown("---")
     _summary_lines = [f"以下のRAGデータと分析結果を踏まえて質問に回答してください。\n\nRAGデータ: {_selected} (フィルタ後: {filtered_count}件 / 全体: {total_count}件)"]
     _df_for_llm = df_filtered.drop(columns=[c for c in df_filtered.columns if "vector" in c], errors="ignore")
-    if _filterable_cols:
-        for col in _filterable_cols[:5]:
-            _val_counts = _df_for_llm[col].value_counts().head(10).to_dict() if col in _df_for_llm.columns else {}
-            if _val_counts:
-                _summary_lines.append(f"\n[{col}の分布]\n" + "\n".join(f"  {k}: {v}件" for k, v in _val_counts.items()))
+    for col in _filterable_cols[:5]:
+        if col in _df_for_llm.columns:
+            _vc = _df_for_llm[col].value_counts().head(10).to_dict()
+            if _vc:
+                _summary_lines.append(f"\n[{col}の分布]\n" + "\n".join(f"  {k}: {v}件" for k, v in _vc.items()))
     _sample_n = min(30, len(_df_for_llm))
     _summary_lines.append(f"\n[データ(先頭{_sample_n}件)]\n{_df_for_llm.head(_sample_n).to_csv(index=False)}")
-    _sens_cache = st.session_state.get("_rag_sensitivity")
-    if _sens_cache and _sens_cache.get("selected") == _selected:
-        _summary_lines.append(f"\n[感度分析結果 (Query: {_sens_cache['query']})]\n")
-        for _, r in _sens_cache["ranking"].head(10).iterrows():
-            _summary_lines.append(f"  score={r.get('score','')}, [{r.get('category','')}] {r.get('title','')}: {str(r.get('value_text',''))[:60]}")
-    if st.session_state.get("_rag_sensitivity_explanation"):
-        _summary_lines.append(f"\n[感度分析の解説]\n{st.session_state._rag_sensitivity_explanation[:500]}")
-    _cl_cache = st.session_state.get("_rag_cluster_cache")
-    if _cl_cache and _cl_cache.get("selected") == _selected:
-        _summary_lines.append(f"\n[クラスタリング結果: {_cl_cache['cl_info']}]\n{_cl_cache['cl_summary'][:500]}")
     if st.session_state.get("_rag_cluster_explanation"):
-        _summary_lines.append(f"\n[クラスター解説]\n{st.session_state._rag_cluster_explanation[:500]}")
-    _temp_cache = st.session_state.get("_rag_temporal")
-    if _temp_cache:
-        _summary_lines.append(f"\n[時系列分析]\n{_temp_cache.get('summary', '')[:500]}")
+        _summary_lines.append(f"\n[Clustering解説]\n{st.session_state._rag_cluster_explanation[:600]}")
     if st.session_state.get("_rag_temporal_explanation"):
-        _summary_lines.append(f"\n[時系列解説]\n{st.session_state._rag_temporal_explanation[:500]}")
-
+        _summary_lines.append(f"\n[Trend解説]\n{st.session_state._rag_temporal_explanation[:600]}")
+    if st.session_state.get("_rag_sensitivity_explanation"):
+        _summary_lines.append(f"\n[Topic解説]\n{st.session_state._rag_sensitivity_explanation[:600]}")
     _chromadb_context = "\n".join(_summary_lines)
     _ask_agent_ui(_chromadb_context, key_prefix="rag")
     _chromadb_response = _show_ask_result(key_prefix="rag")
     if _chromadb_response:
         st.session_state._rag_llm_response = _chromadb_response
 
-    # ===== 分析結果のダウンロード =====
+    # =========================================================
+    # Export Report
+    # =========================================================
     st.markdown("---")
     st.subheader("Export Report")
     if st.button("Generate Report", key="rag_gen_report"):
-        import base64
-        import io
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-
-        def _fig_to_md(fig):
-            """matplotlibのfigをBase64埋め込みMarkdown画像に変換"""
-            buf = io.BytesIO()
-            fig.savefig(buf, format="png", dpi=150, bbox_inches="tight")
-            buf.seek(0)
-            b64 = base64.b64encode(buf.read()).decode()
-            plt.close(fig)
-            return f"![chart](data:image/png;base64,{b64})"
-
         _now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         _report = f"# Knowledge Explorer {_now}\n\n"
         _report += f"**対象データ:** {_selected}\n\n"
         _report += f"**データ件数:** フィルタ後 {filtered_count}件 / 全体 {total_count}件\n\n"
 
-        # 散布図
-        _sc_cache = st.session_state.get("_rag_scatter_cache")
-        if _sc_cache and _sc_cache.get("selected") == _selected:
-            from matplotlib.lines import Line2D as _L2D_rep
-            _report += "## Scatter Plot\n\n"
-            _dfr = _sc_cache["df_reduced"]
-            _sc_m = _sc_cache["dim_method"]
-            _sc_info = _sc_cache["dim_info"]
-            _sc_color = _sc_cache["color_col"]
-            _sc_marker_r = _sc_cache.get("marker_col", "(none)")
-            _sc_cat_map = _sc_cache.get("cat_color_map", {})
-            fig_r, ax_r = plt.subplots(figsize=(10, 7))
-            _marker_map_r = {}
-            if _sc_marker_r != "(none)" and _sc_marker_r in _dfr.columns:
-                _mk_vals_r = sorted(_dfr[_sc_marker_r].dropna().unique())
-                _marker_map_r = {v: _MARKER_CHOICES[i % len(_MARKER_CHOICES)] for i, v in enumerate(_mk_vals_r)}
-            _color_map_full_r = {}
-            if _sc_color != "(none)" and _sc_color in _dfr.columns:
-                _cats_r = sorted(_dfr[_sc_color].dropna().unique())
-                _default_cmap_r = plt.cm.get_cmap("tab10", max(len(_cats_r), 1))
-                _color_map_full_r = {c: (_sc_cat_map.get(c) or _default_cmap_r(i)) for i, c in enumerate(_cats_r)}
-
-            # データ描画（凡例は後で別途プロキシで作成）
-            if _color_map_full_r and _marker_map_r:
-                for cat in _color_map_full_r.keys():
-                    for mk_v, mk_sym in _marker_map_r.items():
-                        _m = (_dfr[_sc_color] == cat) & (_dfr[_sc_marker_r] == mk_v)
-                        if not _m.any():
-                            continue
-                        ax_r.scatter(_dfr.loc[_m, "X1"], _dfr.loc[_m, "X2"],
-                                    color=_color_map_full_r[cat], alpha=0.7, marker=mk_sym)
-            elif _color_map_full_r:
-                for cat, col in _color_map_full_r.items():
-                    _m = _dfr[_sc_color] == cat
-                    ax_r.scatter(_dfr.loc[_m, "X1"], _dfr.loc[_m, "X2"], color=col, alpha=0.7)
-            elif _marker_map_r:
-                for mk_v, mk_sym in _marker_map_r.items():
-                    _m = _dfr[_sc_marker_r] == mk_v
-                    ax_r.scatter(_dfr.loc[_m, "X1"], _dfr.loc[_m, "X2"], alpha=0.7, marker=mk_sym)
-            else:
-                ax_r.scatter(_dfr["X1"], _dfr["X2"], alpha=0.7)
-
-            # 凡例（色と形を別々に表示）
-            _rep_legend_h = []
-            if _color_map_full_r:
-                _rep_legend_h.append(_L2D_rep([0], [0], linestyle="", label=f"〔{_sc_color}〕"))
-                for cat, col in _color_map_full_r.items():
-                    _rep_legend_h.append(_L2D_rep([0], [0], marker="o", linestyle="",
-                                                  color=col, markersize=8, label=str(cat)[:20]))
-            if _marker_map_r:
-                _rep_legend_h.append(_L2D_rep([0], [0], linestyle="", label=f"〔{_sc_marker_r}〕"))
-                for mk_v, mk_sym in _marker_map_r.items():
-                    _rep_legend_h.append(_L2D_rep([0], [0], marker=mk_sym, linestyle="",
-                                                  color="dimgray", markersize=8, label=str(mk_v)[:20]))
-            if _rep_legend_h:
-                ax_r.legend(handles=_rep_legend_h, loc="upper left",
-                            bbox_to_anchor=(1, 1), fontsize=8)
-            ax_r.set_title(f"{_sc_m} ({_sc_info})")
-            ax_r.grid(True)
-            _report += _fig_to_md(fig_r) + "\n\n"
-
-        # 感度分析（基本色はScatter Plotと同じ・類似度でグラデーション）
-        _sens_c = st.session_state.get("_rag_sensitivity")
-        if _sens_c and _sens_c.get("selected") == _selected:
-            _report += f"## Sensitivity Analysis\n\nQuery: {_sens_c.get('query', '')}\n\n"
-            _sr = _sens_c["ranking"]
-            if "X1" in _sr.columns and _sc_cache:
-                import matplotlib.colors as _mcolors_r
-                from matplotlib.lines import Line2D as _L2D_r
-                _df_all_r = _sc_cache["df_reduced"]
-                _sc_color_rs = _sc_cache.get("color_col", "(none)")
-                _sc_marker_rs = _sc_cache.get("marker_col", "(none)")
-                _sc_cat_map_rs = _sc_cache.get("cat_color_map", {})
-                _color_map_full_rs = {}
-                if _sc_color_rs != "(none)" and _sc_color_rs in _df_all_r.columns:
-                    _cats_rs = sorted(_df_all_r[_sc_color_rs].dropna().unique())
-                    _default_cmap_rs = plt.cm.get_cmap("tab10", max(len(_cats_rs), 1))
-                    _color_map_full_rs = {c: (_sc_cat_map_rs.get(c) or _default_cmap_rs(i)) for i, c in enumerate(_cats_rs)}
-                _marker_map_rs = {}
-                if _sc_marker_rs != "(none)" and _sc_marker_rs in _df_all_r.columns:
-                    _mk_vals_rs = sorted(_df_all_r[_sc_marker_rs].dropna().unique())
-                    _marker_map_rs = {v: _MARKER_CHOICES[i % len(_MARKER_CHOICES)] for i, v in enumerate(_mk_vals_rs)}
-                _score_min_r = _sr["score"].min() if not _sr["score"].empty else 0
-                _score_max_r = _sr["score"].max() if not _sr["score"].empty else 1
-                _score_range_r = (_score_max_r - _score_min_r) if _score_max_r > _score_min_r else 1.0
-                fig_s, ax_s = plt.subplots(figsize=(10, 7))
-                ax_s.scatter(_df_all_r["X1"], _df_all_r["X2"], color="lightgray", alpha=0.3, s=15)
-                for _, _row in _sr.iterrows():
-                    _x = _row.get("X1"); _y = _row.get("X2")
-                    if pd.isna(_x) or pd.isna(_y):
-                        continue
-                    if _color_map_full_rs and _sc_color_rs in _row.index and pd.notna(_row.get(_sc_color_rs)):
-                        _base = _mcolors_r.to_rgb(_color_map_full_rs.get(_row[_sc_color_rs], "#1565C0"))
-                    else:
-                        _base = _mcolors_r.to_rgb("#1565C0")
-                    _norm = (_row["score"] - _score_min_r) / _score_range_r
-                    _alpha_v = float(0.95 - 0.55 * _norm)
-                    if _row.get("bonus_applied"):
-                        _mk = "D"
-                    elif _marker_map_rs and _sc_marker_rs in _row.index and pd.notna(_row.get(_sc_marker_rs)):
-                        _mk = _marker_map_rs.get(_row[_sc_marker_rs], "o")
-                    else:
-                        _mk = "o"
-                    ax_s.scatter([_x], [_y], color=_base, alpha=_alpha_v, s=70,
-                                edgecolors="black", linewidths=0.5, marker=_mk)
-                _legend_h = []
-                if _color_map_full_rs:
-                    _legend_h.append(_L2D_r([0], [0], linestyle="", label=f"〔{_sc_color_rs}〕"))
-                    for cat, col in _color_map_full_rs.items():
-                        _legend_h.append(_L2D_r([0], [0], marker="o", linestyle="", color=col, markersize=8, label=str(cat)[:20]))
-                if _marker_map_rs:
-                    _legend_h.append(_L2D_r([0], [0], linestyle="", label=f"〔{_sc_marker_rs}〕"))
-                    for mk_v, mk_sym in _marker_map_rs.items():
-                        _legend_h.append(_L2D_r([0], [0], marker=mk_sym, linestyle="", color="dimgray", markersize=8, label=str(mk_v)[:20]))
-                if _sr["bonus_applied"].any():
-                    _legend_h.append(_L2D_r([0], [0], marker="D", linestyle="", color="dimgray", markersize=8, label="Bonus Applied"))
-                if _legend_h:
-                    ax_s.legend(handles=_legend_h, loc="upper left", bbox_to_anchor=(1, 1), fontsize=8)
-                ax_s.set_title(f"Sensitivity: \"{_sens_c['query']}\"")
-                ax_s.grid(True)
-                _report += _fig_to_md(fig_s) + "\n\n"
-            if st.session_state.get("_rag_sensitivity_explanation"):
-                _report += st.session_state._rag_sensitivity_explanation + "\n\n"
-
-        # クラスタリング（マーカー＋クラスター名対応）
-        _cl_c = st.session_state.get("_rag_cluster_cache")
-        if _cl_c and _cl_c.get("selected") == _selected:
-            from matplotlib.lines import Line2D as _L2D_clr
-            _report += f"## Clustering\n\n{_cl_c.get('cl_info', '')}\n\n"
-            _dfc = _cl_c["df_clustered"]
-            _cl_marker_col_r = _cl_c.get("marker_col", "(none)")
-            _cl_names_map_r = st.session_state.get("_rag_cluster_names") or {}
-            def _cl_label_r(cl):
-                if cl < 0:
-                    return "Noise"
-                _nm = _cl_names_map_r.get(str(int(cl))) or _cl_names_map_r.get(int(cl))
-                return f"C{int(cl)}: {str(_nm)[:10]}" if _nm else f"Cluster {int(cl)}"
-            fig_c, ax_c = plt.subplots(figsize=(10, 7))
-            _cl_labels_r = sorted(_dfc["Cluster"].unique())
-            _cmap_c = plt.cm.get_cmap("tab10", max(len(_cl_labels_r), 1))
-            _cl_color_map_r = {cl: ("gray" if cl < 0 else _cmap_c(i)) for i, cl in enumerate(_cl_labels_r)}
-            _cl_marker_map_r = {}
-            if _cl_marker_col_r != "(none)" and _cl_marker_col_r in _dfc.columns:
-                _mk_vals_cl_r = sorted(_dfc[_cl_marker_col_r].dropna().unique())
-                _cl_marker_map_r = {v: _MARKER_CHOICES[i % len(_MARKER_CHOICES)] for i, v in enumerate(_mk_vals_cl_r)}
-
-            # データ描画（凡例は後で別途プロキシで作成）
-            for cl in _cl_labels_r:
-                _color = _cl_color_map_r[cl]
-                if _cl_marker_map_r:
-                    for mk_v, mk_sym in _cl_marker_map_r.items():
-                        _m = (_dfc["Cluster"] == cl) & (_dfc[_cl_marker_col_r] == mk_v)
-                        if not _m.any():
-                            continue
-                        ax_c.scatter(_dfc.loc[_m, "X1"], _dfc.loc[_m, "X2"], color=_color,
-                                    alpha=0.7, marker=mk_sym)
-                else:
-                    _m = _dfc["Cluster"] == cl
-                    ax_c.scatter(_dfc.loc[_m, "X1"], _dfc.loc[_m, "X2"], color=_color, alpha=0.7)
-
-            # 凡例（クラスターと形を別々に表示）
-            _cl_rep_legend_h = [_L2D_clr([0], [0], linestyle="", label="〔Cluster〕")]
-            for cl, col in _cl_color_map_r.items():
-                _cl_rep_legend_h.append(_L2D_clr([0], [0], marker="o", linestyle="",
-                                                 color=col, markersize=8, label=_cl_label_r(cl)))
-            if _cl_marker_map_r:
-                _cl_rep_legend_h.append(_L2D_clr([0], [0], linestyle="", label=f"〔{_cl_marker_col_r}〕"))
-                for mk_v, mk_sym in _cl_marker_map_r.items():
-                    _cl_rep_legend_h.append(_L2D_clr([0], [0], marker=mk_sym, linestyle="",
-                                                     color="dimgray", markersize=8, label=str(mk_v)[:20]))
-            ax_c.legend(handles=_cl_rep_legend_h, loc="upper left",
-                        bbox_to_anchor=(1, 1), fontsize=8)
-            ax_c.set_title(f"Clustering: {_cl_c['cl_info']}")
-            ax_c.grid(True)
-            _report += _fig_to_md(fig_c) + "\n\n"
-            if st.session_state.get("_rag_cluster_explanation"):
-                _report += st.session_state._rag_cluster_explanation + "\n\n"
-
-        # 時系列分析（指定カテゴリ列・RAG_NAME別対応）
-        _temp_c = st.session_state.get("_rag_temporal")
-        if _temp_c:
-            _report += "## Temporal Analysis\n\n"
-            _cat_color_map_r = {}
-            try:
-                _cm_j = dmu.read_json_file("category_map.json", mst_folder_path)
-                if not _cm_j:
-                    _cm_j = dmu.read_json_file("sample_category_map.json", mst_folder_path)
-                _cat_color_map_r = _cm_j.get("CategoryColor", {})
-            except Exception:
-                pass
-            _temp_cat_col_r = _temp_c.get("category_col", "category")
-            _temp_period_r = _temp_c.get("period", "month")
-            _temp_mode_r = _temp_c.get("mode", "Total")
-
-            def _draw_temporal_pivot_r(_cp_df, _title):
-                _colors_r = [_cat_color_map_r.get(c) for c in _cp_df.columns]
-                fig_t, ax_t = plt.subplots(figsize=(12, 5))
-                _cp_df.plot(kind="bar", stacked=True, ax=ax_t,
-                            color=_colors_r if all(_colors_r) else None, alpha=0.8)
-                ax_t.set_title(_title)
-                ax_t.set_ylabel("Count")
-                ax_t.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=7)
-                plt.xticks(rotation=45, ha="right")
-                plt.tight_layout()
-                return fig_t
-
-            if _temp_c.get("cat_pivot") is not None and not _temp_c["cat_pivot"].empty:
-                _fig_total = _draw_temporal_pivot_r(_temp_c["cat_pivot"],
-                                                   f"{_temp_cat_col_r} Composition ({_temp_period_r}) - Total")
-                _report += "### Total\n\n" + _fig_to_md(_fig_total) + "\n\n"
-            if _temp_mode_r == "Per RAG_NAME":
-                _per_rag_r = _temp_c.get("per_rag", {}) or {}
-                for _rn, _v in _per_rag_r.items():
-                    _cp_rn = _v.get("cat_pivot")
-                    if _cp_rn is not None and not _cp_rn.empty:
-                        _fig_rn = _draw_temporal_pivot_r(_cp_rn,
-                                                        f"{_temp_cat_col_r} Composition ({_temp_period_r}) - {_rn}")
-                        _report += f"### {_rn}\n\n" + _fig_to_md(_fig_rn) + "\n\n"
-            if _temp_c.get("kw_df") is not None:
-                _report += "**Total Keywords:**\n\n" + _temp_c["kw_df"].to_markdown(index=False) + "\n\n"
-            if _temp_mode_r == "Per RAG_NAME":
-                _per_rag_r = _temp_c.get("per_rag", {}) or {}
-                for _rn, _v in _per_rag_r.items():
-                    _kw_rn = _v.get("kw_df")
-                    if _kw_rn is not None and not _kw_rn.empty:
-                        _report += f"**Keywords - {_rn}:**\n\n" + _kw_rn.to_markdown(index=False) + "\n\n"
-            if st.session_state.get("_rag_temporal_explanation"):
-                _report += st.session_state._rag_temporal_explanation + "\n\n"
-
-        # Ask Agent
+        _scc = st.session_state.get("_rag_scatter_cache")
+        if _scc and _scc.get("selected") == _selected:
+            _report += "## Overall - Scatter Plot\n\n### Total\n\n" + _b64img(_scc["png_total"]) + "\n\n"
+            for _rn, _pb in (_scc.get("png_rag") or {}).items():
+                _report += f"### RAG: {_rn}\n\n" + _b64img(_pb) + "\n\n"
+        _clc = st.session_state.get("_rag_cluster_cache")
+        if _clc and _clc.get("selected") == _selected and _clc.get("results"):
+            _report += "## Overall - Clustering\n\n"
+            if _clc.get("png_total") is not None:
+                _report += "### Total\n\n" + _b64img(_clc["png_total"]) + "\n\n"
+            for _cv, _pb in (_clc.get("png_by_rag") or {}).items():
+                _report += f"### RAG: {_cv}\n\n" + _b64img(_pb) + "\n\n"
+        _ch = st.session_state.get("_rag_cluster_expl_history") or []
+        _cs = st.session_state.get("_rag_cluster_expl_sel")
+        if _ch:
+            _ci = _cs if (_cs is not None and 0 <= _cs < len(_ch)) else len(_ch) - 1
+            _report += f"### Clustering解説 ({_ch[_ci]['timestamp']} / {_ch[_ci]['agent']})\n\n{_ch[_ci]['response']}\n\n"
+        _trr = st.session_state.get("_rag_trend")
+        if _trr and _trr.get("groups"):
+            _report += "## Trend\n\n"
+            if _trr.get("no_period"):
+                _report += "**期間情報なし:** " + ", ".join(f"{k}:{v}件" for k, v in _trr["no_period"].items()) + "\n\n"
+            for _g in _trr["groups"]:
+                _report += f"### {_g['name']}\n\n"
+                if _g.get("bar_png") is not None:
+                    _report += _b64img(_g["bar_png"]) + "\n\n"
+                for _pl, _pb in (_g.get("wc") or []):
+                    _report += f"*{_pl}* " + _b64img(_pb) + "\n\n"
+        _th = st.session_state.get("_rag_trend_expl_history") or []
+        _ts = st.session_state.get("_rag_trend_expl_sel")
+        if _th:
+            _ti = _ts if (_ts is not None and 0 <= _ts < len(_th)) else len(_th) - 1
+            _report += f"### Trend解説 ({_th[_ti]['timestamp']} / {_th[_ti]['agent']})\n\n{_th[_ti]['response']}\n\n"
+        _tpr2 = st.session_state.get("_rag_topic")
+        if _tpr2 and _tpr2.get("selected") == _selected and _tpr2.get("groups"):
+            _report += f"## Topic\n\nQuery: {_tpr2.get('query','')}\n\n"
+            for _g in _tpr2["groups"]:
+                _report += f"### {_g['name']}\n\n"
+                if _g.get("chart_png") is not None:
+                    _report += _b64img(_g["chart_png"]) + "\n\n"
+                if _g.get("scatter_png") is not None:
+                    _report += _b64img(_g["scatter_png"]) + "\n\n"
+        _ph = st.session_state.get("_rag_topic_expl_history") or []
+        _ps = st.session_state.get("_rag_topic_expl_sel")
+        if _ph:
+            _pi = _ps if (_ps is not None and 0 <= _ps < len(_ph)) else len(_ph) - 1
+            _report += f"### Topic解説 ({_ph[_pi]['timestamp']} / {_ph[_pi]['agent']})\n\n{_ph[_pi]['response']}\n\n"
         if st.session_state.get("_rag_llm_response"):
-            _report += "## Ask Agent\n\n"
-            _report += st.session_state._rag_llm_response + "\n\n"
-
+            _report += "## Ask Agent\n\n" + st.session_state._rag_llm_response + "\n\n"
         _report += f"\n---\nGenerated: {_now}\n"
-
         st.session_state._rag_report = _report
-
-        # レポート生成と同時に分析セッションを自動保存
         try:
             _saved_path = _save_analysis_session(_selected)
             st.success(f"レポートを生成し、セッションを保存しました: {_saved_path}")
@@ -2620,7 +2300,6 @@ def _knowledge_explorer():
         _report_name = f"Knowledge_Explorer_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         st.download_button("Download (.md)", data=st.session_state._rag_report.encode("utf-8"),
                           file_name=f"{_report_name}.md", mime="text/markdown", key="rag_dl_md")
-
 
 ### Scheduler画面 ###
 def _scheduler_view():
