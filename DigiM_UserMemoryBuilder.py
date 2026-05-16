@@ -83,9 +83,21 @@ def _format_persona(rec: dict) -> str:
     def _items_to_text(label, items):
         if not isinstance(items, list):
             return None
-        # Approved（旧editedも含む）のみコンテキストに含める。pending/deletedは除外。
-        kept = [it.get("label", "").strip() for it in items
-                if isinstance(it, dict) and (it.get("status") in ("approved", "edited")) and (it.get("label", "").strip())]
+        # approved/edited は確定、pending は「(暫定)」付きで含める。deletedのみ除外。
+        kept = []
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            lbl = (it.get("label") or "").strip()
+            if not lbl:
+                continue
+            st = (it.get("status") or "").strip().lower()
+            if st == "deleted":
+                continue
+            if st == "pending":
+                kept.append(f"{lbl}(暫定)")
+            else:
+                kept.append(lbl)
         if not kept:
             return None
         return f"・{label}: " + "、".join(kept)
@@ -102,7 +114,7 @@ def _format_persona(rec: dict) -> str:
         if line:
             parts.append(line)
 
-    # Big5: approvedのみコンテキストに含める。各特性はスコア(0-1)を日本語で表示。
+    # Big5: approved/edited は確定、pending は「(暫定)」付きで含める。deletedのみ除外。
     big5 = rec.get("big5") or {}
     if isinstance(big5, dict) and big5:
         big5_parts = []
@@ -110,13 +122,15 @@ def _format_persona(rec: dict) -> str:
             it = big5.get(trait_key) or {}
             if not isinstance(it, dict):
                 continue
-            if (it.get("status") or "").strip().lower() not in ("approved", "edited"):
+            st = (it.get("status") or "").strip().lower()
+            if st == "deleted":
                 continue
             try:
                 score = float(it.get("score") or 0.5)
             except (TypeError, ValueError):
                 score = 0.5
-            big5_parts.append(f"{ja}={score:.2f}")
+            suffix = "(暫定)" if st == "pending" else ""
+            big5_parts.append(f"{ja}={score:.2f}{suffix}")
         if big5_parts:
             parts.append("・Big5: " + "、".join(big5_parts))
 

@@ -216,8 +216,7 @@ _RDB_DDL = {
             evidence_session_ids  JSONB,
             summary_text          TEXT,
             token_count           INTEGER,
-            active                CHAR(1) DEFAULT 'Y',
-            UNIQUE(service_id, user_id, period)
+            active                CHAR(1) DEFAULT 'Y'
         )
     """,
     "persona": """
@@ -268,6 +267,12 @@ def _rdb_connect():
 def _ensure_rdb_table(conn, layer: str):
     with conn.cursor() as cur:
         cur.execute(_RDB_DDL[layer])
+        if layer == "nowaday":
+            # 旧スキーマの UNIQUE(service_id,user_id,period) を撤廃（スナップショット履歴方式へ移行）
+            cur.execute(
+                "ALTER TABLE digim_user_memory_nowaday "
+                "DROP CONSTRAINT IF EXISTS digim_user_memory_nowaday_service_id_user_id_period_key"
+            )
     conn.commit()
 
 
@@ -309,8 +314,9 @@ def _rdb_upsert(layer: str, rec: dict):
         conflict_keys = "(session_id)"
         update_cols = [c for c in cols if c not in ("id", "session_id")]
     elif layer == "nowaday":
-        conflict_keys = "(service_id, user_id, period)"
-        update_cols = [c for c in cols if c not in ("id", "service_id", "user_id", "period")]
+        # スナップショット履歴方式: id は生成毎に一意。同idの再upsertのみ更新（編集保存用）
+        conflict_keys = "(id)"
+        update_cols = [c for c in cols if c not in ("id",)]
     else:
         conflict_keys = "(service_id, user_id)"
         update_cols = [c for c in cols if c not in ("service_id", "user_id")]
@@ -537,7 +543,16 @@ def _notion_upsert(layer: str, rec: dict):
                 target_page_id = page["id"]
                 break
 
-    title_value = rec.get("topic") or rec.get("user_id") or rec.get("session_id") or "user_memory"
+    # Notionページタイトルはレコード一意キーにする。
+    # create_page() は同名タイトルの既存ページをアーカイブするため、
+    # タイトルが衝突すると別レコード（特にNowadayのスナップショット履歴や
+    # 同トピックHistory）が消える。一意キーで衝突を防ぐ。
+    if layer == "nowaday":
+        title_value = rec.get("id") or f"{rec.get('user_id','')}__{rec.get('period','')}"
+    elif layer == "history":
+        title_value = rec.get("session_id") or rec.get("id") or rec.get("topic") or "history"
+    else:  # persona: 1ユーザー1レコードなのでuser_idで一意
+        title_value = rec.get("user_id") or "user_memory"
     if target_page_id is None:
         # 新規作成
         resp = dmn.create_page(db_id, str(title_value)[:80], title_item="title")
@@ -668,8 +683,16 @@ def make_history_id(service_id: str, user_id: str, session_id: str) -> str:
     return f"{service_id}__{user_id}__{session_id}"
 
 
-def make_nowaday_id(service_id: str, user_id: str, period: str) -> str:
-    return f"{service_id}__{user_id}__{period}"
+def make_nowaday_id(service_id: str, user_id: str, period: str, gen_ts: str = "") -> str:
+    """Nowaday は生成ごとにスナップショットを追記する履歴方式。
+
+    gen_ts（生成時刻の数字列 例:20260516_103000）を付けると一意IDとなり、
+    同じ period でも上書きされず別レコードとして蓄積される。
+    コンテキスト/分析側は generated_at 降順で最新を選択する。
+    gen_ts 省略時は旧形式（後方互換）。
+    """
+    base = f"{service_id}__{user_id}__{period}"
+    return f"{base}__{gen_ts}" if gen_ts else base
 
 
 def now_ts() -> str:

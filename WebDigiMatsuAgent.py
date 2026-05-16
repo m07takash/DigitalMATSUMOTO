@@ -121,6 +121,8 @@ if 'allowed_rag_management' not in st.session_state:
     st.session_state.allowed_rag_management = True
 if 'allowed_knowledge_explorer' not in st.session_state:
     st.session_state.allowed_knowledge_explorer = True
+if 'allowed_user_memory_explorer' not in st.session_state:
+    st.session_state.allowed_user_memory_explorer = False
 if 'allowed_exec_setting' not in st.session_state:
     st.session_state.allowed_exec_setting = True
 if 'allowed_rag_setting' not in st.session_state:
@@ -389,6 +391,7 @@ def ensure_login():
 def user_allowed_parameter(allowded_dict):
     st.session_state.allowed_rag_management = allowded_dict.get("RAG Management", True)
     st.session_state.allowed_knowledge_explorer = allowded_dict.get("Knowledge Explorer", True)
+    st.session_state.allowed_user_memory_explorer = allowded_dict.get("User Memory Explorer", False)
     st.session_state.allowed_exec_setting = allowded_dict.get("Exec Setting", True)
     st.session_state.allowed_rag_setting = allowded_dict.get("RAG Setting", True)
     st.session_state.allowed_feedback = allowded_dict.get("Feedback", True)
@@ -612,11 +615,7 @@ def refresh_session_states():
     st.session_state.web_user["USER_ID"] = st.session_state.user_id
     st.session_state.sidebar_message = ""
     # User Memory のセッション内一時状態をリセット
-    # - レビュー編集中の値や開閉状態は単純削除
     # - 層チェックボックスは「マスタ保存値」に強制リセット（del だけだと Streamlit のウィジェット記憶で戻らないため）
-    for _k in list(st.session_state.keys()):
-        if _k.startswith("um_lbl_") or _k.startswith("um_stat_") or _k == "um_review_open":
-            del st.session_state[_k]
     try:
         import DigiM_UserMemorySetting as _dmus_reset
         _master_layers = _dmus_reset.load_user_setting(st.session_state.user_id).get("layers", [])
@@ -2454,6 +2453,698 @@ def _scheduler_view():
             st.rerun()
 
 
+### User Memory Explorer画面 ###
+def _user_memory_explorer():
+    """ユーザー理解のための分析。タブ②深掘り(個人) / タブ①横断(集団)。各タブにメモリ接地対話。"""
+    import DigiM_UserMemoryExplorer as ux
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from math import pi
+    import pandas as pd
+
+    _UME_BASE = "user/common/analytics/user_memory_explorer/"
+    st.subheader("User Memory Explorer")
+
+    _all_users = ux.list_users("")
+    if not _all_users:
+        st.info("ユーザーメモリのレコードがまだありません。チャットを重ねるか Update User Memory を実行してください。")
+        return
+
+    def _radar(labels, values, title, vmax=1.0):
+        n = len(labels)
+        ang = [i / float(n) * 2 * pi for i in range(n)]
+        ang += ang[:1]
+        v = list(values) + list(values)[:1]
+        fig = plt.figure(figsize=(4.0, 4.0))
+        ax = plt.subplot(111, polar=True)
+        ax.set_theta_offset(pi / 2)
+        ax.set_theta_direction(-1)
+        plt.xticks(ang[:-1], labels, fontfamily="IPAexGothic", fontsize=9)
+        ax.set_ylim(0, vmax)
+        ax.plot(ang, v, linewidth=1.5, color="#1f77b4")
+        ax.fill(ang, v, alpha=0.25, color="#1f77b4")
+        plt.title(title, fontfamily="IPAexGothic", fontsize=11)
+        return fig
+
+    def _radar3(labels, series, title, vmax=1.0):
+        """series=[(name,color,values), ...] を1つのレーダーに重ねる（max/mean/min用）。"""
+        n = len(labels)
+        ang = [i / float(n) * 2 * pi for i in range(n)]
+        ang += ang[:1]
+        fig = plt.figure(figsize=(4.2, 4.2))
+        ax = plt.subplot(111, polar=True)
+        ax.set_theta_offset(pi / 2)
+        ax.set_theta_direction(-1)
+        plt.xticks(ang[:-1], labels, fontfamily="IPAexGothic", fontsize=9)
+        ax.set_ylim(0, vmax)
+        for _nm, _cl, _vs in series:
+            _vv = list(_vs) + list(_vs)[:1]
+            ax.plot(ang, _vv, linewidth=1.4, color=_cl, label=_nm)
+            ax.fill(ang, _vv, alpha=0.12, color=_cl)
+        ax.legend(loc="upper right", bbox_to_anchor=(1.15, 1.12), fontsize=8,
+                  prop={"family": "IPAexGothic"})
+        plt.title(title, fontfamily="IPAexGothic", fontsize=11)
+        return fig
+
+    def _um_ask(context_text, key_prefix):
+        """メモリ接地エージェントとの対話。専用セッションに保存。"""
+        st.markdown("---")
+        st.subheader("メモリ接地エージェントと対話")
+        if not context_text:
+            st.caption("対象データが空のため対話できません。")
+            return
+        with st.expander("接地コンテキスト（エージェントに渡す文脈）"):
+            st.text(context_text[:4000])
+
+        _agent_list = st.session_state.agent_list
+        _aidx = _agent_list.index(st.session_state.agent_id) if st.session_state.get("agent_id") in _agent_list else 0
+        _agent = st.selectbox("Agent:", _agent_list, index=_aidx, key=f"{key_prefix}_agent")
+        _q = st.text_area("質問:", placeholder="例: この人/この層の関心の変遷と背景を説明して",
+                          height=90, key=f"{key_prefix}_q")
+        if _q and st.button("Ask", key=f"{key_prefix}_ask"):
+            _af = next((a["FILE"] for a in st.session_state.agents if a["AGENT"] == _agent), None)
+            if _af:
+                _ui = f"{context_text}\n\n【質問】\n{_q}"
+                _exec = {
+                    "MEMORY_USE": False, "MEMORY_SAVE": True, "SAVE_DIGEST": False,
+                    "CONTENTS_SAVE": False, "STREAM_MODE": False, "MAGIC_WORD_USE": False,
+                    "META_SEARCH": False, "RAG_QUERY_GENE": False,
+                    "WEB_SEARCH": False, "PRIVATE_MODE": True, "THINKING_MODE": False,
+                    "USER_MEMORY_LAYERS": [],
+                }
+                _sid = "UME_" + dms.set_new_session_id()
+                _folder = os.path.join(_UME_BASE, f"analytics{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+                _sbase = os.path.join(_folder, _sid)
+                _tmp = dms.DigiMSession(_sid, "User Memory Explorer", base_path=_sbase)
+                _tmp.save_status("LOCKED")
+                _exec["_SESSION_BASE_PATH"] = _sbase
+                with st.spinner("エージェント実行中..."):
+                    try:
+                        _resp = ""
+                        for _, _, chunk, _, _oref in dme.DigiMatsuExecute(
+                                st.session_state.web_service, st.session_state.web_user,
+                                _sid, "User Memory Explorer", _af, "LLM",
+                                1, _ui, [], {}, {}, [], "No Template", _exec):
+                            if chunk and not str(chunk).startswith("[STATUS]"):
+                                _resp += chunk
+                        st.session_state.setdefault(f"_{key_prefix}_hist", [])
+                        st.session_state[f"_{key_prefix}_hist"].append({
+                            "agent": _agent, "query": _q, "response": _resp,
+                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        })
+                    except Exception as e:
+                        st.error(f"実行エラー: {type(e).__name__}: {e}")
+                    finally:
+                        _tmp.save_status("UNLOCKED")
+        for _h in st.session_state.get(f"_{key_prefix}_hist", []):
+            with st.chat_message("user"):
+                st.markdown(f"**[{_h['timestamp']}] {_h['agent']}**")
+                st.markdown(_h["query"])
+            with st.chat_message("assistant"):
+                st.markdown(_h["response"])
+
+    def _um_twin_chat(user_id, key_prefix="ume_deep"):
+        """選択ユーザーのメモリだけを持つAI（=そのユーザーのデジタルツイン）と対話。
+
+        - サイドバーで選択中のエージェントに搭載されたLLMエンジンのみ選択
+        - サイドバーのエージェントのペルソナ/知識/システムプロンプトは一切使わない
+        - Persona/Nowaday/History を「ユーザーメモリのコンテキスト注入方式」で合成
+          （Historyは質問文のキーワードでスコアリングして選定）
+        - LLM単体で応答。AIの名前は選択ユーザー名
+        """
+        import DigiM_UserMemory as _dmum_t
+        import DigiM_UserMemoryBuilder as _dmumb_t
+        import DigiM_FoundationModel as _dmfm_t
+
+        st.markdown("---")
+        st.subheader("Chat with this User Twin")
+        st.caption(
+            f"「{user_id}」のユーザーメモリ(Persona/Nowaday/History)だけを文脈に持つLLMと対話します。"
+            "サイドバーのエージェント設定（人格・知識・システムプロンプト）は使用しません。"
+        )
+
+        # 対象ユーザーの実 service_id を解決
+        _bd = ux.load_bundle(user_id, "")
+        _svc = ""
+        for _r in [_bd.get("persona") or {}] + (_bd.get("nowaday") or []) + (_bd.get("history") or []):
+            if _r.get("service_id"):
+                _svc = _r["service_id"]
+                break
+
+        # サイドバー選択中エージェントのLLMエンジン一覧（エンジンのみ選択）
+        try:
+            _adata = dmu.read_json_file(st.session_state.agent_file, agent_folder_path)
+        except Exception:
+            _adata = st.session_state.get("agent_data", {}) or {}
+        _eng_list = dma.get_engine_list(_adata, model_type="LLM")
+        if not _eng_list:
+            st.caption("選択中エージェントにLLMエンジンが定義されていません。")
+            return
+        _eng_default = _adata.get("ENGINE", {}).get("LLM", {}).get("DEFAULT", _eng_list[0])
+        _eidx = _eng_list.index(_eng_default) if _eng_default in _eng_list else 0
+        _eng_name = st.selectbox("LLM Engine:", _eng_list, index=_eidx, key=f"{key_prefix}_engine")
+
+        _q = st.text_area("質問:", placeholder=f"例: 最近のあなた（{user_id}）の関心と、その背景を教えて",
+                          height=90, key=f"{key_prefix}_q")
+        if _q and st.button("Ask", key=f"{key_prefix}_ask"):
+            with st.spinner("応答生成中..."):
+                try:
+                    # 質問文でHistoryをスコアリングして文脈合成（ユーザーメモリ注入方式）
+                    _ctx, _used, _meta = _dmumb_t.build_context_text(
+                        _svc, user_id, list(_dmum_t.LAYERS), query_text=_q)
+                    _sys = (
+                        f"あなたは「{user_id}」という人物本人です。"
+                        f"以下はあなた（={user_id}）についての記憶情報のみです。"
+                        f"この記憶だけに基づき、{user_id}本人になりきって一人称で回答してください。"
+                        f"記憶に無いことは推測せず「記憶にない」と述べてください。"
+                        f"外部知識やこの記憶以外の情報は使わないでください。\n\n"
+                        f"{_ctx or '（記憶情報がありません）'}"
+                    )
+                    _eng = _adata["ENGINE"]["LLM"][_eng_name]
+                    _resp = ""
+                    for _p, _r, _c in _dmfm_t.call_function_by_name(
+                            _eng["FUNC_NAME"], _q, _sys, _eng, [], [], {}, False):
+                        if _r:
+                            _resp += _r
+                    st.session_state.setdefault(f"_{key_prefix}_hist", [])
+                    st.session_state[f"_{key_prefix}_hist"].append({
+                        "agent": f"{user_id} (User Twin / {_eng_name})",
+                        "query": _q, "response": _resp,
+                        "context": _ctx or "",
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    })
+                except Exception as e:
+                    st.error(f"実行エラー: {type(e).__name__}: {e}")
+        _hist = st.session_state.get(f"_{key_prefix}_hist", [])
+        if _hist and _hist[-1].get("context"):
+            with st.expander("Context (User Twin)"):
+                st.text(_hist[-1]["context"][:4000])
+        for _h in _hist:
+            with st.chat_message("user"):
+                st.markdown(f"**[{_h['timestamp']}] {_h['agent']}**")
+                st.markdown(_h["query"])
+            with st.chat_message("assistant"):
+                st.markdown(_h["response"])
+
+    def _um_group_twin(user_ids, key_prefix="ume_cross"):
+        """対象集団の代表AI（Group Twin）と対話。
+
+        - 対象データ(Persona+Nowaday)からシステムプロンプトをLLM生成→手動修正可
+        - Big5/基本感情の平均 + 二次感情Top5 を統計ブロックとして付与
+        - サイドバー選択中エージェントのLLMエンジンのみ選択して対話（LLM単体）
+        """
+        import DigiM_FoundationModel as _dmfm_g
+        st.markdown("---")
+        st.subheader("Chat with this Group Twin")
+        if not user_ids:
+            st.caption("対象ユーザーを選択してください。")
+            return
+        try:
+            _adata = dmu.read_json_file(st.session_state.agent_file, agent_folder_path)
+        except Exception:
+            _adata = st.session_state.get("agent_data", {}) or {}
+        _el = dma.get_engine_list(_adata, model_type="LLM")
+        if not _el:
+            st.caption("選択中エージェントにLLMエンジンが定義されていません。")
+            return
+        _ed = _adata.get("ENGINE", {}).get("LLM", {}).get("DEFAULT", _el[0])
+        _eng_name = st.selectbox("LLM Engine:", _el,
+                                 index=_el.index(_ed) if _ed in _el else 0,
+                                 key=f"{key_prefix}_g_engine")
+        _eng = _adata["ENGINE"]["LLM"][_eng_name]
+
+        _bk = f"_{key_prefix}_gtwin_sys"
+        if st.button("システムプロンプト生成/再生成（Persona+Nowaday）", key=f"{key_prefix}_g_gen"):
+            with st.spinner("生成中..."):
+                st.session_state[_bk] = ux.build_group_twin_prompt(user_ids, "", _eng)
+        _base = st.text_area("システムプロンプト（手動修正可）",
+                             value=st.session_state.get(_bk, ""), height=170,
+                             key=f"{key_prefix}_g_sysbox")
+
+        _b5s = ux.cohort_big5_stats(user_ids, "")
+        _es = ux.cohort_basic_emotion_stats(user_ids, "")
+        _sec = ux.agg_secondary_emotions(user_ids, "")
+        _stat = (
+            "\n\n【この集団の統計】\n"
+            "・Big5平均: " + "、".join(f"{ux.BIG5_JA.get(t,t)}={_b5s[t]['mean']:.2f}"
+                                       for t in ux.BIG5_TRAITS)
+            + "\n・基本感情平均: " + "、".join(f"{ux.PLUTCHIK_JA.get(e,e)}={_es[e]['mean']:.2f}"
+                                              for e in ux.PLUTCHIK_PRIMARY)
+            + "\n・二次感情Top5: " + ("、".join(f"{ux.PLUTCHIK_JA.get(k,k)}({c})"
+                                               for k, c in _sec.most_common(5)) or "なし")
+        )
+        with st.expander("付与される統計ブロック"):
+            st.text(_stat)
+
+        _q = st.text_area("質問:", height=90, key=f"{key_prefix}_g_q",
+                          placeholder="例: この集団が最も重視している価値観は？")
+        if _q and st.button("Ask", key=f"{key_prefix}_g_ask"):
+            with st.spinner("応答生成中..."):
+                try:
+                    _sys = (_base or "あなたはこのユーザー集団を代表する人物です。") + _stat
+                    _resp = ""
+                    for _p, _r, _c in _dmfm_g.call_function_by_name(
+                            _eng["FUNC_NAME"], _q, _sys, _eng, [], [], {}, False):
+                        if _r:
+                            _resp += _r
+                    st.session_state.setdefault(f"_{key_prefix}_g_hist", [])
+                    st.session_state[f"_{key_prefix}_g_hist"].append({
+                        "agent": f"Group Twin ({len(user_ids)}人 / {_eng_name})",
+                        "query": _q, "response": _resp,
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    })
+                except Exception as e:
+                    st.error(f"実行エラー: {type(e).__name__}: {e}")
+        for _h in st.session_state.get(f"_{key_prefix}_g_hist", []):
+            with st.chat_message("user"):
+                st.markdown(f"**[{_h['timestamp']}] {_h['agent']}**")
+                st.markdown(_h["query"])
+            with st.chat_message("assistant"):
+                st.markdown(_h["response"])
+
+    _tab_edit, _tab_deep, _tab_cross = st.tabs(
+        ["マイメモリ", "ユーザー理解(個人)", "グループ理解"])
+
+    # ===== タブ: ユーザー理解(個人) =====
+    with _tab_deep:
+        _uid = st.selectbox("ユーザー:", _all_users, key="ume_deep_user")
+        _b = ux.load_bundle(_uid, "")
+        _p = _b["persona"] or {}
+
+        st.markdown("#### Persona（長期像）")
+        if _p:
+            if _p.get("role"):
+                st.markdown(f"**役割:** {_p.get('role')}")
+            if _p.get("summary_text"):
+                st.caption(_p.get("summary_text"))
+            _b5 = _p.get("big5") or {}
+            _appr = []  # (label, score) for radar
+            _b5rows = []  # for table (特性/スコアのみ)
+            for t in ux.BIG5_TRAITS:
+                _it = _b5.get(t)
+                if not isinstance(_it, dict):
+                    continue
+                _stt = (_it.get("status") or "").strip().lower()
+                if _stt == "deleted":
+                    continue
+                _sc = float(_it.get("score", 0.5) or 0.5)
+                _appr.append((ux.BIG5_JA.get(t, t), _sc))
+                _b5rows.append({"特性": ux.BIG5_JA.get(t, t), "スコア": _sc})
+            if _appr:
+                _c1, _c2 = st.columns([1, 1])
+                with _c1:
+                    st.pyplot(_radar([l for l, _ in _appr], [v for _, v in _appr],
+                                     "Big5 (approved+pending)"))
+                with _c2:
+                    st.dataframe(pd.DataFrame(_b5rows), hide_index=True)
+            else:
+                st.caption("Big5はまだありません（下の要レビュー参照）")
+        else:
+            st.caption("Persona未生成")
+
+        st.markdown("#### Nowaday（最近の傾向）")
+        if _b["nowaday"]:
+            _nw = _b["nowaday"][0]
+            st.markdown(f"**期間:** {_nw.get('period','')}")
+            if _nw.get("summary_text"):
+                st.caption(_nw["summary_text"])
+            _be = _nw.get("basic_emotions") or {}
+            _vals = [float(_be.get(e, 0) or 0) for e in ux.PLUTCHIK_PRIMARY]
+            if any(v > 0 for v in _vals):
+                _ec1, _ec2 = st.columns([1, 1])
+                with _ec1:
+                    st.pyplot(_radar([ux.PLUTCHIK_JA.get(e, e) for e in ux.PLUTCHIK_PRIMARY],
+                                     _vals, "基本感情（強度）"))
+                with _ec2:
+                    st.dataframe(pd.DataFrame(
+                        [{"特性": ux.PLUTCHIK_JA.get(e, e),
+                          "スコア": round(float(_be.get(e, 0) or 0), 2)}
+                         for e in ux.PLUTCHIK_PRIMARY]), hide_index=True)
+            if _nw.get("secondary_emotions"):
+                st.markdown("**二次感情:** " + "、".join(
+                    ux.PLUTCHIK_JA.get(s, s) for s in _nw["secondary_emotions"]))
+            for _lbl, _k in (("継続", "recurring_topics"), ("新規", "emerging"),
+                             ("減退", "declining"), ("変化", "shifts")):
+                if _nw.get(_k):
+                    st.markdown(f"**{_lbl}:** " + "、".join(str(x) for x in _nw[_k]))
+        else:
+            st.caption("Nowaday未生成")
+
+        st.markdown("#### History 感情トラジェクトリ")
+        _traj_all = ux.user_emotion_trajectory(_uid, "")
+        if _traj_all:
+            _def_end = now_time.date()
+            _def_start = (now_time - timedelta(days=30)).date()
+            _rng = st.date_input(
+                "期間（このユーザーのHistory日付で絞り込み）",
+                value=(_def_start, _def_end), key="ume_deep_traj_period",
+            )
+            if isinstance(_rng, (list, tuple)) and len(_rng) == 2:
+                _s, _e = _rng[0].isoformat(), _rng[1].isoformat()
+            elif isinstance(_rng, (list, tuple)) and len(_rng) == 1:
+                _s, _e = _rng[0].isoformat(), _def_end.isoformat()
+            else:
+                _s, _e = _rng.isoformat(), _def_end.isoformat()
+            _traj = [(d, t, es) for d, t, es in _traj_all if _s <= d <= _e]
+            st.caption(f"対象 {_s} 〜 {_e}: {len(_traj)}件 / 全{len(_traj_all)}件")
+            if _traj:
+                _rows = []
+                for _d, _t, _emos in _traj:
+                    _row = {"date": _d}
+                    for _e2 in _emos:
+                        _row[ux.PLUTCHIK_JA.get(_e2, _e2)] = _row.get(ux.PLUTCHIK_JA.get(_e2, _e2), 0) + 1
+                    _rows.append(_row)
+                _df = pd.DataFrame(_rows).fillna(0)
+                if not _df.empty and len(_df.columns) > 1:
+                    _agg = _df.groupby("date").sum(numeric_only=True)
+                    st.area_chart(_agg)
+                with st.expander(f"セッション別 感情ログ（{len(_traj)}件）"):
+                    st.dataframe(pd.DataFrame(
+                        [{"date": d, "topic": t, "emotions": "、".join(ux.PLUTCHIK_JA.get(e, e) for e in es)}
+                         for d, t, es in reversed(_traj)], ), hide_index=True)
+            else:
+                st.caption("指定期間にHistoryがありません")
+        else:
+            st.caption("History未生成")
+
+        _rev = ux.persona_review_items(_uid, "")
+        if _rev["big5"] or _rev["lists"]:
+            with st.expander("要レビュー（pending）項目"):
+                if _rev["big5"]:
+                    st.markdown("**Big5:** " + "、".join(
+                        f"{ux.BIG5_JA.get(t,t)}(score={s},conf={c})" for t, s, c in _rev["big5"]))
+                for _f, _items in _rev["lists"].items():
+                    st.markdown(f"**{_f}:** " + "、".join(_items))
+
+        _um_twin_chat(_uid, "ume_deep")
+
+    # ===== タブ: グループ理解 =====
+    with _tab_cross:
+        import DigiM_VAnalytics as _dmva_g
+        st.markdown("#### 対象ユーザー選択")
+        _cohort = st.multiselect("対象ユーザー", _all_users,
+                                  default=list(_all_users), key="ume_cross_users")
+        st.caption(f"{len(_cohort)}人 選択中")
+        if not _cohort:
+            st.info("対象ユーザーを1人以上選択してください。")
+        else:
+            _b5L = [ux.BIG5_JA.get(t, t) for t in ux.BIG5_TRAITS]
+            _emL = [ux.PLUTCHIK_JA.get(e, e) for e in ux.PLUTCHIK_PRIMARY]
+
+            # ---------- Persona ----------
+            st.markdown("### Persona")
+            _b5s = ux.cohort_big5_stats(_cohort, "")
+            _pc1, _pc2 = st.columns([1, 1])
+            with _pc1:
+                st.pyplot(_radar3(_b5L, [
+                    ("最大", "#d62728", [_b5s[t]["max"] for t in ux.BIG5_TRAITS]),
+                    ("平均", "#1f77b4", [_b5s[t]["mean"] for t in ux.BIG5_TRAITS]),
+                    ("最小", "#2ca02c", [_b5s[t]["min"] for t in ux.BIG5_TRAITS]),
+                ], "Big5 (max / mean / min)"))
+            with _pc2:
+                st.dataframe(pd.DataFrame([
+                    {"特性": ux.BIG5_JA.get(t, t), "最大": _b5s[t]["max"],
+                     "平均": _b5s[t]["mean"], "最小": _b5s[t]["min"]}
+                    for t in ux.BIG5_TRAITS]), hide_index=True)
+
+            _ptext = "\n".join(ux.persona_text(u, "") for u in _cohort)
+            _pf = ux.word_freq(_ptext)
+            if _pf:
+                _wcf = _dmva_g.make_wordcloud_figure(_pf, title="Persona", width=560, height=300)
+                if _wcf is not None:
+                    st.pyplot(_wcf)
+
+            _pkmax = max(2, len(_cohort))
+            _pk = st.number_input("Personaクラスタ数", 2, _pkmax,
+                                  min(3, _pkmax), key="ume_cross_pk")
+            if st.button("Personaクラスタリング実行", key="ume_cross_pcl"):
+                st.session_state["_ume_pcluster"] = ux.cluster_users(
+                    [(u, ux.persona_text(u, "")) for u in _cohort], int(_pk), "")
+                st.session_state["_ume_pexp"] = None
+            _pcl = st.session_state.get("_ume_pcluster")
+            if _pcl:
+                if _pcl.get("error"):
+                    st.warning(_pcl["error"])
+                else:
+                    st.caption(_pcl["info"])
+                    st.dataframe(_pcl["df"], hide_index=True)
+                    if st.button("クラスタを解説（Persona）", key="ume_cross_pexp_btn"):
+                        with st.spinner("解説生成中..."):
+                            st.session_state["_ume_pexp"] = ux.explain_clusters(_pcl["summary"])
+                    if st.session_state.get("_ume_pexp"):
+                        st.markdown(st.session_state["_ume_pexp"])
+
+            # ---------- Nowaday ----------
+            st.markdown("### Nowaday")
+            _es = ux.cohort_basic_emotion_stats(_cohort, "")
+            _nc1, _nc2 = st.columns([1, 1])
+            with _nc1:
+                st.pyplot(_radar3(_emL, [
+                    ("最大", "#d62728", [_es[e]["max"] for e in ux.PLUTCHIK_PRIMARY]),
+                    ("平均", "#1f77b4", [_es[e]["mean"] for e in ux.PLUTCHIK_PRIMARY]),
+                    ("最小", "#2ca02c", [_es[e]["min"] for e in ux.PLUTCHIK_PRIMARY]),
+                ], "基本感情 (max / mean / min)"))
+            with _nc2:
+                st.dataframe(pd.DataFrame([
+                    {"感情": ux.PLUTCHIK_JA.get(e, e), "最大": _es[e]["max"],
+                     "平均": _es[e]["mean"], "最小": _es[e]["min"]}
+                    for e in ux.PLUTCHIK_PRIMARY]), hide_index=True)
+
+            _sec = ux.agg_secondary_emotions(_cohort, "")
+            if _sec:
+                st.markdown("**二次感情ランキング（合計件数）**")
+                st.dataframe(pd.DataFrame([
+                    {"二次感情": ux.PLUTCHIK_JA.get(k, k), "件数": c}
+                    for k, c in _sec.most_common()]), hide_index=True)
+
+            _nfc = ux.nowaday_field_corpus(_cohort, "")
+            st.markdown("**Nowadayワードクラウド**")
+            _wcc = st.columns(2)
+            for _i, (_fk, _fl) in enumerate(
+                    [("summary", "サマリー"), ("recurring", "継続"),
+                     ("emerging", "新規"), ("declining", "減退"), ("shifts", "変化")]):
+                _fr = ux.word_freq(_nfc.get(_fk, ""))
+                if _fr:
+                    _wf = _dmva_g.make_wordcloud_figure(_fr, title=_fl, width=360, height=220)
+                    if _wf is not None:
+                        _wcc[_i % 2].pyplot(_wf)
+                else:
+                    _wcc[_i % 2].caption(f"{_fl}: データなし")
+
+            _nkmax = max(2, len(_cohort))
+            _nk = st.number_input("Nowadayクラスタ数", 2, _nkmax,
+                                  min(3, _nkmax), key="ume_cross_nk")
+            if st.button("Nowadayクラスタリング実行", key="ume_cross_ncl"):
+                st.session_state["_ume_ncluster"] = ux.cluster_users(
+                    [(u, ux.nowaday_text(u, "")) for u in _cohort], int(_nk), "")
+                st.session_state["_ume_nexp"] = None
+            _ncl = st.session_state.get("_ume_ncluster")
+            if _ncl:
+                if _ncl.get("error"):
+                    st.warning(_ncl["error"])
+                else:
+                    st.caption(_ncl["info"])
+                    st.dataframe(_ncl["df"], hide_index=True)
+                    if st.button("クラスタを解説（Nowaday）", key="ume_cross_nexp_btn"):
+                        with st.spinner("解説生成中..."):
+                            st.session_state["_ume_nexp"] = ux.explain_clusters(_ncl["summary"])
+                    if st.session_state.get("_ume_nexp"):
+                        st.markdown(st.session_state["_ume_nexp"])
+
+            # ---------- History 感情トラジェクトリ（合計） ----------
+            st.markdown("### History 感情トラジェクトリ（合計）")
+            _ht = ux.cohort_history_emotion_totals(_cohort, "")
+            if _ht:
+                st.bar_chart(pd.Series(
+                    {ux.PLUTCHIK_JA.get(k, k): v for k, v in _ht.items()}, name="件数"))
+                st.caption(f"対象 {len(_cohort)}人の全History合計: "
+                           + "、".join(f"{ux.PLUTCHIK_JA.get(k,k)}={v}"
+                                       for k, v in list(_ht.items())[:8]))
+            else:
+                st.caption("History未生成")
+
+            # ---------- Chat with this Group Twin ----------
+            _um_group_twin(_cohort, "ume_cross")
+
+    # ===== タブ: マイメモリ（自分のメモリのみ確認・修正） =====
+    with _tab_edit:
+        import DigiM_UserMemory as _dmum_e
+        _me = st.session_state.get("user_id", "")
+        st.caption(f"対象: **{_me}**（自分のユーザーメモリのみ編集できます）")
+        if not _me:
+            st.info("ログインユーザーが特定できません。")
+        else:
+            _mb = ux.load_bundle(_me, "")
+            _emo_all = list(ux.PLUTCHIK_PRIMARY) + list(ux.PLUTCHIK_SECONDARY)
+            _stat_opts = ["approved", "pending", "deleted"]
+
+            # ---- Persona ----
+            with st.expander("Persona（長期像）を編集", expanded=True):
+                _pr = _mb["persona"] or {}
+                if not _pr:
+                    st.caption("Persona未生成")
+                else:
+                    _role = st.text_input("役割(role)", value=_pr.get("role", ""), key="ume_e_role")
+                    _summary = st.text_area("要約(summary_text)", value=_pr.get("summary_text", ""),
+                                            height=120, key="ume_e_summary")
+                    _flds = {
+                        "expertise": "専門", "recurring_interests": "関心",
+                        "values_principles": "価値観", "constraints": "制約",
+                        "communication_style": "口調/説明の好み", "avoid_topics": "避けたい話題",
+                    }
+                    for _f, _jl in _flds.items():
+                        _items = _pr.get(_f) or []
+                        if not _items:
+                            continue
+                        st.markdown(f"**{_jl}**")
+                        for _i, _it in enumerate(_items):
+                            if not isinstance(_it, dict):
+                                continue
+                            _cc1, _cc2, _cc3 = st.columns([6, 2, 1])
+                            _cc1.text_input(f"l_{_f}_{_i}", value=_it.get("label", ""),
+                                            key=f"ume_e_lbl_{_f}_{_i}", label_visibility="collapsed")
+                            _cs = (_it.get("status") or "pending").lower()
+                            _cs = _cs if _cs in _stat_opts else "pending"
+                            _cc2.selectbox(f"s_{_f}_{_i}", _stat_opts,
+                                           index=_stat_opts.index(_cs),
+                                           key=f"ume_e_st_{_f}_{_i}", label_visibility="collapsed")
+                            _cc3.markdown(
+                                f"<div style='padding-top:.4em;color:#888;font-size:.8em'>conf {float(_it.get('confidence') or 0):.2f}</div>",
+                                unsafe_allow_html=True)
+                    # Big5
+                    _b5 = _pr.get("big5") or {}
+                    if _b5:
+                        st.markdown("**Big5**")
+                        for _t in ux.BIG5_TRAITS:
+                            _bi = _b5.get(_t) or {}
+                            _bc1, _bc2, _bc3 = st.columns([3, 3, 2])
+                            _bc1.markdown(f"{ux.BIG5_JA.get(_t,_t)}")
+                            _bc2.number_input(f"score_{_t}", min_value=0.0, max_value=1.0,
+                                              value=float(_bi.get("score", 0.5) or 0.5), step=0.05,
+                                              key=f"ume_e_b5sc_{_t}", label_visibility="collapsed")
+                            _bs = (_bi.get("status") or "pending").lower()
+                            _bs = _bs if _bs in _stat_opts else "pending"
+                            _bc3.selectbox(f"b5st_{_t}", _stat_opts,
+                                           index=_stat_opts.index(_bs),
+                                           key=f"ume_e_b5st_{_t}", label_visibility="collapsed")
+                    if st.button("Persona を保存", key="ume_e_save_persona"):
+                        _upd = dict(_pr)
+                        _upd["role"] = st.session_state.get("ume_e_role", _upd.get("role", ""))
+                        _upd["summary_text"] = st.session_state.get("ume_e_summary", _upd.get("summary_text", ""))
+                        for _f in _flds:
+                            _items = _pr.get(_f) or []
+                            _ni = []
+                            for _i, _it in enumerate(_items):
+                                if not isinstance(_it, dict):
+                                    continue
+                                _ni.append({
+                                    "label": st.session_state.get(f"ume_e_lbl_{_f}_{_i}", _it.get("label", "")),
+                                    "confidence": float(_it.get("confidence") or 0.0),
+                                    "status": st.session_state.get(f"ume_e_st_{_f}_{_i}", _it.get("status") or "pending"),
+                                    "evidence": _it.get("evidence") or [],
+                                })
+                            _upd[_f] = _ni
+                        if _b5:
+                            _nb5 = dict(_b5)
+                            for _t in ux.BIG5_TRAITS:
+                                _src = dict(_b5.get(_t) or {})
+                                _src["score"] = float(st.session_state.get(f"ume_e_b5sc_{_t}", _src.get("score", 0.5)))
+                                _src["status"] = st.session_state.get(f"ume_e_b5st_{_t}", _src.get("status") or "pending")
+                                _src.setdefault("confidence", 0.0)
+                                _nb5[_t] = _src
+                            _upd["big5"] = _nb5
+                        _upd["last_reviewed"] = _dmum_e.now_ts()
+                        _dmum_e.upsert("persona", _upd)
+                        st.session_state.sidebar_message = "Persona を保存しました"
+                        st.rerun()
+
+            # ---- Nowaday ----
+            with st.expander("Nowaday（最近の傾向）を編集"):
+                _nws = _mb["nowaday"]
+                if not _nws:
+                    st.caption("Nowaday未生成")
+                else:
+                    # _nws は generated_at 降順。スナップショット履歴のため period@生成時刻で一意表示
+                    _nw_opts = {
+                        f"{m.get('period','')} @ {m.get('generated_at','')}": m for m in _nws
+                    }
+                    _osel = st.selectbox("スナップショット（period @ 生成時刻、上が最新）",
+                                         list(_nw_opts.keys()), key="ume_e_nw_period")
+                    _nw = _nw_opts[_osel]
+                    _psel = _nw.get("period", "")
+                    _k = "".join(ch for ch in str(_nw.get("id", _osel)) if ch.isalnum() or ch == "_")
+                    _nw_sum = st.text_area("要約(summary_text)", value=_nw.get("summary_text", ""),
+                                           height=110, key=f"ume_e_nw_sum_{_k}")
+                    _listflds = {"recurring_topics": "継続トピック", "emerging": "新規関心",
+                                 "declining": "減退話題", "shifts": "変化"}
+                    for _lf, _lj in _listflds.items():
+                        st.text_area(f"{_lj}（1行1項目）",
+                                     value="\n".join(str(x) for x in (_nw.get(_lf) or [])),
+                                     height=80, key=f"ume_e_nw_{_lf}_{_k}")
+                    st.markdown("**基本感情（強度0-1）**")
+                    _be = _nw.get("basic_emotions") or {}
+                    _bcols = st.columns(4)
+                    for _ei, _e in enumerate(ux.PLUTCHIK_PRIMARY):
+                        _bcols[_ei % 4].number_input(
+                            f"{ux.PLUTCHIK_JA.get(_e,_e)}", min_value=0.0, max_value=1.0,
+                            value=float(_be.get(_e, 0) or 0), step=0.05,
+                            key=f"ume_e_nw_be_{_e}_{_k}")
+                    _sec_cur = [s for s in (_nw.get("secondary_emotions") or []) if s in ux.PLUTCHIK_SECONDARY]
+                    st.multiselect("二次感情", list(ux.PLUTCHIK_SECONDARY), default=_sec_cur,
+                                   format_func=lambda s: ux.PLUTCHIK_JA.get(s, s),
+                                   key=f"ume_e_nw_sec_{_k}")
+                    if st.button("Nowaday を保存", key=f"ume_e_save_nw_{_k}"):
+                        _u = dict(_nw)
+                        _u["summary_text"] = st.session_state.get(f"ume_e_nw_sum_{_k}", _u.get("summary_text", ""))
+                        for _lf in _listflds:
+                            _txt = st.session_state.get(f"ume_e_nw_{_lf}_{_k}", "")
+                            _u[_lf] = [ln.strip() for ln in _txt.split("\n") if ln.strip()]
+                        _u["basic_emotions"] = {
+                            _e: float(st.session_state.get(f"ume_e_nw_be_{_e}_{_k}", 0) or 0)
+                            for _e in ux.PLUTCHIK_PRIMARY}
+                        _u["secondary_emotions"] = list(st.session_state.get(f"ume_e_nw_sec_{_k}", []))
+                        _dmum_e.upsert("nowaday", _u)
+                        st.session_state.sidebar_message = f"Nowaday({_psel}) を保存しました"
+                        st.rerun()
+
+            # ---- History ----
+            with st.expander("History（セッション要点）を編集"):
+                _hs = _mb["history"]
+                if not _hs:
+                    st.caption("History未生成")
+                else:
+                    _hopts = {
+                        f"{str(h.get('create_date') or '')[:16]} | {str(h.get('topic') or '')[:30]} | {h.get('session_id','')}": h
+                        for h in _hs}
+                    _hsel = st.selectbox("セッション", list(_hopts.keys()), key="ume_e_h_sel")
+                    _h = _hopts[_hsel]
+                    _hk = _h.get("session_id", "x")
+                    st.text_input("トピック", value=_h.get("topic", ""), key=f"ume_e_h_topic_{_hk}")
+                    st.text_area("抜粋(excerpt)", value=_h.get("excerpt", ""), height=110,
+                                 key=f"ume_e_h_exc_{_hk}")
+                    _hemo = [e for e in (_h.get("emotions") or []) if e in _emo_all]
+                    st.multiselect("感情(プルチック)", _emo_all, default=_hemo,
+                                   format_func=lambda s: ux.PLUTCHIK_JA.get(s, s),
+                                   key=f"ume_e_h_emo_{_hk}")
+                    st.number_input("confidence", min_value=0.0, max_value=1.0,
+                                    value=float(_h.get("confidence") or 0.0), step=0.05,
+                                    key=f"ume_e_h_conf_{_hk}")
+                    st.checkbox("有効(active) — オフで一覧/コンテキストから除外",
+                                value=((_h.get("active") or "Y") == "Y"),
+                                key=f"ume_e_h_act_{_hk}")
+                    if st.button("History を保存", key=f"ume_e_save_h_{_hk}"):
+                        _u = dict(_h)
+                        _u["topic"] = st.session_state.get(f"ume_e_h_topic_{_hk}", _u.get("topic", ""))
+                        _u["excerpt"] = st.session_state.get(f"ume_e_h_exc_{_hk}", _u.get("excerpt", ""))
+                        _u["emotions"] = list(st.session_state.get(f"ume_e_h_emo_{_hk}", []))
+                        _u["confidence"] = float(st.session_state.get(f"ume_e_h_conf_{_hk}", 0.0))
+                        _u["active"] = "Y" if st.session_state.get(f"ume_e_h_act_{_hk}", True) else "N"
+                        _dmum_e.upsert("history", _u)
+                        st.session_state.sidebar_message = "History を保存しました"
+                        st.rerun()
+
+
 ### Streamlit画面 ###
 def main():
     # セッションステートを初期化
@@ -2489,6 +3180,8 @@ def main():
         _view_options = ["Chat"]
         if st.session_state.allowed_knowledge_explorer:
             _view_options.append("Knowledge Explorer")
+        if st.session_state.allowed_user_memory_explorer:
+            _view_options.append("User Memory Explorer")
         if st.session_state.allowed_scheduler:
             _view_options.append("Scheduler")
         if len(_view_options) > 1:
@@ -2565,6 +3258,12 @@ def main():
             if side_col1.button("New Analysis", key="new_analysis_sidebar"):
                 for _k in list(st.session_state.keys()):
                     if _k.startswith("_rag_"):
+                        del st.session_state[_k]
+                st.rerun()
+        elif st.session_state.get("main_view") == "User Memory Explorer":
+            if side_col1.button("Clear Dialogue", key="ume_clear_dialogue"):
+                for _k in list(st.session_state.keys()):
+                    if _k.startswith("_ume_") and _k.endswith("_hist"):
                         del st.session_state[_k]
                 st.rerun()
         else:
@@ -2803,9 +3502,10 @@ def main():
                     _um_period_use = st.checkbox("Filter by start date", value=False, key="um_admin_period_use")
                     _um_period_value = "all"
                     if _um_period_use:
+                        _um_default_start = (now_time - timedelta(days=30)).date()
                         _um_period_date = st.date_input(
                             "Period (aggregate sessions on/after this date)",
-                            value=now_time.date(),
+                            value=_um_default_start,
                             key="um_admin_period_date",
                         )
                         _um_period_value = f"since_{_um_period_date.strftime('%Y-%m-%d')}"
@@ -3035,6 +3735,9 @@ def main():
     # メインエリアの画面切り替え
     if st.session_state.get("main_view") == "Knowledge Explorer":
         _knowledge_explorer()
+        return
+    if st.session_state.get("main_view") == "User Memory Explorer":
+        _user_memory_explorer()
         return
     if st.session_state.get("main_view") == "Scheduler":
         _scheduler_view()
@@ -3622,11 +4325,8 @@ def main():
 
         # User Memory（メイン画面・BOOKの直下に配置。Allowed.User Memory=True で表示）
         if st.session_state.allowed_user_memory:
-            import DigiM_UserMemory as _dmum
             import DigiM_UserMemorySetting as _dmus
-            import DigiM_GeneUserMemory as _dmgum
             _uid_for_um = st.session_state.user_id
-            _svc_for_um = st.session_state.service_id
 
             with st.expander("User Memory", expanded=False):
                 _user_setting = _dmus.load_user_setting(_uid_for_um)
@@ -3648,77 +4348,8 @@ def main():
                     st.session_state.sidebar_message = "Layer setting saved."
                     st.rerun()
 
-                # Review User Memory（任意で開く / 編集はバッファリングしてSaveで一括反映）
-                st.markdown("---")
-                if st.checkbox("Review User Memory", value=False, key="um_review_open"):
-                    _persona_rec = _dmum.get_one("persona", {"service_id": _svc_for_um, "user_id": _uid_for_um})
-                    if not _persona_rec:
-                        st.caption("No persona generated yet.")
-                    else:
-                        _field_labels = {
-                            "expertise": "Expertise", "recurring_interests": "Recurring interests",
-                            "values_principles": "Values / Principles", "constraints": "Constraints",
-                            "communication_style": "Communication style", "avoid_topics": "Avoid topics",
-                        }
-                        _status_options = ["Approved", "Pending", "Deleted"]
-                        _status_to_internal = {"Approved": "approved", "Pending": "pending", "Deleted": "deleted"}
-                        _internal_to_status = {v: k for k, v in _status_to_internal.items()}
-                        # 旧 'edited' も Approved として表示
-                        _internal_to_status["edited"] = "Approved"
-
-                        # Save button at the top
-                        if st.button("Save User Memory", key="um_review_save"):
-                            _updated = dict(_persona_rec)
-                            for _field in _field_labels.keys():
-                                _items = _persona_rec.get(_field) or []
-                                _new_items = []
-                                for _idx, _it in enumerate(_items):
-                                    if not isinstance(_it, dict):
-                                        continue
-                                    _new_label = st.session_state.get(f"um_lbl_{_field}_{_idx}", _it.get("label", ""))
-                                    _cur_internal = _it.get("status") or "pending"
-                                    _cur_disp = _internal_to_status.get(_cur_internal, "Pending")
-                                    _new_status_disp = st.session_state.get(f"um_stat_{_field}_{_idx}", _cur_disp)
-                                    _new_status = _status_to_internal.get(_new_status_disp, "pending")
-                                    _new_items.append({
-                                        "label": _new_label,
-                                        "confidence": float(_it.get("confidence") or 0.0),
-                                        "status": _new_status,
-                                        "evidence": _it.get("evidence") or [],
-                                    })
-                                _updated[_field] = _new_items
-                            _updated["last_reviewed"] = _dmum.now_ts()
-                            _dmum.upsert("persona", _updated)
-                            st.session_state.sidebar_message = "User memory saved."
-                            st.rerun()
-
-                        st.markdown(f"**Role**: {_persona_rec.get('role') or '(unset)'}")
-                        st.markdown(f"**Last reviewed**: {_persona_rec.get('last_reviewed') or '(never)'}")
-
-                        # 各項目: text_input(ラベル上書き) + selectbox(ステータス)
-                        for _field, _label in _field_labels.items():
-                            _items = _persona_rec.get(_field) or []
-                            if not _items:
-                                continue
-                            st.markdown(f"**{_label}**")
-                            for _idx, _it in enumerate(_items):
-                                if not isinstance(_it, dict):
-                                    continue
-                                _lbl = _it.get("label", "")
-                                _conf = float(_it.get("confidence") or 0.0)
-                                _cur_status = _internal_to_status.get(_it.get("status") or "pending", "Pending")
-                                if _cur_status not in _status_options:
-                                    _cur_status = "Pending"
-                                _c1, _c2, _c3 = st.columns([6, 2, 1])
-                                _c1.text_input(f"label_{_field}_{_idx}", value=_lbl, key=f"um_lbl_{_field}_{_idx}", label_visibility="collapsed")
-                                _c2.selectbox(
-                                    f"status_{_field}_{_idx}",
-                                    _status_options,
-                                    index=_status_options.index(_cur_status),
-                                    key=f"um_stat_{_field}_{_idx}",
-                                    label_visibility="collapsed",
-                                )
-                                _c3.markdown(f"<div style='padding-top:0.4em;color:#888;font-size:0.85em'>conf {_conf:.2f}</div>", unsafe_allow_html=True)
+                # Persona/Nowaday/History の確認・修正は
+                # User Memory Explorer の「③ マイメモリ編集」タブへ移管。
 
     # ファイルダウンローダー
     if st.session_state.allowed_download_md:
