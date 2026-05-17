@@ -524,10 +524,17 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
     # KnowledgeのRAGデータ毎に処理（エージェントのKNOWLEDGE→BOOKの定義順で出力）
     db_client = dmc.get_chroma_client()
     knowledge_map = {k.get("RAG_NAME"): k for k in agent.knowledge}
+    # QUERY_SEQ（クエリ種別）ごとの色。seq_label と対応:
+    #   "0" = クエリ①「入力そのまま」      → 水色
+    #   "1" = クエリ②「会話履歴付き入力」  → 青色
+    #   "2" = クエリ③「入力の意図」        → 紫色
+    # タプルは (NORMAL=濃色, それ以外(＋期間の絞込等)=淡色)。
+    # キーは文字列。QUERY_SEQ が int/str どちらでも str() で正規化して引く
     color_map = {
-        "1": ("blue", "lightskyblue"),
-        "2": ("navy", "cornflowerblue"),
-        "default": ("deepskyblue", "powderblue"),
+        "0": ("deepskyblue", "lightskyblue"),
+        "1": ("blue", "cornflowerblue"),
+        "2": ("purple", "plum"),
+        "default": ("gray", "lightgray"),
     }
     cat_category = category_map_json.get("Category", {})
     cat_color = category_map_json.get("CategoryColor", {})
@@ -559,7 +566,7 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
 
     for rag_name, group in ordered_groups:
         group["q_colors"] = [
-            color_map.get(seq, color_map["default"])[0 if mode == "NORMAL" else 1]
+            color_map.get(str(seq), color_map["default"])[0 if str(mode) == "NORMAL" else 1]
             for seq, mode in zip(group["QUERY_SEQ"], group["QUERY_MODE"])
         ]
 

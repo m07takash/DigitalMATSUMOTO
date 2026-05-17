@@ -865,6 +865,30 @@ def mode_label(x: str) -> str:
         return "＋期間の絞込"
     return x
 
+def _resolve_ku_file(_folder, _seq, _sub, _candidates, _logical_key, _rag):
+    """Knowledge Utility画像の実ファイル名を解決する。
+    1) 保存済み候補が実在すればそれを使う
+    2) 無ければセッション名に依存せず {seq}-{sub}-*<種別>*_{rag}.{ext} でglob補完
+    （セッション名が途中で変わってもファイルを見失わないようにするため）"""
+    _ext = "csv" if "csv" in str(_logical_key) else "png"
+    for _f in (_candidates or []):
+        if _f and str(_f).endswith(f"_{_rag}.{_ext}") and os.path.exists(os.path.join(_folder, _f)):
+            return _f
+    _tok = {
+        "scatter_plot_file_ref": "ScatterRefPlot",
+        "scatter_plot_file_category": "ScatterCategoryPlot",
+        "scatter_plot_file_csv": "ScatterData",
+        "similarity_plot_file": "KUtilPlot",
+    }.get(_logical_key, "")
+    try:
+        for _fn in sorted(os.listdir(_folder)):
+            if _fn.startswith(f"{_seq}-{_sub}-") and (_tok in _fn if _tok else True) and _fn.endswith(f"_{_rag}.{_ext}"):
+                return _fn
+    except (FileNotFoundError, NotADirectoryError):
+        pass
+    return None
+
+
 def ak_line(ak_dict):
     query_seq = seq_label(ak_dict.get("QUERY_SEQ", ""))
     query_mode = mode_label(ak_dict.get("QUERY_MODE", ""))
@@ -4062,7 +4086,7 @@ def main():
                                                 st.session_state.analytics_dimension_mode["params"]["perplexity"] = ak_col3.number_input(label="t-SNE Perplexity:", value=40, step=1, format="%d", key=f"tsne_perplexity_{k}_{k2}")
                                             if ak_col1.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}", disabled=bool(st.session_state._bg_task)):
                                                 _ak_agent_file = v2["setting"]["agent_file"]
-                                                _ak_title = f"{k}-{k2}-{st.session_state.session.session_name}"
+                                                _ak_title = f"{k}-{k2}-{st.session_state.session.session_id}"
                                                 _ak_refs = [dmu.parse_log_template(rd) for rd in v2["response"]["reference"]["knowledge_rag"] if "page_id" not in rd]
                                                 _ak_folder = st.session_state.session.session_analytics_folder_path
                                                 _ak_mode = st.session_state.analytics_knowledge_mode
@@ -4107,7 +4131,7 @@ def main():
                                                         if st.session_state.analytics_dimension_mode_compare["method"] == "t-SNE":
                                                             st.session_state.analytics_dimension_mode_compare["params"]["perplexity"] = ak_compare_col3.number_input(label="t-SNE Perplexity:", value=40, step=1, format="%d", key=f"tsne_perplexity_compare_{k}_{k2}")
                                                         if ak_compare_col1.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}_compare{selected_compare_idx}", disabled=bool(st.session_state._bg_task)):
-                                                            _cak_title = f"{k}-{k2}-{st.session_state.session.session_name}_compare{selected_compare_idx}"
+                                                            _cak_title = f"{k}-{k2}-{st.session_state.session.session_id}_compare{selected_compare_idx}"
                                                             _cak_refs = [dmu.parse_log_template(rd) for rd in compare_agent_info["knowledge_rag"]["knowledge_ref"] if "page_id" not in rd]
                                                             _cak_agent_file = compare_agent_file
                                                             _cak_timestamp = compare_timestamp
@@ -4140,8 +4164,9 @@ def main():
                                                         if "image_files" in compare_agent_info["knowledge_utility"]:
                                                             image_files = compare_agent_info["knowledge_utility"]["image_files"]
                                                             ext_for = lambda k: "csv" if "csv" in k else "png"
+                                                            _ku_seq, _ku_sub = k, k2
                                                             rag_to_files = {
-                                                                rag: {k: next((f for f in v if f.endswith(f"_{rag}.{ext_for(k)}")), None) for k, v in image_files.items()}
+                                                                rag: {lk: _resolve_ku_file(st.session_state.session.session_analytics_folder_path, _ku_seq, _ku_sub, v, lk, rag) for lk, v in image_files.items()}
                                                                 for rag in sorted({os.path.splitext(f)[0].rsplit("_", 1)[-1] for v in image_files.values() for f in v})
                                                             }
                                                             for rag_category, files in rag_to_files.items():
@@ -4175,8 +4200,9 @@ def main():
                                                     image_files = analytics_dict["knowledge_utility"]["image_files"]
                                                     ext_for = lambda k: "csv" if "csv" in k else "png"
                                                     rag_categories = sorted(similarity_utility_dict.keys())
+                                                    _ku_seq, _ku_sub = k, k2
                                                     rag_to_files = {
-                                                        rag: {k: next((f for f in v if f.endswith(f"_{rag}.{ext_for(k)}")), None) for k, v in image_files.items()}
+                                                        rag: {lk: _resolve_ku_file(st.session_state.session.session_analytics_folder_path, _ku_seq, _ku_sub, v, lk, rag) for lk, v in image_files.items()}
                                                         #for rag in sorted({os.path.splitext(f)[0].rsplit("_", 1)[-1] for v in image_files.values() for f in v})
                                                         for rag in rag_categories
                                                     }
