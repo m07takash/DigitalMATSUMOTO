@@ -270,7 +270,7 @@ def _build_where_limitation(rag_data, exec_info, define_code={}):
                 non_empty = [x for x in code_val if x not in ("", None)]
                 if non_empty:
                     items.append({v: {"$in": non_empty}})
-            else:
+            elif code_val not in ("", None):
                 items.append({v: {"$eq": code_val}})
         if items:
             where_limitation_conditions.append(

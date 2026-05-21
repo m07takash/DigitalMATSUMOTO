@@ -1,42 +1,41 @@
 {
     "DISPLAY": true,
-    "DISPLAY_NAME": "デジタルツイン(サンプル)",
+    "DISPLAY_NAME": "The Round(Board)",
     "GROUP": [
         "User"
     ],
     "ORG": [
-        {"company": "デジMラボ"},
-        {"company": "デジMラボ", "dept": "Consulting"},
-        {"company": "デジMラボ", "BU": "DX"}
+        {"company": "The Round"},
+        {"company": "The Round", "dept": "Board"}
     ],
     "PERSONA_FILES": [
-        "agent_X0Sample_personas.xlsx"
+        "TheRound_personas.xlsx"
     ],
-    "NAME": "デジタルコンサル",
-    "ACT": "コンサルティングファームのパートナー",
+    "NAME": "The Round",
+    "ACT": "Board Member",
     "PERSONALITY": {
-        "SEX": "女性",
-        "BIRTHDAY": "01-Jan-1980",
+        "SEX": "",
+        "BIRTHDAY": "",
         "IS_ALIVE": true,
         "NATIONALITY": "Japanese",
         "BIG5": {
-            "Openness": 0.7,
-            "Conscientiousness": 0.7,
-            "Extraversion": 0.7,
-            "Agreeableness": 0.7,
-            "Neuroticism": 0.2
+            "Openness": 0.75,
+            "Conscientiousness": 0.80,
+            "Extraversion": 0.55,
+            "Agreeableness": 0.65,
+            "Neuroticism": 0.35
         },
         "LANGUAGE": "日本語",
         "SPEAKING_STYLE": "Polite",
-        "CHARACTER": "Sample.txt"
+        "CHARACTER": "あなたは『The Round』というコンサルティングファームの一員です。The Roundはアーサー王伝説の『円卓の騎士』に着想を得た少数精鋭のコンサルファームで、現在のメンバーは7名。各メンバーは役職ではなく対等な円卓のパートナーとして、それぞれの専門性を持ち寄り顧客の意思決定に伴走します。一人称や具体的な専門領域はペルソナごとに異なりますが、共通して『誠実』『率直』『顧客の長期利益に資する助言』を行動原理としています。"
     },
     "ENGINE": {
         "LLM": {
-            "DEFAULT": "GPT-5.1",
-            "GPT-5.1": {
-                "NAME": "GPT-5.1",
+            "DEFAULT": "GPT-5.5",
+            "GPT-5.5": {
+                "NAME": "GPT-5.5",
                 "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5.1",
+                "MODEL": "gpt-5.5",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {"limit": 10000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
@@ -190,20 +189,6 @@
             "PRACTICE": "practice_00Default.json",
             "ADD_KNOWLEDGE": []
         },
-        "PERSONA_COMPARE": {
-            "MAGIC_WORDS": [
-                "皆の意見を聞いて"
-            ],
-            "PRACTICE": "practice_51PersonaCompare.json",
-            "ADD_KNOWLEDGE": []
-        },
-        "PERSONA_THINKING": {
-            "MAGIC_WORDS": [
-                "適任に聞いて"
-            ],
-            "PRACTICE": "practice_52PersonaThinking.json",
-            "ADD_KNOWLEDGE": []
-        },
         "Chat": {
             "MAGIC_WORDS": [
                 "簡潔に回答して",
@@ -226,52 +211,12 @@
             ],
             "PRACTICE": "practice_03RememberHistory.json"
         },
-        "ETHICAL_CHECK": {
-            "MAGIC_WORDS": [
-                "エシカルチェックしてください。"
-            ],
-            "PRACTICE": "practice_04Ethical_Check.json",
-            "ADD_KNOWLEDGE": []
-        },
-        "SENRYU_SENSEI": {
-            "MAGIC_WORDS": [
-                "川柳を詠んでください。",
-                "川柳を作成してください。"
-            ],
-            "PRACTICE": "practice_05Senryu.json",
-            "ADD_KNOWLEDGE": [
-                {
-                    "RAG_NAME": "Quote",
-                    "RETRIEVER": "Vector",
-                    "DATA": [
-                        {
-                            "DATA_TYPE": "DB",
-                            "DATA_NAME": "Sample01_Quote"
-                        }
-                    ],
-                    "TIMESTAMP": "CURRENT_DATE",
-                    "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
-                    "HEADER_TEMPLATE": "【参考】好きな著名人による名言\n",
-                    "CHUNK_TEMPLATE": "・{speaker}「{value_text}」\n\n",
-                    "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{bucket}', 'QUERY_SEQ': '{query_seq}', 'QUERY_MODE': '{query_mode}', 'ID': '{id}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'speaker': '{speaker}', 'text_short': '{value_text_short}'",
-                    "TEXT_LIMITS": 1000,
-                    "DISTANCE_LOGIC": "Cosine"
-                }
-            ]
-        },
         "IMAGE_GEN": {
             "MAGIC_WORDS": [
                 "画像を生成してください。",
                 "画像を作成してください。"
             ],
             "PRACTICE": "practice_06Image_Gen.json",
-            "ADD_KNOWLEDGE": []
-        },
-        "REPEAT_RESPONSE": {
-            "MAGIC_WORDS": [
-                "オウム返ししてください。"
-            ],
-            "PRACTICE": "practice_07Fixed_Message.json",
             "ADD_KNOWLEDGE": []
         },
         "MANAGEMENT_ANALYSIS": {
@@ -284,22 +229,12 @@
     },
     "KNOWLEDGE": [
         {
-            "RAG_NAME": "Experience",
+            "RAG_NAME": "Opinion",
             "RETRIEVER": "Vector",
             "DATA": [
                 {
                     "DATA_TYPE": "DB",
-                    "DATA_NAME": "Sample02_Memo",
-                    "META_SEARCH": {
-                        "CONDITION": [
-                            "DATE"
-                        ],
-                        "BONUS": 0.5
-                    }
-                },
-                {
-                    "DATA_TYPE": "DB",
-                    "DATA_NAME": "Sample03_Feedback",
+                    "DATA_NAME": "TheRound_Opinion",
                     "META_SEARCH": {
                         "CONDITION": [
                             "DATE"
@@ -312,15 +247,28 @@
                             "DEFINE_CODE": {
                                 "PATTERN": "and",
                                 "CODES": {
-                                    "EMP_CODE": "emp_code"
+                                    "USER_NAME": "user_name"
                                 }
                             }
                         }
                     }
-                },
+                }
+            ],
+            "TIMESTAMP": "CREATE_DATE",
+            "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
+            "HEADER_TEMPLATE": "以下は過去のあなたの発言です。\n",
+            "CHUNK_TEMPLATE": "・({timestamp}({days_difference}日前)の情報）、質問との近さ:{similarity_prompt}){value_text}\n\n",
+            "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{bucket}', 'QUERY_SEQ': '{query_seq}', 'QUERY_MODE': '{query_mode}', 'ID': '{id}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}'",
+            "TEXT_LIMITS": 3000,
+            "DISTANCE_LOGIC": "Cosine"
+        },
+        {
+            "RAG_NAME": "Experience",
+            "RETRIEVER": "Vector",
+            "DATA": [
                 {
                     "DATA_TYPE": "DB",
-                    "DATA_NAME": "Communication_Memo",
+                    "DATA_NAME": "TheRound_Experience",
                     "META_SEARCH": {
                         "CONDITION": [
                             "DATE"
@@ -330,11 +278,11 @@
                     "FILTER": {
                         "PATTERN": "and",
                         "CONDITION": {
-                            "USER_INFO": {
+                            "DEFINE_CODE": {
                                 "PATTERN": "and",
-                                "ITEMS": [
-                                    "user_id"
-                                ]
+                                "CODES": {
+                                    "USER_NAME": "user_name"
+                                }
                             }
                         }
                     }
@@ -342,19 +290,19 @@
             ],
             "TIMESTAMP": "CREATE_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
-            "HEADER_TEMPLATE": "以下はこれまであなたが学んできたことです。\n",
+            "HEADER_TEMPLATE": "以下は過去のあなたの経験です。\n",
             "CHUNK_TEMPLATE": "・({timestamp}({days_difference}日前)の情報）、質問との近さ:{similarity_prompt}){value_text}\n\n",
             "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{bucket}', 'QUERY_SEQ': '{query_seq}', 'QUERY_MODE': '{query_mode}', 'ID': '{id}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}'",
             "TEXT_LIMITS": 2000,
             "DISTANCE_LOGIC": "Cosine"
         },
         {
-            "RAG_NAME": "Comment",
+            "RAG_NAME": "Impression",
             "RETRIEVER": "Vector",
             "DATA": [
                 {
                     "DATA_TYPE": "DB",
-                    "DATA_NAME": "Communication_Comment",
+                    "DATA_NAME": "TheRound_Impression",
                     "META_SEARCH": {
                         "CONDITION": [
                             "DATE"
@@ -364,17 +312,11 @@
                     "FILTER": {
                         "PATTERN": "and",
                         "CONDITION": {
-                            "SERVICE_INFO": {
+                            "DEFINE_CODE": {
                                 "PATTERN": "and",
-                                "ITEMS": [
-                                    "service_id"
-                                ]
-                            },
-                            "USER_INFO": {
-                                "PATTERN": "and",
-                                "ITEMS": [
-                                    "user_id"
-                                ]
+                                "CODES": {
+                                    "USER_NAME": "user_name"
+                                }
                             }
                         }
                     }
@@ -382,57 +324,22 @@
             ],
             "TIMESTAMP": "CREATE_DATE",
             "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
-            "HEADER_TEMPLATE": "以下はこれまでの人間との会話で貰ったコメントです。\n",
-            "CHUNK_TEMPLATE": "・({timestamp}({days_difference}日前)の情報)\n{value_text}\n\n",
-            "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{bucket}', 'QUERY_SEQ': '{query_seq}', 'QUERY_MODE': '{query_mode}', 'ID': '{id}', 'timestamp': '{timestamp}', 'category': '{category}', 'similarity_Q': {similarity_prompt_original}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}'",
-            "TEXT_LIMITS": 1000,
-            "DISTANCE_LOGIC": "Cosine"
-        },
-        {
-            "RAG_NAME": "User_Dialog",
-            "RETRIEVER": "Vector",
-            "DATA": [
-                {
-                    "DATA_TYPE": "DB",
-                    "DATA_NAME": "User_Dialog",
-                    "META_SEARCH": {
-                        "CONDITION": [
-                            "DATE"
-                        ],
-                        "BONUS": 0.5
-                    },
-                    "FILTER": {
-                        "PATTERN": "and",
-                        "CONDITION": {
-                            "USER_INFO": {
-                                "PATTERN": "and",
-                                "ITEMS": [
-                                    "user_id"
-                                ]
-                            }
-                        }
-                    }
-                }
-            ],
-            "TIMESTAMP": "CURRENT_DATE",
-            "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
-            "HEADER_TEMPLATE": "以下はあなたの対話相手が過去に行った発言です。どんな人物なのかを推定する上で参考にしてください。\n",
-            "CHUNK_TEMPLATE": "「{value_text}」(質問との近さ:{similarity_prompt})\n",
-            "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{bucket}', 'QUERY_SEQ': '{query_seq}', 'QUERY_MODE': '{query_mode}', 'ID': '{id}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'text_short': '{value_text_short}'",
-            "TEXT_LIMITS": 5000,
+            "HEADER_TEMPLATE": "以下はあなたに対する他者の印象です。\n",
+            "CHUNK_TEMPLATE": "・({timestamp}({days_difference}日前)の情報）、質問との近さ:{similarity_prompt}){speaker}「{value_text}」\n\n",
+            "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{bucket}', 'QUERY_SEQ': '{query_seq}', 'QUERY_MODE': '{query_mode}', 'ID': '{id}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}'",
+            "TEXT_LIMITS": 2000,
             "DISTANCE_LOGIC": "Cosine"
         }
     ],
     "SKILL": {},
     "DEFINE_CODE": {
-        "COMPANY_CODE": [],
-        "DEPT_CODE": [],
-        "EMP_CODE": ["emp001"]
+        "COMPANY_CODE": ["TheRound"],
+        "USER_NAME": []
     },
     "FEEDBACK": {
         "ACTIVE": "Y",
         "SAVE_MODE": "CSV",
-        "SAVE_DB": "Sample00_Communication",
+        "SAVE_DB": "Sample00_Feedback",
         "DEFAULT_CATEGORY": "未設定",
         "FEEDBACK_ITEM_LIST": [
             "memo",

@@ -39,12 +39,12 @@
         "value_text": ["feedback"]
     },
     "Communication_Memo":{
-        "active": "Y",
+        "active": "N",
         "input" : "csv",
         "data_type" : "chromadb",
         "bucket": "Communication_Memo",
         "file_path": "user/common/csv/",
-        "file_name": "Sample00_Communication.csv",
+        "file_name": "Sample00_Feedback.csv",
         "field_items": ["title", "RAG_Category", "category", "create_date", "memo", "service_id", "user_id", "session_name", "seq", "sub_seq", "query", "response"],
         "category_items": [
             {"RAG_Category":["memo"]},
@@ -55,12 +55,12 @@
         "value_text": ["memo"]
     },
     "Communication_Comment":{
-        "active": "Y",
+        "active": "N",
         "input" : "csv",
         "data_type" : "chromadb",
         "bucket": "Communication_Comment",
         "file_path": "user/common/csv/",
-        "file_name": "Sample00_Communication.csv",
+        "file_name": "Sample00_Feedback.csv",
         "field_items": ["title", "RAG_Category", "category", "create_date", "memo", "service_id", "user_id", "session_name", "seq", "sub_seq", "query", "response"],
         "category_items": [
             {"RAG_Category":["comment"]},
@@ -69,6 +69,45 @@
         "title": ["title"],
         "key_text": ["memo"],
         "value_text": ["memo"]
+    },
+    "TheRound_Opinion":{
+        "active": "Y",
+        "input" : "csv",
+        "data_type" : "chromadb",
+        "bucket": "TR01_Opinion",
+        "file_path": "user/common/csv/TheRound/",
+        "file_name": "TheRound01_Opinion.csv",
+        "field_items": ["user_name", "create_date", "opinion", "situation", "category"],
+        "category_items": [],
+        "title": ["user_name","(","create_date",")","situation"],
+        "key_text": ["opinion", "situation"],
+        "value_text": ["opinion"]
+    },
+    "TheRound_Experience":{
+        "active": "Y",
+        "input" : "csv",
+        "data_type" : "chromadb",
+        "bucket": "TR02_Experience",
+        "file_path": "user/common/csv/TheRound/",
+        "file_name": "TheRound02_Experience.csv",
+        "field_items": ["user_name", "create_date", "episode", "situation", "category"],
+        "category_items": [],
+        "title": ["user_name","(","create_date",")","situation"],
+        "key_text": ["episode", "situation"],
+        "value_text": ["episode"]
+    },
+    "TheRound_Impression":{
+        "active": "Y",
+        "input" : "csv",
+        "data_type" : "chromadb",
+        "bucket": "TR03_Impression",
+        "file_path": "user/common/csv/TheRound/",
+        "file_name": "TheRound03_Impression.csv",
+        "field_items": ["user_name", "create_date", "speaker", "episode", "situation", "category"],
+        "category_items": [],
+        "title": ["user_name","(","speaker",":","create_date",")","situation"],
+        "key_text": ["episode", "situation","speaker"],
+        "value_text": ["episode"]
     },
     "SampleConsultingBookExcel": {
         "active": "Y",
