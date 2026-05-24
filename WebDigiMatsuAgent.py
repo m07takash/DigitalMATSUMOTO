@@ -2120,6 +2120,15 @@ def _knowledge_explorer():
                         for _j, (_pl, _pb) in enumerate(_chunk):
                             _cols[_j].image(_pb, caption=_pl)
 
+            # Trend解説の対象期間（任意）: 指定すると全体期間の中で当該期間の特徴を中心に解説
+            _tr_focus_on = st.checkbox("解説の対象期間を指定する（指定なし＝全期間ベース＋今後のトピック推定）", value=False, key="rag_trend_focus_on")
+            _tr_focus_from = None
+            _tr_focus_to = None
+            if _tr_focus_on and _has_date and _date_from is not None and _date_to is not None:
+                _fc1, _fc2 = st.columns(2)
+                _tr_focus_from = _fc1.date_input("Focus Period From:", value=_date_from, min_value=_date_from, max_value=_FAR_FUTURE, key="rag_trend_focus_from")
+                _tr_focus_to = _fc2.date_input("Focus Period To:", value=_date_to, min_value=_date_from, max_value=_FAR_FUTURE, key="rag_trend_focus_to")
+
             def _tr_ctx():
                 _t = st.session_state.get("_rag_trend")
                 if not _t or not _t.get("groups"):
@@ -2128,6 +2137,11 @@ def _knowledge_explorer():
                 for _g in _t["groups"]:
                     if _g.get("summary"):
                         _x += f"\n[{_g['name']}]\n{_g['summary']}\n"
+                if _tr_focus_from is not None and _tr_focus_to is not None:
+                    _x += (f"\n【解説の対象期間】 {_tr_focus_from} 〜 {_tr_focus_to}\n"
+                           "上記の全体期間データを背景としつつ、特に「解説の対象期間」に該当する期間の"
+                           "特徴・話題・変化を中心に【概要】を記述してください。"
+                           "【今後のトピック推定】は対象期間以降の見通しとして提示してください。\n")
                 return _x
 
             _tr_disp = _explanation_block("_rag_trend_expl", "Trend Analyst", "agent_23DataAnalyst.json",
