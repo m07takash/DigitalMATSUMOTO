@@ -762,7 +762,14 @@ def show_uploaded_files_memory(seq_key, file_path, file_name, file_type):
         df = pd.read_excel(uploaded_file)
         st.dataframe(df)
     elif "image" in file_type:
-        st.image(uploaded_file)
+        # st.image(path) は拡張子からMIME判定するため拡張子と実フォーマットが
+        # 一致しない場合（例: 中身JPEGなのに .png）に表示されない。
+        # バイトで渡してStreamlit側のフォーマット自動判定に任せる。
+        try:
+            with open(uploaded_file, "rb") as _f:
+                st.image(_f.read())
+        except Exception:
+            st.image(uploaded_file)
     elif "video" in file_type:
         st.video(uploaded_file)
     elif "audio" in file_type:
@@ -1501,6 +1508,7 @@ def _knowledge_explorer():
 
     _data_type = "ChromaDB"
     _MARKER_CHOICES = ["o", "s", "D", "^", "*", "P", "X", "v", "p", "h", "<", ">"]
+    _FAR_FUTURE = datetime(2099, 12, 31).date()  # 日付入力の未来日選択を許容する上限
 
     # コレクション(DATA_NAME) → RAG_NAME のマップ（エージェントのKNOWLEDGE/BOOK由来）
     _col_to_rag_name = {}
@@ -1592,7 +1600,7 @@ def _knowledge_explorer():
             return sorted(_dfx["rag_name"].dropna().astype(str).unique().tolist())
         return []
 
-    def _scatter_png(_dfx, _color_col, _marker_col, _size_mode, _title):
+    def _scatter_png(_dfx, _color_col, _marker_col, _size_mode, _title, _period_from=None, _period_to=None):
         _dot = None
         if _size_mode == "Newer=Larger" and "create_date" in _dfx.columns:
             _d = pd.to_datetime(_dfx["create_date"], errors="coerce")
@@ -1601,6 +1609,10 @@ def _knowledge_explorer():
                 _mx = _d.max().timestamp()
                 _rg = _mx - _mn if _mx > _mn else 1
                 _dot = _d.apply(lambda x: 10 + 190 * ((x.timestamp() - _mn) / _rg) if pd.notna(x) else 10).values
+        elif _size_mode == "Highlight Period" and "create_date" in _dfx.columns and _period_from is not None and _period_to is not None:
+            _d = pd.to_datetime(_dfx["create_date"], errors="coerce")
+            _in = (_d >= pd.Timestamp(_period_from)) & (_d <= pd.Timestamp(_period_to) + pd.Timedelta(days=1))
+            _dot = _in.apply(lambda b: 200 if bool(b) else 20).values
         fig, ax = plt.subplots(figsize=(9, 6))
         _mk = {}
         if _marker_col != "(none)" and _marker_col in _dfx.columns:
@@ -1772,7 +1784,7 @@ def _knowledge_explorer():
             if not _dp.empty:
                 _mn = _dp.min().date()
                 _mx = _dp.max().date()
-                _pv = _c3.date_input("Period From/To:", value=(_mn, _mx), min_value=_mn, max_value=_mx, key=f"{kp}_f_period")
+                _pv = _c3.date_input("Period From/To:", value=(_mn, _mx), min_value=_mn, max_value=_FAR_FUTURE, key=f"{kp}_f_period")
                 if isinstance(_pv, (list, tuple)) and len(_pv) == 2:
                     _pf, _pt = _pv
                     _dd = pd.to_datetime(_sub["create_date"], errors="coerce")
@@ -1806,8 +1818,8 @@ def _knowledge_explorer():
             _mind = _dpall.min().date()
             _maxd = _dpall.max().date()
             _dc1, _dc2 = st.columns(2)
-            _date_from = _dc1.date_input("Date From:", value=_mind, min_value=_mind, max_value=_maxd, key="rag_date_from")
-            _date_to = _dc2.date_input("Date To:", value=_maxd, min_value=_mind, max_value=_maxd, key="rag_date_to")
+            _date_from = _dc1.date_input("Date From:", value=_mind, min_value=_mind, max_value=_FAR_FUTURE, key="rag_date_from")
+            _date_to = _dc2.date_input("Date To:", value=_maxd, min_value=_mind, max_value=_FAR_FUTURE, key="rag_date_to")
 
     _s1, _s2, _s3, _s4 = st.columns([1, 1, 1, 1])
     _dim_method = _s1.radio("Dimension Reduction:", ["PCA", "t-SNE"], index=0, horizontal=True, key="rag_dim_method")
@@ -1824,8 +1836,15 @@ def _knowledge_explorer():
     _color_col = _s3.selectbox("Color By:", _color_options, index=_cdef, key="rag_color_by")
     _marker_col = _s4.selectbox("Marker By:", ["(none)"] + [c for c in _filterable_cols if c != _color_col], index=0, key="rag_marker_by")
     _s5, _s6 = st.columns([1, 1])
-    _size_mode = _s5.radio("Dot Size:", ["Uniform", "Newer=Larger"], index=0, horizontal=True, key="rag_dot_size")
+    _size_mode = _s5.radio("Dot Size:", ["Uniform", "Newer=Larger", "Highlight Period"], index=0, horizontal=True, key="rag_dot_size")
     _do_search = _s6.button("Search & Plot", key="rag_do_search", type="primary")
+    # Highlight Period モード時のサブ期間（Date From～To の範囲内で指定）。該当ドットだけ大きく描画
+    _hl_from = None
+    _hl_to = None
+    if _size_mode == "Highlight Period" and _has_date and _date_from is not None and _date_to is not None:
+        _h1, _h2 = st.columns(2)
+        _hl_from = _h1.date_input("Highlight Period From:", value=_date_from, min_value=_date_from, max_value=_date_to, key="rag_hl_from")
+        _hl_to = _h2.date_input("Highlight Period To:", value=_date_to, min_value=_date_from, max_value=_date_to, key="rag_hl_to")
 
     if _do_search:
         st.session_state._rag_searched = True
@@ -1858,15 +1877,16 @@ def _knowledge_explorer():
                 if _marker_col != "(none)" and _marker_col not in _dfr.columns and _marker_col in _dfs.columns:
                     _dfr[_marker_col] = _dfr["id"].map(_dfs.set_index("id")[_marker_col])
                 _ttl = f"{_dim_method} - {_selected} ({filtered_count}件)\n{_dinfo}"
-                _png_total = _scatter_png(_dfr, _color_col, _marker_col, _size_mode, _ttl)
+                _png_total = _scatter_png(_dfr, _color_col, _marker_col, _size_mode, _ttl, _hl_from, _hl_to)
                 _png_rag = {}
                 for _rn in _rag_list(_dfr):
                     _sr = _dfr[_dfr["rag_name"].astype(str) == _rn]
                     if len(_sr) >= 1:
-                        _png_rag[_rn] = _scatter_png(_sr, _color_col, _marker_col, _size_mode, f"{_dim_method} - {_rn} ({len(_sr)}件)")
+                        _png_rag[_rn] = _scatter_png(_sr, _color_col, _marker_col, _size_mode, f"{_dim_method} - {_rn} ({len(_sr)}件)", _hl_from, _hl_to)
                 st.session_state._rag_scatter_cache = {
                     "df_reduced": _dfr, "dim_info": _dinfo, "dim_method": _dim_method,
                     "color_col": _color_col, "marker_col": _marker_col, "size_mode": _size_mode,
+                    "hl_from": _hl_from, "hl_to": _hl_to,
                     "selected": _selected, "filtered_count": filtered_count,
                     "png_total": _png_total, "png_rag": _png_rag,
                 }
@@ -1910,10 +1930,20 @@ def _knowledge_explorer():
             _aeps = dmva.estimate_dbscan_eps(_scc["df_reduced"], k=5)
             _cl_params["min_samples"] = _cl3.number_input("min_samples:", value=5, min_value=2, step=1, key="rag_cl_min")
             _cl_params["eps"] = _cl2.number_input(f"eps (auto={_aeps}):", value=_aeps, min_value=0.1, step=0.5, format="%.2f", key="rag_cl_eps")
+        # クラスタリング対象期間（Overall の Date From～To の範囲内でさらに絞り込み）
+        _cl_period_from = None
+        _cl_period_to = None
+        if _has_date and _date_from is not None and _date_to is not None:
+            _cp1, _cp2 = st.columns(2)
+            _cl_period_from = _cp1.date_input("Cluster Period From:", value=_date_from, min_value=_date_from, max_value=_date_to, key="rag_cl_period_from")
+            _cl_period_to = _cp2.date_input("Cluster Period To:", value=_date_to, min_value=_date_from, max_value=_date_to, key="rag_cl_period_to")
 
         if st.button("Run Clustering", key="rag_run_cluster"):
             _dfr = _scc["df_reduced"]
             _scope = _dfr[_dfr["id"].isin(df_filtered["id"])].copy()
+            if _cl_period_from is not None and _cl_period_to is not None and "create_date" in _scope.columns:
+                _dd = pd.to_datetime(_scope["create_date"], errors="coerce")
+                _scope = _scope[(_dd >= pd.Timestamp(_cl_period_from)) & (_dd <= pd.Timestamp(_cl_period_to) + pd.Timedelta(days=1))]
             with st.spinner("クラスタリング中..."):
                 try:
                     # Totalのみクラスタリング。RAG NAMEはTotalのクラスター割当をそのまま流用
@@ -1936,6 +1966,8 @@ def _knowledge_explorer():
                         "total_summary": dmva.build_cluster_summary(_dft),
                         "labels": sorted([int(c) for c in _dft["Cluster"].unique()]),
                         "rag_dist": _rag_dist, "png_total": _png_t, "png_by_rag": _png_by,
+                        "period_from": _cl_period_from, "period_to": _cl_period_to,
+                        "scope_count": int(len(_scope)),
                     }
                     st.session_state._rag_cluster_names = None
                 except Exception as e:
@@ -2125,7 +2157,7 @@ def _knowledge_explorer():
                 _bmin = _bdp.min().date()
                 _bmax = _bdp.max().date()
                 _bv = st.date_input("Bonus Period From/To:", value=(_bmin, _bmax),
-                                    min_value=_bmin, max_value=_bmax, key="rag_topic_bonus_period")
+                                    min_value=_bmin, max_value=_FAR_FUTURE, key="rag_topic_bonus_period")
                 if isinstance(_bv, (list, tuple)) and len(_bv) == 2:
                     _tp_bf, _tp_bt = _bv
 
@@ -2488,6 +2520,79 @@ def _user_memory_explorer():
     import pandas as pd
 
     _UME_BASE = "user/common/analytics/user_memory_explorer/"
+
+    # 保存対象のsession_stateキー（分析キャッシュ・選択・対話履歴・レポート）
+    _UME_STATE_KEYS = [
+        # 共通
+        "_ume_report",
+        # ユーザー理解(個人)
+        "ume_deep_user", "ume_deep_traj_period",
+        "_ume_deep_hist",
+        # グループ理解
+        "ume_cross_users", "ume_cross_pk", "ume_cross_nk",
+        "_ume_pcluster", "_ume_ncluster", "_ume_pexp", "_ume_nexp",
+        "_ume_cross_gtwin_sys", "_ume_cross_g_hist",
+    ]
+
+    def _ume_save_session(label):
+        """全UME分析状態をフォルダに保存。"""
+        import pickle
+        _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        _folder = os.path.join(_UME_BASE, f"analytics{_ts}")
+        os.makedirs(_folder, exist_ok=True)
+        _meta = {
+            "label": label,
+            "timestamp": _ts,
+            "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        dmu.save_json_file(_meta, os.path.join(_folder, "meta.json"))
+        _state = {}
+        for _k in _UME_STATE_KEYS:
+            if _k in st.session_state:
+                _state[_k] = st.session_state[_k]
+        try:
+            with open(os.path.join(_folder, "state.pkl"), "wb") as f:
+                pickle.dump(_state, f)
+        except Exception as e:
+            # pickle不能なオブジェクト混入時はテキスト系のみ保存
+            _safe = {k: v for k, v in _state.items()
+                     if isinstance(v, (str, int, float, list, dict, tuple, bool, type(None)))}
+            with open(os.path.join(_folder, "state.pkl"), "wb") as f:
+                pickle.dump(_safe, f)
+        if st.session_state.get("_ume_report"):
+            dmu.save_text_file(st.session_state._ume_report,
+                               os.path.join(_folder, "report.md"))
+        return _folder
+
+    def _ume_load_session(folder_path):
+        """保存済みフォルダから session_state に復元。"""
+        import pickle
+        _meta_path = os.path.join(folder_path, "meta.json")
+        if not os.path.exists(_meta_path):
+            return None
+        _meta = dmu.read_json_file(_meta_path)
+        for _k in _UME_STATE_KEYS:
+            if _k in st.session_state:
+                del st.session_state[_k]
+        _pkl_path = os.path.join(folder_path, "state.pkl")
+        if os.path.exists(_pkl_path):
+            try:
+                with open(_pkl_path, "rb") as f:
+                    _state = pickle.load(f)
+                for _k, _v in _state.items():
+                    st.session_state[_k] = _v
+            except Exception:
+                pass
+        return _meta
+
+    # サイドバーからのロード要求を処理
+    if st.session_state.get("_ume_load_folder"):
+        _lp = st.session_state._ume_load_folder
+        st.session_state._ume_load_folder = None
+        _lm = _ume_load_session(_lp)
+        if _lm:
+            st.info(f"分析セッションを読み込みました: {_lm.get('created_at','')} - {_lm.get('label','')}")
+
     st.subheader("User Memory Explorer")
 
     _all_users = ux.list_users("")
@@ -3168,6 +3273,156 @@ def _user_memory_explorer():
                         st.session_state.sidebar_message = "History を保存しました"
                         st.rerun()
 
+    # =========================================================
+    # Export Report
+    # =========================================================
+    st.markdown("---")
+    st.subheader("Export Report")
+    if st.button("Generate Report", key="ume_gen_report"):
+        _now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        _r = [f"# User Memory Explorer {_now}", ""]
+
+        # ---- ユーザー理解(個人) ----
+        _ud = st.session_state.get("ume_deep_user")
+        if _ud:
+            _r.append("## ユーザー理解(個人)")
+            _r.append(f"- **対象ユーザー:** {_ud}")
+            _bd = ux.load_bundle(_ud, "")
+            _pp = _bd.get("persona") or {}
+            if _pp:
+                _r.append(f"- **役割:** {_pp.get('role','') or '-'}")
+                if _pp.get("summary_text"):
+                    _r.append(f"- **要約:** {_pp.get('summary_text')}")
+                _b5 = _pp.get("big5") or {}
+                _b5lines = []
+                for _t in ux.BIG5_TRAITS:
+                    _it = _b5.get(_t) or {}
+                    if isinstance(_it, dict) and (_it.get("status") or "").lower() != "deleted":
+                        _b5lines.append(f"{ux.BIG5_JA.get(_t,_t)}={float(_it.get('score',0.5) or 0.5):.2f}({_it.get('status','')})")
+                if _b5lines:
+                    _r.append("- **Big5:** " + "、".join(_b5lines))
+            if _bd["nowaday"]:
+                _nw = _bd["nowaday"][0]
+                _r.append("")
+                _r.append(f"### Nowaday (latest: period={_nw.get('period','')}, generated_at={_nw.get('generated_at','')})")
+                if _nw.get("summary_text"):
+                    _r.append(_nw["summary_text"])
+                _be = _nw.get("basic_emotions") or {}
+                _r.append("- **基本感情:** " + "、".join(
+                    f"{ux.PLUTCHIK_JA.get(e,e)}={float(_be.get(e,0) or 0):.2f}" for e in ux.PLUTCHIK_PRIMARY))
+                if _nw.get("secondary_emotions"):
+                    _r.append("- **二次感情:** " + "、".join(
+                        ux.PLUTCHIK_JA.get(s,s) for s in _nw["secondary_emotions"]))
+                for _lbl, _k in (("継続","recurring_topics"),("新規","emerging"),
+                                 ("減退","declining"),("変化","shifts")):
+                    if _nw.get(_k):
+                        _r.append(f"- **{_lbl}:** " + "、".join(str(x) for x in _nw[_k]))
+            _traj_all = ux.user_emotion_trajectory(_ud, "")
+            if _traj_all:
+                _rng = st.session_state.get("ume_deep_traj_period")
+                _s = _e = ""
+                if isinstance(_rng, (list, tuple)) and len(_rng) == 2:
+                    _s, _e = _rng[0].isoformat(), _rng[1].isoformat()
+                    _tj = [t for t in _traj_all if _s <= t[0] <= _e]
+                else:
+                    _tj = _traj_all
+                from collections import Counter as _C
+                _ct = _C()
+                for _d, _t, _es in _tj:
+                    for _x in _es:
+                        _ct[ux.PLUTCHIK_JA.get(_x, _x)] += 1
+                _r.append("")
+                _r.append(f"### History 感情トラジェクトリ ({_s or '全期間'} 〜 {_e or '今'}, {len(_tj)}件 / 全{len(_traj_all)}件)")
+                if _ct:
+                    _r.append("- **集計:** " + "、".join(f"{k}={v}" for k, v in _ct.most_common()))
+            _dh = st.session_state.get("_ume_deep_hist") or []
+            if _dh:
+                _r.append("")
+                _r.append("### Chat with this User Twin")
+                for _h in _dh:
+                    _r.append(f"- **[{_h.get('timestamp','')}] {_h.get('agent','')}**")
+                    _r.append(f"  - Q: {_h.get('query','')}")
+                    _r.append(f"  - A: {_h.get('response','')}")
+            _r.append("")
+
+        # ---- グループ理解 ----
+        _ch = st.session_state.get("ume_cross_users") or []
+        if _ch:
+            _r.append("## グループ理解")
+            _r.append(f"- **対象ユーザー({len(_ch)}人):** " + ", ".join(_ch))
+            _b5s = ux.cohort_big5_stats(_ch, "")
+            _r.append("")
+            _r.append("### Persona — Big5 (max/mean/min)")
+            _r.append("| 特性 | 最大 | 平均 | 最小 |")
+            _r.append("|---|---|---|---|")
+            for _t in ux.BIG5_TRAITS:
+                _r.append(f"| {ux.BIG5_JA.get(_t,_t)} | {_b5s[_t]['max']:.2f} | {_b5s[_t]['mean']:.2f} | {_b5s[_t]['min']:.2f} |")
+            _es = ux.cohort_basic_emotion_stats(_ch, "")
+            _r.append("")
+            _r.append("### Nowaday — 基本感情 (max/mean/min)")
+            _r.append("| 感情 | 最大 | 平均 | 最小 |")
+            _r.append("|---|---|---|---|")
+            for _e in ux.PLUTCHIK_PRIMARY:
+                _r.append(f"| {ux.PLUTCHIK_JA.get(_e,_e)} | {_es[_e]['max']:.2f} | {_es[_e]['mean']:.2f} | {_es[_e]['min']:.2f} |")
+            _sec = ux.agg_secondary_emotions(_ch, "")
+            if _sec:
+                _r.append("")
+                _r.append("### 二次感情ランキング")
+                _r.append("- " + "、".join(f"{ux.PLUTCHIK_JA.get(k,k)}({c})" for k, c in _sec.most_common()))
+            _pc = st.session_state.get("_ume_pcluster") or {}
+            if _pc.get("df") is not None:
+                _r.append("")
+                _r.append(f"### Personaクラスタリング ({_pc.get('info','')})")
+                _r.append(_pc["df"].to_markdown(index=False))
+                if st.session_state.get("_ume_pexp"):
+                    _r.append("")
+                    _r.append("#### クラスタ解説")
+                    _r.append(str(st.session_state["_ume_pexp"]))
+            _nc = st.session_state.get("_ume_ncluster") or {}
+            if _nc.get("df") is not None:
+                _r.append("")
+                _r.append(f"### Nowadayクラスタリング ({_nc.get('info','')})")
+                _r.append(_nc["df"].to_markdown(index=False))
+                if st.session_state.get("_ume_nexp"):
+                    _r.append("")
+                    _r.append("#### クラスタ解説")
+                    _r.append(str(st.session_state["_ume_nexp"]))
+            _ht = ux.cohort_history_emotion_totals(_ch, "")
+            if _ht:
+                _r.append("")
+                _r.append("### History 感情トラジェクトリ（合計）")
+                _r.append("- " + "、".join(f"{ux.PLUTCHIK_JA.get(k,k)}={v}" for k, v in _ht.items()))
+            _gsys = st.session_state.get("_ume_cross_gtwin_sys")
+            if _gsys:
+                _r.append("")
+                _r.append("### Group Twin System Prompt")
+                _r.append("```\n" + _gsys + "\n```")
+            _gh = st.session_state.get("_ume_cross_g_hist") or []
+            if _gh:
+                _r.append("")
+                _r.append("### Chat with this Group Twin")
+                for _h in _gh:
+                    _r.append(f"- **[{_h.get('timestamp','')}] {_h.get('agent','')}**")
+                    _r.append(f"  - Q: {_h.get('query','')}")
+                    _r.append(f"  - A: {_h.get('response','')}")
+            _r.append("")
+
+        _r.append(f"\n---\nGenerated: {_now}")
+        _report_text = "\n".join(_r)
+        st.session_state._ume_report = _report_text
+        try:
+            _label = (_ud or "") + (f"+{len(_ch)}users" if _ch else "")
+            _saved = _ume_save_session(_label or "session")
+            st.success(f"レポートを生成し、セッションを保存しました: {_saved}")
+        except Exception as e:
+            st.success("レポートを生成しました")
+            st.warning(f"セッション保存エラー: {e}")
+
+    if st.session_state.get("_ume_report"):
+        _rname = f"UserMemoryExplorer_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        st.download_button("Download (.md)", data=st.session_state._ume_report.encode("utf-8"),
+                           file_name=f"{_rname}.md", mime="text/markdown", key="ume_dl_md")
+
 
 ### Support Agent Test画面 ###
 def _support_agent_test():
@@ -3753,6 +4008,24 @@ def main():
                         _label = f"{_m.get('created_at', '')[:10]} {_m.get('collection', '')}"[:20]
                         if st.button(_label, key=f"rag_load_{_sf}"):
                             st.session_state._rag_load_folder = os.path.join(_analytics_base, _sf)
+                            st.rerun()
+
+        # User Memory Explorer用: 保存済み分析セッション一覧
+        elif st.session_state.get("main_view", "Chat") == "User Memory Explorer":
+            st.markdown("----")
+            _ume_base = "user/common/analytics/user_memory_explorer/"
+            if os.path.exists(_ume_base):
+                _ume_folders = sorted(
+                    [f for f in os.listdir(_ume_base)
+                     if os.path.isdir(os.path.join(_ume_base, f)) and f.startswith("analytics")],
+                    reverse=True)
+                for _sf in _ume_folders[:10]:
+                    _meta_p = os.path.join(_ume_base, _sf, "meta.json")
+                    if os.path.exists(_meta_p):
+                        _m = dmu.read_json_file(_meta_p)
+                        _label = f"{_m.get('created_at', '')[:10]} {_m.get('label', '')}"[:24]
+                        if st.button(_label, key=f"ume_load_{_sf}"):
+                            st.session_state._ume_load_folder = os.path.join(_ume_base, _sf)
                             st.rerun()
 
     # メインエリアの画面切り替え

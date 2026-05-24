@@ -64,15 +64,15 @@
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
             },
-            "Claude-4.5": {
-                "NAME": "Claude-Sonnet-4.5",
+            "Claude-Opus-4.7": {
+                "NAME": "Claude-Opus-4.7",
                 "FUNC_NAME": "generate_response_T_claude",
-                "MODEL": "claude-sonnet-4-5",
-                "PARAMETER": {"max_tokens": 64000},
+                "MODEL": "claude-opus-4-7",
+                "PARAMETER": {"max_tokens": 128000},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
             },
-            "Claude-4.6": {
+            "Claude-Sonnet-4.6": {
                 "NAME": "Claude-Sonnet-4.6",
                 "FUNC_NAME": "generate_response_T_claude",
                 "MODEL": "claude-sonnet-4-6",
@@ -369,52 +369,19 @@
     },
     "BOOK": [
         {
-            "RAG_NAME": "Quote",
-            "RETRIEVER": "Vector",
-            "DATA": [
-                {
-                    "DATA_TYPE": "DB",
-                    "DATA_NAME": "Sample01_Quote"
-                }
-            ],
-            "TIMESTAMP": "CURRENT_DATE",
-            "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
-            "HEADER_TEMPLATE": "以下はあなたが気に入っている著名人による名言です。\n",
-            "CHUNK_TEMPLATE": "・{speaker}「{value_text}」\n\n",
-            "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{bucket}', 'QUERY_SEQ': '{query_seq}', 'QUERY_MODE': '{query_mode}', 'ID': '{id}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'speaker': '{speaker}', 'text_short': '{value_text_short}'",
-            "TEXT_LIMITS": 1000,
-            "DISTANCE_LOGIC": "Cosine"
-        },
-        {
-            "RAG_NAME": "ConsultingBook",
+            "RAG_NAME": "TheRoundBook",
             "RETRIEVER": "PageIndex",
             "DATA": [
                 {
                     "DATA_TYPE": "PAGE_INDEX",
-                    "DATA_NAME": "SampleConsultingBook",
+                    "DATA_NAME": "TheRoundBook",
                     "SUPPORT_AGENT": "agent_59PageIndexSearch.json"
                 }
             ],
-            "HEADER_TEMPLATE": "【コンサルノウハウ集】以下はコンサルティングの方法論に関するナレッジです。\n",
+            "HEADER_TEMPLATE": "以下はThe Roundで仕事をする上で重要な考え方をまとめている教本の一部です。\n",
             "LOG_TEMPLATE": "'rag':'{rag_name}', 'page_id':'{page_id}', 'title':'{title}', 'category':'{category}', 'summary':'{summary}'",
-            "TEXT_LIMITS": 6000,
-            "MAX_PAGES": 3,
-            "DISTANCE_LOGIC": "PageIndex"
-        },
-        {
-            "RAG_NAME": "ConsultingBookExcel",
-            "RETRIEVER": "PageIndex",
-            "DATA": [
-                {
-                    "DATA_TYPE": "PAGE_INDEX",
-                    "DATA_NAME": "SampleConsultingBookExcel",
-                    "SUPPORT_AGENT": "agent_59PageIndexSearch.json"
-                }
-            ],
-            "HEADER_TEMPLATE": "【コンサルノウハウ集（Excel版）】以下はコンサルティングの方法論に関するナレッジです。\n",
-            "LOG_TEMPLATE": "'rag':'{rag_name}', 'page_id':'{page_id}', 'title':'{title}', 'category':'{category}', 'summary':'{summary}'",
-            "TEXT_LIMITS": 6000,
-            "MAX_PAGES": 3,
+            "TEXT_LIMITS": 10000,
+            "MAX_PAGES": 10,
             "DISTANCE_LOGIC": "PageIndex"
         }
     ]

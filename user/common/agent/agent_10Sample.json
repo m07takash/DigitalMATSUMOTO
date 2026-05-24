@@ -381,40 +381,6 @@
             "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{bucket}', 'QUERY_SEQ': '{query_seq}', 'QUERY_MODE': '{query_mode}', 'ID': '{id}', 'timestamp': '{timestamp}', 'category': '{category}', 'similarity_Q': {similarity_prompt_original}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}'",
             "TEXT_LIMITS": 1000,
             "DISTANCE_LOGIC": "Cosine"
-        },
-        {
-            "RAG_NAME": "User_Dialog",
-            "RETRIEVER": "Vector",
-            "DATA": [
-                {
-                    "DATA_TYPE": "DB",
-                    "DATA_NAME": "User_Dialog",
-                    "META_SEARCH": {
-                        "CONDITION": [
-                            "DATE"
-                        ],
-                        "BONUS": 0.5
-                    },
-                    "FILTER": {
-                        "PATTERN": "and",
-                        "CONDITION": {
-                            "USER_INFO": {
-                                "PATTERN": "and",
-                                "ITEMS": [
-                                    "user_id"
-                                ]
-                            }
-                        }
-                    }
-                }
-            ],
-            "TIMESTAMP": "CURRENT_DATE",
-            "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
-            "HEADER_TEMPLATE": "以下はあなたの対話相手が過去に行った発言です。どんな人物なのかを推定する上で参考にしてください。\n",
-            "CHUNK_TEMPLATE": "「{value_text}」(質問との近さ:{similarity_prompt})\n",
-            "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{bucket}', 'QUERY_SEQ': '{query_seq}', 'QUERY_MODE': '{query_mode}', 'ID': '{id}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'text_short': '{value_text_short}'",
-            "TEXT_LIMITS": 5000,
-            "DISTANCE_LOGIC": "Cosine"
         }
     ],
     "SKILL": {},
@@ -473,35 +439,19 @@
             "DISTANCE_LOGIC": "Cosine"
         },
         {
-            "RAG_NAME": "ConsultingBook",
+            "RAG_NAME": "Digital MATSUMOTO System Guide",
             "RETRIEVER": "PageIndex",
             "DATA": [
                 {
                     "DATA_TYPE": "PAGE_INDEX",
-                    "DATA_NAME": "SampleConsultingBook",
+                    "DATA_NAME": "DigiMPGSystemGuide",
                     "SUPPORT_AGENT": "agent_59PageIndexSearch.json"
                 }
             ],
-            "HEADER_TEMPLATE": "【コンサルノウハウ集】以下はコンサルティングの方法論に関するナレッジです。\n",
+            "HEADER_TEMPLATE": "【システムガイド】以下はデジタルMATSUMOTOのシステムに関する技術情報です。\n",
             "LOG_TEMPLATE": "'rag':'{rag_name}', 'page_id':'{page_id}', 'title':'{title}', 'category':'{category}', 'summary':'{summary}'",
-            "TEXT_LIMITS": 6000,
-            "MAX_PAGES": 3,
-            "DISTANCE_LOGIC": "PageIndex"
-        },
-        {
-            "RAG_NAME": "ConsultingBookExcel",
-            "RETRIEVER": "PageIndex",
-            "DATA": [
-                {
-                    "DATA_TYPE": "PAGE_INDEX",
-                    "DATA_NAME": "SampleConsultingBookExcel",
-                    "SUPPORT_AGENT": "agent_59PageIndexSearch.json"
-                }
-            ],
-            "HEADER_TEMPLATE": "【コンサルノウハウ集（Excel版）】以下はコンサルティングの方法論に関するナレッジです。\n",
-            "LOG_TEMPLATE": "'rag':'{rag_name}', 'page_id':'{page_id}', 'title':'{title}', 'category':'{category}', 'summary':'{summary}'",
-            "TEXT_LIMITS": 6000,
-            "MAX_PAGES": 3,
+            "TEXT_LIMITS": 10000,
+            "MAX_PAGES": 10,
             "DISTANCE_LOGIC": "PageIndex"
         }
     ]

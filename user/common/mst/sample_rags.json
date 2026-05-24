@@ -109,14 +109,14 @@
         "key_text": ["episode", "situation","speaker"],
         "value_text": ["episode"]
     },
-    "SampleConsultingBookExcel": {
+    "TheRoundBook": {
         "active": "Y",
         "input": "excel",
         "data_type": "pageindex",
-        "data_name": "SampleConsultingBookExcel",
-        "bucket": "SampleConsultingBookExcel",
-        "source_dir": "user/common/csv/pageindex/SampleConsultingBookExcel",
-        "source_file": "SampleConsultingBookExcel.xlsx",
+        "data_name": "TheRoundBook",
+        "bucket": "TheRoundBook",
+        "source_dir": "user/common/csv/pageindex/TheRoundBook",
+        "source_file": "TheRoundBook.xlsx",
         "sheet": "pages",
         "item_dict": {
             "book": "ブック名",

@@ -199,7 +199,6 @@ user/common/rag/json/*
 user/common/rag/docs/*
 !user/common/rag/docs/RAGsample.txt
 user/common/rag/pages/*
-!user/common/rag/pages/SampleConsultingBook/
 
 # DigiM Folder(csv)
 user/common/csv/*
@@ -210,6 +209,10 @@ user/common/csv/*
 user/common/csv/pageindex/*
 !user/common/csv/pageindex/Sample*/
 !user/common/csv/pageindex/Sample*/*
+!user/common/csv/pageindex/DigiMPGSystemGuide*/
+!user/common/csv/pageindex/DigiMPGSystemGuide*/*
+!user/common/csv/pageindex/TheRound*/
+!user/common/csv/pageindex/TheRound*/*
 
 # DigiM Folder
 user/session*/
@@ -217,6 +220,9 @@ user/common/analytics/*
 !user/common/analytics/knowledge_explorer/
 user/common/analytics/knowledge_explorer/*
 !user/common/analytics/knowledge_explorer/.gitkeep
+!user/common/analytics/user_memory_explorer/
+user/common/analytics/user_memory_explorer/*
+!user/common/analytics/user_memory_explorer/.gitkeep
 user/common/temp/*
 !user/common/temp/tempファイルの格納先
 user/common/user_memory/*
