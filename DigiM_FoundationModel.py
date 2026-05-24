@@ -470,27 +470,70 @@ def generate_image_gemini(prompt, system_prompt, model, memories=[], image_paths
         )
     )
 
-    # TEMPフォルダに保存
+    # TEMPフォルダに保存（拡張子と実フォーマットを必ず一致させる）
+    def _ext_from_bytes(b, fallback_mime=""):
+        # 実バイトから真のフォーマットを判定し、拡張子文字列を返す
+        try:
+            import io as _io
+            from PIL import Image as _PIL
+            _fmt = (_PIL.open(_io.BytesIO(b)).format or "").lower()
+            if _fmt == "jpeg":
+                return "jpg"
+            if _fmt in ("png", "gif", "webp", "bmp"):
+                return _fmt
+        except Exception:
+            pass
+        if fallback_mime:
+            _m = fallback_mime.lower()
+            if "jpeg" in _m or "jpg" in _m:
+                return "jpg"
+            for _e in ("png", "gif", "webp", "bmp"):
+                if _e in _m:
+                    return _e
+        return "png"
+
     img_files = []
     response_text = "画像を生成しました。"
     num = 0
     for part in completion.parts:
         if hasattr(part, "text") and part.text:
             response_text = part.text
-        else:
-            img = part.as_image() if hasattr(part, "as_image") else None
-            if img is None and hasattr(part, "inline_data") and part.inline_data:
-                img_bytes = base64.b64decode(part.inline_data.data)
-                img_file = temp_folder_path + f"{num}_gemini_image.jpg"
-                with open(img_file, "wb") as f:
-                    f.write(img_bytes)
-                img_files.append(img_file)
-                num += 1
-            elif img is not None:
-                img_file = temp_folder_path + f"{num}_gemini_image.png"
-                img.save(img_file)
-                img_files.append(img_file)
-                num += 1
+            continue
+        # 画像バイトを取得（inline_data があれば優先、無ければ as_image() 経由）
+        img_bytes = None
+        mime_hint = ""
+        if hasattr(part, "inline_data") and part.inline_data:
+            try:
+                _raw = part.inline_data.data
+                # SDKによって bytes / base64文字列 のどちらが入るかブレるためtry両対応
+                img_bytes = _raw if isinstance(_raw, (bytes, bytearray)) else base64.b64decode(_raw)
+            except Exception:
+                img_bytes = None
+            mime_hint = getattr(part.inline_data, "mime_type", "") or ""
+        if img_bytes is None and hasattr(part, "as_image"):
+            try:
+                _im = part.as_image()
+                if _im is not None:
+                    if hasattr(_im, "image_bytes") and _im.image_bytes:
+                        img_bytes = _im.image_bytes
+                        mime_hint = getattr(_im, "mime_type", "") or mime_hint
+                    else:
+                        # PIL Image 互換ならPNGへ再エンコード
+                        import io as _io2
+                        _buf = _io2.BytesIO()
+                        _im.save(_buf, format="PNG")
+                        img_bytes = _buf.getvalue()
+                        mime_hint = "image/png"
+            except Exception:
+                pass
+        if not img_bytes:
+            continue
+        _ext = _ext_from_bytes(img_bytes, mime_hint)
+        img_file = temp_folder_path + f"{num}_gemini_image.{_ext}"
+        with open(img_file, "wb") as f:
+            f.write(img_bytes)
+        img_files.append(img_file)
+        num += 1
 
     completion_result = img_files if img_files else completion
     yield str(contents), response_text, completion_result

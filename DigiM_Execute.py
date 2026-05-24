@@ -649,6 +649,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             timestamp_log += "[18.メモリダイジェストの作成をバックグラウンドで開始]" + str(datetime.now()) + "<br>"
 
             # インクリメンタル方式: 前回ダイジェスト + 今回1往復のみを入力にして高速化
+            # 話者名つきで投入し、ダイジェスト側でも「誰の発言か」を保てるようにする
             _slim_memories = []
             try:
                 _, _, _prev_digest = session.get_history_digest(str(seq), str(sub_seq))
@@ -656,8 +657,11 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                     _slim_memories.append({"role": "assistant", "text": _prev_digest["text"]})
             except Exception:
                 pass
-            _slim_memories.append({"role": "user", "text": user_query})
-            _slim_memories.append({"role": "assistant", "text": response})
+            # 話者名は user_info.NAME を優先、無ければ USER_ID にフォールバック（マスタ参照しない）
+            _udisp = (user_info or {}).get("NAME") or (user_info or {}).get("USER_ID") or "(unknown)"
+            _aname = getattr(agent, "name", "") or "AI"
+            _slim_memories.append({"role": "user", "text": f"[ユーザー: {_udisp}] {user_query}"})
+            _slim_memories.append({"role": "assistant", "text": f"[エージェント: {_aname}] {response}"})
 
             _digest_job_id = djr.new_job_id()
             _digest_args = (session, service_info, user_info, session_id, session_name,
@@ -686,6 +690,19 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
 
 # プラクティスで実行
 def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name, in_agent_file, user_query, in_contents=[], in_situation={}, in_overwrite_items={}, in_add_knowledge=[], in_execution={}, in_persona=None, in_rag_query_text="", in_personas=None, in_org=None):
+
+    # 話者名をSETTINGに残すため、user_infoに NAME を1度だけ補完（保存以降の履歴に反映）。
+    # マスタ参照は1リクエスト1回限り。呼び出し側辞書を汚さないようコピーを持つ。
+    user_info = dict(user_info or {})
+    if user_info.get("USER_ID") and not user_info.get("NAME"):
+        try:
+            import DigiM_Auth as _dma_um
+            _um = _dma_um.load_user_master() or {}
+            _nm = (_um.get(user_info["USER_ID"]) or {}).get("Name")
+            if _nm:
+                user_info["NAME"] = _nm
+        except Exception:
+            pass
 
     # B-2: 実行設定の取得
     last_only = in_execution.get("LAST_ONLY", False)

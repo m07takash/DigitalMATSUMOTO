@@ -531,6 +531,16 @@ class DigiMSession:
         memories_list_final = []
         total_tokens = 0
 
+        # 話者名のプレフィックス（会話履歴に NAME が無ければ USER_ID にフォールバック。
+        # ユーザーマスタの参照はしない）
+        def _prefix(role, name):
+            _n = (name or "").strip() or ("(unknown)" if role == "user" else "AI")
+            if role == "user":
+                return f"[ユーザー: {_n}] "
+            if role == "assistant":
+                return f"[エージェント: {_n}] "
+            return ""
+
         # アクティブな会話履歴からメモリに設定する履歴を取得
         chat_history_active_dict = self.extract_history_by_keys(self.chat_history_active_dict, seq_limit, sub_seq_limit)
 
@@ -557,6 +567,9 @@ class DigiMSession:
             for k, v in chat_history_active_dict.items():
                 if v.get("SETTING", {}).get("MEMORY_FLG", "Y") == "N":
                     continue
+                # seq単位の話者識別: user_info.NAME（無ければ USER_ID へフォールバック）
+                _u_info = v.get("SETTING", {}).get("user_info") or {}
+                _user_disp = (_u_info.get("NAME") or _u_info.get("USER_ID") or "").strip()
                 for k2, v2 in v.items():
                     if k2 != "SETTING":
                         if v2.get("setting", {}).get("memory_flg", "Y") == "N":
@@ -569,13 +582,16 @@ class DigiMSession:
                                 if memory_similarity:
                                     v2["prompt"]["query"]["vec_text"] = self.get_vec_file(k, k2, "query")
                                     similarity_prompt = dmu.calculate_similarity_vec(query_vec, v2["prompt"]["query"]["vec_text"], memory_similarity_logic)
-                                memories_list.append({"seq": k, "sub_seq": k2, "type": v2["prompt"]["role"], "role": v2["prompt"]["role"], "timestamp": v2["prompt"]["timestamp"], "token": v2["prompt"]["query"]["token"], "similarity_prompt": similarity_prompt, "text": v2["prompt"]["query"]["text"], "vec_text": v2["prompt"]["query"]["vec_text"]})
+                                _utxt = _prefix("user", _user_disp) + (v2["prompt"]["query"]["text"] or "")
+                                memories_list.append({"seq": k, "sub_seq": k2, "type": v2["prompt"]["role"], "role": v2["prompt"]["role"], "timestamp": v2["prompt"]["timestamp"], "token": v2["prompt"]["query"]["token"], "similarity_prompt": similarity_prompt, "text": _utxt, "vec_text": v2["prompt"]["query"]["vec_text"]})
                         if memory_role in ["both", "assistant"]:
                             if v2["response"]["role"] == "assistant":
                                 if memory_similarity:
                                     v2["response"]["vec_text"] = self.get_vec_file(k, k2, "response")
                                     similarity_prompt = dmu.calculate_similarity_vec(query_vec, v2["response"]["vec_text"], memory_similarity_logic)
-                                memories_list.append({"seq": k, "sub_seq": k2, "type": v2["response"]["role"], "role": v2["response"]["role"], "timestamp": v2["response"]["timestamp"], "token": v2["response"]["token"], "similarity_prompt": similarity_prompt, "text": v2["response"]["text"], "vec_text": v2["response"]["vec_text"]})
+                                _agent_name = (v2.get("setting") or {}).get("name", "")
+                                _atxt = _prefix("assistant", _agent_name) + (v2["response"]["text"] or "")
+                                memories_list.append({"seq": k, "sub_seq": k2, "type": v2["response"]["role"], "role": v2["response"]["role"], "timestamp": v2["response"]["timestamp"], "token": v2["response"]["token"], "similarity_prompt": similarity_prompt, "text": _atxt, "vec_text": v2["response"]["vec_text"]})
 
             # 各履歴をプライオリティ順に並び替え
             if memory_priority == "latest":

@@ -1,7 +1,7 @@
 {
     "DISPLAY": true,
-    "DISPLAY_NAME": "通常LLM",
-    "NAME": "通常LLM",
+    "DISPLAY_NAME": "Default LLM",
+    "NAME": "Default LLM",
     "ACT": "",
     "PERSONALITY": {
         "SPEAKING_STYLE": "Polite"
