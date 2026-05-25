@@ -315,7 +315,7 @@ INSERT INTO digim_agent_personas
   (persona_id, template_agent, org, company, dept, name, act, personality,
    habits, knowledge, define_code, character_text, character_file, active)
 VALUES
-  ('P0001', 'agent_X0Sample.json',
+  ('P0001', 'agent_10Sample.json',
    '{"company":"デジMラボ","dept":"Consulting","BU":"DX"}'::jsonb,
    'デジMラボ', 'Consulting', 'DXコンサル太郎', 'DX戦略コンサルタント',
    '{"SEX":"男性","NATIONALITY":"Japanese","SPEAKING_STYLE":"Polite"}'::jsonb,
@@ -332,32 +332,70 @@ SET template_agent=EXCLUDED.template_agent, org=EXCLUDED.org,
     active=EXCLUDED.active;
 ```
 
-> WebUIのサイドバーから Excel をアップロードして RDB に一括 UPSERT するUIも今後追加予定（Phase 7）。`active='N'` で論理削除。
+> エージェントJSONに `"ORG": [...]` と `"PERSONA_FILES": [...]` を定義することで、WebUIサイドバーにORG selectbox + Persona multiselectが出現します。`active='N'` で論理削除。`AGENT_PERSONA_SOURCE=BOTH` の場合は Excel + RDB をマージし、同 `persona_id` は RDB を優先します。
 
-### 6-7. digim_agent_personas（エージェントペルソナマスタ）
+### 6-7. digim_user_memory_history / _nowaday / _persona（階層的ユーザーメモリ）
 
-1つのテンプレートエージェントに複数ペルソナ（人格・所属・権限制限）を登録し、ORGで切り替えて並列実行する場合に作成します（`system.env` で `AGENT_PERSONA_SOURCE=RDB` または `BOTH` を指定）。アプリ初回利用時に `CREATE TABLE IF NOT EXISTS` で自動作成もされます。
+`system.env` で `USER_MEMORY_HISTORY_BACKEND` / `_NOWADAY_BACKEND` / `_PERSONA_BACKEND` のいずれかを `RDB` に設定すると、対応する3つのテーブルがアプリ初回アクセス時に `CREATE TABLE IF NOT EXISTS` で **自動作成** されます。事前にDDLを実行する必要はありませんが、運用時のバックアップ・権限設計用にスキーマを記載しておきます。
 
 ```sql
-CREATE TABLE IF NOT EXISTS digim_agent_personas (
-    persona_id     TEXT PRIMARY KEY,
-    template_agent TEXT,                 -- 紐付くテンプレートエージェントファイル名
-    org            JSONB,                -- 所属組織dict（agent側ORGの全キーをこの値が同値で含めばマッチ）
-    company        TEXT,
-    dept           TEXT,
-    name           TEXT,
-    act            TEXT,
-    personality    JSONB,                -- agent.PERSONALITYを全置換
-    habits         JSONB,                -- ["ALL"]または実行可能なHABIT名のリスト
-    knowledge      JSONB,                -- ["ALL"]または参照可能なKNOWLEDGE.RAG_NAMEのリスト
-    define_code    JSONB,                -- 自由スキーマ
-    character_text TEXT,
-    character_file TEXT,
-    active         CHAR(1) DEFAULT 'Y'
+-- 短期メモリ（セッション単位の対話要約）
+CREATE TABLE IF NOT EXISTS digim_user_memory_history (
+    id              TEXT PRIMARY KEY,
+    service_id      TEXT,
+    user_id         TEXT,
+    session_id      TEXT UNIQUE,
+    session_name    TEXT,
+    create_date     TIMESTAMP,
+    topic           TEXT,
+    excerpt         TEXT,
+    axis_tags       JSONB,
+    emotions        JSONB,         -- プルチック基本感情 + 二次感情のスコア
+    confidence      DOUBLE PRECISION,
+    source_seq      JSONB,
+    active          CHAR(1) DEFAULT 'Y'
+);
+
+-- 中期メモリ（period=YYYY-MM 等のスナップショット）
+CREATE TABLE IF NOT EXISTS digim_user_memory_nowaday (
+    id                    TEXT PRIMARY KEY,
+    service_id            TEXT,
+    user_id               TEXT,
+    period                TEXT,
+    generated_at          TIMESTAMP,
+    recurring_topics      JSONB,
+    emerging              JSONB,
+    declining             JSONB,
+    shifts                JSONB,
+    basic_emotions        JSONB,
+    secondary_emotions    JSONB,
+    evidence_session_ids  JSONB,
+    summary_text          TEXT,
+    token_count           INTEGER,
+    active                CHAR(1) DEFAULT 'Y'
+);
+
+-- 長期メモリ（ユーザー人物像。service_id + user_id でユニーク）
+CREATE TABLE IF NOT EXISTS digim_user_memory_persona (
+    service_id            TEXT,
+    user_id               TEXT,
+    generated_at          TIMESTAMP,
+    last_reviewed         TIMESTAMP,
+    role                  TEXT,
+    expertise             JSONB,
+    recurring_interests   JSONB,
+    values_principles     JSONB,
+    constraints           JSONB,
+    communication_style   JSONB,
+    avoid_topics          JSONB,
+    big5                  JSONB,       -- score / confidence / status
+    summary_text          TEXT,
+    token_count           INTEGER,
+    PRIMARY KEY(service_id, user_id)
 );
 ```
 
-> エージェントJSONに `"ORG": [...]` と `"PERSONA_FILES": [...]` を定義することで、WebUIサイドバーにORG selectbox + Persona multiselectが出現します。
+> 各バックエンドは独立に切替可能（例: Persona のみ RDB、HistoryはEXCEL等）。EXCEL/NOTION バックエンドを選んだ層についてはこれらのテーブルは作成されません。
 
 ---
 
