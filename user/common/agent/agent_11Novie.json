@@ -334,7 +334,7 @@
     "FEEDBACK": {
         "ACTIVE": "Y",
         "SAVE_MODE": "CSV",
-        "SAVE_DB": "Sample00_Communication",
+        "SAVE_DB": "Sample00_Feedback",
         "DEFAULT_CATEGORY": "未設定",
         "FEEDBACK_ITEM_LIST": [
             "memo",
