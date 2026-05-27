@@ -1,83 +1,83 @@
-**日本語** | **[English](SETUP_POSTGRESQL_AZURE.en.md)**
+**[日本語](SETUP_POSTGRESQL_AZURE.md)** | **English**
 
-# Azure PostgreSQL セットアップ手順
+# Azure PostgreSQL Setup Guide
 
-DigitalMATSUMOTO の分析用DBを Azure Database for PostgreSQL にゼロから構築する手順です。
+A step-by-step guide for building the DigitalMATSUMOTO analytics DB from scratch on Azure Database for PostgreSQL.
 
 ---
 
-## 1. Azure Database for PostgreSQL の作成
+## 1. Creating Azure Database for PostgreSQL
 
-### 1-1. リソース作成
+### 1-1. Create Resource
 
-1. [Azure Portal](https://portal.azure.com) にログイン
-2. 「リソースの作成」→「データベース」→「Azure Database for PostgreSQL」を選択
-3. **フレキシブルサーバー** を選択して「作成」
+1. Sign in to [Azure Portal](https://portal.azure.com)
+2. Select "Create a resource" → "Databases" → "Azure Database for PostgreSQL"
+3. Select **Flexible server** and click "Create"
 
-### 1-2. 基本設定
+### 1-2. Basic settings
 
-| 項目 | 設定値（例） |
+| Item | Value (example) |
 |------|-------------|
-| サブスクリプション | 任意 |
-| リソースグループ | 任意（新規作成可） |
-| サーバー名 | `digim-rdb`（→ `digim-rdb.postgres.database.azure.com`） |
-| リージョン | Japan East（任意） |
-| PostgreSQL バージョン | 16（推奨） |
-| ワークロードの種類 | 開発（小規模の場合） |
-| 管理者ユーザー名 | `digimatsuadmin`（任意） |
-| パスワード | 任意（控えておくこと） |
+| Subscription | Any |
+| Resource group | Any (can be newly created) |
+| Server name | `digim-rdb` (→ `digim-rdb.postgres.database.azure.com`) |
+| Region | Japan East (any) |
+| PostgreSQL version | 16 (recommended) |
+| Workload type | Development (for small scale) |
+| Admin user name | `digimatsuadmin` (any) |
+| Password | Any (keep it noted) |
 
-### 1-3. ネットワーク設定
+### 1-3. Network configuration
 
-1. 「ネットワーク」タブを開く
-2. 接続方法: **パブリックアクセス（すべてのネットワークを許可）**
-3. SSL接続: **有効**（デフォルト）
+1. Open the "Networking" tab
+2. Connectivity method: **Public access (allow all networks)**
+3. SSL connection: **Enabled** (default)
 
-### 1-4. 作成完了の確認
+### 1-4. Verify creation
 
-- 「確認および作成」→「作成」をクリック
-- デプロイ完了後、リソースページの「概要」からホスト名を確認
-  例: `digim-rdb.postgres.database.azure.com`
-
----
-
-## 2. Azure OpenAI リソースの作成
-
-### 2-1. リソース作成
-
-1. Azure Portal →「リソースの作成」→「Azure OpenAI」
-2. 基本設定：
-
-| 項目 | 設定値 |
-|------|-------|
-| リージョン | East US / Sweden Central（モデル提供状況が多い） |
-| 価格レベル | Standard S0 |
-| ネットワーク | すべてのネットワークを許可 |
-
-3. 作成完了後、「キーとエンドポイント」から以下を控える
-   - **エンドポイント**: `https://xxxx.openai.azure.com/`
-   - **APIキー**: キー1 または キー2
-
-### 2-2. Embedding モデルのデプロイ（Azure AI Foundry）
-
-1. Azure OpenAI リソースページ →「Go to Azure AI Foundry portal」をクリック
-2. 左メニュー「**デプロイ**」→「＋モデルのデプロイ」→「基本モデルをデプロイする」
-3. `text-embedding-3-large` を検索して選択
-4. デプロイ設定：
-
-| 項目 | 設定値 |
-|------|-------|
-| デプロイ名 | `text-embedding-3-large` |
-| デプロイの種類 | Standard |
-| トークン/分のレート制限 | 150,000以上推奨 |
+- Click "Review + create" → "Create"
+- After deployment, check the host name from the "Overview" of the resource page
+  Example: `digim-rdb.postgres.database.azure.com`
 
 ---
 
-## 3. サーバーパラメーターの設定
+## 2. Creating the Azure OpenAI Resource
 
-Azure Portal の PostgreSQL リソース →「サーバーパラメーター」を開く。
+### 2-1. Create Resource
 
-`azure.extensions` を検索して値に以下を追加して保存、その後サーバーを再起動。
+1. Azure Portal → "Create a resource" → "Azure OpenAI"
+2. Basic settings:
+
+| Item | Value |
+|------|-------|
+| Region | East US / Sweden Central (more models available) |
+| Pricing tier | Standard S0 |
+| Network | Allow all networks |
+
+3. After creation, note the following from "Keys and Endpoint":
+   - **Endpoint**: `https://xxxx.openai.azure.com/`
+   - **API key**: Key 1 or Key 2
+
+### 2-2. Deploy Embedding Model (Azure AI Foundry)
+
+1. From the Azure OpenAI resource page, click "Go to Azure AI Foundry portal"
+2. Left menu "**Deployments**" → "+ Deploy model" → "Deploy base model"
+3. Search for and select `text-embedding-3-large`
+4. Deployment settings:
+
+| Item | Value |
+|------|-------|
+| Deployment name | `text-embedding-3-large` |
+| Deployment type | Standard |
+| Tokens per minute rate limit | 150,000 or more recommended |
+
+---
+
+## 3. Configuring Server Parameters
+
+In the Azure Portal, open the PostgreSQL resource → "Server Parameters".
+
+Search for `azure.extensions`, add the following to the value and save, then restart the server.
 
 ```
 AZURE_AI,VECTOR
@@ -85,15 +85,15 @@ AZURE_AI,VECTOR
 
 ---
 
-## 4. データベースの作成
+## 4. Create Database
 
-### 4-1. psql で接続
+### 4-1. Connect with psql
 
 ```bash
 psql "host=digim-rdb.postgres.database.azure.com port=5432 dbname=postgres user=digimatsuadmin sslmode=require"
 ```
 
-### 4-2. データベース作成
+### 4-2. Create database
 
 ```sql
 CREATE DATABASE digim_analytics
@@ -102,7 +102,7 @@ CREATE DATABASE digim_analytics
          LC_CTYPE   = 'en_US.utf8';
 ```
 
-### 4-3. 作成したDBに接続
+### 4-3. Connect to the created DB
 
 ```bash
 psql "host=digim-rdb.postgres.database.azure.com port=5432 dbname=digim_analytics user=digimatsuadmin sslmode=require"
@@ -110,7 +110,7 @@ psql "host=digim-rdb.postgres.database.azure.com port=5432 dbname=digim_analytic
 
 ---
 
-## 5. 拡張機能の有効化・接続設定
+## 5. Enabling Extensions and Connection Settings
 
 ```sql
 -- 拡張の有効化
@@ -127,7 +127,7 @@ SELECT azure_openai.create_embeddings('text-embedding-3-large', 'テスト')::te
 
 ---
 
-## 6. テーブルの作成
+## 6. Create Tables
 
 ### 6-1. digim_sessions
 
@@ -198,13 +198,13 @@ CREATE TABLE digim_dialogs (
 );
 ```
 
-> 既に `digim_dialogs` を作成済みで `memory_flg` カラムが無い場合は以下を実行:
+> If `digim_dialogs` has already been created without the `memory_flg` column, run:
 > ```sql
 > ALTER TABLE digim_dialogs ADD COLUMN IF NOT EXISTS memory_flg CHAR(1);
 > UPDATE digim_dialogs SET memory_flg = 'Y' WHERE memory_flg IS NULL;
 > ```
 >
-> Phase 6 マルチペルソナ用カラムを追加する場合:
+> To add Phase 6 multi-persona columns:
 > ```sql
 > ALTER TABLE digim_dialogs
 >   ADD COLUMN IF NOT EXISTS persona_id   VARCHAR(64),
@@ -239,7 +239,7 @@ CREATE TABLE digim_references (
 );
 ```
 
-### 6-4. インデックスの作成
+### 6-4. Create Indexes
 
 ```sql
 -- digim_dialogs
@@ -252,9 +252,9 @@ CREATE INDEX digim_references_dialog_id_idx        ON digim_references (dialog_i
 CREATE INDEX digim_references_rag_name_db_name_idx ON digim_references (rag_name, db_name);
 ```
 
-### 6-5. digim_users（ログイン認証マスタ）
+### 6-5. digim_users (Authentication master)
 
-WebUIのログイン認証ソースとしてAzure PostgreSQLを使う場合に作成します（`system.env` で `LOGIN_AUTH_METHOD=RDB` を指定）。アプリ初回起動時に `CREATE TABLE IF NOT EXISTS` で自動作成もされますが、明示的に作成しておくと運用が分かりやすいです。
+Create this when using Azure PostgreSQL as the WebUI login authentication source (set `LOGIN_AUTH_METHOD=RDB` in `system.env`). It is also auto-created via `CREATE TABLE IF NOT EXISTS` on first application startup, but creating it explicitly makes operations clearer.
 
 ```sql
 CREATE TABLE IF NOT EXISTS digim_users (
@@ -267,7 +267,7 @@ CREATE TABLE IF NOT EXISTS digim_users (
 );
 ```
 
-既存JSON（`users.json`）からの移行登録例:
+Example migration from existing JSON (`users.json`):
 
 ```sql
 INSERT INTO digim_users (user_id, name, pw, group_cd, agent, allowed) VALUES
@@ -278,18 +278,18 @@ SET name=EXCLUDED.name, pw=EXCLUDED.pw, group_cd=EXCLUDED.group_cd,
     agent=EXCLUDED.agent, allowed=EXCLUDED.allowed;
 ```
 
-> 平文パスワードを入れた場合、初回ログイン後にbcryptハッシュへ自動変換されます。最初からハッシュ値（`$2b$...`）を入れることも可能。
+> If a plaintext password is entered, it will be automatically converted to a bcrypt hash on first login. You can also insert hash values (`$2b$...`) from the start.
 
-> 過去に `group_cd TEXT` で作成済みの場合は、JSONBへの型変換が必要です:
+> If the table was previously created with `group_cd TEXT`, a type conversion to JSONB is required:
 > ```sql
 > ALTER TABLE digim_users ALTER COLUMN group_cd TYPE JSONB
 > USING CASE WHEN group_cd IS NULL OR group_cd = '' THEN '[]'::jsonb
 >            ELSE jsonb_build_array(group_cd) END;
 > ```
 
-### 6-6. digim_agent_personas（エージェントペルソナマスタ）
+### 6-6. digim_agent_personas (Agent persona master)
 
-テンプレートエージェントに対して複数のペルソナ（人格・所属・権限制限）をPostgreSQL側で管理する場合に作成します（`system.env` で `AGENT_PERSONA_SOURCE=RDB` または `BOTH` を指定）。アプリ初回利用時に `CREATE TABLE IF NOT EXISTS` で自動作成もされます。
+Create this when managing multiple personas (personality, affiliation, permission restrictions) for a template agent on the PostgreSQL side (set `AGENT_PERSONA_SOURCE=RDB` or `BOTH` in `system.env`). It is also auto-created via `CREATE TABLE IF NOT EXISTS` on first application use.
 
 ```sql
 CREATE TABLE IF NOT EXISTS digim_agent_personas (
@@ -310,7 +310,7 @@ CREATE TABLE IF NOT EXISTS digim_agent_personas (
 );
 ```
 
-Excel（`user/common/agent/persona_data/`）からの移行登録例:
+Example migration from Excel (`user/common/agent/persona_data/`):
 
 ```sql
 INSERT INTO digim_agent_personas
@@ -334,11 +334,11 @@ SET template_agent=EXCLUDED.template_agent, org=EXCLUDED.org,
     active=EXCLUDED.active;
 ```
 
-> エージェントJSONに `"ORG": [...]` と `"PERSONA_FILES": [...]` を定義することで、WebUIサイドバーにORG selectbox + Persona multiselectが出現します。`active='N'` で論理削除。`AGENT_PERSONA_SOURCE=BOTH` の場合は Excel + RDB をマージし、同 `persona_id` は RDB を優先します。
+> By defining `"ORG": [...]` and `"PERSONA_FILES": [...]` in the agent JSON, an ORG selectbox + Persona multiselect appears in the WebUI sidebar. Use `active='N'` for logical delete. When `AGENT_PERSONA_SOURCE=BOTH`, Excel + RDB are merged, and entries with the same `persona_id` give precedence to RDB.
 
-### 6-7. digim_user_memory_history / _nowaday / _persona（階層的ユーザーメモリ）
+### 6-7. digim_user_memory_history / _nowaday / _persona (Hierarchical User Memory)
 
-`system.env` で `USER_MEMORY_HISTORY_BACKEND` / `_NOWADAY_BACKEND` / `_PERSONA_BACKEND` のいずれかを `RDB` に設定すると、対応する3つのテーブルがアプリ初回アクセス時に `CREATE TABLE IF NOT EXISTS` で **自動作成** されます。事前にDDLを実行する必要はありませんが、運用時のバックアップ・権限設計用にスキーマを記載しておきます。
+When any of `USER_MEMORY_HISTORY_BACKEND` / `_NOWADAY_BACKEND` / `_PERSONA_BACKEND` is set to `RDB` in `system.env`, the corresponding three tables are **auto-created** (on first access) via `CREATE TABLE IF NOT EXISTS`. There is no need to run DDL in advance, but the schemas are listed here for backup and permission design during operation.
 
 ```sql
 -- 短期メモリ（セッション単位の対話要約）
@@ -397,13 +397,13 @@ CREATE TABLE IF NOT EXISTS digim_user_memory_persona (
 );
 ```
 
-> 各バックエンドは独立に切替可能（例: Persona のみ RDB、HistoryはEXCEL等）。EXCEL/NOTION バックエンドを選んだ層についてはこれらのテーブルは作成されません。
+> Each backend can be switched independently (e.g., only Persona on RDB, History on EXCEL, etc.). For layers using the EXCEL/NOTION backend, these tables are not created.
 
 ---
 
-## 7. ベクトル自動生成トリガーの作成
+## 7. Creating the Auto-Vectorization Trigger
 
-INSERT / UPDATE 時に自動でベクトルを生成するトリガーを設定します。
+Set up a trigger that automatically generates vectors on INSERT / UPDATE.
 
 ```sql
 CREATE OR REPLACE FUNCTION trg_fn_digim_dialogs_vec()
@@ -433,14 +433,14 @@ ON digim_dialogs
 FOR EACH ROW EXECUTE FUNCTION trg_fn_digim_dialogs_vec();
 ```
 
-> `LEFT(text, 4000)` は日本語1文字≒2トークンのため8192トークン上限対策として4000文字に制限しています。
-> トリガーはINSERT/UPDATEで動作しますが、**大量バッチ処理（DigiM_DB_Export.py経由）では無効**です。その場合は手順9のPythonスクリプトでベクトル化します。
+> `LEFT(text, 4000)` limits the text to 4000 characters as a countermeasure to the 8192 token limit, since one Japanese character is roughly 2 tokens.
+> The trigger fires on INSERT/UPDATE, but is **disabled for large batch processing (via DigiM_DB_Export.py)**. In that case, vectorize using the Python script in step 9.
 
 ---
 
-## 8. system.env の設定
+## 8. Configuring system.env
 
-`system.env_sample` をコピーして `system.env` を作成し、接続情報を記載します。
+Copy `system.env_sample` to create `system.env` and fill in the connection details.
 
 ```env
 # PostgreSQL接続情報
@@ -463,11 +463,11 @@ LOGIN_AUTH_METHOD="RDB"
 AGENT_PERSONA_SOURCE="RDB"
 ```
 
-> `system.env` は `.gitignore` に含めてリポジトリにコミットしないこと。
+> Add `system.env` to `.gitignore` and do not commit it to the repository.
 
 ---
 
-## 9. 接続確認
+## 9. Connection check
 
 ```bash
 python3 -c "
@@ -489,29 +489,29 @@ conn.close()
 
 ---
 
-## 10. 初回データ投入
+## 10. Initial data load
 
-### 10-1. セッションデータのエクスポート
+### 10-1. Export session data
 
 ```bash
 python3 DigiM_DB_Export.py
 ```
 
-または WebUI の **Sessions → Export to DB** ボタンから実行できます。
+Alternatively, you can run it from the WebUI **Sessions → Export to DB** button.
 
-### 10-2. 既存データの一括ベクトル化
+### 10-2. Bulk vectorization of existing data
 
-エクスポート後、未ベクトル化レコードを一括処理します。
+After exporting, batch-process the unvectorized records.
 
 ```bash
 python3 -c "import DigiM_DB_Export as dmdbe; dmdbe.vectorize_dialogs()"
 ```
 
-> 以降の新規データは WebUI の **Export to DB** ボタン実行時に自動でベクトル化されます。
+> Subsequent new data is automatically vectorized when the WebUI **Export to DB** button is executed.
 
 ---
 
-## テーブル構成の概要
+## Table structure overview
 
 ```
 digim_sessions  (1)
@@ -519,8 +519,8 @@ digim_sessions  (1)
             └── digim_references  (N)  ← dialog_id で紐付け
 ```
 
-| テーブル | 説明 |
+| Table | Description |
 |---------|------|
-| `digim_sessions` | セッション単位のメタ情報（名前・ユーザー・エージェント等） |
-| `digim_dialogs` | 会話の各ターン（入力・応答・トークン数・RAG利用状況等） |
-| `digim_references` | 各ターンで参照されたRAGナレッジチャンクの詳細 |
+| `digim_sessions` | Per-session metadata (name, user, agent, etc.) |
+| `digim_dialogs` | Each turn of the conversation (input, response, token counts, RAG usage, etc.) |
+| `digim_references` | Details of the RAG knowledge chunks referenced in each turn |

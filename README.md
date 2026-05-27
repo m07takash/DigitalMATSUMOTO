@@ -1,3 +1,5 @@
+**日本語** | **[English](README.en.md)**
+
 # Digital MATSUMOTO
 
 ## はじめに

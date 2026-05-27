@@ -1,3 +1,5 @@
+**日本語** | **[English](FEATURE_LIST.en.md)**
+
 # デジタルMATSUMOTO 機能一覧（概念レベル）
 
 ## 全体構成

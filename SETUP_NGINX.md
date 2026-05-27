@@ -1,3 +1,5 @@
+**日本語** | **[English](SETUP_NGINX.en.md)**
+
 # NGINX セットアップ手順
 
 DigitalMATSUMOTO の Docker コンテナを外部公開するための NGINX リバースプロキシ設定手順です。
