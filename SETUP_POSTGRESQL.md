@@ -1,3 +1,5 @@
+**日本語** | **[English](SETUP_POSTGRESQL.en.md)**
+
 # PostgreSQL セットアップ手順（Docker環境）
 
 Docker がインストールされているだけの環境で、DigitalMATSUMOTO の分析用DBをゼロから構築する手順です。
