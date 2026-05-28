@@ -24,7 +24,7 @@ from wordcloud import WordCloud
 import base64
 import tiktoken
 import openai
-from openai import OpenAI
+from openai import OpenAI, AzureOpenAI
 from google import genai
 import fitz  # PyMuPDF
 from docx import Document as DocxDocument
@@ -38,6 +38,9 @@ timezone = os.getenv("TIMEZONE")
 openai_api_key = os.getenv("OPENAI_API_KEY")
 gemini_api_key = os.getenv("GEMINI_API_KEY")
 embedding_model = os.getenv("EMBEDDING_MODEL")
+# 埋め込み生成のプロバイダ切替（"openai"=OpenAI, "azure"=Azure OpenAI）
+embed_provider = (os.getenv("EMBED_PROVIDER") or "openai").lower()
+azure_openai_embed_model = os.getenv("AZURE_OPENAI_EMBED_MODEL")  # Azure側のデプロイ名
 
 # ロギングの初期設定（アプリケーション起動時に一度呼び出す）
 def setup_logging(level=logging.INFO):
@@ -466,14 +469,24 @@ def save_yaml_file(data, file_name, folder_path=""):
 #        yaml.dump(data, file, allow_unicode=True)
         yaml.dump(current_data, f, allow_unicode=True)
 
-# MP3ファイルをテキストに変換
+# MP3ファイルをテキストに変換（TRANSCRIBE_PROVIDER で OpenAI / Azure を切替）
 def mp3_to_text(file_name, folder_path=""):
-    client = OpenAI(api_key=openai_api_key)
+    _provider = (os.getenv("TRANSCRIBE_PROVIDER") or "openai").lower()
+    if _provider == "azure":
+        client = AzureOpenAI(
+            api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+            azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+            api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview"),
+        )
+        model_name = os.getenv("AZURE_OPENAI_WHISPER_MODEL") or "whisper"
+    else:
+        client = OpenAI(api_key=openai_api_key)
+        model_name = "whisper-1"
     file_path = folder_path + file_name
     if os.path.exists(file_path):
         with open(file_path, "rb") as audio_file:
             transcript = client.audio.transcriptions.create(
-                model="whisper-1",
+                model=model_name,
                 file=audio_file,
                 language="ja"
             )
@@ -516,14 +529,33 @@ _embed_client = None
 _embed_enc = None
 
 def _get_embed_client():
+    """埋め込み生成クライアント。EMBED_PROVIDER=azure なら Azure OpenAI を使う。"""
     global _embed_client, _embed_enc
     if _embed_client is None:
-        _embed_client = OpenAI(api_key=openai_api_key)
+        if embed_provider == "azure":
+            _embed_client = AzureOpenAI(
+                api_key=os.getenv("AZURE_OPENAI_API_KEY"),
+                azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
+                api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview"),
+            )
+        else:
+            _embed_client = OpenAI(api_key=openai_api_key)
     if _embed_enc is None:
-        _embed_enc = tiktoken.encoding_for_model(embedding_model)
+        # tiktoken は OpenAIモデル名を期待。Azureのデプロイ名は不明なので
+        # EMBEDDING_MODEL（実モデル名）で引き、失敗時は text-embedding-3-large の互換 cl100k_base にフォールバック
+        try:
+            _embed_enc = tiktoken.encoding_for_model(embedding_model or "text-embedding-3-large")
+        except Exception:
+            _embed_enc = tiktoken.get_encoding("cl100k_base")
     return _embed_client, _embed_enc
 
-# テキストを埋め込みベクトルに変換（OpenAIのEmbeddingモデル）
+def _embed_model_name():
+    """API の model 引数に渡す名前。Azure ではデプロイ名、OpenAI ではモデル名。"""
+    if embed_provider == "azure":
+        return azure_openai_embed_model or embedding_model
+    return embedding_model
+
+# テキストを埋め込みベクトルに変換（EMBED_PROVIDER に応じて OpenAI / Azure OpenAI を使い分け）
 def embed_text(text):
     client, enc = _get_embed_client()
     max_tokens = 8192
@@ -531,7 +563,7 @@ def embed_text(text):
     if len(tokens) > max_tokens:
         tokens = tokens[:max_tokens]
     safe_text = enc.decode(tokens)
-    response = client.embeddings.create(model=embedding_model, input=safe_text)
+    response = client.embeddings.create(model=_embed_model_name(), input=safe_text)
     return response.data[0].embedding
 
 # C-3: 複数テキストを1回のAPI呼び出しでベクトル化（バッチ処理）
@@ -558,7 +590,7 @@ def embed_texts_batch(texts, batch_token_limit=250000):
             batch_tokens += t
             batch_end = i + 1
         batch = safe_texts[batch_start:batch_end]
-        response = client.embeddings.create(model=embedding_model, input=batch)
+        response = client.embeddings.create(model=_embed_model_name(), input=batch)
         for item in response.data:
             all_embeddings[batch_start + item.index] = item.embedding
         batch_start = batch_end

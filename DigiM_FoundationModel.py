@@ -34,7 +34,7 @@ xai_api_key = os.getenv("XAI_API_KEY")
 # Azure OpenAI Service（chat/image用）
 azure_openai_api_key = os.getenv("AZURE_OPENAI_API_KEY")
 azure_openai_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-azure_openai_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-10-21")
+azure_openai_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
 
 # LLMクライアントのシングルトン
 _clients = {}
