@@ -26,11 +26,11 @@
     },
     "ENGINE": {
         "LLM": {
-            "DEFAULT": "GPT-5.1",
-            "GPT-5.1": {
-                "NAME": "GPT-5.1",
+            "DEFAULT": "GPT-5.5",
+            "GPT-5.5": {
+                "NAME": "GPT-5.5",
                 "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5.1",
+                "MODEL": "gpt-5.5",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {"limit": 10000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
@@ -142,8 +142,8 @@
             "GPT-Azure": {
                 "NAME": "GPT-Azure",
                 "FUNC_NAME": "generate_response_T_azure_openai",
-                "MODEL": "gpt-5.1",
-                "PARAMETER": {},
+                "MODEL": "gpt-5.4",
+                "PARAMETER": {"max_completion_tokens": 20000},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {"limit": 10000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
             }

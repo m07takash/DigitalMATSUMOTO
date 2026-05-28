@@ -204,7 +204,8 @@ user/common/rag/pages/*
 user/common/csv/*
 !user/common/csv/Sample*.csv
 !user/common/csv/Format*.csv
-!user/common/csv/TheRound*.csv
+!user/common/csv/TheRound/
+!user/common/csv/TheRound/*.csv
 !user/common/csv/pageindex/
 user/common/csv/pageindex/*
 !user/common/csv/pageindex/Sample*/
