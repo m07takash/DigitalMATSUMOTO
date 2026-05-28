@@ -156,14 +156,18 @@ def get_rag_list():
     return result + rest
 
 # RAGコレクションのメタデータ一覧を取得（Knowledge Explorer用）
-def get_rag_collection_data(collection_name):
-    """ChromaDBコレクションの全メタデータをリスト[dict]で返す"""
+def get_rag_collection_data(collection_name, where=None):
+    """ChromaDBコレクションの全メタデータをリスト[dict]で返す。
+    where（ChromaDBのメタデータ条件dict）を渡すと、そのチャンクのみに絞り込む。"""
     db_client = get_chroma_client()
     try:
         collection = db_client.get_collection(collection_name)
     except Exception:
         return []
-    response = collection.get(include=["metadatas"])
+    _get_kwargs = {"include": ["metadatas"]}
+    if where:
+        _get_kwargs["where"] = where
+    response = collection.get(**_get_kwargs)
     if not response or not response["ids"]:
         return []
     data = []

@@ -1308,8 +1308,9 @@ def _knowledge_explorer():
     else:
         _selected_list = st.multiselect("Collection:", _chroma_list, default=[], key="rag_collection_chromadb")
 
-    # 選択をソートして文字列化（キャッシュキーに使う）
-    _selected_key = str(sorted(_selected_list))
+    # 選択をソートして文字列化（キャッシュキーに使う）。ペルソナ選択もキーに含め、変更時に再取得
+    _persona_sig = str(sorted(st.session_state.get("selected_persona_ids") or []))
+    _selected_key = str(sorted(_selected_list)) + "|persona:" + _persona_sig
 
     # Collection変更時にキャッシュと検索状態をリセット
     # （空選択時、読み込み済みセッションがある場合、BGタスク実行中はスキップ）
@@ -1522,6 +1523,54 @@ def _knowledge_explorer():
                 _col_to_rag_name[_dn] = _rag_name_v
 
     # データ取得（キャッシュがあればそれを使う）
+    # 選択中ペルソナの define_code を和集合で合成（KNOWLEDGEのDATA単位FILTERで絞り込むため）
+    _persona_define_code = {}
+    try:
+        _sel_pids = list(st.session_state.get("selected_persona_ids") or [])
+        if _sel_pids and st.session_state.get("selected_org"):
+            _cands = dap.find_personas_by_org(
+                st.session_state.selected_org,
+                template_agent=st.session_state.get("agent_file"),
+                persona_files=_agent_data.get("PERSONA_FILES") or None,
+                source=_agent_data.get("PERSONA_SOURCE"),
+            )
+            _pid_map = {p["persona_id"]: p for p in _cands}
+            for _pid in _sel_pids:
+                _p = _pid_map.get(_pid)
+                if not _p:
+                    continue
+                for _ck, _cv in (_p.get("define_code") or {}).items():
+                    _vals = _cv if isinstance(_cv, list) else [_cv]
+                    _cur = _persona_define_code.setdefault(_ck, [])
+                    for _x in _vals:
+                        if _x not in ("", None) and _x not in _cur:
+                            _cur.append(_x)
+    except Exception:
+        _persona_define_code = {}
+
+    # コレクション(DATA_NAME) → DATAエントリ(FILTER付き) のマップ
+    _data_entry_map = {}
+    for _kn_entry in _agent_data.get("KNOWLEDGE", []) + _agent_data.get("BOOK", []):
+        for _dt_entry in _kn_entry.get("DATA", []):
+            if _dt_entry.get("DATA_NAME"):
+                _data_entry_map[_dt_entry["DATA_NAME"]] = _dt_entry
+    _exec_info_ke = {"SERVICE_INFO": st.session_state.web_service, "USER_INFO": st.session_state.web_user}
+
+    def _persona_where(_collection):
+        """選択ペルソナ時、そのコレクションのDATA-FILTERから絞り込みwhereを返す（未設定ならNone）"""
+        if not _persona_define_code:
+            return None
+        _de = _data_entry_map.get(_collection)
+        if not _de or "FILTER" not in _de:
+            return None
+        try:
+            _wl = dmc._build_where_limitation(_de, _exec_info_ke, _persona_define_code)
+        except Exception:
+            return None
+        if not _wl:
+            return None
+        return _wl[0] if len(_wl) == 1 else {"$and": _wl}
+
     if st.session_state.get("_rag_cached_data") is not None:
         df = st.session_state._rag_cached_data
         _data_type = st.session_state._rag_cached_type
@@ -1532,7 +1581,7 @@ def _knowledge_explorer():
     else:
         _all_raw_data = []
         for _sel in _selected_list:
-            _col_data = dmc.get_rag_collection_data(_sel)
+            _col_data = dmc.get_rag_collection_data(_sel, where=_persona_where(_sel))
             _rn = _col_to_rag_name.get(_sel, _sel)
             for d in _col_data:
                 d["_source"] = _sel
@@ -1697,22 +1746,36 @@ def _knowledge_explorer():
             _ai = _al.index(st.session_state.agent_id)
         _ag = _c1.selectbox(f"{label} Agent:", _al, index=_ai, key=f"{kp}_expl_agent")
         _af = next((a["FILE"] for a in st.session_state.agents if a["AGENT"] == _ag), None)
-        _el = []
+        _aj = {}
         if _af:
             try:
-                _aj = dmu.read_json_file(_af, agent_folder_path)
-                _el = [e for e in _aj.get("ENGINE", {}).get("LLM", {}).keys() if e != "DEFAULT"]
+                _aj = dmu.read_json_file(_af, agent_folder_path) or {}
             except Exception:
-                _el = []
+                _aj = {}
+        _el = [e for e in _aj.get("ENGINE", {}).get("LLM", {}).keys() if e != "DEFAULT"]
         _eng = _c2.selectbox(f"{label} Engine:", _el, key=f"{kp}_expl_engine") if _el else None
-        return _af, _ag, _eng
+        # このエージェントがペルソナを持つ場合、ペルソナを1つ選択可能（任意・(none)で未適用）
+        _persona = None
+        _pfiles = _aj.get("PERSONA_FILES")
+        if _af and _pfiles:
+            try:
+                _plist = dap.load_personas(template_agent=_af, persona_files=_pfiles, source=_aj.get("PERSONA_SOURCE"))
+            except Exception:
+                _plist = []
+            if _plist:
+                _popts = ["(none)"] + [f"{p.get('persona_id')}: {p.get('name')}" for p in _plist]
+                _psel = st.selectbox(f"{label} Persona:", _popts, index=0, key=f"{kp}_expl_persona")
+                if _psel != "(none)":
+                    _pid = _psel.split(":", 1)[0].strip()
+                    _persona = next((p for p in _plist if str(p.get("persona_id")) == _pid), None)
+        return _af, _ag, _eng, _persona
 
     def _explanation_block(state_base, template_name, fallback_agent, ctx_builder, label, kp, postprocess=None):
         """解説: エージェント+エンジン選択→複数回実行→ドロップダウンで1件表示。表示中テキストを返す。"""
         _hk = f"{state_base}_history"
         _sk = f"{state_base}_sel"
         st.markdown(f"**{label}の解説:**")
-        _af, _ag, _eng = _agent_engine_selectors(label, kp)
+        _af, _ag, _eng, _persona = _agent_engine_selectors(label, kp)
         if st.button(f"Explain {label}", key=f"{kp}_expl_run"):
             _ctx = ctx_builder()
             if not _ctx:
@@ -1721,7 +1784,7 @@ def _knowledge_explorer():
                 _use_af = _af or fallback_agent
                 with st.spinner(f"{label}を解説中..."):
                     try:
-                        _agent = dma.DigiM_Agent(_use_af)
+                        _agent = dma.DigiM_Agent(_use_af, persona=_persona) if _persona else dma.DigiM_Agent(_use_af)
                         if _eng and _eng in _agent.agent.get("ENGINE", {}).get("LLM", {}):
                             _agent.agent["ENGINE"]["LLM"]["DEFAULT"] = _eng
                         try:
@@ -1741,6 +1804,7 @@ def _knowledge_explorer():
                         _entry = {
                             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             "agent": _ag, "engine": _eng or "(default)", "response": _disp,
+                            "persona": (_persona.get("name") if _persona else ""),
                         }
                         _h = (st.session_state.get(_hk) or []) + [_entry]
                         st.session_state[_hk] = _h
@@ -1755,7 +1819,7 @@ def _knowledge_explorer():
             _sel = len(_h) - 1
         _sel = st.selectbox(
             f"{label} 解説履歴:", list(range(len(_h))), index=_sel,
-            format_func=lambda i: f"[{i+1}/{len(_h)}] {_h[i]['timestamp']} / {_h[i]['agent']} / {_h[i]['engine']}",
+            format_func=lambda i: f"[{i+1}/{len(_h)}] {_h[i]['timestamp']} / {_h[i]['agent']}{('・'+_h[i]['persona']) if _h[i].get('persona') else ''} / {_h[i]['engine']}",
             key=f"{kp}_expl_sel")
         st.session_state[_sk] = _sel
         st.markdown(_h[_sel]["response"])
