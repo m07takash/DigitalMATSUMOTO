@@ -568,10 +568,11 @@ def _merge_big5(existing: dict, new: dict) -> dict:
     return out
 
 
-def merge_persona(service_id: str, user_id: str, nowaday_profiles=None) -> dict:
+def merge_persona(service_id: str, user_id: str, nowaday_profiles=None, save: bool = True) -> dict:
     """既存PersonaとNowadayプロファイルをLLMでマージし、Persona DBにupsert。
 
     nowaday_profiles: list[dict]  指定がなければ最新のNowaday 1件を使う。
+    save: False を渡すと upsert せず、下書きの rec のみ返す（UIプレビュー用）。
     """
     existing = dmum.get_one("persona", {"service_id": service_id, "user_id": user_id}) or {}
     if nowaday_profiles is None:
@@ -621,8 +622,11 @@ def merge_persona(service_id: str, user_id: str, nowaday_profiles=None) -> dict:
         "token_count": len(summary),
     }
     rec.update(merged_lists)
-    dmum.upsert("persona", rec)
-    logger.info(f"[user_memory.persona] saved user={user_id} chars={len(summary)}")
+    if save:
+        dmum.upsert("persona", rec)
+        logger.info(f"[user_memory.persona] saved user={user_id} chars={len(summary)}")
+    else:
+        logger.info(f"[user_memory.persona] draft (no save) user={user_id} chars={len(summary)}")
     return rec
 
 

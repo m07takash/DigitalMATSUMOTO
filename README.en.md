@@ -185,7 +185,9 @@ cp system.env_sample system.env
 | `USER_MEMORY_AUTO_APPROVE_THRESHOLD` | `0.8` | Threshold for auto-approving Persona items by confidence |
 | `USER_MEMORY_PERSONA_MAX_CHARS_PER_FIELD` | `300` | Max character count retained per Persona field |
 | `USER_MEMORY_HISTORY_MAX_CHARS` | `800` | Max total character count for History memory injection |
-| `EMBEDDING_MODEL` | `text-embedding-3-large` | Embedding vector model |
+| `EMBEDDING_MODEL` | `text-embedding-3-large` | Embedding vector model (also used to select the tiktoken tokenizer) |
+| `EMBED_PROVIDER` | `openai` | Embedding generation provider: `openai` or `azure`. When `azure`, used together with `AZURE_OPENAI_*` and `AZURE_OPENAI_EMBED_MODEL` |
+| `TRANSCRIBE_PROVIDER` | `openai` | Speech-to-text (Whisper) provider: `openai` or `azure`. When `azure`, used together with `AZURE_OPENAI_WHISPER_MODEL` |
 | `WEB_TITLE` | `Digital Twin` | Title of the WebUI |
 | `WEB_DEFAULT_AGENT_FILE` | `agent_10Sample.json` | Default agent in the WebUI |
 | `WEB_MAX_UPLOAD_SIZE` | `500` | File upload limit (MB) |
@@ -222,16 +224,25 @@ Configure when using Notion as the storage destination for feedback or RAG data.
 
 **Optional settings (Azure OpenAI Service):**
 
-Configure when using deployments such as gpt-* / dall-e / gpt-image-* on Azure as chat/image generation engines, and when performing embedding vectorization via Azure.
+Configure when using deployments such as gpt-* / dall-e / gpt-image-* on Azure as chat/image generation engines, and when running embedding or audio transcription via Azure.
 
 | Variable | Description |
 |------|------|
 | `AZURE_OPENAI_ENDPOINT` | Endpoint URL of the Azure OpenAI resource |
 | `AZURE_OPENAI_API_KEY` | API key |
-| `AZURE_OPENAI_API_VERSION` | API version for the chat/image engine (default `2024-10-21`). Per-agent overrides go in `PARAMETER.api_version` |
-| `AZURE_OPENAI_EMBED_MODEL` | Deployment name for embedding (used by PostgreSQL vectorization) |
+| `AZURE_OPENAI_API_VERSION` | API version for the chat/image engine (default `2024-12-01-preview` / required for gpt-5 series). Per-agent overrides go in `PARAMETER.api_version` |
+| `AZURE_OPENAI_EMBED_MODEL` | Embedding deployment name (used when `EMBED_PROVIDER="azure"`) |
+| `AZURE_OPENAI_WHISPER_MODEL` | Whisper deployment name (used when `TRANSCRIBE_PROVIDER="azure"`) |
 
-In the agent JSON, specify `FUNC_NAME: "generate_response_T_azure_openai"` under `ENGINE.LLM`, and `"generate_image_azure_dalle"` under `ENGINE.IMAGEGEN`. In `MODEL`, put the **deployment name on Azure**.
+In the agent JSON, specify `FUNC_NAME: "generate_response_T_azure_openai"` under `ENGINE.LLM`, and `"generate_image_azure_dalle"` under `ENGINE.IMAGEGEN`. In `MODEL`, put the **deployment name on Azure**. For `gpt-5*` / `o1` / `o3` / `o4` series, `max_tokens` is automatically translated to `max_completion_tokens`.
+
+**OpenAI / Azure combination examples:**
+
+| Mode | env settings |
+|---|---|
+| OpenAI only (legacy) | Nothing to change (`EMBED_PROVIDER` / `TRANSCRIBE_PROVIDER` may be omitted; only `OPENAI_API_KEY` is required) |
+| Fully Azure | `EMBED_PROVIDER="azure"` / `TRANSCRIBE_PROVIDER="azure"` + the full `AZURE_OPENAI_*` set. In the agent JSON, choose the `generate_response_T_azure_openai`-family. The OpenAI WebSearch tool has no Azure equivalent and should not be used |
+| Mixed | `EMBED_PROVIDER` / `TRANSCRIBE_PROVIDER` can be switched independently per subsystem (e.g., chat=OpenAI, embedding=Azure) |
 
 ### 5. Launching the application (executed inside the container)
 
@@ -831,7 +842,7 @@ The model with the key name specified in `DEFAULT` is used. It can also be switc
 
 **Using Azure OpenAI Service**
 
-Set `AZURE_OPENAI_ENDPOINT` / `AZURE_OPENAI_API_KEY` / `AZURE_OPENAI_API_VERSION` (default `2024-10-21`) in `system.env`. In the agent JSON, put the Azure deployment name in `MODEL`. You can also **override on a per-engine basis** with `PARAMETER.api_version` (e.g., use a new API version only for gpt-5 series):
+Set `AZURE_OPENAI_ENDPOINT` / `AZURE_OPENAI_API_KEY` / `AZURE_OPENAI_API_VERSION` (default `2024-12-01-preview`, required for gpt-5 series) in `system.env`. In the agent JSON, put the Azure deployment name in `MODEL`. You can also **override on a per-engine basis** with `PARAMETER.api_version` (e.g., use a new API version only for gpt-5 series). For `gpt-5*` / `o1` / `o3` / `o4` series, `max_tokens` is automatically translated to `max_completion_tokens`:
 
 ```json
 "GPT-Azure": {
@@ -1531,7 +1542,13 @@ The screen consists of four sections stacked vertically: **Overall -> Trend -> T
 
 Switch between **Collection (VectorDB)** and **PageIndex** via radio button. The list of collections is filtered based on the KNOWLEDGE and BOOK settings of the selected agent. When PageIndex is selected, it becomes a dedicated screen for tree-structure display / page sensitivity analysis.
 
+> **Persona filtering:** When a Persona is selected in the sidebar, that persona's `define_code` is used to narrow chunks according to the **per-DATA `FILTER` (mapping in `DEFINE_CODE.CODES`)** of each KNOWLEDGE entry (same logic as the runtime RAG path `_build_where_limitation`). When multiple personas are selected, results are the **union** (e.g., `user_name in [Reika, Mone]`). If DATA has no `FILTER` or no persona is selected, no narrowing is applied (all chunks).
+
+> **Explanation agent persona:** In Clustering / Trend / Topic explanations, if the selected explanation agent has `PERSONA_FILES`, a **Persona selector (optional / single)** appears and the explanation is generated under that persona (`(none)` skips). Multiple runs are recorded in the history as "Agent · persona / engine" and can be switched in the dropdown.
+
 All analyses are fixedly displayed for **Total and per RAG NAME**. Heavy figures (scatter plot, bar chart, word cloud, etc.) are generated and rasterized once at analysis execution time, and are not recomputed on subsequent redraws (operability improvement).
+
+> **Future date allowance:** All date inputs in Knowledge Explorer (Overall's `Date From/To`, the additional Period filter in Trend/Topic, and the Bonus Period in Topic) accept **future dates up to `2099-12-31`**. `Highlight Period` / `Cluster Period` are constrained inside `Date From-To`, so extending Date To into the future lets them extend along with it.
 
 ### 1. Overall
 
@@ -1612,14 +1629,25 @@ A 3-tab layout from the left: **"My Memory" / "User Understanding (Individual)" 
 
 **My Memory (only your own memory)** — if you have `Allowed["User Memory Explorer"]`, you can edit your own 3 layers (other users cannot edit yours):
 - Persona: role / summary_text / each list item (label override + status approved/pending/deleted) / Big5 (score 0-1 + status)
+  - **Summary draft regeneration**: Calls `merge_persona(..., save=False)` with the latest Nowaday to regenerate a draft `summary_text` into the text area. **Nothing is saved until you press "Save Persona"**
 - Nowaday: snapshot selection (period @ generation time, latest on top) -> summary_text / continuing / new / waning / change (one item per line) / 8 basic emotion intensities / secondary emotions
+  - **New snapshot generation**: Choose a period mode (`YYYY-MM` / `since_YYYY-MM-DD` / `rolling_<N>d` / `all`) and generate a **new snapshot** (existing snapshots are not overwritten — history style)
 - History: session selection -> topic / excerpt / emotion / confidence / active (when off, excluded from list / context)
 - Each layer's Save button does `DigiM_UserMemory.upsert` only for that record (key items are preserved)
 
 **User Understanding (Individual)** — select one user:
 - Persona: role / summary / Big5 radar + a "trait / score" table on the right (status hidden) / items requiring review (pending)
-- Nowaday: period summary / basic emotion radar + an "emotion / score" table on the right / secondary emotions / continuing / new / waning / change
+- **Persona 6-attribute treemap + data table**: Visualizes `expertise / recurring_interests / values_principles / constraints / communication_style / avoid_topics` as a treemap (rows = field / area = confidence ratio / color = field) plus a data table (field = colored / confidence = progress bar / status = colored). Filterable by **Status** (default approved+pending)
+- Nowaday: **snapshot selection (period @ generation time, latest on top)** -> period summary / basic emotion radar + an "emotion / score" table on the right / secondary emotions / continuing / new / waning / change
 - History emotion trajectory: with a specified period (default = today through past 1 month), stacks Plutchik emotions of each session by date + per-session log
+- **User × Agent relationship (button-driven)**: Pick an agent and press "Run analysis" to scan dialog history and render 7 panels (cached):
+  - **(1) Basic summary** (5 KPI metrics): session count / turn count / total chars / average turns per session / last contact date
+  - **(2) Activity trend**: with **Period (From-To)** + **granularity (Month/Week/Day)** selectors. Bar (sessions) + line (turns) on dual axes
+  - **(3) Communication features**: averages of query chars / response chars / ratio + **seq-unit** query × response scatter (color = month)
+  - **(4) Emotional tone**: basic-emotion radar from `history.emotions` (max-normalized) + top secondary emotions (derivation noted in caption)
+  - **(5) Compatibility score (6-axis radar)**: Continuity / Frequency / Focus / Richness / Engagement / Knowledge use + auto "relationship label" (e.g., "Long-term / High-frequency / Theme-focused / Verbose response / High knowledge reliance")
+  - **(6) Theme overlap**: top-10 of `axis_tags.interests/values/constraints` in 3 columns
+  - **(7) Knowledge references (scatter + list)**: Scatter (X = avg similarity_Q / Y = avg knowledge_utility (sQ−sA) / color = category linked with `category_map.json` / size = reference count) + list (Bucket / Title / Category / CreateDate / refs / knowledge utility {sum, avg, median, max, min, variance})
 - **Chat with this User Twin**: Dialogue with an AI (= a digital twin) that has only the selected user's memories. The agent is not selected; **only the LLM engine of the sidebar-selected agent** is selectable. Responds using only the context synthesized from Persona/Nowaday/History via the User Memory injection method (History is scored by question keywords) + LLM-only (the sidebar agent's personality / knowledge / system prompt are not used). The AI acts as the user themself, by their name
 
 **Group Understanding** — select target users with multiselect (default = everyone, no filter):
