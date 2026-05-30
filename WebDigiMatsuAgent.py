@@ -913,6 +913,97 @@ def ak_line(ak_dict):
     return line
 
 ### Knowledge Explorer画面 ###
+def _agent_engine_selectors(label, kp):
+    _c1, _c2 = st.columns([1, 1])
+    _al = st.session_state.agent_list
+    _ai = 0
+    _da = next((a for a in _al if "Analyst" in a), None)
+    if _da:
+        _ai = _al.index(_da)
+    elif st.session_state.get("agent_id") in _al:
+        _ai = _al.index(st.session_state.agent_id)
+    _ag = _c1.selectbox(f"{label} Agent:", _al, index=_ai, key=f"{kp}_expl_agent")
+    _af = next((a["FILE"] for a in st.session_state.agents if a["AGENT"] == _ag), None)
+    _aj = {}
+    if _af:
+        try:
+            _aj = dmu.read_json_file(_af, agent_folder_path) or {}
+        except Exception:
+            _aj = {}
+    _el = [e for e in _aj.get("ENGINE", {}).get("LLM", {}).keys() if e != "DEFAULT"]
+    _eng = _c2.selectbox(f"{label} Engine:", _el, key=f"{kp}_expl_engine") if _el else None
+    # このエージェントがペルソナを持つ場合、ペルソナを1つ選択可能（任意・(none)で未適用）
+    _persona = None
+    _pfiles = _aj.get("PERSONA_FILES")
+    if _af and _pfiles:
+        try:
+            _plist = dap.load_personas(template_agent=_af, persona_files=_pfiles, source=_aj.get("PERSONA_SOURCE"))
+        except Exception:
+            _plist = []
+        if _plist:
+            _popts = ["(none)"] + [f"{p.get('persona_id')}: {p.get('name')}" for p in _plist]
+            _psel = st.selectbox(f"{label} Persona:", _popts, index=0, key=f"{kp}_expl_persona")
+            if _psel != "(none)":
+                _pid = _psel.split(":", 1)[0].strip()
+                _persona = next((p for p in _plist if str(p.get("persona_id")) == _pid), None)
+    return _af, _ag, _eng, _persona
+
+def _explanation_block(state_base, template_name, fallback_agent, ctx_builder, label, kp, postprocess=None):
+    """解説: エージェント+エンジン選択→複数回実行→ドロップダウンで1件表示。表示中テキストを返す。"""
+    _hk = f"{state_base}_history"
+    _sk = f"{state_base}_sel"
+    st.markdown(f"**{label}の解説:**")
+    _af, _ag, _eng, _persona = _agent_engine_selectors(label, kp)
+    if st.button(f"Explain {label}", key=f"{kp}_expl_run"):
+        _ctx = ctx_builder()
+        if not _ctx:
+            st.warning("解説対象のデータがありません。先に分析を実行してください。")
+        else:
+            _use_af = _af or fallback_agent
+            with st.spinner(f"{label}を解説中..."):
+                try:
+                    _agent = dma.DigiM_Agent(_use_af, persona=_persona) if _persona else dma.DigiM_Agent(_use_af)
+                    if _eng and _eng in _agent.agent.get("ENGINE", {}).get("LLM", {}):
+                        _agent.agent["ENGINE"]["LLM"]["DEFAULT"] = _eng
+                    try:
+                        _tmpl = _agent.set_prompt_template(template_name)
+                    except Exception:
+                        _tmpl = ""
+                    _resp = ""
+                    for _, _ch, _ in _agent.generate_response("LLM", f"{_tmpl}\n{_ctx}", [], stream_mode=False):
+                        if _ch:
+                            _resp += _ch
+                    _disp = _resp
+                    if postprocess:
+                        try:
+                            _disp = postprocess(_resp)
+                        except Exception:
+                            _disp = _resp
+                    _entry = {
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "agent": _ag, "engine": _eng or "(default)", "response": _disp,
+                        "persona": (_persona.get("name") if _persona else ""),
+                    }
+                    _h = (st.session_state.get(_hk) or []) + [_entry]
+                    st.session_state[_hk] = _h
+                    st.session_state[_sk] = len(_h) - 1
+                except Exception as e:
+                    st.error(f"{label}解説エラー: {e}")
+    _h = st.session_state.get(_hk) or []
+    if not _h:
+        return ""
+    _sel = st.session_state.get(_sk)
+    if _sel is None or _sel >= len(_h) or _sel < 0:
+        _sel = len(_h) - 1
+    _sel = st.selectbox(
+        f"{label} 解説履歴:", list(range(len(_h))), index=_sel,
+        format_func=lambda i: f"[{i+1}/{len(_h)}] {_h[i]['timestamp']} / {_h[i]['agent']}{('・'+_h[i]['persona']) if _h[i].get('persona') else ''} / {_h[i]['engine']}",
+        key=f"{kp}_expl_sel")
+    st.session_state[_sk] = _sel
+    st.markdown(_h[_sel]["response"])
+    return _h[_sel]["response"]
+
+
 def _knowledge_explorer():
     import fnmatch
 
@@ -1734,96 +1825,6 @@ def _knowledge_explorer():
         ax.set_title(_title)
         ax.grid(True)
         return _png(fig)
-
-    def _agent_engine_selectors(label, kp):
-        _c1, _c2 = st.columns([1, 1])
-        _al = st.session_state.agent_list
-        _ai = 0
-        _da = next((a for a in _al if "Analyst" in a), None)
-        if _da:
-            _ai = _al.index(_da)
-        elif st.session_state.get("agent_id") in _al:
-            _ai = _al.index(st.session_state.agent_id)
-        _ag = _c1.selectbox(f"{label} Agent:", _al, index=_ai, key=f"{kp}_expl_agent")
-        _af = next((a["FILE"] for a in st.session_state.agents if a["AGENT"] == _ag), None)
-        _aj = {}
-        if _af:
-            try:
-                _aj = dmu.read_json_file(_af, agent_folder_path) or {}
-            except Exception:
-                _aj = {}
-        _el = [e for e in _aj.get("ENGINE", {}).get("LLM", {}).keys() if e != "DEFAULT"]
-        _eng = _c2.selectbox(f"{label} Engine:", _el, key=f"{kp}_expl_engine") if _el else None
-        # このエージェントがペルソナを持つ場合、ペルソナを1つ選択可能（任意・(none)で未適用）
-        _persona = None
-        _pfiles = _aj.get("PERSONA_FILES")
-        if _af and _pfiles:
-            try:
-                _plist = dap.load_personas(template_agent=_af, persona_files=_pfiles, source=_aj.get("PERSONA_SOURCE"))
-            except Exception:
-                _plist = []
-            if _plist:
-                _popts = ["(none)"] + [f"{p.get('persona_id')}: {p.get('name')}" for p in _plist]
-                _psel = st.selectbox(f"{label} Persona:", _popts, index=0, key=f"{kp}_expl_persona")
-                if _psel != "(none)":
-                    _pid = _psel.split(":", 1)[0].strip()
-                    _persona = next((p for p in _plist if str(p.get("persona_id")) == _pid), None)
-        return _af, _ag, _eng, _persona
-
-    def _explanation_block(state_base, template_name, fallback_agent, ctx_builder, label, kp, postprocess=None):
-        """解説: エージェント+エンジン選択→複数回実行→ドロップダウンで1件表示。表示中テキストを返す。"""
-        _hk = f"{state_base}_history"
-        _sk = f"{state_base}_sel"
-        st.markdown(f"**{label}の解説:**")
-        _af, _ag, _eng, _persona = _agent_engine_selectors(label, kp)
-        if st.button(f"Explain {label}", key=f"{kp}_expl_run"):
-            _ctx = ctx_builder()
-            if not _ctx:
-                st.warning("解説対象のデータがありません。先に分析を実行してください。")
-            else:
-                _use_af = _af or fallback_agent
-                with st.spinner(f"{label}を解説中..."):
-                    try:
-                        _agent = dma.DigiM_Agent(_use_af, persona=_persona) if _persona else dma.DigiM_Agent(_use_af)
-                        if _eng and _eng in _agent.agent.get("ENGINE", {}).get("LLM", {}):
-                            _agent.agent["ENGINE"]["LLM"]["DEFAULT"] = _eng
-                        try:
-                            _tmpl = _agent.set_prompt_template(template_name)
-                        except Exception:
-                            _tmpl = ""
-                        _resp = ""
-                        for _, _ch, _ in _agent.generate_response("LLM", f"{_tmpl}\n{_ctx}", [], stream_mode=False):
-                            if _ch:
-                                _resp += _ch
-                        _disp = _resp
-                        if postprocess:
-                            try:
-                                _disp = postprocess(_resp)
-                            except Exception:
-                                _disp = _resp
-                        _entry = {
-                            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "agent": _ag, "engine": _eng or "(default)", "response": _disp,
-                            "persona": (_persona.get("name") if _persona else ""),
-                        }
-                        _h = (st.session_state.get(_hk) or []) + [_entry]
-                        st.session_state[_hk] = _h
-                        st.session_state[_sk] = len(_h) - 1
-                    except Exception as e:
-                        st.error(f"{label}解説エラー: {e}")
-        _h = st.session_state.get(_hk) or []
-        if not _h:
-            return ""
-        _sel = st.session_state.get(_sk)
-        if _sel is None or _sel >= len(_h) or _sel < 0:
-            _sel = len(_h) - 1
-        _sel = st.selectbox(
-            f"{label} 解説履歴:", list(range(len(_h))), index=_sel,
-            format_func=lambda i: f"[{i+1}/{len(_h)}] {_h[i]['timestamp']} / {_h[i]['agent']}{('・'+_h[i]['persona']) if _h[i].get('persona') else ''} / {_h[i]['engine']}",
-            key=f"{kp}_expl_sel")
-        st.session_state[_sk] = _sel
-        st.markdown(_h[_sel]["response"])
-        return _h[_sel]["response"]
 
     def _extra_filter_ui(_base_df, kp, with_period=True):
         """Overall範囲内での追加絞り込み: RAG NAME / Collection / 期間。(df_sub, 説明文)を返す"""
@@ -2967,12 +2968,155 @@ def _user_memory_explorer():
                     st.dataframe(pd.DataFrame(_b5rows), hide_index=True)
             else:
                 st.caption("Big5はまだありません（下の要レビュー参照）")
+
+            # 6属性の可視化（ツリーマップ → データテーブル）
+            _PFLD_COLORS = {
+                "expertise": "#2E86AB",
+                "recurring_interests": "#A23B72",
+                "values_principles": "#F18F01",
+                "constraints": "#C73E1D",
+                "communication_style": "#3CB371",
+                "avoid_topics": "#7B68EE",
+            }
+            _PFLD_JA = {
+                "expertise": "専門", "recurring_interests": "関心",
+                "values_principles": "価値観", "constraints": "制約",
+                "communication_style": "口調", "avoid_topics": "避けたい話題",
+            }
+            _PSTATUS_COLOR = {
+                "approved": "#2E8B57", "pending": "#FFA500", "deleted": "#A0A0A0",
+            }
+            _has_p_items = any((_p.get(_pf) or []) for _pf in _PFLD_COLORS)
+            if _has_p_items:
+                st.markdown("**Persona 属性の可視化（3案併記・比較用）**")
+                _stat_sel = st.multiselect("Statusフィルタ",
+                                            ["approved", "pending", "deleted"],
+                                            default=["approved", "pending"],
+                                            key="ume_deep_pfield_status")
+                _stat_norm = {s.lower() for s in _stat_sel}
+                _by_pfield = {pf: [] for pf in _PFLD_COLORS}
+                for _pf in _PFLD_COLORS:
+                    for _it in (_p.get(_pf) or []):
+                        if not isinstance(_it, dict):
+                            continue
+                        _st = (_it.get("status") or "pending").lower()
+                        if _st not in _stat_norm:
+                            continue
+                        _lbl = (_it.get("label") or "").strip()
+                        if not _lbl:
+                            continue
+                        _conf = float(_it.get("confidence") or 0.0)
+                        _by_pfield[_pf].append({"label": _lbl, "confidence": _conf, "status": _st})
+                _total_items = sum(len(v) for v in _by_pfield.values())
+
+                if _total_items == 0:
+                    st.caption("選択中のStatusに該当する属性がありません")
+                else:
+                    # ===== ツリーマップ =====
+                    st.markdown("##### ツリーマップ（行=種別 / 面積=confidence比率 / 色=種別）")
+                    import matplotlib.patches as _mpatches_t
+                    import textwrap as _tw_t
+                    _field_totals = {pf: sum(x["confidence"] for x in its)
+                                     for pf, its in _by_pfield.items() if its}
+                    _grand = sum(_field_totals.values())
+                    # ラベル読みやすさのため、フィギュアを大きめ + 大きいフォント
+                    _fig_t, _ax_t = plt.subplots(figsize=(11, 6))
+                    _canvas_w, _canvas_h = 100.0, 100.0
+                    _MAX_LBL_CHARS = 32  # ラベル最大文字数（超過時は…で切詰）
+                    _LBL_FS = 11         # ラベルのフォントサイズ
+                    _CONF_FS = 9         # confidence値のフォントサイズ
+                    _cur_y = 0.0
+                    for _pf, _its in _by_pfield.items():
+                        if not _its:
+                            continue
+                        _strip_h = _canvas_h * _field_totals[_pf] / max(_grand, 1e-9)
+                        _items_sorted = sorted(_its, key=lambda x: x["confidence"], reverse=True)
+                        _f_total = max(_field_totals[_pf], 1e-9)
+                        _cur_x = 0.0
+                        for _x in _items_sorted:
+                            _w_r = _canvas_w * _x["confidence"] / _f_total
+                            _rect = _mpatches_t.Rectangle(
+                                (_cur_x, _cur_y), _w_r, _strip_h,
+                                facecolor=_PFLD_COLORS[_pf], edgecolor="white", linewidth=1.5)
+                            _ax_t.add_patch(_rect)
+                            # 折返し＆切詰: 矩形サイズに応じて1行の最大文字数と最大行数を決定
+                            if _w_r > 5 and _strip_h > 4:
+                                _chars_per_line = max(3, int(_w_r * 0.50))
+                                _max_lines = max(1, int(_strip_h / 4.5))
+                                _budget = max(1, _chars_per_line * _max_lines - 1)
+                                _lbl_t = _x["label"]
+                                if len(_lbl_t) > min(_MAX_LBL_CHARS, _budget):
+                                    _lbl_t = _lbl_t[:max(1, min(_MAX_LBL_CHARS, _budget))] + "…"
+                                _wrapped = _tw_t.fill(_lbl_t, width=_chars_per_line,
+                                                      break_long_words=True, break_on_hyphens=False)
+                                # ラベル本体（中央やや上）と confidence 数値（下）
+                                _ax_t.text(_cur_x + _w_r / 2, _cur_y + _strip_h * 0.42,
+                                           _wrapped, ha="center", va="center",
+                                           fontsize=_LBL_FS, color="white",
+                                           fontfamily="IPAexGothic", linespacing=1.1)
+                                _ax_t.text(_cur_x + _w_r / 2, _cur_y + _strip_h * 0.85,
+                                           f"({_x['confidence']:.2f})",
+                                           ha="center", va="center",
+                                           fontsize=_CONF_FS, color="white",
+                                           fontfamily="IPAexGothic")
+                            _cur_x += _w_r
+                        _cur_y += _strip_h
+                    _ax_t.set_xlim(0, _canvas_w)
+                    _ax_t.set_ylim(_canvas_h, 0)
+                    _ax_t.axis("off")
+                    plt.tight_layout()
+                    st.pyplot(_fig_t)
+                    plt.close(_fig_t)
+                    # 種別カラー凡例（下に表示）
+                    _tm_legend = " &nbsp;&nbsp; ".join(
+                        f"<span style='color:{_c};font-weight:bold;font-size:1.05em'>■ {_PFLD_JA[_k]}</span>"
+                        for _k, _c in _PFLD_COLORS.items()
+                    )
+                    st.markdown(_tm_legend, unsafe_allow_html=True)
+
+                    # ===== データテーブル =====
+                    st.markdown("##### データテーブル（種別=色 / confidence=進捗バー / ソート・検索可）")
+                    _rows_a = []
+                    for _pf, _its in _by_pfield.items():
+                        for _x in _its:
+                            _rows_a.append({
+                                "種別": _PFLD_JA[_pf], "ラベル": _x["label"],
+                                "confidence": _x["confidence"], "status": _x["status"],
+                            })
+                    _df_a = pd.DataFrame(_rows_a)
+                    # 種別列はツリーマップと同じ種別カラー、status列はstatusカラーで文字色を付ける
+                    _ja_to_color = {_PFLD_JA[_k]: _c for _k, _c in _PFLD_COLORS.items()}
+                    def _style_pfld_col(_vals):
+                        return [f"color: {_ja_to_color.get(_v, '#000')}; font-weight: bold"
+                                for _v in _vals]
+                    def _style_status_col(_vals):
+                        return [f"color: {_PSTATUS_COLOR.get(str(_v).lower(), '#000')}; font-weight: bold"
+                                for _v in _vals]
+                    try:
+                        _df_show = (_df_a.style
+                                    .apply(_style_pfld_col, subset=["種別"])
+                                    .apply(_style_status_col, subset=["status"]))
+                    except Exception:
+                        _df_show = _df_a
+                    st.dataframe(
+                        _df_show, hide_index=True, use_container_width=True,
+                        column_config={
+                            "confidence": st.column_config.ProgressColumn(
+                                "confidence", min_value=0.0, max_value=1.0, format="%.2f"),
+                        },
+                    )
         else:
             st.caption("Persona未生成")
 
         st.markdown("#### Nowaday（最近の傾向）")
         if _b["nowaday"]:
-            _nw = _b["nowaday"][0]
+            # スナップショット選択（generated_at 降順。先頭が最新）
+            _nws_d = _b["nowaday"]
+            _nw_opts_d = {f"{m.get('period','')} @ {m.get('generated_at','')}": m for m in _nws_d}
+            _osel_d = st.selectbox("スナップショット（period @ 生成時刻、上が最新）",
+                                    list(_nw_opts_d.keys()),
+                                    index=0, key="ume_deep_nw_sel")
+            _nw = _nw_opts_d[_osel_d]
             st.markdown(f"**期間:** {_nw.get('period','')}")
             if _nw.get("summary_text"):
                 st.caption(_nw["summary_text"])
@@ -3043,6 +3187,668 @@ def _user_memory_explorer():
                         f"{ux.BIG5_JA.get(t,t)}(score={s},conf={c})" for t, s, c in _rev["big5"]))
                 for _f, _items in _rev["lists"].items():
                     st.markdown(f"**{_f}:** " + "、".join(_items))
+
+        # ============ Agent との関係性・コミュニケーション分析 ============
+        st.markdown("---")
+        st.markdown("### Relationship with Agent")
+        _ua_ag = st.selectbox(
+            "対話相手のエージェント",
+            st.session_state.agent_list,
+            index=(st.session_state.agent_list.index(st.session_state.agent_id)
+                   if st.session_state.get("agent_id") in st.session_state.agent_list else 0),
+            key="ume_deep_ua_agent",
+        )
+        _ua_af = next((a["FILE"] for a in st.session_state.agents if a["AGENT"] == _ua_ag), None)
+        if _ua_af:
+            import glob as _glob_ua
+            import json as _json_ua
+            import json as _json
+            import re as _re
+            from collections import Counter as _Cnt_ua
+            from datetime import datetime as _dt_ua, date as _date_ua, timedelta as _td_ua
+
+            _FAR_FUTURE_UA = _date_ua(2099, 12, 31)
+            _today_ua = _dt_ua.now().date()
+            try:
+                _default_from_ua = _date_ua(_today_ua.year - 1, _today_ua.month, _today_ua.day)
+            except ValueError:
+                _default_from_ua = _date_ua(_today_ua.year - 1, 2, 28)
+
+            _pcol1, _pcol2 = st.columns(2)
+            _ua_period_from = _pcol1.date_input(
+                "Period From:", value=_default_from_ua,
+                min_value=_date_ua(2000, 1, 1), max_value=_FAR_FUTURE_UA,
+                key="ume_deep_ua_period_from")
+            _ua_period_to = _pcol2.date_input(
+                "Period To:", value=_today_ua,
+                min_value=_date_ua(2000, 1, 1), max_value=_FAR_FUTURE_UA,
+                key="ume_deep_ua_period_to")
+            st.caption("※ 期間を指定して『分析を実行』を押すと、活動推移〜Knowledge参照までの一連のパネルを期間で絞り込みます。")
+
+            def _ua_scan(uid, af, p_from, p_to):
+                _pf_s = p_from.isoformat()
+                _pt_s = p_to.isoformat()
+                _result = []
+                for _sf in sorted(_glob_ua.glob("user/session2*"), reverse=True):
+                    _p = os.path.join(_sf, "chat_memory.json")
+                    if not os.path.exists(_p):
+                        continue
+                    try:
+                        _d = _json_ua.load(open(_p, encoding="utf-8"))
+                    except Exception:
+                        continue
+                    _seq1_st = _d.get("1", {}).get("SETTING", {})
+                    if (_seq1_st.get("user_info") or {}).get("USER_ID") != uid:
+                        continue
+                    _sid = os.path.basename(_sf).replace("session", "")
+                    for _sk, _sv in _d.items():
+                        if not isinstance(_sv, dict):
+                            continue
+                        for _bk, _bv in _sv.items():
+                            if _bk == "SETTING" or not isinstance(_bv, dict):
+                                continue
+                            _st_ = _bv.get("setting") or {}
+                            if _st_.get("agent_file") != af:
+                                continue
+                            _q = ((_bv.get("prompt") or {}).get("query") or {}).get("input", "") or ""
+                            _r = ((_bv.get("response") or {}).get("text", "")) or ""
+                            _ts = ((_bv.get("response") or {}).get("timestamp", "")
+                                   or (_bv.get("prompt") or {}).get("timestamp", ""))
+                            _tsd = _ts[:10] if _ts else ""
+                            if _tsd and not (_pf_s <= _tsd <= _pt_s):
+                                continue
+                            _kref = ((_bv.get("response") or {}).get("reference") or {}).get("knowledge_rag", []) or []
+                            _result.append({
+                                "session_id": _sid,
+                                "session_name": _st_.get("session_name", ""),
+                                "seq": _sk, "sub_seq": _bk,
+                                "query": _q, "response": _r, "timestamp": _ts,
+                                "knowledge_rag": _kref,
+                            })
+                return _result
+
+            _run_btn = st.button("分析を実行", key="ume_deep_ua_run", type="primary",
+                                  help="対話履歴を集計して各パネルを描画します")
+            _cache_key = f"_ume_deep_ua_cache_{_uid}_{_ua_af}"
+            if _run_btn:
+                with st.spinner("対話履歴をスキャン中..."):
+                    _scan_result = _ua_scan(_uid, _ua_af, _ua_period_from, _ua_period_to)
+                _chunk_refs_tmp = {}
+                for _s in _scan_result:
+                    for _kref in (_s.get("knowledge_rag") or []):
+                        try:
+                            _rd = dmu.parse_log_template(_kref)
+                        except Exception:
+                            continue
+                        _bk = _rd.get("DB") or _rd.get("bucket")
+                        _rid = str(_rd.get("ID") or _rd.get("id") or "")
+                        if not (_bk and _rid):
+                            continue
+                        _chunk_refs_tmp.setdefault((_bk, _rid), []).append({
+                            "sQ": float(_rd.get("similarity_Q") or 0.0),
+                            "sA": float(_rd.get("similarity_A") or 0.0),
+                            "ts": _s.get("timestamp", ""),
+                        })
+                _chunk_meta_tmp = {}
+                _all_chunks_by_bn = {}
+                _col_to_rag_name_ua = {}
+                _agent_data_ua = {}
+                try:
+                    _agent_data_ua = dmu.read_json_file(_ua_af, agent_folder_path) or {}
+                except Exception:
+                    _agent_data_ua = {}
+                for _kn_entry in _agent_data_ua.get("KNOWLEDGE", []):
+                    _rn_v = _kn_entry.get("RAG_NAME")
+                    if not _rn_v:
+                        continue
+                    for _dt_entry in _kn_entry.get("DATA", []):
+                        _dn = _dt_entry.get("DATA_NAME", "")
+                        if _dn:
+                            _col_to_rag_name_ua[_dn] = _rn_v
+                _bns_to_fetch = sorted(set(list(_col_to_rag_name_ua.keys()) + [b for b, _ in _chunk_refs_tmp.keys()]))
+                if _bns_to_fetch:
+                    with st.spinner("RAGメタデータを取得中..."):
+                        for _bn in _bns_to_fetch:
+                            try:
+                                _rows = dmc.get_rag_collection_data(_bn)
+                                _all_chunks_by_bn[_bn] = _rows
+                                for _row in _rows:
+                                    _rid2 = str(_row.get("id") or "")
+                                    _chunk_meta_tmp[(_bn, _rid2)] = _row
+                            except Exception:
+                                pass
+                st.session_state[_cache_key] = {
+                    "seqs": _scan_result,
+                    "chunk_refs": _chunk_refs_tmp,
+                    "chunk_meta": _chunk_meta_tmp,
+                    "all_chunks_by_bn": _all_chunks_by_bn,
+                    "col_to_rag_name": _col_to_rag_name_ua,
+                    "period_from": _ua_period_from, "period_to": _ua_period_to,
+                }
+            _cached = st.session_state.get(_cache_key)
+            if _cached is None:
+                st.caption("エージェント・期間を選んで『分析を実行』を押すと結果を表示します。")
+            elif not _cached.get("seqs"):
+                st.info(f"「{_uid}」と「{_ua_ag}」の対話履歴がありません（期間: {_ua_period_from} 〜 {_ua_period_to}）")
+            else:
+                _ua_seqs = _cached["seqs"]
+                _chunk_refs = _cached["chunk_refs"]
+                _chunk_meta = _cached["chunk_meta"]
+                _all_chunks_by_bn = _cached.get("all_chunks_by_bn", {})
+                _col_to_rag_name_ua = _cached.get("col_to_rag_name", {})
+                _cached_pf = _cached.get("period_from")
+                _cached_pt = _cached.get("period_to")
+                _hist_by_sid = {h.get("session_id"): h for h in (_b.get("history") or [])}
+                _sess_ids = sorted(set(s["session_id"] for s in _ua_seqs))
+                from datetime import datetime as _dt_a, timedelta as _td_a
+                from collections import Counter as _Cnt_a
+
+                st.caption(f"対象期間: **{_cached_pf} 〜 {_cached_pt}** / セッション: {len(_sess_ids)} / ターン: {len(_ua_seqs)}")
+
+                # ===== ① 基本サマリ =====
+                st.markdown("#### Summary")
+                _kc = st.columns(5)
+                _kc[0].metric("セッション数", len(_sess_ids))
+                _kc[1].metric("ターン数", len(_ua_seqs))
+                _total_chars = sum(len(s["query"]) + len(s["response"]) for s in _ua_seqs)
+                _kc[2].metric("総文字数", f"{_total_chars:,}")
+                _avg_turns_per = round(len(_ua_seqs) / max(len(_sess_ids), 1), 1)
+                _kc[3].metric("平均ターン/Sess", _avg_turns_per)
+                _last_ts = max((s["timestamp"] for s in _ua_seqs if s["timestamp"]), default="")
+                _kc[4].metric("最終対話", _last_ts[:10] if _last_ts else "—")
+
+                # ===== ② 活動推移 =====
+                st.markdown("#### 活動推移")
+                _gran = st.selectbox("単位", ["月", "週", "日"], index=0, key="ume_deep_ua_actgran")
+
+                def _gkey(_ts, _g):
+                    if not _ts:
+                        return "未設定"
+                    if _g == "月":
+                        return _ts[:7]
+                    if _g == "日":
+                        return _ts[:10]
+                    try:
+                        _tt = pd.Timestamp(_ts[:10])
+                        _ws = (_tt - pd.Timedelta(days=int(_tt.weekday()))).date()
+                        return f"{_ws.year}-{_ws.month}-{_ws.day}+w"
+                    except Exception:
+                        return _ts[:7]
+                _by_g_s = _Cnt_a(); _by_g_t = _Cnt_a()
+                _sess_first_g = {}
+                for s in _ua_seqs:
+                    _k = _gkey(s["timestamp"], _gran)
+                    _by_g_t[_k] += 1
+                    if s["session_id"] not in _sess_first_g:
+                        _sess_first_g[s["session_id"]] = _k
+                for _sid_x, _k in _sess_first_g.items():
+                    _by_g_s[_k] += 1
+                _keys = sorted(set(_by_g_s.keys()) | set(_by_g_t.keys()))
+                if _keys:
+                    _fig_act, _ax_act = plt.subplots(figsize=(10, 3.6))
+                    _ax_act.bar(_keys, [_by_g_s[k] for k in _keys],
+                                color="#4A90D9", alpha=0.75, label="セッション数")
+                    _ax2 = _ax_act.twinx()
+                    _ax2.plot(_keys, [_by_g_t[k] for k in _keys],
+                              color="#E74C3C", marker="o", label="ターン数")
+                    _ax_act.set_ylabel("セッション数", color="#4A90D9")
+                    _ax2.set_ylabel("ターン数", color="#E74C3C")
+                    _ax_act.set_xticks(range(len(_keys)))
+                    _ax_act.set_xticklabels(_keys, rotation=45, ha="right", fontsize=9)
+                    _ax_act.grid(True, alpha=0.3)
+                    plt.tight_layout()
+                    st.pyplot(_fig_act); plt.close(_fig_act)
+                else:
+                    st.caption("対象期間にデータがありません")
+
+                # ===== ③ 会話の傾向 (Q字数×R字数 のKMeansクラスタリング + LLM解説) =====
+                st.markdown("#### 会話の傾向")
+                _qlens_all = [len(s["query"]) for s in _ua_seqs]
+                _rlens_all = [len(s["response"]) for s in _ua_seqs]
+                _qmin_a, _qmax_a = (min(_qlens_all), max(_qlens_all)) if _qlens_all else (0, 0)
+                _rmin_a, _rmax_a = (min(_rlens_all), max(_rlens_all)) if _rlens_all else (0, 0)
+                _avg_q = sum(_qlens_all) / max(len(_qlens_all), 1)
+                _avg_r = sum(_rlens_all) / max(len(_rlens_all), 1)
+                _kpc = st.columns(3)
+                _kpc[0].metric("平均 質問字数", int(_avg_q))
+                _kpc[1].metric("平均 応答字数", int(_avg_r))
+                _kpc[2].metric("応答/質問 比", f"{(_avg_r / max(_avg_q, 1)):.1f}x")
+
+                _fq1, _fq2 = st.columns(2)
+                if _qmax_a > _qmin_a:
+                    _qr = _fq1.slider("質問字数 範囲", min_value=int(_qmin_a), max_value=int(_qmax_a),
+                                      value=(int(_qmin_a), int(_qmax_a)), key="ume_deep_ua_qrange")
+                else:
+                    _qr = (int(_qmin_a), int(_qmax_a)); _fq1.caption(f"質問字数: {int(_qmin_a)} (単一値)")
+                if _rmax_a > _rmin_a:
+                    _rr = _fq2.slider("応答字数 範囲", min_value=int(_rmin_a), max_value=int(_rmax_a),
+                                      value=(int(_rmin_a), int(_rmax_a)), key="ume_deep_ua_rrange")
+                else:
+                    _rr = (int(_rmin_a), int(_rmax_a)); _fq2.caption(f"応答字数: {int(_rmin_a)} (単一値)")
+                _filt_qr = [s for s in _ua_seqs
+                            if _qr[0] <= len(s["query"]) <= _qr[1] and _rr[0] <= len(s["response"]) <= _rr[1]]
+
+                _kc1, _kc2 = st.columns([1, 3])
+                _kk = _kc1.number_input("クラスタ数 (k)", min_value=2, max_value=8, value=3,
+                                         step=1, key="ume_deep_ua_kmeans_k")
+                _run_cl = _kc2.button("クラスタリング実行 (KMeans)", key="ume_deep_ua_kmeans_run")
+                _cl_cache_key = f"_ume_deep_ua_kmeans_{_uid}_{_ua_af}"
+                if _run_cl:
+                    if len(_filt_qr) < int(_kk):
+                        st.warning(f"クラスタ数 k={_kk} に対しデータ件数が不足しています（{len(_filt_qr)}件）")
+                    else:
+                        try:
+                            from sklearn.cluster import KMeans as _KM_qr
+                            _Xqr = [[len(s["query"]), len(s["response"])] for s in _filt_qr]
+                            _km_qr = _KM_qr(n_clusters=int(_kk), random_state=0, n_init=10).fit(_Xqr)
+                            _labels_qr = _km_qr.labels_.tolist()
+                            _items_cl = []
+                            for s, _lb in zip(_filt_qr, _labels_qr):
+                                _items_cl.append({**s, "Cluster": int(_lb)})
+                            st.session_state[_cl_cache_key] = {
+                                "items": _items_cl, "k": int(_kk),
+                                "centers": _km_qr.cluster_centers_.tolist(),
+                            }
+                            st.session_state[f"{_cl_cache_key}_names"] = None
+                        except Exception as _e:
+                            st.warning(f"KMeansでエラー: {_e}")
+
+                _clc_qr = st.session_state.get(_cl_cache_key)
+                _names_qr = st.session_state.get(f"{_cl_cache_key}_names") or {}
+                _fig_qa, _ax_qa = plt.subplots(figsize=(9, 4.4))
+                from matplotlib.lines import Line2D as _L2D_qr
+                if _clc_qr and (_clc_qr.get("items") or []):
+                    _items_show = [it for it in (_clc_qr.get("items") or [])
+                                   if _qr[0] <= len(it["query"]) <= _qr[1]
+                                   and _rr[0] <= len(it["response"]) <= _rr[1]]
+                    _cmap_qr_lbl = sorted(set(it["Cluster"] for it in _items_show))
+                    _tab_qr = plt.cm.get_cmap("tab10", max(len(_cmap_qr_lbl), 1))
+                    _c2col = {cl: _tab_qr(i) for i, cl in enumerate(_cmap_qr_lbl)}
+                    for it in _items_show:
+                        _ax_qa.scatter(len(it["query"]), len(it["response"]),
+                                       color=_c2col.get(it["Cluster"], "gray"),
+                                       alpha=0.7, s=55, edgecolors="white", linewidths=0.6)
+                    _lh_qr = [_L2D_qr([0], [0], linestyle="", label="〔Cluster〕")]
+                    for cl in _cmap_qr_lbl:
+                        _nm = _names_qr.get(str(int(cl))) or _names_qr.get(int(cl))
+                        _lab_qr = f"C{int(cl)}: {str(_nm)[:14]}" if _nm else f"Cluster {int(cl)}"
+                        _lh_qr.append(_L2D_qr([0], [0], marker="o", linestyle="",
+                                              color=_c2col[cl], markersize=8, label=_lab_qr))
+                    _ax_qa.legend(handles=_lh_qr, loc="upper left", bbox_to_anchor=(1.02, 1), fontsize=8)
+                    _ax_qa.set_title(f"seq単位の質問×応答字数（KMeans k={_clc_qr.get('k')}）")
+                else:
+                    _u_m = sorted(set(s["timestamp"][:7] for s in _filt_qr if s["timestamp"]))
+                    _m_idx = {m: i for i, m in enumerate(_u_m)}
+                    _cmap_qa = plt.cm.get_cmap("viridis", max(len(_u_m), 1))
+                    for s in _filt_qr:
+                        _col_q = _cmap_qa(_m_idx.get(s["timestamp"][:7], 0)) if s["timestamp"] else "gray"
+                        _ax_qa.scatter(len(s["query"]), len(s["response"]),
+                                       color=_col_q, alpha=0.65, s=50, edgecolors="white", linewidths=0.6)
+                    _ax_qa.set_title("seq単位の質問×応答字数（色=月）")
+                _ax_qa.set_xlabel("質問字数 (seq単位)"); _ax_qa.set_ylabel("応答字数 (seq単位)")
+                _ax_qa.grid(True, alpha=0.3)
+                plt.tight_layout()
+                st.pyplot(_fig_qa); plt.close(_fig_qa)
+
+                if _clc_qr and _clc_qr.get("items"):
+                    def _cl_qa_ctx():
+                        _cc = st.session_state.get(_cl_cache_key)
+                        if not _cc:
+                            return ""
+                        _txt = ("会話（seq単位）の質問字数×応答字数 のKMeansクラスタリング結果です。\n"
+                                f"k={_cc.get('k')}\n")
+                        _by_cl = {}
+                        for it in (_cc.get("items") or []):
+                            _by_cl.setdefault(int(it["Cluster"]), []).append(it)
+                        for _cl in sorted(_by_cl.keys()):
+                            _xs = _by_cl[_cl]
+                            _qq = [len(s["query"]) for s in _xs]
+                            _rr2 = [len(s["response"]) for s in _xs]
+                            _txt += (f"\n【Cluster {int(_cl)}】({len(_xs)}件) "
+                                     f"質問字数 平均={sum(_qq)/len(_qq):.0f} (min={min(_qq)}, max={max(_qq)}), "
+                                     f"応答字数 平均={sum(_rr2)/len(_rr2):.0f} (min={min(_rr2)}, max={max(_rr2)})\n")
+                            for s in _xs[:3]:
+                                _txt += f"  - Q: {s['query'][:80]} / R: {s['response'][:80]}\n"
+                        _txt += "\n各クラスタの特徴（やりとりの性質）を、ユーザー×エージェントの関係性の観点で短く名付けてください。"
+                        return _txt
+
+                    def _cl_qa_post(resp):
+                        _m = _re.search(r"```json\s*(\{.*?\})\s*```", resp, _re.DOTALL) or _re.search(r"(\{[^{}]*\})", resp, _re.DOTALL)
+                        if _m:
+                            try:
+                                _raw = _json.loads(_m.group(1))
+                                st.session_state[f"{_cl_cache_key}_names"] = {str(k): str(v)[:14] for k, v in _raw.items()}
+                            except Exception:
+                                pass
+                        return _re.sub(r"```json\s*\{.*?\}\s*```\s*", "", resp, count=1, flags=_re.DOTALL).strip()
+                    _explanation_block("_ume_deep_ua_qa_expl", "Cluster Analyst UME", "agent_23DataAnalyst.json",
+                                       _cl_qa_ctx, "会話クラスタ", "ume_deep_ua_qa", postprocess=_cl_qa_post)
+
+                # ===== ④ 感情のトーン =====
+                st.markdown("#### 感情のトーン")
+                st.caption("元データ: User Memory **history** テーブル（history.emotions: 各セッションでLLMが推定した感情タグ）。基本感情は最大値で正規化したレーダー、二次感情は出現回数の上位リスト。")
+                _emo_c = _Cnt_a()
+                for sid in _sess_ids:
+                    _h = _hist_by_sid.get(sid)
+                    if _h:
+                        for _e in (_h.get("emotions") or []):
+                            _emo_c[_e] += 1
+                if _emo_c:
+                    _basic_vals = [_emo_c.get(e, 0) for e in ux.PLUTCHIK_PRIMARY]
+                    _mx = max(_basic_vals) if max(_basic_vals) > 0 else 1
+                    _bvals_n = [v / _mx for v in _basic_vals]
+                    _ec1, _ec2 = st.columns([1, 1])
+                    with _ec1:
+                        st.pyplot(_radar([ux.PLUTCHIK_JA.get(e, e) for e in ux.PLUTCHIK_PRIMARY],
+                                          _bvals_n, "基本感情の出現比率（正規化）"))
+                    with _ec2:
+                        _sec_pairs = [(_e, _emo_c[_e]) for _e in _emo_c if _e in ux.PLUTCHIK_SECONDARY]
+                        _sec_pairs.sort(key=lambda x: x[1], reverse=True)
+                        if _sec_pairs:
+                            st.markdown("**二次感情 上位**")
+                            st.dataframe(
+                                pd.DataFrame([{"感情": ux.PLUTCHIK_JA.get(e, e), "回数": c}
+                                              for e, c in _sec_pairs[:10]]),
+                                hide_index=True, use_container_width=True)
+                        else:
+                            st.caption("二次感情データなし")
+                else:
+                    st.caption("感情データなし")
+
+                # ===== ⑤ 相性スコア =====
+                st.markdown("#### 相性スコア")
+                st.caption("元データ: chat_memory.json（質問字数・応答字数・RAG参照数・タイムスタンプ）＋ User Memory **history** テーブル（axis_tags.interests）。継続性=対話期間(月)/12, 頻度=ターン÷活動月数÷20, 集中度=最頻興味タグ比率×2, 充実度=平均応答字数/500, 能動性=平均質問字数/200, 知識活用=平均RAG参照数/5。いずれも0〜1にクリップ。")
+                _all_ts = sorted([s["timestamp"] for s in _ua_seqs if s["timestamp"]])
+                _span_months = 0
+                if len(_all_ts) >= 2:
+                    try:
+                        _t0 = _dt_a.fromisoformat(_all_ts[0][:10])
+                        _t1 = _dt_a.fromisoformat(_all_ts[-1][:10])
+                        _span_months = max(0, (_t1.year - _t0.year) * 12 + (_t1.month - _t0.month))
+                    except Exception:
+                        _span_months = 0
+                _continuity = min(_span_months / 12.0, 1.0)
+                _active_months = len(set(s["timestamp"][:7] for s in _ua_seqs if s["timestamp"])) or 1
+                _frequency = min((len(_ua_seqs) / _active_months) / 20.0, 1.0)
+                _ax_int_c = _Cnt_a()
+                for sid in _sess_ids:
+                    _h = _hist_by_sid.get(sid)
+                    if _h:
+                        for _x in ((_h.get("axis_tags") or {}).get("interests") or []):
+                            _ax_int_c[_x] += 1
+                _top_share = 0.0
+                _all_int_n = sum(_ax_int_c.values())
+                if _all_int_n > 0 and _ax_int_c:
+                    _top_share = _ax_int_c.most_common(1)[0][1] / _all_int_n
+                _focus = min(_top_share * 2.0, 1.0)
+                _richness = min(_avg_r / 500.0, 1.0)
+                _engagement = min(_avg_q / 200.0, 1.0)
+                _kn_per_turn = sum(len(s["knowledge_rag"]) for s in _ua_seqs) / max(len(_ua_seqs), 1)
+                _knowledge_use = min(_kn_per_turn / 5.0, 1.0)
+                _comp_labels = ["継続性", "頻度", "集中度", "充実度", "能動性", "知識活用"]
+                _comp_vals = [_continuity, _frequency, _focus, _richness, _engagement, _knowledge_use]
+                _crc1, _crc2 = st.columns([1, 1])
+                with _crc1:
+                    st.pyplot(_radar(_comp_labels, _comp_vals, "相性スコア", vmax=1.0))
+                with _crc2:
+                    st.dataframe(
+                        pd.DataFrame([{"観点": _l, "スコア(0-1)": round(_v, 2)}
+                                      for _l, _v in zip(_comp_labels, _comp_vals)]),
+                        hide_index=True, use_container_width=True)
+                    _verdict = []
+                    _verdict.append("長期関係" if _continuity >= 0.5 else ("継続中" if _continuity >= 0.2 else "短期"))
+                    _verdict.append("高頻度" if _frequency >= 0.5 else ("中頻度" if _frequency >= 0.2 else "低頻度"))
+                    _verdict.append("テーマ集中型" if _focus >= 0.5 else "多テーマ型")
+                    _verdict.append("詳細応答" if _richness >= 0.5 else "簡潔応答")
+                    _verdict.append("知識依存高" if _knowledge_use >= 0.5 else ("知識参照中" if _knowledge_use >= 0.2 else "知識参照低"))
+                    st.markdown(f"**関係性ラベル:** {' / '.join(_verdict)}")
+
+                # ===== ⑥ テーマの重なり =====
+                st.markdown("#### テーマの重なり")
+                st.caption("元データ: User Memory **history** テーブル（history.axis_tags: interests / values / constraints）。このエージェントとの対話分のみを集計。")
+                _ax_c = {"interests": _Cnt_a(), "values": _Cnt_a(), "constraints": _Cnt_a()}
+                for sid in _sess_ids:
+                    _h = _hist_by_sid.get(sid)
+                    if _h:
+                        _at = _h.get("axis_tags") or {}
+                        for _ck in _ax_c:
+                            for _x in (_at.get(_ck) or []):
+                                _ax_c[_ck][_x] += 1
+                _tc1, _tc2, _tc3 = st.columns(3)
+                for _ic, (_jl, _ck, _co) in enumerate([
+                    ("興味 (interests)", "interests", _tc1),
+                    ("価値観 (values)", "values", _tc2),
+                    ("制約 (constraints)", "constraints", _tc3),
+                ]):
+                    with _co:
+                        st.markdown(f"**{_jl}**")
+                        _items = _ax_c[_ck].most_common(10)
+                        if _items:
+                            st.dataframe(pd.DataFrame(_items, columns=["項目", "回数"]),
+                                         hide_index=True, use_container_width=True)
+                        else:
+                            st.caption("—")
+
+                # ===== ⑦ Knowledge参照（散布図＋一覧, KE Overall方式） =====
+                st.markdown("#### Knowledge参照（散布図＋一覧）")
+                st.caption("元データ: chat_memory.json `response.reference.knowledge_rag` ＋ RAGコレクション metadata（vector_data_value_text を含む）。**指定期間の最終時点 (≤Period To) のRAGデータ全件**を散布図に描画し、その中で **期間内に参照されたチャンク** のみカテゴリ色で表示（他はライトグレー）。Dot Size は Knowledge Explorer Overall と同じ3パターン。")
+
+                if not _all_chunks_by_bn:
+                    st.caption("対象期間にRAG参照履歴がありません")
+                else:
+                    import io as _io_kn
+                    import numpy as _np_k
+                    _cat_color_map_kn = {}
+                    try:
+                        _cmj = dmu.read_json_file("category_map.json", mst_folder_path) or dmu.read_json_file("sample_category_map.json", mst_folder_path)
+                        _cat_color_map_kn = (_cmj or {}).get("CategoryColor", {})
+                    except Exception:
+                        _cat_color_map_kn = {}
+
+                    _kc_l, _kc_r = st.columns([1, 1])
+                    _kn_dim = _kc_l.radio("Dimension Reduction:", ["PCA", "t-SNE"], index=0, horizontal=True, key="ume_deep_ua_kn_dim")
+                    _kn_size_mode = _kc_r.radio("Dot Size:", ["Uniform", "Newer=Larger", "Highlight Period"], index=0, horizontal=True, key="ume_deep_ua_kn_size")
+                    _kn_exclude_private = st.checkbox("Exclude Private Data", value=True, key="ume_deep_ua_kn_excl_priv")
+                    _kn_hl_from = None
+                    _kn_hl_to = None
+                    if _kn_size_mode == "Highlight Period":
+                        _h1k, _h2k = st.columns(2)
+                        _kn_hl_from = _h1k.date_input("Highlight Period From:", value=_cached_pf,
+                                                      min_value=_date_ua(2000, 1, 1), max_value=_FAR_FUTURE_UA,
+                                                      key="ume_deep_ua_kn_hl_from")
+                        _kn_hl_to = _h2k.date_input("Highlight Period To:", value=_cached_pt,
+                                                    min_value=_date_ua(2000, 1, 1), max_value=_FAR_FUTURE_UA,
+                                                    key="ume_deep_ua_kn_hl_to")
+                    _kn_tsne_perp = 30
+                    if _kn_dim == "t-SNE":
+                        _kn_tsne_perp = int(st.number_input("Perplexity:", value=30, step=1, min_value=2,
+                                                            key="ume_deep_ua_kn_tsne_perp"))
+
+                    def _norm_date(_s):
+                        try:
+                            return pd.to_datetime(str(_s)).date()
+                        except Exception:
+                            return None
+
+                    def _png_kn(_fig):
+                        _buf = _io_kn.BytesIO()
+                        _fig.savefig(_buf, format="png", dpi=140, bbox_inches="tight")
+                        plt.close(_fig)
+                        return _buf.getvalue()
+
+                    def _build_scatter(_rows_with_bn, _title):
+                        """_rows_with_bn: list of dicts with '__bn__' key per row. Plots all chunks <=period_to,
+                        colors only those referenced in period, others lightgray.
+                        Returns (png_bytes, df_for_table)."""
+                        if not _rows_with_bn:
+                            return None, pd.DataFrame()
+                        _kept = []
+                        for _r in _rows_with_bn:
+                            if _kn_exclude_private:
+                                _pv = _r.get("private")
+                                if _pv is True or str(_pv).lower() == "true":
+                                    continue
+                            _cd = _r.get("create_date")
+                            _d = _norm_date(_cd)
+                            if _d is not None and _d > _cached_pt:
+                                continue
+                            _v = _r.get("vector_data_value_text")
+                            if not _v:
+                                continue
+                            _kept.append(_r)
+                        if not _kept:
+                            return None, pd.DataFrame()
+                        _df_in = pd.DataFrame(_kept)
+                        try:
+                            _df_red, _info = dmva.reduce_dimensions(
+                                _df_in, method=_kn_dim,
+                                params={"perplexity": _kn_tsne_perp} if _kn_dim == "t-SNE" else {})
+                        except Exception as _e:
+                            return None, pd.DataFrame()
+                        _x = _df_red["X1"].values
+                        _y = _df_red["X2"].values
+                        _ids = _df_red["id"].astype(str).tolist()
+                        _bns = [_r.get("__bn__", "") for _r in _kept]
+                        _rags = [_r.get("__rag_name__", "") for _r in _kept]
+                        _cats = (_df_red["category"].fillna("未設定").astype(str).tolist()
+                                 if "category" in _df_red.columns else ["未設定"] * len(_ids))
+                        _titles = (_df_red["title"].fillna("").astype(str).tolist()
+                                   if "title" in _df_red.columns else _ids)
+                        _cdates = (_df_red["create_date"].fillna("").astype(str).tolist()
+                                   if "create_date" in _df_red.columns else [""] * len(_ids))
+                        _is_ref = [((_bns[_i], _ids[_i]) in _chunk_refs) for _i in range(len(_ids))]
+                        _cats_in_period = sorted(set(_cats[_i] for _i in range(len(_ids)) if _is_ref[_i]))
+                        _tab_c = plt.cm.get_cmap("tab10", max(len(_cats_in_period), 1))
+                        _cat2col = {}
+                        for _i, _c in enumerate(_cats_in_period):
+                            _cat2col[_c] = _cat_color_map_kn.get(_c) or _tab_c(_i)
+                        _sizes = [50] * len(_ids)
+                        if _kn_size_mode == "Newer=Larger":
+                            _ds = pd.to_datetime(_cdates, errors="coerce")
+                            if _ds.notna().any():
+                                _mn = _ds.min().timestamp(); _mx = _ds.max().timestamp()
+                                _rg = _mx - _mn if _mx > _mn else 1
+                                _sizes = [10 + 190 * ((_dx.timestamp() - _mn) / _rg) if pd.notna(_dx) else 10 for _dx in _ds]
+                        elif _kn_size_mode == "Highlight Period" and _kn_hl_from is not None and _kn_hl_to is not None:
+                            _hf = _kn_hl_from.isoformat(); _ht = _kn_hl_to.isoformat()
+                            _sizes = []
+                            for _i_ in range(len(_ids)):
+                                _hit = False
+                                if _is_ref[_i_]:
+                                    for _r2 in (_chunk_refs.get((_bns[_i_], _ids[_i_])) or []):
+                                        _tsd = (_r2.get("ts") or "")[:10]
+                                        if _tsd and _hf <= _tsd <= _ht:
+                                            _hit = True; break
+                                _sizes.append(220 if _hit else 25)
+                        _fig, _ax = plt.subplots(figsize=(9, 6))
+                        _gray = (0.55, 0.55, 0.55, 0.6)
+                        _gx = []; _gy = []; _gs = []
+                        for _i_ in range(len(_ids)):
+                            if not _is_ref[_i_]:
+                                _gx.append(_x[_i_]); _gy.append(_y[_i_]); _gs.append(_sizes[_i_])
+                        if _gx:
+                            _ax.scatter(_gx, _gy, color=_gray, s=_gs, edgecolors="white", linewidths=0.4)
+                        for _c in _cats_in_period:
+                            _xs = []; _ys = []; _ss = []
+                            for _i_ in range(len(_ids)):
+                                if _is_ref[_i_] and _cats[_i_] == _c:
+                                    _xs.append(_x[_i_]); _ys.append(_y[_i_]); _ss.append(_sizes[_i_])
+                            if _xs:
+                                _ax.scatter(_xs, _ys, color=_cat2col[_c], s=_ss, alpha=0.85,
+                                            edgecolors="white", linewidths=0.6)
+                        from matplotlib.lines import Line2D as _L2D_kn
+                        _lh = []
+                        _lh.append(_L2D_kn([0], [0], marker="o", linestyle="",
+                                            markerfacecolor=_gray, markeredgecolor="white",
+                                            markersize=8, label="未参照（期間内）"))
+                        for _c in _cats_in_period:
+                            _lh.append(_L2D_kn([0], [0], marker="o", linestyle="",
+                                                color=_cat2col[_c], markersize=8, label=_c))
+                        if _lh:
+                            _ax.legend(handles=_lh, loc="upper left", bbox_to_anchor=(1.02, 1), fontsize=8)
+                        _ax.set_title(f"{_kn_dim} | {_title} (chunks≤{_cached_pt}, n={len(_ids)})\n{_info}")
+                        _ax.grid(True, alpha=0.3)
+                        _ax.set_xlabel("X1"); _ax.set_ylabel("X2")
+                        _png = _png_kn(_fig)
+                        _rows_out = []
+                        for _i_ in range(len(_ids)):
+                            _refs2 = _chunk_refs.get((_bns[_i_], _ids[_i_])) or []
+                            _sQs = [r["sQ"] for r in _refs2]
+                            _arr = _np_k.array([r["sQ"] - r["sA"] for r in _refs2]) if _refs2 else _np_k.array([])
+                            _rows_out.append({
+                                "RAG_NAME": _rags[_i_],
+                                "Bucket": _bns[_i_],
+                                "ID": _ids[_i_],
+                                "Title": _titles[_i_],
+                                "Category": _cats[_i_],
+                                "CreateDate": _cdates[_i_],
+                                "X1": round(float(_x[_i_]), 3),
+                                "X2": round(float(_y[_i_]), 3),
+                                "参照回数": len(_refs2),
+                                "期間内参照": "Y" if _is_ref[_i_] else "",
+                                "平均 similarity_Q": round(float(sum(_sQs) / len(_sQs)), 3) if _sQs else None,
+                                "知識活用性_合計": round(float(_arr.sum()), 3) if _refs2 else None,
+                                "知識活用性_平均": round(float(_arr.mean()), 3) if _refs2 else None,
+                                "知識活用性_中央値": round(float(_np_k.median(_arr)), 3) if _refs2 else None,
+                                "知識活用性_最大": round(float(_arr.max()), 3) if _refs2 else None,
+                                "知識活用性_最小": round(float(_arr.min()), 3) if _refs2 else None,
+                                "知識活用性_分散": round(float(_arr.var()), 3) if _refs2 else None,
+                            })
+                        return _png, pd.DataFrame(_rows_out)
+
+                    _total_rows = []
+                    _rows_by_rag = {}
+                    for _bn, _rs in _all_chunks_by_bn.items():
+                        _rn = _col_to_rag_name_ua.get(_bn, _bn)
+                        for _r in (_rs or []):
+                            _r2 = dict(_r)
+                            _r2["__bn__"] = _bn
+                            _r2["__rag_name__"] = _rn
+                            _r2["id"] = str(_r.get("id") or "")
+                            _total_rows.append(_r2)
+                            _rows_by_rag.setdefault(_rn, []).append(_r2)
+                    if _total_rows:
+                        st.markdown("**Total**")
+                        try:
+                            _png_t, _df_t = _build_scatter(_total_rows, _title="Total")
+                        except Exception as _e:
+                            _png_t, _df_t = None, pd.DataFrame()
+                            st.warning(f"Totalの描画でエラー: {_e}")
+                        if _png_t is not None:
+                            st.image(_png_t)
+                        if not _df_t.empty:
+                            st.dataframe(
+                                _df_t.sort_values(["期間内参照", "参照回数"], ascending=[False, False]),
+                                hide_index=True, use_container_width=True, height=320)
+
+                    st.markdown("**RAG_NAMEごと（横2列）**")
+                    try:
+                        _agent_data_disp = dmu.read_json_file(_ua_af, agent_folder_path) or {}
+                    except Exception:
+                        _agent_data_disp = {}
+                    _rag_order = [_kn.get("RAG_NAME") for _kn in _agent_data_disp.get("KNOWLEDGE", []) if _kn.get("RAG_NAME")]
+                    _rag_keys = [_r for _r in _rag_order if _r in _rows_by_rag] + \
+                                sorted([_r for _r in _rows_by_rag.keys() if _r not in _rag_order])
+                    _rag_panels = []
+                    for _rn in _rag_keys:
+                        try:
+                            _png_b, _df_b = _build_scatter(_rows_by_rag[_rn], _title=f"RAG_NAME: {_rn}")
+                        except Exception as _e:
+                            _png_b, _df_b = None, pd.DataFrame()
+                            st.warning(f"{_rn} の描画でエラー: {_e}")
+                        if _png_b is not None:
+                            _rag_panels.append((_rn, _png_b, _df_b))
+                    for _i in range(0, len(_rag_panels), 2):
+                        _row = _rag_panels[_i:_i + 2]
+                        _cols = st.columns(len(_row))
+                        for _j, (_rn, _pb, _df_b) in enumerate(_row):
+                            _cols[_j].image(_pb, caption=f"RAG_NAME: {_rn}")
+                    for _rn, _pb, _df_b in _rag_panels:
+                        if not _df_b.empty:
+                            with st.expander(f"データ一覧: {_rn}", expanded=False):
+                                st.dataframe(
+                                    _df_b.sort_values(["期間内参照", "参照回数"], ascending=[False, False]),
+                                    hide_index=True, use_container_width=True, height=320)
 
         _um_twin_chat(_uid, "ume_deep")
 
@@ -3193,6 +3999,22 @@ def _user_memory_explorer():
                     st.caption("Persona未生成")
                 else:
                     _role = st.text_input("役割(role)", value=_pr.get("role", ""), key="ume_e_role")
+                    # Persona Summary 下書き再生成（保存ボタンを押さない限り反映されない）
+                    _pcg1, _pcg2 = st.columns([1, 4])
+                    if _pcg1.button("Summary下書きを再生成", key="ume_e_regen_persona"):
+                        import DigiM_GeneUserMemory as _gum
+                        with st.spinner("Personaサマリを再生成中..."):
+                            try:
+                                _draft = _gum.merge_persona(_pr.get("service_id", ""), _me, save=False)
+                                if _draft and _draft.get("summary_text"):
+                                    st.session_state["ume_e_summary"] = _draft["summary_text"]
+                                    st.session_state.sidebar_message = "Personaサマリの下書きを再生成（『Persona を保存』で反映）"
+                                    st.rerun()
+                                else:
+                                    st.warning("再生成できませんでした（Nowadayプロファイルが必要）")
+                            except Exception as e:
+                                st.error(f"再生成エラー: {type(e).__name__}: {e}")
+                    _pcg2.caption("※ 下書きを生成しても、下の『Persona を保存』を押さない限り保存されません。")
                     _summary = st.text_area("要約(summary_text)", value=_pr.get("summary_text", ""),
                                             height=120, key="ume_e_summary")
                     _flds = {
@@ -3268,6 +4090,36 @@ def _user_memory_explorer():
 
             # ---- Nowaday ----
             with st.expander("Nowaday（最近の傾向）を編集"):
+                # 新規スナップショット生成（期間指定 / 既存スナップショットに上書きせず新規追加）
+                st.markdown("**新しいスナップショットを生成**")
+                _ngc1, _ngc2, _ngc3 = st.columns([1.5, 1.5, 1])
+                _pmode = _ngc1.selectbox("期間モード",
+                                          ["YYYY-MM", "since_YYYY-MM-DD", "rolling_<N>d", "all"],
+                                          key="ume_e_nw_pmode")
+                _period_val = "all"
+                if _pmode == "YYYY-MM":
+                    _ym = _ngc2.text_input("YYYY-MM", value=datetime.now().strftime("%Y-%m"), key="ume_e_nw_ym")
+                    _period_val = (_ym or "").strip() or datetime.now().strftime("%Y-%m")
+                elif _pmode == "since_YYYY-MM-DD":
+                    _sd = _ngc2.date_input("Since", value=(datetime.now() - timedelta(days=30)).date(), key="ume_e_nw_sd")
+                    _period_val = f"since_{_sd.isoformat()}"
+                elif _pmode == "rolling_<N>d":
+                    _nd = _ngc2.number_input("N日", min_value=1, max_value=365, value=30, step=1, key="ume_e_nw_nd")
+                    _period_val = f"rolling_{int(_nd)}d"
+                if _ngc3.button("新規スナップショット生成", key="ume_e_nw_gen"):
+                    import DigiM_GeneUserMemory as _gum_nw
+                    _svc_for_nw = ((_mb.get("nowaday") or [{}])[0].get("service_id", "") if _mb.get("nowaday") else "")
+                    with st.spinner(f"Nowaday({_period_val})を生成中..."):
+                        try:
+                            _new = _gum_nw.build_nowaday_profile(_svc_for_nw, _me, _period_val)
+                            if _new:
+                                st.session_state.sidebar_message = f"Nowadayスナップショット({_period_val})を生成しました"
+                                st.rerun()
+                            else:
+                                st.warning("期間内にHistoryがありません")
+                        except Exception as e:
+                            st.error(f"生成エラー: {type(e).__name__}: {e}")
+                st.markdown("---")
                 _nws = _mb["nowaday"]
                 if not _nws:
                     st.caption("Nowaday未生成")

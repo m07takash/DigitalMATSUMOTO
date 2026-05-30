@@ -28,7 +28,7 @@
 | 1-2 | Multi Image-Generation Abstraction | Call DALL-E/Gemini image generation through a unified interface |
 | 1-3 | Token Counting | Measure prompt/response token counts with each model's tokenizer |
 | 1-4 | Text Sanitization | Remove characters that cannot be parsed as JSON (NUL, lone surrogates, control characters) from LLM input |
-| 1-5 | Vector Embedding | Convert text into numeric vectors using an embedding model |
+| 1-5 | Vector Embedding | Convert text into numeric vectors using an embedding model. `EMBED_PROVIDER` switches between OpenAI / Azure (Whisper likewise via `TRANSCRIBE_PROVIDER`). Azure gpt-5 family is supported with `api_version=2024-12-01-preview` and automatic `max_tokens → max_completion_tokens` translation |
 | 1-6 | Similarity Computation | Compute semantic closeness between vectors via cosine distance and similar metrics |
 | 1-7 | Vector DB Management | Create, query and update metadata for ChromaDB collections |
 | 1-8 | Session Persistence | Save chat history, settings and vectors to the file system |
@@ -187,9 +187,9 @@
 | 4-19 | Agent Comparison Analysis | Compare and evaluate responses from different agents to the same question |
 | 4-20 | Support Agent Evaluation | Benchmark the speed and quality of RAG query generation and date extraction using a test question set |
 | 4-21 | Ethical Check | Evaluate responses across 10 inappropriate-expression categories |
-| 4-22 | Knowledge Explorer Integrated Analysis | Unified analysis of RAG/PageIndex topic distribution, time-series trends, Focus Period, and chunk similarity clustering (reproducible from saved sessions) |
+| 4-22 | Knowledge Explorer Integrated Analysis | Unified analysis of RAG/PageIndex topic distribution, time-series trends, Focus Period, and chunk similarity clustering (reproducible from saved sessions). Overall: Highlight Period (emphasize dots in a specified range) / Cluster Period (restrict clustering target window). When personas are selected, chunks are filtered via DATA-FILTER × `define_code`. Each narrative explanation supports agent + engine + (optional) persona selection, history switching, and future dates up to 2099-12-31 |
 | 4-23 | Knowledge Utility Analysis | Color-coded plot of knowledge contribution by query type. Generated with stable file names |
-| 4-24 | User Memory Explorer Analysis | Cross-aggregate the three memory layers per user / per group. Big5 radar, word cloud, PCA+K-Means clustering, interest topic transitions, emotion trajectory |
+| 4-24 | User Memory Explorer Analysis | Cross-aggregate the three memory layers per user / per group. Big5 radar, word cloud, PCA+K-Means clustering, interest topic transitions, emotion trajectory. **My Memory**: regenerate a Persona Summary draft (unsaved until the save button is pressed) / generate a new Nowaday snapshot for a chosen period. **Individual**: Persona 6-attribute treemap + data table (colored 種別/status) / Nowaday snapshot selector / **User × Agent relationship analysis** (button-driven, 7 panels: basic summary, activity trend (period + Month/Week/Day), communication features (per-seq Q×R scatter), emotional tone, 6-axis compatibility radar, theme overlap, Knowledge reference scatter + list) |
 | 4-25 | User/Group Twin Dialogue | Ground the dialogue in user memory and converse with an individual/group digital twin |
 
 ---
