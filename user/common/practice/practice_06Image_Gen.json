@@ -2,14 +2,27 @@
     "NAME": "ImageGen",
     "CHAINS": [
         {
-            "TYPE": "IMAGEGEN",
+            "TYPE": "LLM",
             "SETTING": {
                 "AGENT_FILE": "USER",
                 "OVERWRITE_ITEMS": {},
                 "ADD_KNOWLEDGE": [],
-                "PROMPT_TEMPLATE": "Image Gen",
+                "PROMPT_TEMPLATE": "Image Text",
                 "USER_INPUT": "USER",
                 "CONTENTS": "USER",
+                "SITUATION": "USER",
+                "MEMORY_USE": true
+            }
+        },
+        {
+            "TYPE": "IMAGEGEN",
+            "SETTING": {
+                "AGENT_FILE": "agent_52ArtCritic.json",
+                "OVERWRITE_ITEMS": {},
+                "ADD_KNOWLEDGE": [],
+                "PROMPT_TEMPLATE": "Image Gen",
+                "USER_INPUT": "OUTPUT_1",
+                "CONTENTS": "",
                 "SITUATION": "USER",
                 "MEMORY_USE": true
             }
