@@ -528,6 +528,60 @@ def convert_to_ymd(date_str, date_format='%Y-%m-%d'):
 _embed_client = None
 _embed_enc = None
 
+
+class _ApproxEncoder:
+    """tiktoken 不使用時の近似エンコーダ。
+    用途は『埋め込み API に渡す前にトークン上限で切り詰める』ことと『トークン数の表示』だけ
+    なので、CJK の最悪ケースに合わせて 1 文字 = 2 トークン換算とし、
+    既存の `max_tokens=8192` 判定をそのまま使うと実質 4096 文字でクリップされる。
+    encode/decode の往復で元のテキストが復元できるよう、トークン列は (char, "") のペア。
+    """
+    def encode(self, text):
+        text = text or ""
+        out = []
+        for c in text:
+            out.append(c)
+            out.append("")
+        return out
+
+    def decode(self, tokens):
+        # ペアの偶数要素のみ拾えば元のテキスト
+        return "".join(tokens[::2])
+
+
+def _tiktoken_disabled():
+    return (os.getenv("TIKTOKEN_DISABLE") or "").lower() in ("true", "1", "yes", "on")
+
+
+def _load_tiktoken_encoding(name_or_model, by_model=False):
+    """tiktoken エンコーディングをロードする共通ヘルパ。
+    閉域環境では openaipublic.blob.core.windows.net への HTTPS 取得が落ちるため、
+    事前に TIKTOKEN_CACHE_DIR を設定して cl100k_base / o200k_base 等のキャッシュ
+    ファイルを配置しておく必要がある。ネットワーク失敗を検知した場合は
+    対処手順を含む RuntimeError を投げる。"""
+    try:
+        if by_model:
+            return tiktoken.encoding_for_model(name_or_model)
+        return tiktoken.get_encoding(name_or_model)
+    except KeyError:
+        # 未知のモデル名（Azureデプロイ名等）→ cl100k_base（text-embedding-3系互換）にフォールバック
+        if by_model:
+            return _load_tiktoken_encoding("cl100k_base", by_model=False)
+        raise
+    except Exception as e:
+        _cache_dir = os.getenv("TIKTOKEN_CACHE_DIR") or "(未設定)"
+        raise RuntimeError(
+            f"tiktoken エンコーディング '{name_or_model}' のロードに失敗しました: {type(e).__name__}: {e}\n"
+            f"  原因: tiktoken は初回利用時に https://openaipublic.blob.core.windows.net/encodings/ から\n"
+            f"        BPE ファイルを取得します。閉域環境ではこのホストに到達できないため失敗します。\n"
+            f"  現在の TIKTOKEN_CACHE_DIR = {_cache_dir}\n"
+            f"  対処: 外向き通信が可能な端末で以下を実行してキャッシュを作り、\n"
+            f"        その中身を閉域 VM の任意のディレクトリにコピーし、\n"
+            f"        system.env に TIKTOKEN_CACHE_DIR=<そのパス> を追加して再起動してください。\n"
+            f"        TIKTOKEN_CACHE_DIR=/tmp/tiktoken_cache python3 -c \"import tiktoken;\\\n"
+            f"          [tiktoken.get_encoding(n) for n in ('cl100k_base','o200k_base','p50k_base','r50k_base')]\""
+        ) from e
+
 def _get_embed_client():
     """埋め込み生成クライアント。EMBED_PROVIDER=azure なら Azure OpenAI を使う。"""
     global _embed_client, _embed_enc
@@ -541,12 +595,13 @@ def _get_embed_client():
         else:
             _embed_client = OpenAI(api_key=openai_api_key)
     if _embed_enc is None:
-        # tiktoken は OpenAIモデル名を期待。Azureのデプロイ名は不明なので
-        # EMBEDDING_MODEL（実モデル名）で引き、失敗時は text-embedding-3-large の互換 cl100k_base にフォールバック
-        try:
-            _embed_enc = tiktoken.encoding_for_model(embedding_model or "text-embedding-3-large")
-        except Exception:
-            _embed_enc = tiktoken.get_encoding("cl100k_base")
+        # TIKTOKEN_DISABLE=true で tiktoken を完全に迂回し、文字長ベースの近似に切替（閉域向け）
+        if _tiktoken_disabled():
+            _embed_enc = _ApproxEncoder()
+        else:
+            # tiktoken は OpenAIモデル名を期待。Azureのデプロイ名は不明なので
+            # EMBEDDING_MODEL（実モデル名）で引き、失敗時は text-embedding-3 系互換の cl100k_base にフォールバック
+            _embed_enc = _load_tiktoken_encoding(embedding_model or "text-embedding-3-large", by_model=True)
     return _embed_client, _embed_enc
 
 def _embed_model_name():
@@ -672,8 +727,12 @@ def get_wordcloud(title, dict, folder_path="user/common/analytics/insight/"):
 def count_token(tokenizer, model, text):
     tokens = 0
     if tokenizer == "tiktoken":
-        encoding = tiktoken.get_encoding("cl100k_base")
-        tokens = len(encoding.encode(text))
+        if _tiktoken_disabled():
+            # 文字数 × 2 で近似（CJK 最悪ケース見積もり）。表示用なので厳密性は不要
+            tokens = len(text or "") * 2
+        else:
+            encoding = _load_tiktoken_encoding("cl100k_base")
+            tokens = len(encoding.encode(text))
     elif tokenizer == "gemini":
         gemini_client = genai.Client(api_key=gemini_api_key)
         response_tokens = gemini_client.models.count_tokens(model=model, contents=text)
