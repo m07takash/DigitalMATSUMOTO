@@ -5,17 +5,17 @@
 ## Overall Architecture
 
 ```
-┌─────────────────────────────────┐
-│  UI／インターフェース層          │  人間やシステムとの接点
-├─────────────────────────────────┤
-│  アプリケーション層              │  実行制御・判断・分析
-├─────────────────────────────────┤
-│  コンテキストデザイン層          │  AIに与える文脈の設計
-├─────────────────────────────────┤
-│  データ／ナレッジ層              │  知識・記憶・履歴の管理
-├─────────────────────────────────┤
-│  インフラ／基盤層                │  LLM接続・認証・永続化
-└─────────────────────────────────┘
+┌─────────────────────────────────────────────┐
+│  UI / Interface Layer            │  Touch points with humans and external systems
+├─────────────────────────────────────────────┤
+│  Application Layer               │  Execution control, decisions, analytics
+├─────────────────────────────────────────────┤
+│  Context Design Layer            │  Designing the context fed to the AI
+├─────────────────────────────────────────────┤
+│  Data / Knowledge Layer          │  Managing knowledge, memory, and history
+├─────────────────────────────────────────────┤
+│  Infrastructure / Foundation     │  LLM connectivity, auth, and persistence
+└─────────────────────────────────────────────┘
 ```
 
 ---
@@ -77,7 +77,7 @@
 | 3-1 | System Prompt Auto-Generation | Dynamically build the system prompt from personality settings (name, gender, nationality, Big5, tone) |
 | 3-2 | Character Definition | Describe a detailed personality (background, values, first-person pronoun, etc.) in an external text file |
 | 3-3 | Big5 Personality Model | Set the five factors (Openness, Conscientiousness, Extraversion, Agreeableness, Neuroticism) on a 0-1 scale and reflect them in the AI's behavior |
-| 3-4 | Tone Templates | Inject speaking styles such as Polite (丁寧語), Samurai (武士語), or Gyaru (ギャル語) into the prompt |
+| 3-4 | Tone Templates | Inject speaking styles such as Polite (teineigo), Samurai (bushigo), or Gyaru into the prompt |
 | 3-4b | Plutchik Emotion Model | Record the 8 basic emotions (Joy/Trust/Fear/Surprise/Sadness/Disgust/Anger/Anticipation) and secondary emotions (dyads) into user memory, and reflect that state in the context |
 | 3-4c | Multi-Persona Parallel Execution | For a single template agent, switch ORG/Persona in a matrix and generate responses from multiple personas in parallel (`MAX_PARALLEL_PERSONAS`). `PersonaSelector` can auto-select via Thinking |
 
@@ -189,7 +189,7 @@
 | 4-21 | Ethical Check | Evaluate responses across 10 inappropriate-expression categories |
 | 4-22 | Knowledge Explorer Integrated Analysis | Unified analysis of RAG/PageIndex topic distribution, time-series trends, Focus Period, and chunk similarity clustering (reproducible from saved sessions). Overall: Highlight Period (emphasize dots in a specified range) / Cluster Period (restrict clustering target window). When personas are selected, chunks are filtered via DATA-FILTER × `define_code`. Each narrative explanation supports agent + engine + (optional) persona selection, history switching, and future dates up to 2099-12-31 |
 | 4-23 | Knowledge Utility Analysis | Color-coded plot of knowledge contribution by query type. Generated with stable file names |
-| 4-24 | User Memory Explorer Analysis | Cross-aggregate the three memory layers per user / per group. Big5 radar, word cloud, PCA+K-Means clustering, interest topic transitions, emotion trajectory. **My Memory**: regenerate a Persona Summary draft (unsaved until the save button is pressed) / generate a new Nowaday snapshot for a chosen period. **Individual**: Persona 6-attribute treemap + data table (colored 種別/status) / Nowaday snapshot selector / **User × Agent relationship analysis** (button-driven, 7 panels: basic summary, activity trend (period + Month/Week/Day), communication features (per-seq Q×R scatter), emotional tone, 6-axis compatibility radar, theme overlap, Knowledge reference scatter + list) |
+| 4-24 | User Memory Explorer Analysis | Cross-aggregate the three memory layers per user / per group. Big5 radar, word cloud, PCA+K-Means clustering, interest topic transitions, emotion trajectory. **My Memory**: regenerate a Persona Summary draft (unsaved until the save button is pressed) / generate a new Nowaday snapshot for a chosen period. **Individual**: Persona 6-attribute treemap + data table (colored category/status) / Nowaday snapshot selector / **User × Agent relationship analysis** (button-driven, 7 panels: basic summary, activity trend (period + Month/Week/Day), communication features (per-seq Q×R scatter), emotional tone, 6-axis compatibility radar, theme overlap, Knowledge reference scatter + list) |
 | 4-25 | User/Group Twin Dialogue | Ground the dialogue in user memory and converse with an individual/group digital twin |
 
 ---

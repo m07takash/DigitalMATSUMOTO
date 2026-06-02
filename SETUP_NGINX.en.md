@@ -169,7 +169,7 @@ curl -s -X POST https://your-domain.com/api/run \
     "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
     "user_info": {"USER_ID": "TestUser", "USER_DATA": {}},
     "session_id": "NGINX_TEST_001",
-    "user_input": "こんにちは",
+    "user_input": "Hello",
     "agent_file": "agent_10Sample.json"
   }' | python3 -m json.tool
 ```

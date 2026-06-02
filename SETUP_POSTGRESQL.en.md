@@ -108,12 +108,12 @@ CREATE TABLE digim_dialogs (
     session_id                VARCHAR(64),
     seq                       INTEGER,
     sub_seq                   INTEGER,
-    flg                       CHAR(1),       -- 論理削除フラグ（'N'は表示・参照とも除外）
-    memory_flg                CHAR(1),       -- メモリ参照フラグ（'N'は表示は残るがメモリ参照から除外）
-    persona_id                VARCHAR(64),   -- 適用ペルソナID（personaなしのときは空）
-    persona_name              VARCHAR(128),  -- 適用ペルソナ名（display用）
-    chain_index               INTEGER,       -- Practiceチェイン内のステップ番号（0始まり）
-    chain_role                VARCHAR(32),   -- 'persona' / 'merge' / null（PERSONAS並列ステップの識別）
+    flg                       CHAR(1),       -- Logical-delete flag ('N' excludes from both display and reference)
+    memory_flg                CHAR(1),       -- Memory-reference flag ('N' stays visible but is excluded from memory references)
+    persona_id                VARCHAR(64),   -- Applied persona ID (empty when there is no persona)
+    persona_name              VARCHAR(128),  -- Applied persona name (for display)
+    chain_index               INTEGER,       -- Step index inside the Practice chain (0-based)
+    chain_role                VARCHAR(32),   -- 'persona' / 'merge' / null (identifies steps in the PERSONAS parallel chain)
     practice_name             VARCHAR(128),
     model_type                VARCHAR(32),
     agent_file                VARCHAR(255),
@@ -215,10 +215,10 @@ Create this when using PostgreSQL as the WebUI login authentication source (set 
 CREATE TABLE IF NOT EXISTS digim_users (
     user_id    TEXT PRIMARY KEY,
     name       TEXT,
-    pw         TEXT,           -- bcryptハッシュ。平文初回ログイン時は自動でハッシュ化される
-    group_cd   JSONB,          -- 所属グループの配列（複数指定可、["Admin"]/["Sales","Marketing"]等）
-    agent      TEXT,           -- デフォルトエージェントファイル名（"DEFAULT" or "agent_*.json"）
-    allowed    JSONB           -- UI機能の表示/非表示マップ
+    pw         TEXT,           -- bcrypt hash. Plaintext on first login is auto-converted to a hash
+    group_cd   JSONB,          -- Array of belonging groups (multiple allowed, e.g. ["Admin"] / ["Sales","Marketing"])
+    agent      TEXT,           -- Default agent file name ("DEFAULT" or "agent_*.json")
+    allowed    JSONB           -- Show/hide map for UI features
 );
 ```
 
@@ -242,18 +242,18 @@ Create this when managing multiple personas (personality, affiliation, permissio
 ```sql
 CREATE TABLE IF NOT EXISTS digim_agent_personas (
     persona_id     TEXT PRIMARY KEY,
-    template_agent TEXT,           -- 紐付くテンプレートエージェントファイル名（任意）
-    org            JSONB,          -- 所属組織（dict）。agent側ORGの全キーをこの値が同値で含めばマッチ
+    template_agent TEXT,           -- Associated template agent file name (optional)
+    org            JSONB,          -- Belonging organization (dict). Matches when this dict equals all keys of the agent-side ORG
     company        TEXT,
     dept           TEXT,
     name           TEXT,
     act            TEXT,
-    personality    JSONB,          -- 性別/Big5等の人格設定（agent.PERSONALITYを全置換）
-    habits         JSONB,          -- ["ALL"]または実行可能なHABIT名のリスト
-    knowledge      JSONB,          -- ["ALL"]または参照可能なKNOWLEDGE.RAG_NAMEのリスト
-    define_code    JSONB,          -- 自由スキーマ（COMPANY_CODE/DEPT_CODE/EMP_CODE等）
-    character_text TEXT,           -- キャラクターテキスト（直接記述）
-    character_file TEXT,           -- character/フォルダ配下のファイル名（長文の場合）
+    personality    JSONB,          -- Personality settings (sex / Big5 etc.). Fully replaces agent.PERSONALITY
+    habits         JSONB,          -- ["ALL"] or list of executable HABIT names
+    knowledge      JSONB,          -- ["ALL"] or list of referable KNOWLEDGE.RAG_NAME values
+    define_code    JSONB,          -- Free-form schema (COMPANY_CODE / DEPT_CODE / EMP_CODE, etc.)
+    character_text TEXT,           -- Character text (described inline)
+    character_file TEXT,           -- File name under the character/ folder (for long descriptions)
     active         CHAR(1) DEFAULT 'Y'
 );
 ```
@@ -266,12 +266,12 @@ INSERT INTO digim_agent_personas
    habits, knowledge, define_code, character_text, character_file, active)
 VALUES
   ('P0001', 'agent_10Sample.json',
-   '{"company":"デジMラボ","dept":"Consulting","BU":"DX"}'::jsonb,
-   'デジMラボ', 'Consulting', 'DXコンサル太郎', 'DX戦略コンサルタント',
-   '{"SEX":"男性","NATIONALITY":"Japanese","SPEAKING_STYLE":"Polite"}'::jsonb,
+   '{"company":"DigiM Lab","dept":"Consulting","BU":"DX"}'::jsonb,
+   'DigiM Lab', 'Consulting', 'DX Consultant Taro', 'DX strategy consultant',
+   '{"SEX":"Male","NATIONALITY":"Japanese","SPEAKING_STYLE":"Polite"}'::jsonb,
    '["ALL"]'::jsonb, '["ALL"]'::jsonb,
    '{"COMPANY_CODE":["DML"],"DEPT_CODE":["CON"],"EMP_CODE":["e0001"]}'::jsonb,
-   'DXの推進力に長けた戦略コンサル。', '', 'Y')
+   'A strategy consultant strong in driving DX initiatives.', '', 'Y')
 ON CONFLICT (persona_id) DO UPDATE
 SET template_agent=EXCLUDED.template_agent, org=EXCLUDED.org,
     company=EXCLUDED.company, dept=EXCLUDED.dept, name=EXCLUDED.name,
@@ -289,7 +289,7 @@ SET template_agent=EXCLUDED.template_agent, org=EXCLUDED.org,
 When any of `USER_MEMORY_HISTORY_BACKEND` / `_NOWADAY_BACKEND` / `_PERSONA_BACKEND` is set to `RDB` in `system.env`, the corresponding three tables are **auto-created** (on first access) via `CREATE TABLE IF NOT EXISTS`. There is no need to run DDL in advance, but the schemas are listed here for backup and permission design during operation.
 
 ```sql
--- 短期メモリ（セッション単位の対話要約）
+-- Short-term memory (per-session dialogue summaries)
 CREATE TABLE IF NOT EXISTS digim_user_memory_history (
     id              TEXT PRIMARY KEY,
     service_id      TEXT,
@@ -300,13 +300,13 @@ CREATE TABLE IF NOT EXISTS digim_user_memory_history (
     topic           TEXT,
     excerpt         TEXT,
     axis_tags       JSONB,
-    emotions        JSONB,         -- プルチック基本感情 + 二次感情のスコア
+    emotions        JSONB,         -- Plutchik basic + secondary emotion scores
     confidence      DOUBLE PRECISION,
     source_seq      JSONB,
     active          CHAR(1) DEFAULT 'Y'
 );
 
--- 中期メモリ（period=YYYY-MM 等のスナップショット）
+-- Mid-term memory (snapshots such as period=YYYY-MM)
 CREATE TABLE IF NOT EXISTS digim_user_memory_nowaday (
     id                    TEXT PRIMARY KEY,
     service_id            TEXT,
@@ -325,7 +325,7 @@ CREATE TABLE IF NOT EXISTS digim_user_memory_nowaday (
     active                CHAR(1) DEFAULT 'Y'
 );
 
--- 長期メモリ（ユーザー人物像。service_id + user_id でユニーク）
+-- Long-term memory (user persona profile; unique by service_id + user_id)
 CREATE TABLE IF NOT EXISTS digim_user_memory_persona (
     service_id            TEXT,
     user_id               TEXT,
@@ -354,23 +354,23 @@ CREATE TABLE IF NOT EXISTS digim_user_memory_persona (
 Copy `system.env_sample` to create `system.env` and fill in the connection details.
 
 ```env
-# PostgreSQL接続情報
+# PostgreSQL connection info
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
 POSTGRES_DB=digim_analytics
 POSTGRES_USER=digimatsuadmin
 POSTGRES_PASSWORD=<your_password>
 
-# Azure OpenAI（ベクトル化に使用）
+# Azure OpenAI (used for vectorization)
 AZURE_OPENAI_ENDPOINT=https://xxxx.openai.azure.com/
 AZURE_OPENAI_API_KEY=<your_api_key>
 AZURE_OPENAI_EMBED_MODEL=text-embedding-3-large
 
-# ログイン認証ソースの切替（"JSON" or "RDB"）
-# RDBの場合、上記POSTGRES_*接続でdigim_usersテーブルを使用
+# Switch the login authentication source ("JSON" or "RDB")
+# When "RDB", uses the digim_users table over the POSTGRES_* connection above
 LOGIN_AUTH_METHOD="RDB"
 
-# エージェントペルソナのソース（"EXCEL" or "RDB" or "BOTH"）
+# Source for agent personas ("EXCEL" or "RDB" or "BOTH")
 AGENT_PERSONA_SOURCE="RDB"
 ```
 
@@ -393,7 +393,7 @@ conn = psycopg2.connect(
     user=os.getenv('POSTGRES_USER'),
     password=os.getenv('POSTGRES_PASSWORD'),
 )
-print('接続OK:', conn.server_version)
+print('Connection OK:', conn.server_version)
 conn.close()
 "
 ```
@@ -428,16 +428,16 @@ python3 -c "import DigiM_DB_Export as dmdbe; dmdbe.vectorize_dialogs()"
 ## Container management
 
 ```bash
-# 停止
+# Stop
 docker compose stop
 
-# 停止 + コンテナ削除（データは保持）
+# Stop + remove containers (data is preserved)
 docker compose down
 
-# 停止 + コンテナ・ボリューム削除（データも消える）
+# Stop + remove containers and volumes (data is also wiped)
 docker compose down -v
 
-# ログ確認
+# View logs
 docker compose logs postgres
 ```
 
@@ -447,8 +447,8 @@ docker compose logs postgres
 
 ```
 digim_sessions  (1)
-    └── digim_dialogs  (N)  ← session_id で紐付け
-            └── digim_references  (N)  ← dialog_id で紐付け
+    └── digim_dialogs  (N)  <- linked by session_id
+            └── digim_references  (N)  <- linked by dialog_id
 ```
 
 | Table | Description |
