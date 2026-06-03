@@ -5141,7 +5141,7 @@ def main():
                             if "feedback" in v2["setting"]:
                                 agent_feedback = v2["setting"]["feedback"]
 
-                                if agent_feedback["ACTIVE"] == "Y":
+                                if "ACTIVE" in agent_feedback and agent_feedback["ACTIVE"] == "Y":
                                     # Fetch category choices
                                     _cat_map = dmu.read_json_file("category_map.json", mst_folder_path)
                                     _cat_options = list(_cat_map.get("Category", {}).keys()) if _cat_map else ["Unset"]
