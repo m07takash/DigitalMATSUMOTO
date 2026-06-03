@@ -1,19 +1,19 @@
-"""スケジュールジョブのマスタCRUD。
+"""CRUD for the scheduled-job master.
 
-マスタ実体: user/common/mst/scheduled_jobs.json （配列）
-1ジョブのフィールド:
-  job_id          : 文字列。一意。空ならcreate()で自動採番。
-  name            : 表示名
+Master file: user/common/mst/scheduled_jobs.json (array)
+Fields per job:
+  job_id          : String. Unique. If empty, create() assigns one automatically.
+  name            : Display name
   kind            : "rag_update" | "user_memory_nowaday" | "agent_run"
-  cron            : "off" | "daily" | "weekly" | "monthly" | 5フィールドcron
+  cron            : "off" | "daily" | "weekly" | "monthly" | a 5-field cron string
   enabled         : bool
-  owner_user_id   : 作成/最終編集ユーザー(セッションに紐付け / 監査用)
-  params          : kind毎の追加パラメータ(主にagent_run用)
+  owner_user_id   : Creator / last-editor user (linked to the session, for audit)
+  params          : Extra parameters per kind (mainly for agent_run)
                     agent_run: {agent_file, user_input, engine?, execution{...}}
-  last_run        : "YYYY-MM-DD HH:MM:SS" (UTC+TIMEZONE)
-  last_status     : "success" | "error" | "running" | "" (未実行)
-  last_error      : 直近エラーメッセージ
-  last_session_id : agent_run のみ、最新の発番セッションID
+  last_run        : "YYYY-MM-DD HH:MM:SS" (UTC + TIMEZONE)
+  last_status     : "success" | "error" | "running" | "" (not yet run)
+  last_error      : Latest error message
+  last_session_id : agent_run only; the most recently issued session ID
   created_at, updated_at
 """
 import json
@@ -75,7 +75,7 @@ def load_all() -> List[Dict[str, Any]]:
         return []
     if not isinstance(data, list):
         return []
-    # フィールド補完(後方互換)
+    # Fill in missing fields for backward compatibility
     out = []
     for job in data:
         if not isinstance(job, dict):
@@ -103,7 +103,7 @@ def get(job_id: str) -> Optional[Dict[str, Any]]:
 
 
 def upsert(job: Dict[str, Any]) -> Dict[str, Any]:
-    """job_id が空ならcreate、既存ならupdate。"""
+    """Create if job_id is empty, update if it exists."""
     if job.get("kind") not in VALID_KINDS:
         raise ValueError(f"invalid kind: {job.get('kind')}")
     with _LOCK:
@@ -124,7 +124,7 @@ def upsert(job: Dict[str, Any]) -> Dict[str, Any]:
                 jobs[i] = merged
                 save_all(jobs)
                 return merged
-        # 指定job_idが無い → 新規登録扱い
+        # No job with the specified job_id -> treat as a new registration
         new_job = _empty_job(job["job_id"])
         new_job.update(job)
         jobs.append(new_job)
@@ -144,8 +144,9 @@ def delete(job_id: str) -> bool:
 
 def update_run_result(job_id: str, status: str, error: str = "",
                       session_id: str = "", started_at: str = ""):
-    """実行結果を該当ジョブに書き込む。startedとendedの両方を扱える。
-    status="running" のとき started_at を last_run に書く(未完了表示用)。
+    """Write the execution result into the matching job.
+    Handles both "started" and "ended" states.
+    When status="running", write started_at into last_run (to display in-progress state).
     """
     with _LOCK:
         jobs = load_all()

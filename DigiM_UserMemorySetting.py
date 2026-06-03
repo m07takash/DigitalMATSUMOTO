@@ -1,12 +1,13 @@
-"""ユーザーメモリのOn/Off設定（2階層: システム > ユーザーマスタ）。
+"""On/Off settings for User Memory (2-layer hierarchy: system > user master).
 
-優先順:
-  1. ユーザーマスタの Allowed["User Memory Layers"] (users.json または RDB)
-  2. システムデフォルト   (system.env: USER_MEMORY_DEFAULT_LAYERS)
+Priority order:
+  1. Allowed["User Memory Layers"] in the user master (users.json or RDB)
+  2. System default (system.env: USER_MEMORY_DEFAULT_LAYERS)
 
-ユーザーが自分の `layers` を変更できるかは Allowed["User Memory"] (true/false) で判定。
-WebUIはこのフラグでサイドバー表示をゲートし、true のユーザーだけが
-このモジュールの save_user_setting を呼ぶ前提。
+Whether a user can change their own `layers` is determined by
+Allowed["User Memory"] (true/false). The WebUI gates the sidebar display
+with this flag, and only users with `true` are expected to call
+save_user_setting from this module.
 """
 import logging
 import os
@@ -29,7 +30,7 @@ def _get_user_record(user_id: str) -> dict:
     try:
         users = dma_auth.load_user_master()
     except Exception as e:
-        logger.warning(f"[user_memory] ユーザーマスタ読込失敗 {user_id}: {e}")
+        logger.warning(f"[user_memory] failed to load user master {user_id}: {e}")
         return {}
     return users.get(user_id, {}) or {}
 
@@ -39,18 +40,18 @@ def get_system_default_layers() -> list:
 
 
 def is_user_memory_allowed(user_id: str) -> bool:
-    """ユーザーが User Memory の編集を許可されているか（Allowed.User Memory=True）。"""
+    """Whether the user is allowed to edit User Memory (Allowed.User Memory=True)."""
     rec = _get_user_record(user_id)
     allowed = rec.get("Allowed") or {}
     return bool(allowed.get(ALLOWED_PERMISSION_KEY, False))
 
 
 def load_user_setting(user_id: str) -> dict:
-    """ユーザーマスタから User Memory Layers を取得。
+    """Fetch User Memory Layers from the user master.
 
-    キーが存在する場合は空リストでもユーザーの明示的な選択として尊重し、
-    キーが存在しない場合のみシステムデフォルトを返す。
-    返却: {"layers": [...]}
+    If the key exists, an empty list is still respected as the user's explicit
+    selection; only when the key is absent do we fall back to the system default.
+    Returns: {"layers": [...]}
     """
     rec = _get_user_record(user_id)
     allowed = rec.get("Allowed") or {}
@@ -61,17 +62,17 @@ def load_user_setting(user_id: str) -> dict:
 
 
 def save_user_setting(user_id: str, layers: list):
-    """ユーザーマスタの Allowed["User Memory Layers"] を更新。
+    """Update Allowed["User Memory Layers"] in the user master.
 
-    Allowed["User Memory"]=True のユーザーに限り呼び出すこと（WebUI側でゲート）。
+    Only call this for users where Allowed["User Memory"]=True (gated on the WebUI side).
     """
     try:
         users = dma_auth.load_user_master()
     except Exception as e:
-        logger.error(f"[user_memory] ユーザーマスタ読込失敗 {user_id}: {e}")
+        logger.error(f"[user_memory] failed to load user master {user_id}: {e}")
         return
     if user_id not in users:
-        logger.warning(f"[user_memory] 未登録ユーザー: {user_id}")
+        logger.warning(f"[user_memory] unregistered user: {user_id}")
         return
     if not isinstance(users[user_id].get("Allowed"), dict):
         users[user_id]["Allowed"] = {}
@@ -79,11 +80,11 @@ def save_user_setting(user_id: str, layers: list):
     try:
         dma_auth.save_user_master(users)
     except Exception as e:
-        logger.error(f"[user_memory] ユーザーマスタ保存失敗 {user_id}: {e}")
+        logger.error(f"[user_memory] failed to save user master {user_id}: {e}")
 
 
 def resolve_active_layers(user_id: str) -> list:
-    """実効的に使う層リストを返す（ユーザーマスタ優先、無ければシステムデフォルト）。"""
+    """Return the effective layer list (user master takes priority, else the system default)."""
     user = load_user_setting(user_id)
     if user.get("layers") is not None:
         return user["layers"]

@@ -15,15 +15,15 @@ import mimetypes
 import DigiM_Util as dmu
 
 def _get_image_mime(image_path):
-    """ファイルパスからMIMEタイプを判定（デフォルト: image/png）"""
+    """Detect MIME type from the file path (default: image/png)."""
     mime, _ = mimetypes.guess_type(image_path)
     return mime if mime and mime.startswith("image/") else "image/png"
 
-# setting.yamlからフォルダパスなどを設定
+# Load folder paths and other settings from setting.yaml
 system_setting_dict = dmu.read_yaml_file("setting.yaml")
 temp_folder_path = system_setting_dict["TEMP_FOLDER"]
 
-# system.envファイルをロードして環境変数を設定
+# Load system.env and set environment variables
 if os.path.exists("system.env"):
     load_dotenv("system.env")
 openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -31,12 +31,12 @@ anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
 gemini_api_key = os.getenv("GEMINI_API_KEY")
 llama_api_key = os.getenv("LLAMA_API_KEY")
 xai_api_key = os.getenv("XAI_API_KEY")
-# Azure OpenAI Service（chat/image用）
+# Azure OpenAI Service (for chat/image)
 azure_openai_api_key = os.getenv("AZURE_OPENAI_API_KEY")
 azure_openai_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
 azure_openai_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
 
-# LLMクライアントのシングルトン
+# Singleton LLM clients
 _clients = {}
 
 def _get_openai_client(timeout=None):
@@ -46,7 +46,7 @@ def _get_openai_client(timeout=None):
     return _clients[key]
 
 def _get_azure_openai_client(timeout=None, api_version=None):
-    """Azure OpenAI Service クライアント。エージェント単位で api_version を上書き可能。"""
+    """Azure OpenAI Service client. api_version can be overridden per agent."""
     _api_version = api_version or azure_openai_api_version
     key = f"azure_openai_{timeout}_{_api_version}"
     if key not in _clients:
@@ -73,22 +73,22 @@ def _get_llama_client():
         _clients["llama"] = LlamaAPI(llama_api_key)
     return _clients["llama"]
 
-# 文字列から関数名を取得
+# Resolve a function by its string name
 def _sanitize_text(text):
-    """JSONパースエラーの原因となる不正文字を除去する"""
+    """Strip characters that cause JSON parse errors."""
     if not isinstance(text, str):
         return text
     import re
-    # NUL文字を除去
+    # Remove the NUL character
     text = text.replace("\0", "")
-    # サロゲートペア断片（孤立サロゲート）を除去
+    # Strip lone surrogates
     text = re.sub(r'[\ud800-\udfff]', '', text)
-    # JSONで問題になるC0制御文字を除去（\t, \n, \r は保持）
+    # Strip C0 control characters that break JSON (keep \t, \n, \r)
     text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', text)
     return text
 
 def _sanitize_messages(messages):
-    """メッセージリスト内の全テキストをサニタイズする"""
+    """Sanitize every text element inside a messages list."""
     if isinstance(messages, str):
         return _sanitize_text(messages)
     if isinstance(messages, list):
@@ -100,36 +100,36 @@ def _sanitize_messages(messages):
 def call_function_by_name(func_name, *args, **kwargs):
     if func_name in globals():
         func = globals()[func_name]
-        return func(*args, **kwargs)  # 引数を関数に渡す
+        return func(*args, **kwargs)  # Forward arguments to the function
     else:
         return "Function not found"
 
-# GPTの実行
+# Run GPT
 def generate_response_T_gpt(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
     openai_client = _get_openai_client()
 
-    # システムプロンプトの設定
+    # Build the system prompt
     system_message = [
         {"role": "system", "content": system_prompt}
     ]
 
-    # メモリをプロンプトに設定
+    # Add memory to the prompt
     memory_message = []
     for memory in memories:
         memory_message.append({"role": memory["role"], "content": memory["text"]})
 
-    # イメージ画像をプロンプトに設定
+    # Add images to the prompt
     image_message = []
     for image_path in image_paths:
         image_base64 = dmu.encode_image_file(image_path)
         image_message.append({"type": "image_url", "image_url": {"url": f"data:{_get_image_mime(image_path)};base64,{image_base64}"}})
 
-    # ユーザーのプロンプトを設定
+    # Build the user prompt
     user_prompt = [{"type": "text", "text": query}] + image_message
     user_message = [{"role": "user", "content": user_prompt}]
     prompt = _sanitize_messages(system_message + memory_message + user_message)
 
-    # モデルの実行
+    # Execute the model
     completion = openai_client.chat.completions.create(
         model = model["MODEL"],
         **model["PARAMETER"],
@@ -146,9 +146,9 @@ def generate_response_T_gpt(query, system_prompt, model, memories=[], image_path
         response = completion.choices[0].message.content
         yield str(prompt), response, completion
 
-# Azure OpenAI Service の実行（gpt-* on Azure）
-# MODEL には Azure 上の deployment 名を入れる。
-# PARAMETER に "api_version" を指定するとエージェント単位で API バージョン上書き可。
+# Run Azure OpenAI Service (gpt-* on Azure)
+# MODEL must contain the Azure deployment name.
+# Setting "api_version" inside PARAMETER overrides the API version per agent.
 def generate_response_T_azure_openai(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
     params = dict(model.get("PARAMETER") or {})
     _api_version = params.pop("api_version", None)
@@ -170,7 +170,7 @@ def generate_response_T_azure_openai(query, system_prompt, model, memories=[], i
     prompt = _sanitize_messages(system_message + memory_message + user_message)
 
     completion = azure_client.chat.completions.create(
-        model=model["MODEL"],   # Azure ではここがdeployment名
+        model=model["MODEL"],   # On Azure this is the deployment name
         **params,
         messages=prompt,
         stream=stream_mode,
@@ -186,30 +186,30 @@ def generate_response_T_azure_openai(query, system_prompt, model, memories=[], i
         yield str(prompt), response, completion
 
 
-# OpenAIのResponses関数の実行
+# Run the OpenAI Responses API
 def generate_response_T_gpt_response(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=False):
     openai_client = _get_openai_client(timeout=600)
 
-    # システムプロンプトではなくインストラクションを設定
+    # Set instructions instead of a system prompt
     instructions = system_prompt
 
-    # メモリをプロンプトに設定
+    # Add memory to the prompt
     memory_message = []
     for memory in memories:
         memory_message.append({"role": memory["role"], "content": memory["text"]})
 
-    # イメージ画像をプロンプトに設定
+    # Add images to the prompt
     image_message = []
     for image_path in image_paths:
         image_base64 = dmu.encode_image_file(image_path)
         image_message.append({"type": "image_url", "image_url": {"url": f"data:{_get_image_mime(image_path)};base64,{image_base64}"}})
     
-    # ユーザーのプロンプトを設定
+    # Build the user prompt
     user_prompt = [{"type": "input_text", "text": query}] + image_message
     user_message = [{"role": "user", "content": user_prompt}]
     prompt = _sanitize_messages(memory_message + user_message)
 
-    # モデルの実行
+    # Execute the model
     completion = openai_client.responses.create(
         model = model["MODEL"],
         **model["PARAMETER"],
@@ -220,34 +220,34 @@ def generate_response_T_gpt_response(query, system_prompt, model, memories=[], i
     response = completion.output_text
     yield str(prompt), response, completion 
 
-# OpenAIツールの実行(https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses)
+# Run an OpenAI tool (see https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses)
 def generate_response_openai_tool(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
     openai_client = _get_openai_client()
 
-    # システムプロンプトの設定
+    # Build the system prompt
     system_message = [
         {"role": "developer",
          "content": [{"type": "input_text", "text": system_prompt}]}
     ]
 
-    # メモリをプロンプトに設定
+    # Add memory to the prompt
     memory_message = []
     for memory in memories:
         memory_message.append({"role": memory["role"], "content": memory["text"]})
 
-    # イメージ画像をプロンプトに設定
+    # Add images to the prompt
     image_message = []
     for image_path in image_paths:
         image_base64 = dmu.encode_image_file(image_path)
         #image_message.append({"type": "image_url", "image_url": {"url": image_url["image_url"]}})
         image_message.append({"type": "image_url", "image_url": {"url": f"data:{_get_image_mime(image_path)};base64,{image_base64}"}})
 
-    # ユーザーのプロンプトを設定
+    # Build the user prompt
     user_prompt = [{"type": "input_text", "text": query}] + image_message
     user_message = [{"role": "user", "content": user_prompt}]
     prompt = _sanitize_messages(system_message + memory_message + user_message)
 
-    # モデルの実行
+    # Execute the model
     completion = openai_client.responses.create(
         model = model["MODEL"],
         **model["PARAMETER"],
@@ -258,15 +258,15 @@ def generate_response_openai_tool(query, system_prompt, model, memories=[], imag
     response = completion.output_text
     yield str(prompt), response, completion
 
-# Geminiの実行
+# Run Gemini
 def generate_response_T_gemini(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
     gemini_client = _get_gemini_client()
     contents=[]
 
-    # システムプロンプトの設定
+    # Build the system prompt
     system_instruction = system_prompt
 
-    # メモリをプロンプトに設定
+    # Add memory to the prompt
     memory_message = []
     for memory in memories:
         if memory["role"] == "user":
@@ -276,21 +276,21 @@ def generate_response_T_gemini(query, system_prompt, model, memories=[], image_p
 
     contents += memory_message
 
-    # イメージ画像をプロンプトに設定
+    # Add images to the prompt
     images = []
     for image_path in image_paths:
         image_data = dmu.encode_image_file(image_path)
         image_type = _get_image_mime(image_path)
         images.append({"inlineData": {"mimeType": image_type, "data": image_data}})
 
-    # ユーザーのプロンプトを設定
+    # Build the user prompt
     user_prompt = [{"text": query}]
     contents.append({"role": "user", "parts": user_prompt})
     contents += images
     contents = _sanitize_messages(contents)
     system_instruction = _sanitize_text(system_instruction)
 
-    # thought_signatureなど非テキストパーツを除いてテキストのみ抽出するヘルパー
+    # Helper that strips non-text parts (e.g., thought_signature) and extracts text only
     def _extract_text(candidate_response):
         try:
             parts = candidate_response.candidates[0].content.parts
@@ -298,7 +298,7 @@ def generate_response_T_gemini(query, system_prompt, model, memories=[], image_p
         except Exception:
             return ""
 
-    # モデルの実行（モデル／システムプロンプト）
+    # Execute the model (model + system prompt)
     response_stream_total = ""
     if stream_mode:
         completion = gemini_client.models.generate_content_stream(
@@ -311,7 +311,7 @@ def generate_response_T_gemini(query, system_prompt, model, memories=[], image_p
             response_stream_total += response if response else ""
             yield str(contents), response, chunk_completion
 
-    # ストリーミングの結果が取得されない場合、ストリーミングではないモードで再実行
+    # If streaming yields no results, retry in non-streaming mode
     if not stream_mode or response_stream_total == "":
         completion = gemini_client.models.generate_content(
             model = model["MODEL"],
@@ -321,28 +321,28 @@ def generate_response_T_gemini(query, system_prompt, model, memories=[], image_p
         response = _extract_text(completion)
         yield str(contents), response, completion
 
-# Claudeの実行
+# Run Claude
 def generate_response_T_claude(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
     claude_client = _get_anthropic_client()
 
-    # メモリをプロンプトに設定
+    # Add memory to the prompt
     memory_message = []
     for memory in memories:
         memory_message.append({"role": memory["role"], "content": memory["text"]})
 
-    # イメージ画像をプロンプトに設定
+    # Add images to the prompt
     image_message = []
     for image_path in image_paths:
         image_base64 = dmu.encode_image_file(image_path)
         image_message.append({"type": "image", "source": {"type": "base64", "media_type": _get_image_mime(image_path), "data": image_base64}})
 
-    # ユーザーのプロンプトを設定
+    # Build the user prompt
     user_prompt = [{"type": "text", "text": query}] + image_message
     user_message = [{"role": "user", "content": user_prompt}]
     prompt = _sanitize_messages(memory_message + user_message)
     system_prompt = _sanitize_text(system_prompt)
 
-    # モデルの実行
+    # Execute the model
     if stream_mode:
         with claude_client.messages.stream(
             model = model["MODEL"],
@@ -362,7 +362,7 @@ def generate_response_T_claude(query, system_prompt, model, memories=[], image_p
         response = completion.content[0].text
         yield str(prompt), response, completion
 
-# Grokの実行
+# Run Grok
 def generate_response_T_grok(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
     from xai_sdk import Client
     from xai_sdk.chat import user, assistant, system, image
@@ -370,10 +370,10 @@ def generate_response_T_grok(query, system_prompt, model, memories=[], image_pat
     grok_client = Client(api_key=xai_api_key, timeout=3600)
     grok_chat = grok_client.chat.create(model=model["MODEL"])
 
-    # システムプロンプトの設定
+    # Build the system prompt
     grok_chat.append(system(system_prompt))
 
-    # メモリをプロンプトに設定
+    # Add memory to the prompt
     memory_message = []
     for memory in memories:
         memory_data = {"role": memory["role"], "content": [{"type": "text", "text": memory["text"]}]}
@@ -383,20 +383,20 @@ def generate_response_T_grok(query, system_prompt, model, memories=[], image_pat
         elif memory["role"] == "assistant":
             grok_chat.append(assistant(memory["text"]))
 
-    # イメージ画像をプロンプトに設定
+    # Add images to the prompt
     image_message = []
     for image_path in image_paths:
         image_base64 = dmu.encode_image_file(image_path)
         image_message.append(image(image_url=f"data:{_get_image_mime(image_path)};base64,{image_base64}"))
 
-    # ユーザーのプロンプトを設定
+    # Build the user prompt
     user_prompt = [{"type": "text", "text": query}]# + image_message
     user_message = {"role": "user", "content": user_prompt}
     user_message = {"role": "user", "content": query}
     prompt = _sanitize_messages(memory_message + [user_message])
     grok_chat.append(user(_sanitize_text(query), *image_message))
 
-    # モデルの実行
+    # Execute the model
     if stream_mode:
         for completion, chunk_completion in grok_chat.stream():
             response = chunk_completion.content
@@ -406,31 +406,31 @@ def generate_response_T_grok(query, system_prompt, model, memories=[], image_pat
         response = completion.content
         yield str(prompt), response, completion
 
-# llamaの実行
+# Run Llama
 def generate_response_T_llama(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
     llama = _get_llama_client()
 
-    # システムプロンプトの設定
+    # Build the system prompt
     system_message = [
         {"role": "system", "content": system_prompt}
     ]
 
-    # メモリをプロンプトに設定
+    # Add memory to the prompt
     memory_message = []
     for memory in memories:
         memory_message.append({"role": memory["role"], "content": memory["text"]})
 
-    # イメージ画像をプロンプトに設定
+    # Add images to the prompt
     image_message = []
 #    for image_path in image_paths:
 #        image_base64 = dmu.encode_image_file(image_path)
 #        image_message.append({"type": "image_url", "image_url": {"url": f"data:{_get_image_mime(image_path)};base64,{image_base64}"}})
 
-    # ユーザーのプロンプトを設定
+    # Build the user prompt
     prompt = [{"type": "text", "text": query}] + image_message
     user_message = [{"role": "user", "content": prompt}]
 
-    # モデルの実行
+    # Execute the model
     api_request_json = {
         "model": model["MODEL"],
         **model["PARAMETER"],
@@ -443,11 +443,11 @@ def generate_response_T_llama(query, system_prompt, model, memories=[], image_pa
     response = completion["choices"][0]["message"]["content"]
     yield query, response, completion
 
-# Geminiによる画像生成（nano banana 2等）
+# Image generation via Gemini (nano banana 2, etc.)
 def generate_image_gemini(prompt, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
     gemini_client = _get_gemini_client()
 
-    # メモリをプロンプトに設定
+    # Add memory to the prompt
     memory_message = []
     for memory in memories:
         if memory["role"] == "user":
@@ -455,10 +455,10 @@ def generate_image_gemini(prompt, system_prompt, model, memories=[], image_paths
         elif memory["role"] == "assistant":
             memory_message.append({"role": "model", "parts": [{"text": memory["text"]}]})
 
-    # ユーザーのプロンプトを設定
+    # Build the user prompt
     contents = memory_message + [{"role": "user", "parts": [{"text": prompt}]}]
 
-    # 画像生成パラメータ（ImageConfigはaspect_ratioのみ対応）
+    # Image-generation parameters (ImageConfig supports only aspect_ratio)
     aspect_ratio = model.get("PARAMETER", {}).get("aspect_ratio")
 
     completion = gemini_client.models.generate_content(
@@ -470,9 +470,9 @@ def generate_image_gemini(prompt, system_prompt, model, memories=[], image_paths
         )
     )
 
-    # TEMPフォルダに保存（拡張子と実フォーマットを必ず一致させる）
+    # Save under the temp folder (always match the extension with the real format)
     def _ext_from_bytes(b, fallback_mime=""):
-        # 実バイトから真のフォーマットを判定し、拡張子文字列を返す
+        # Detect the actual format from the bytes and return the extension
         try:
             import io as _io
             from PIL import Image as _PIL
@@ -493,19 +493,19 @@ def generate_image_gemini(prompt, system_prompt, model, memories=[], image_paths
         return "png"
 
     img_files = []
-    response_text = "画像を生成しました。"
+    response_text = "Image generated."
     num = 0
     for part in completion.parts:
         if hasattr(part, "text") and part.text:
             response_text = part.text
             continue
-        # 画像バイトを取得（inline_data があれば優先、無ければ as_image() 経由）
+        # Extract image bytes (prefer inline_data, otherwise via as_image())
         img_bytes = None
         mime_hint = ""
         if hasattr(part, "inline_data") and part.inline_data:
             try:
                 _raw = part.inline_data.data
-                # SDKによって bytes / base64文字列 のどちらが入るかブレるためtry両対応
+                # The SDK may yield raw bytes or a base64 string depending on the version; try both
                 img_bytes = _raw if isinstance(_raw, (bytes, bytearray)) else base64.b64decode(_raw)
             except Exception:
                 img_bytes = None
@@ -518,7 +518,7 @@ def generate_image_gemini(prompt, system_prompt, model, memories=[], image_paths
                         img_bytes = _im.image_bytes
                         mime_hint = getattr(_im, "mime_type", "") or mime_hint
                     else:
-                        # PIL Image 互換ならPNGへ再エンコード
+                        # If it is a PIL Image, re-encode to PNG
                         import io as _io2
                         _buf = _io2.BytesIO()
                         _im.save(_buf, format="PNG")
@@ -539,25 +539,25 @@ def generate_image_gemini(prompt, system_prompt, model, memories=[], image_paths
     yield str(contents), response_text, completion_result
 
 
-# 考察に対する画像生成
+# Image generation for an insight
 def generate_image_dalle(prompt, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
     openai_client = _get_openai_client()
 
-    # システムプロンプトの設定
+    # Build the system prompt
     system_message = [{"role": "system", "content": system_prompt}]
 
-    # ユーザーのプロンプトを設定
+    # Build the user prompt
     user_message = [{"role": "user", "content": prompt}]
 
-    # メモリをプロンプトに設定
+    # Add memory to the prompt
     memory_message = []
     for memory in memories:
         memory_message.append({"role": memory["role"], "content": memory["text"]})
 
-    # プロンプトを文字列に（不正文字を除去）
+    # Stringify the prompt (strip invalid characters)
     prompt_str = json.dumps(_sanitize_messages(memory_message + user_message), ensure_ascii=False).replace("\n", "").replace("\\", "")
 
-    # 画像生成モデルの実行
+    # Execute the image-generation model
     params = dict(model["PARAMETER"])
     if "output_format" not in params:
         params["output_format"] = "png"
@@ -567,7 +567,7 @@ def generate_image_dalle(prompt, system_prompt, model, memories=[], image_paths=
         **params
     )
 
-    # TEMPフォルダに保存
+    # Save under the temp folder
     img_files = []
     num = 0
     ext = params.get("output_format", "png")
@@ -578,13 +578,13 @@ def generate_image_dalle(prompt, system_prompt, model, memories=[], image_paths=
         img_files.append(img_file)
         num = num + 1
 
-    response = "画像を生成しました。"
+    response = "Image generated."
     completion = img_files
 
     yield prompt_str, response, completion
 
 
-# Azure OpenAI Service の画像生成（DALL-E on Azure）
+# Image generation via Azure OpenAI Service (DALL-E on Azure)
 def generate_image_azure_dalle(prompt, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
     params = dict(model.get("PARAMETER") or {})
     _api_version = params.pop("api_version", None)
@@ -602,7 +602,7 @@ def generate_image_azure_dalle(prompt, system_prompt, model, memories=[], image_
     if "output_format" not in params:
         params["output_format"] = "png"
     completion = azure_client.images.generate(
-        model=model["MODEL"],   # Azureはdeployment名
+        model=model["MODEL"],   # On Azure this is the deployment name
         prompt=prompt_str[:3000],
         **params,
     )
@@ -617,5 +617,5 @@ def generate_image_azure_dalle(prompt, system_prompt, model, memories=[], image_
         img_files.append(img_file)
         num += 1
 
-    response = "画像を生成しました。"
+    response = "Image generated."
     yield prompt_str, response, img_files

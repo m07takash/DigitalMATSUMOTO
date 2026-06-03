@@ -13,7 +13,7 @@ import DigiM_Util as dmu
 import DigiM_Agent as dma
 import DigiM_GeneFeedback as dmgf
 
-# system.envファイルをロードして環境変数を設定
+# Load the system.env file and set environment variables
 load_dotenv("system.env")
 api_agent_file = os.getenv("API_AGENT_FILE")
 api_port = os.getenv("API_PORT")
@@ -21,7 +21,7 @@ api_default_session_name = os.getenv("API_DEFAULT_SESSION_NAME")
 
 app = FastAPI()
 
-# ---------- リクエスト / レスポンス ----------
+# ---------- Request / Response ----------
 class ServiceInfo(BaseModel):
     SERVICE_ID: str
     SERVICE_DATA: Dict[str, Any] = {}
@@ -39,7 +39,7 @@ class InputData(BaseModel):
     situation: Dict[str, Any] = {"TIME": "", "SITUATION": ""}
     agent_file: Optional[str] = None
     engine: Optional[str] = None
-    # Exec Setting（API用デフォルト）
+    # Exec Setting (API defaults)
     stream_mode: Optional[bool] = None
     save_digest: Optional[bool] = None
     memory_use: Optional[bool] = None
@@ -50,26 +50,26 @@ class InputData(BaseModel):
     web_search_engine: Optional[str] = None
     private_mode: Optional[bool] = None
     thinking_mode: Optional[bool] = None
-    # ユーザーメモリ（対話相手についての情報）
-    #   user_memory_layers を指定するとそれを最優先（["persona","nowaday","history"] のサブセット / [] で全Off）
-    #   未指定で user_memory=True なら全層ON、False なら全Off
-    #   どちらも未指定なら users.json / USER_MEMORY_DEFAULT_LAYERS に従う（従来動作）
+    # User memory (information about the dialogue partner)
+    #   user_memory_layers takes top priority when set (subset of ["persona","nowaday","history"] / [] turns all off)
+    #   If unset and user_memory=True, all layers are ON; False turns all off
+    #   If neither is set, falls back to users.json / USER_MEMORY_DEFAULT_LAYERS (legacy behavior)
     user_memory: Optional[bool] = None
     user_memory_layers: Optional[List[str]] = None
-    # その他の実行設定（上記以外を直接渡す場合）
+    # Other execution settings (when passing fields not covered above)
     execution: Dict[str, Any] = {}
 
-LOCK_WAIT_MAX = 60   # ロック待機の最大秒数
-LOCK_POLL_INTERVAL = 2  # ポーリング間隔（秒）
+LOCK_WAIT_MAX = 60   # Maximum seconds to wait for a session lock
+LOCK_POLL_INTERVAL = 2  # Polling interval (seconds)
 
-# ---------- 実行関数 ----------
+# ---------- Execution function ----------
 def exec_function(service_info: dict, user_info: dict, session_id: str, session_name: str,
                   user_input: str, situation: dict, agent_file: str, engine: str, execution: dict) -> dict:
-    # セッションの設定（未指定なら新規発番）
+    # Set up the session (issue a new ID if not specified)
     if not session_id:
         session_id = "API" + dms.set_new_session_id()
 
-    # セッションのロック待機
+    # Wait for the session lock
     waited = 0
     while waited < LOCK_WAIT_MAX:
         status = dms.get_status_data(session_id).get("status", "")
@@ -80,18 +80,18 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
     else:
         raise HTTPException(status_code=429, detail=f"Session {session_id} is locked. Retry after a moment.")
 
-    # 実行の設定
+    # Execution settings
     if not execution or "LAST_ONLY" not in execution:
         execution["LAST_ONLY"] = True
 
-    # エンジン切り替え
+    # Engine override
     overwrite_items = {}
     if engine:
         agent_data = dmu.read_json_file(agent_file, dma.agent_folder_path)
         if engine in agent_data.get("ENGINE", {}).get("LLM", {}):
             overwrite_items["ENGINE"] = {"LLM": agent_data["ENGINE"]["LLM"][engine]}
 
-    # 実行
+    # Execute
     response_chunks = []
     output_reference = {}
     for response_service_info, response_user_info, response_chunk, ref in dme.DigiMatsuExecute_Practice(
@@ -108,7 +108,7 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
     else:
         response = "".join(map(str, response_chunks))
 
-    # セッション名の自動生成
+    # Auto-generate the session name
     if not session_name:
         session = dms.DigiMSession(session_id, session_name)
         _, _, new_session_name, _, _, _ = dmt.gene_session_name(
@@ -122,16 +122,16 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
         "response": response,
     }
 
-# ---------- エンドポイント ----------
+# ---------- Endpoints ----------
 
-# メイン実行（同期 - 1回のリクエストで完結）
+# Main execution (synchronous - completes in a single request)
 @app.post("/run")
 async def run(data: InputData):
     agent_file = data.agent_file or api_agent_file
     service_info = data.service_info.model_dump()
     user_info = data.user_info.model_dump()
 
-    # API用デフォルト設定（明示的に指定されたフラグで上書き）
+    # API default settings (overridden by explicitly specified flags)
     execution = {
         "STREAM_MODE": True,
         "SAVE_DIGEST": True,
@@ -145,9 +145,9 @@ async def run(data: InputData):
         "WEB_SEARCH_ENGINE": "OpenAI",
         "PRIVATE_MODE": False,
     }
-    # execution dictで渡された値を上書き
+    # Apply values passed in the execution dict
     execution.update(data.execution)
-    # 明示的フィールドで指定された値を上書き（最優先）
+    # Apply values from explicit fields (highest priority)
     _flag_map = {
         "STREAM_MODE": data.stream_mode,
         "SAVE_DIGEST": data.save_digest,
@@ -164,8 +164,8 @@ async def run(data: InputData):
         if val is not None:
             execution[key] = val
 
-    # ユーザーメモリの有効/無効指定（Execute側は execution["USER_MEMORY_LAYERS"] を最優先で見る）
-    #   未設定なら従来どおり users.json / USER_MEMORY_DEFAULT_LAYERS にフォールバック
+    # User memory enable/disable (Execute side reads execution["USER_MEMORY_LAYERS"] as top priority)
+    #   If unset, falls back to users.json / USER_MEMORY_DEFAULT_LAYERS as before
     _valid_layers = ("persona", "nowaday", "history")
     if data.user_memory_layers is not None:
         execution["USER_MEMORY_LAYERS"] = [
@@ -188,12 +188,12 @@ async def run(data: InputData):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# 後方互換（旧エンドポイント → 同じ同期処理にフォールバック）
+# Backward compatibility (legacy endpoint -> falls back to the same synchronous handler)
 @app.post("/run_function")
 async def run_function(data: InputData):
     return await run(data)
 
-# セッション一覧
+# Session list
 @app.get("/sessions")
 async def get_sessions(user_id: Optional[str] = None, service_id: Optional[str] = None):
     sessions = dms.get_session_list()
@@ -204,7 +204,7 @@ async def get_sessions(user_id: Optional[str] = None, service_id: Optional[str] 
     return {"sessions": [{"id": s.get("id"), "name": s.get("name"), "agent": s.get("agent"),
                           "last_update_date": s.get("last_update_date")} for s in sessions]}
 
-# セッション履歴
+# Session history
 @app.get("/sessions/{session_id}")
 async def get_session_history(session_id: str):
     data = dms.get_session_data(session_id)
@@ -212,13 +212,13 @@ async def get_session_history(session_id: str):
         raise HTTPException(status_code=404, detail="Session not found")
     return {"session_id": session_id, "history": data}
 
-# エージェント一覧
+# Agent list
 @app.get("/agents")
 async def get_agent_list():
     agents = dma.get_display_agents()
     return {"agents": agents}
 
-# エージェントの選択可能なエンジン一覧
+# List of engines selectable for the agent
 @app.get("/agents/{agent_file}/engines")
 async def get_engine_list(agent_file: str):
     try:
@@ -235,7 +235,7 @@ async def get_engine_list(agent_file: str):
         "IMAGEGEN": {"default": default_imagegen, "engines": imagegen_engines},
     }
 
-# Web検索エンジン一覧
+# Web search engine list
 @app.get("/web_search_engines")
 async def get_web_search_engines():
     import DigiM_Tool as dmt
@@ -256,7 +256,7 @@ async def get_web_search_engines():
         "engines": engines,
     }
 
-# エージェントのフィードバック設定を取得
+# Get the agent's feedback configuration
 @app.get("/agents/{agent_file}/feedback")
 async def get_feedback_config(agent_file: str):
     try:
@@ -266,7 +266,7 @@ async def get_feedback_config(agent_file: str):
     comm = agent.feedback
     if comm.get("ACTIVE") != "Y":
         return {"active": False, "message": "Feedback is disabled for this agent"}
-    # カテゴリ選択肢を取得
+    # Fetch category choices
     mst_folder = dmu.read_yaml_file("setting.yaml").get("MST_FOLDER", "")
     cat_map = dmu.read_json_file("category_map.json", mst_folder)
     categories = list(cat_map.get("Category", {}).keys()) if cat_map else []
@@ -278,7 +278,7 @@ async def get_feedback_config(agent_file: str):
         "save_mode": comm.get("SAVE_MODE", "CSV"),
     }
 
-# フィードバック送信
+# Submit feedback
 class FeedbackData(BaseModel):
     session_id: str
     agent_file: Optional[str] = None
@@ -291,21 +291,21 @@ async def post_feedback(data: FeedbackData):
     agent_file = data.agent_file or api_agent_file
     session_id = data.session_id
 
-    # セッション存在確認
+    # Check that the session exists
     session_data = dms.get_session_data(session_id)
     if not session_data:
         raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
     if data.seq not in session_data or data.sub_seq not in session_data.get(data.seq, {}):
         raise HTTPException(status_code=404, detail=f"seq={data.seq}/sub_seq={data.sub_seq} not found")
 
-    # 該当seq/sub_seqのエージェントと一致するか確認
+    # Verify that the agent matches the seq/sub_seq target
     sub_data = session_data[data.seq][data.sub_seq]
     actual_agent = sub_data.get("setting", {}).get("agent_file", "")
     if actual_agent and actual_agent != agent_file:
         raise HTTPException(status_code=400,
             detail=f"Agent mismatch: seq={data.seq}/sub_seq={data.sub_seq} was executed with '{actual_agent}', not '{agent_file}'")
 
-    # エージェントのフィードバック項目と一致するか確認
+    # Verify the items match the agent's feedback configuration
     try:
         agent = dma.DigiM_Agent(agent_file)
     except FileNotFoundError:
@@ -328,7 +328,7 @@ async def post_feedback(data: FeedbackData):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-# ヘルスチェック
+# Health check
 @app.get("/health")
 async def health():
     return {"status": "ok"}

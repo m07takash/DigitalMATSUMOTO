@@ -8,7 +8,7 @@ from pathlib import Path
 import zipfile
 import shutil
 
-# セッションファイル単位の書き込みロック（Race Condition防止）
+# Per-session-file write lock (prevents race conditions)
 _session_file_locks: dict = {}
 _session_file_locks_meta = threading.Lock()
 
@@ -23,7 +23,7 @@ import DigiM_Util as dmu
 
 logger = logging.getLogger(__name__)
 
-# setting.yamlからフォルダパスなどを設定
+# Load folder paths and other settings from setting.yaml
 system_setting_dict = dmu.read_yaml_file("setting.yaml")
 user_folder_path = system_setting_dict["USER_FOLDER"]
 session_folder_prefix = system_setting_dict["SESSION_FOLDER_PREFIX"]
@@ -34,7 +34,7 @@ session_analytics_folder = system_setting_dict["SESSION_ANALYTICS_FOLDER"]
 archive_folder = system_setting_dict["ARCHIVE_FOLDER"]
 archive_days = int(system_setting_dict.get("ARCHIVE_DAYS", 30))
 
-# system.envファイルをロードして環境変数を設定
+# Load system.env and set environment variables
 if os.path.exists("system.env"):
     load_dotenv("system.env")
 temp_move_flg = os.getenv("TEMP_MOVE_FLG")
@@ -42,7 +42,7 @@ temp_move_flg = os.getenv("TEMP_MOVE_FLG")
 DB_EXPORT_DONE = "DONE"
 DB_EXPORT_UNDO = "UNDO"
 
-# セッションの一覧を獲得
+# Get the list of sessions
 def get_session_list():
     sessions = []
     for session_folder_name in os.listdir(user_folder_path):
@@ -71,11 +71,11 @@ def get_session_list():
                         status_dict["user_id"] = user_id
                 sessions.append(status_dict)
         except Exception as e:
-            logger.warning(f"{session_folder_name}でエラーのためスキップしました: {e}")
+            logger.warning(f"Skipped {session_folder_name} due to error: {e}")
             continue
     return sessions
 
-# 無効セッションの一覧を獲得
+# Get the list of inactive sessions
 def get_session_list_inactive():
     sessions_list = []
     sessions = get_session_list()
@@ -84,7 +84,7 @@ def get_session_list_inactive():
             sessions_list.append(session_status)
     return sessions_list
 
-# セッションの一覧を獲得(画面用)
+# Get the list of sessions (for the UI)
 def get_session_list_visible(input_service_id, input_user_id, admin_flg="N"):
     sessions_list = []
     sessions = get_session_list()
@@ -94,7 +94,7 @@ def get_session_list_visible(input_service_id, input_user_id, admin_flg="N"):
     sessions_list_sorted = sorted(sessions_list, key=lambda x: x.get("last_update_date"), reverse=True)
     return sessions_list_sorted
 
-# 無効セッションの一覧を獲得(画面用)
+# Get the list of inactive sessions (for the UI)
 def get_session_list_inactive_visible(input_service_id, input_user_id, admin_flg="N"):
     sessions_list = []
     sessions = get_session_list_inactive()
@@ -104,21 +104,21 @@ def get_session_list_inactive_visible(input_service_id, input_user_id, admin_flg
     sessions_list_sorted = sorted(sessions_list, key=lambda x: x.get("last_update_date"), reverse=True)
     return sessions_list_sorted
 
-# セッションIDを元にセッションの辞書データを取得する関数
+# Get the session dictionary by session ID
 def get_session_data(session_id):
     session_key = session_folder_prefix + session_id
     session_file_path = str(Path(user_folder_path) / session_key / session_file_name)
     session_file_dict = dmu.read_json_file(session_file_path)
     return session_file_dict
 
-# セッションIDを元にセッションのステータスデータを取得する関数
+# Get the session status data by session ID
 def get_status_data(session_id):
     session_key = session_folder_prefix + session_id
     session_status_path = str(Path(user_folder_path) / session_key / session_status_file_name)
     status_dict = dmu.read_yaml_file(session_status_path)
     return status_dict
 
-# 辞書データから最大のシーケンスを取得する関数
+# Get the maximum sequence number from a dictionary
 def max_seq_dict(session_dict):
     max_seq = 0
     seqs = [int(k) for k in session_dict.keys() if k.isdigit()]
@@ -126,7 +126,7 @@ def max_seq_dict(session_dict):
         max_seq = max(seqs, key=int)
     return str(max_seq)
 
-# セッション名を取得
+# Get the session name
 def get_session_name(session_id):
     session_key = session_folder_prefix + session_id
     session_status_path = str(Path(user_folder_path) / session_key / session_status_file_name)
@@ -144,7 +144,7 @@ def get_session_name(session_id):
             session_name = session_file_active_dict[max_seq][max_sub_seq]["setting"]["session_name"]
     return session_name
 
-# 会話履歴のサービス名とユーザー名を取得
+# Get service name and user name from chat history
 def get_ids(session_id):
     session_key = session_folder_prefix + session_id
     session_status_path = str(Path(user_folder_path) / session_key / session_status_file_name)
@@ -172,7 +172,7 @@ def get_ids(session_id):
                 user_id = session_file_active_dict[max_seq]["SETTING"]["user_info"]["USER_ID"]
     return service_id, user_id
 
-# 会話履歴の最終更新日を取得
+# Get the chat history's last update date
 def get_last_update_date(session_id):
     session_key = session_folder_prefix + session_id
     session_status_path = str(Path(user_folder_path) / session_key / session_status_file_name)
@@ -195,7 +195,7 @@ def get_last_update_date(session_id):
     last_update_date_str = str(last_update_date)
     return last_update_date_str
 
-# エージェントファイルを取得
+# Get the agent file
 def get_agent_file(session_id):
     session_key = session_folder_prefix + session_id
     session_status_path = str(Path(user_folder_path) / session_key / session_status_file_name)
@@ -213,7 +213,7 @@ def get_agent_file(session_id):
             agent_file = session_file_active_dict[max_seq]["1"]["setting"]["agent_file"]
     return agent_file
 
-# セッションの最後に実行されたエンジン名を取得
+# Get the engine name last executed in the session
 def get_last_engine_name(session_id):
     session_file_dict = get_session_data(session_id)
     if not session_file_dict:
@@ -227,7 +227,7 @@ def get_last_engine_name(session_id):
     engine = setting.get("engine", {})
     return engine.get("NAME", engine.get("MODEL", ""))
 
-# セッションのアクティブ状態を獲得する
+# Get the session active state
 def get_active_session(session_id):
     session_key = session_folder_prefix + session_id
     session_status_path = str(Path(user_folder_path) / session_key / session_status_file_name)
@@ -239,20 +239,20 @@ def get_active_session(session_id):
         active_flg = "Y"
     return active_flg
 
-# セッションのユーザーダイアログ保存状態を獲得する
+# Get the session user_dialog save state
 def get_user_dialog_session(session_id):
     session_key = session_folder_prefix + session_id
     session_status_path = str(Path(user_folder_path) / session_key / session_status_file_name)
     status_dict = {}
     status_dict = dmu.read_yaml_file(session_status_path)
-    # user_dialogはSAVED/UNSAVED/DISCARD/NONEのいずれか
+    # user_dialog is one of SAVED / UNSAVED / DISCARD / NONE
     if "user_dialog" in status_dict:
         user_dialog_status = status_dict["user_dialog"]
     else:
         user_dialog_status = "UNSAVED"
     return user_dialog_status
 
-# シチュエーションを取得
+# Get the situation
 def get_situation(session_id):
     session_key = session_folder_prefix + session_id
     session_file_path = str(Path(user_folder_path) / session_key / session_file_name)
@@ -260,7 +260,7 @@ def get_situation(session_id):
     session_file_active_dict = {k: v for k, v in session_file_dict.items() if v["SETTING"].get("FLG") == "Y"}
     situation = {}
 
-    # 最大シーケンス／サブシーケンスからシチュエーションを取得
+    # Get the situation from the max seq / sub_seq
     if session_file_active_dict:
         max_seq = max_seq_dict(session_file_active_dict)
         max_sub_seq = max_seq_dict(session_file_active_dict[max_seq])
@@ -268,7 +268,7 @@ def get_situation(session_id):
 
     return situation
 
-# DB ExportのステータスとlastSeqを取得
+# Get the DB Export status and lastSeq
 def get_db_export_info(session_id):
     status_dict = get_status_data(session_id)
     info = status_dict.get("db_export")
@@ -276,33 +276,33 @@ def get_db_export_info(session_id):
         return "", 0
     return info.get("status", ""), int(info.get("last_seq", 0))
 
-# DB ExportステータスをDONEに更新
+# Update the DB Export status to DONE
 def save_db_export_done(session_id, last_seq: int):
     session_key = session_folder_prefix + session_id
     session_status_path = str(Path(user_folder_path) / session_key / session_status_file_name)
     dmu.save_yaml_file({"db_export": {"status": DB_EXPORT_DONE, "last_seq": last_seq}}, session_status_path)
 
-# DB ExportステータスをUNDOに更新
+# Update the DB Export status to UNDO
 def save_db_export_undo(session_id, last_seq: int):
     session_key = session_folder_prefix + session_id
     session_status_path = str(Path(user_folder_path) / session_key / session_status_file_name)
     dmu.save_yaml_file({"db_export": {"status": DB_EXPORT_UNDO, "last_seq": last_seq}}, session_status_path)
 
-# 30日以上更新がないセッションフォルダをZipに圧縮して削除
+# ZIP-compress session folders that haven't been updated for 30+ days, then delete them
 def archive_old_sessions(days: int = None) -> dict:
     """
-    最終更新日から days 日以上経過しているセッションフォルダを
-    1つの ZIP ファイルにまとめて圧縮し、元のフォルダを削除する。
+    Bundle session folders whose last update is >= `days` ago into a single ZIP
+    and then delete the original folders.
 
-    ZIP の保存先: archive_folder / sessions_archive_YYYYMMDD_HHMMSS.zip
-    戻り値: {"zip_path": str, "archived": [folder_name,...], "skipped": [folder_name,...]}
+    ZIP path: archive_folder / sessions_archive_YYYYMMDD_HHMMSS.zip
+    Returns: {"zip_path": str, "archived": [folder_name,...], "skipped": [folder_name,...]}
     """
     now = datetime.now(tz=timezone.utc)
     threshold_days = days if days is not None else archive_days
     archived = []
     skipped = []
 
-    # 圧縮対象フォルダを収集
+    # Collect folders to compress
     target_folders = []
     for entry in os.scandir(user_folder_path):
         if not entry.is_dir():
@@ -317,20 +317,20 @@ def archive_old_sessions(days: int = None) -> dict:
             else:
                 skipped.append(entry.name)
         except Exception as e:
-            logger.warning(f"[archive] {entry.name} のmtime取得に失敗しました: {e}")
+            logger.warning(f"[archive] Failed to read mtime for {entry.name}: {e}")
             skipped.append(entry.name)
 
     if not target_folders:
-        logger.info(f"[archive] {threshold_days}日以上更新のないセッションはありませんでした。")
+        logger.info(f"[archive] No sessions older than {threshold_days} days.")
         return {"zip_path": None, "archived": [], "skipped": skipped}
 
-    # ZIP ファイルパスを決定
+    # Resolve the ZIP file path
     archive_dir = Path(archive_folder)
     archive_dir.mkdir(parents=True, exist_ok=True)
     zip_name = "sessions_archive_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".zip"
     zip_path = str(archive_dir / zip_name)
 
-    # 圧縮
+    # Compress
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for folder_name, folder_path in target_folders:
             for file_path in Path(folder_path).rglob("*"):
@@ -338,19 +338,19 @@ def archive_old_sessions(days: int = None) -> dict:
                     arcname = Path(folder_name) / file_path.relative_to(folder_path)
                     zf.write(file_path, arcname)
 
-    # フォルダ削除
+    # Delete folders
     for folder_name, folder_path in target_folders:
         try:
             shutil.rmtree(folder_path)
             archived.append(folder_name)
-            logger.info(f"[archive] {folder_name} を削除しました。")
+            logger.info(f"[archive] Deleted {folder_name}.")
         except Exception as e:
-            logger.error(f"[archive] {folder_name} の削除に失敗しました: {e}")
+            logger.error(f"[archive] Failed to delete {folder_name}: {e}")
 
-    logger.info(f"[archive] 完了 — ZIP: {zip_path} / 圧縮={len(archived)}件 / スキップ={len(skipped)}件")
+    logger.info(f"[archive] Done -- ZIP: {zip_path} / archived={len(archived)} / skipped={len(skipped)}")
     return {"zip_path": zip_path, "archived": archived, "skipped": skipped}
 
-# 新しいセッションIDを発番する【数値のシーケンスだけ】
+# Issue a new session ID (numeric sequence only)
 def set_new_session_id():
     new_session_prefix = datetime.now().strftime("%Y%m%d_%H%M%S")
     session_list = get_session_list()
@@ -370,7 +370,7 @@ def set_new_session_id():
 
     return new_session_id
 
-# セッションクラス
+# Session class
 class DigiMSession:
     def __init__(self, session_id="", session_name="", base_path=""):
         self.session_id = session_id if session_id else set_new_session_id()
@@ -387,13 +387,13 @@ class DigiMSession:
         self.session_analytics_folder_path = str(_session_base / session_analytics_folder) + "/"
         self.set_history()
 
-    # ヒストリーの再読込
+    # Reload chat history
     def set_history(self):
         self.chat_history_dict = self.get_history()
         self.chat_history_active_dict = self.get_history_active()
         self.chat_history_active_omit_dict = self.get_history_active_omit()
 
-    # 会話履歴を指定したseqとsub_seqまでで切り取り
+    # Truncate chat history up to the given seq / sub_seq
     def extract_history_by_keys(self, chat_history_dict, seq_str="", sub_seq_str=""):
         trimmed_dict = {}
         if seq_str:
@@ -409,7 +409,7 @@ class DigiMSession:
         else:
             return chat_history_dict
 
-    # セッションのステータスを獲得する
+    # Get the session status
     def get_status(self):
         status_dict = {}
         status_dict = dmu.read_yaml_file(self.session_status_path)
@@ -419,36 +419,36 @@ class DigiMSession:
             status = "UNLOCKED"
         return status
 
-    # セッションのアクティブ状態を獲得する
+    # Get the session active state
     def get_active_session(self):
         active_flg = get_active_session(self.session_id)
         return active_flg
 
-    # セッションのユーザーダイアログ保存状態を獲得する
+    # Get the session user_dialog save state
     def get_user_dialog_session(self):
         user_dialog_status = get_user_dialog_session(self.session_id)
         return user_dialog_status
 
-    # 全ての会話履歴を獲得する
+    # Get the entire chat history
     def get_history(self):
         chat_history_dict = {}
         chat_history_dict = dmu.read_json_file(self.session_file_path)
         return chat_history_dict
 
-    # 有効な会話履歴を獲得する
+    # Get the active chat history
     def get_history_active(self):
         chat_history_active_dict = {}
         if self.chat_history_dict:
             chat_history_active_dict = {k: v for k, v in self.chat_history_dict.items() if "SETTING" in v and v["SETTING"].get("FLG") == "Y"}
         return chat_history_active_dict
 
-    # Sub_Seqの最大・最小の辞書型データを獲得する
+    # Get the min/max sub_seq dict data
     def get_history_active_omit(self):
         chat_history_active_omit_dict = {}
         if self.chat_history_active_dict:
             for key, sub_dict in self.chat_history_active_dict.items():
                 sub_seqs = sorted((int(k) for k in sub_dict if k != "SETTING"))
-                # 最小サブキーと最大サブキーを取得
+                # Get the min and max sub keys
                 min_subseq = str(sub_seqs[0])
                 max_subseq = str(sub_seqs[-1])
                 chat_history_active_omit_dict[key] = {}
@@ -456,7 +456,7 @@ class DigiMSession:
                 chat_history_active_omit_dict[key]["1"]["setting"] = sub_dict[str(min_subseq)]["setting"]
                 if "prompt" in sub_dict[str(max_subseq)]:
                     chat_history_active_omit_dict[key]["1"]["prompt"] = sub_dict[str(min_subseq)]["prompt"]
-                # 画像は max_subseq だけでなく途中のsub_seq（IMAGEGENが中間チェインのケース）からも収集
+                # Collect images from both max_subseq and intermediate sub_seqs (when IMAGEGEN is mid-chain)
                 _merged_images = {}
                 for _ss in sub_seqs:
                     _ss_block = sub_dict.get(str(_ss), {})
@@ -475,7 +475,7 @@ class DigiMSession:
                     chat_history_active_omit_dict[key]["1"]["feedback"] = sub_dict[str(max_subseq)]["feedback"]
         return chat_history_active_omit_dict
 
-    # 指定したシーケンスの直前のダイジェストを取得
+    # Get the digest just before the given seq
     def get_history_digest(self, seq="", sub_seq=""):
         chat_history_active_dict = self.get_history_active()
         set_seq = ""
@@ -497,7 +497,7 @@ class DigiMSession:
                     chat_history_digest_dict = chat_history_active_dict[set_seq][set_sub_seq]["digest"]
         return set_seq, set_sub_seq, chat_history_digest_dict
 
-    # 最新のエージェントを取得
+    # Get the latest agent
     def get_history_max_agent(self):
         chat_history_active_dict = self.get_history_active()
         max_seq = max(chat_history_active_dict.keys(), key=int)
@@ -513,7 +513,7 @@ class DigiMSession:
             engine_name = chat_history_active_dict[max_seq][max_sub_seq]["setting"]["engine"]["NAME"]
         return agent_name+":"+engine_name
 
-    # 最新のダイジェストを取得
+    # Get the latest digest
     def get_history_max_digest(self):
         chat_history_active_dict = self.get_history_active()
         max_seq = max(chat_history_active_dict.keys(), key=int)
@@ -525,27 +525,27 @@ class DigiMSession:
             chat_history_max_digest_dict = chat_history_active_dict[max_seq][max_sub_seq]["digest"]
         return max_seq, max_sub_seq, chat_history_max_digest_dict
 
-    # 会話メモリを獲得する（トークン制限で切り取り）
+    # Get conversation memory (truncated by token limit)
     def get_memory(self, query_vec, model_name, tokenizer, memory_limit_tokens, memory_role="both", memory_priority="latest", memory_similarity=False, memory_similarity_logic="cosine", memory_digest="Y", seq_limit="", sub_seq_limit=""):
         memories_list = []
         memories_list_final = []
         total_tokens = 0
 
-        # 話者名のプレフィックス（会話履歴に NAME が無ければ USER_ID にフォールバック。
-        # ユーザーマスタの参照はしない）
+        # Speaker-name prefix (fall back to USER_ID when NAME is missing in chat history;
+        # the user master is not consulted)
         def _prefix(role, name):
             _n = (name or "").strip() or ("(unknown)" if role == "user" else "AI")
             if role == "user":
-                return f"[ユーザー: {_n}] "
+                return f"[User: {_n}] "
             if role == "assistant":
-                return f"[エージェント: {_n}] "
+                return f"[Agent: {_n}] "
             return ""
 
-        # アクティブな会話履歴からメモリに設定する履歴を取得
+        # Pick history items to inject into memory from the active chat history
         chat_history_active_dict = self.extract_history_by_keys(self.chat_history_active_dict, seq_limit, sub_seq_limit)
 
         if chat_history_active_dict:
-            # 最新のダイジェストを取得
+            # Get the latest digest
             if memory_digest == "Y":
                 chat_history_digest_dict = {}
                 if seq_limit or sub_seq_limit:
@@ -553,7 +553,7 @@ class DigiMSession:
                 else:
                     max_seq, max_sub_seq, chat_history_digest_dict = self.get_history_max_digest()
                 if chat_history_digest_dict:
-                    # トークン制限を超えていなければ、ダイジェストを設定
+                    # If under the token limit, include the digest
                     total_tokens += chat_history_digest_dict["token"]
                     if total_tokens <= memory_limit_tokens:
                         chat_history_digest_dict["vec_text"] = []
@@ -563,11 +563,11 @@ class DigiMSession:
                             similarity_prompt = dmu.calculate_similarity_vec(query_vec, chat_history_digest_dict["vec_text"], memory_similarity_logic)
                         memories_list.append({"seq": max_seq, "sub_seq": max_sub_seq, "type": "digest", "role": chat_history_digest_dict["role"], "timestamp": chat_history_digest_dict["timestamp"], "token": chat_history_digest_dict["token"], "similarity_prompt": similarity_prompt, "text": chat_history_digest_dict["text"], "vec_text": chat_history_digest_dict["vec_text"]})
 
-            # 各履歴を取得（MEMORY_FLG="N"のseq、または setting.memory_flg="N" のsub_seq はメモリ参照から除外。表示は残る）
+            # Collect each entry (seq with MEMORY_FLG="N" or sub_seq with setting.memory_flg="N" is excluded from memory; display remains)
             for k, v in chat_history_active_dict.items():
                 if v.get("SETTING", {}).get("MEMORY_FLG", "Y") == "N":
                     continue
-                # seq単位の話者識別: user_info.NAME（無ければ USER_ID へフォールバック）
+                # Per-seq speaker identification: user_info.NAME (falls back to USER_ID when absent)
                 _u_info = v.get("SETTING", {}).get("user_info") or {}
                 _user_disp = (_u_info.get("NAME") or _u_info.get("USER_ID") or "").strip()
                 for k2, v2 in v.items():
@@ -593,7 +593,7 @@ class DigiMSession:
                                 _atxt = _prefix("assistant", _agent_name) + (v2["response"]["text"] or "")
                                 memories_list.append({"seq": k, "sub_seq": k2, "type": v2["response"]["role"], "role": v2["response"]["role"], "timestamp": v2["response"]["timestamp"], "token": v2["response"]["token"], "similarity_prompt": similarity_prompt, "text": _atxt, "vec_text": v2["response"]["vec_text"]})
 
-            # 各履歴をプライオリティ順に並び替え
+            # Sort each entry by priority
             if memory_priority == "latest":
                 memories_list_priority = sorted(memories_list, key=lambda x: datetime.strptime(x["timestamp"], "%Y-%m-%d %H:%M:%S.%f"), reverse=True)
             elif memory_priority == "oldest":
@@ -603,42 +603,42 @@ class DigiMSession:
             else :
                 memories_list_priority = memories_list
 
-            # トークン制限を超えないように会話メモリを設定
+            # Build conversation memory while staying under the token limit
             memories_list_selected = []
             for memory_list_priority in memories_list_priority:
                 total_tokens += memory_list_priority["token"]
                 if total_tokens <= memory_limit_tokens:
                     memories_list_selected.append(memory_list_priority)
 
-            # 最後にタイムスタンプでソート
+            # Finally, sort by timestamp
             memories_list_final = sorted(memories_list_selected, key=lambda x: datetime.strptime(x["timestamp"], "%Y-%m-%d %H:%M:%S.%f"))
 
         return memories_list_final
 
-    # ベクトルデータをセッションフォルダに保存する
+    # Save vector data into the session folder
     def save_vec_file(self, seq, sub_seq="1", mode="query", vec_text=[]):
-        # セッションフォルダがなければ作成
+        # Create the session folder if missing
         if not os.path.exists(self.session_folder_path):
             os.makedirs(self.session_folder_path, exist_ok=True)
 
-        # ベクトルデータの保存フォルダがなければ作成
+        # Create the vector-data folder if missing
         if not os.path.exists(self.session_vec_folder_path):
             os.makedirs(self.session_vec_folder_path, exist_ok=True)
 
-        # ベクトルデータを.npy形式で保存
+        # Save vector data as .npy
         vec_file_name = seq+"-"+sub_seq+"_"+mode+".npy"
         dmu.save_vectext_to_npy(vec_text, str(Path(self.session_vec_folder_path) / vec_file_name))
 
         return vec_file_name
 
-    # ベクトルデータをセッションフォルダから読み込む
+    # Load vector data from the session folder
     def get_vec_file(self, seq, sub_seq="1", mode="query"):
         vec_file_name = seq+"-"+sub_seq+"_"+mode+".npy"
         vec_text=[]
         vec_text = dmu.read_vectext_to_npy(str(Path(self.session_vec_folder_path) / vec_file_name))
         return vec_text
 
-    # セッションメタデータを一括保存する（1回のYAML読み書きで完了）
+    # Save session metadata in one shot (a single YAML read/write)
     def save_session_metadata(self, **kwargs):
         if not os.path.exists(self.session_folder_path):
             os.makedirs(self.session_folder_path, exist_ok=True)
@@ -646,12 +646,12 @@ class DigiMSession:
         if not status_dict:
             status_dict = {}
         status_dict.update(kwargs)
-        # メタデータ更新時にエラー情報をクリア
+        # Clear error info when metadata is updated
         status_dict["error"] = ""
         dmu.save_yaml_file(status_dict, self.session_status_path)
 
     def _update_status_yaml(self, updates):
-        """status.yamlの既存データを保持しつつ指定キーを更新する"""
+        """Update the specified keys while preserving existing data in status.yaml."""
         if not os.path.exists(self.session_folder_path):
             os.makedirs(self.session_folder_path, exist_ok=True)
         status_dict = dmu.read_yaml_file(self.session_status_path)
@@ -660,31 +660,31 @@ class DigiMSession:
         status_dict.update(updates)
         dmu.save_yaml_file(status_dict, self.session_status_path)
 
-    # セッションIDを設定する
+    # Set the session ID
     def save_session_id(self):
         self._update_status_yaml({"id": self.session_id})
 
-    # セッション名を設定する
+    # Set the session name
     def save_session_name(self):
         self._update_status_yaml({"name": self.session_name})
 
-    # セッションのサービスIDを保存する
+    # Save the session service ID
     def save_service_id(self, service_id):
         self._update_status_yaml({"service_id": service_id})
 
-    # セッションのユーザーIDを保存する
+    # Save the session user ID
     def save_user_id(self, user_id):
         self._update_status_yaml({"user_id": user_id})
 
-    # セッションのサービスIDを保存する
+    # Save the session service ID
     def save_agent_file(self, agent_file):
         self._update_status_yaml({"agent": agent_file})
 
-    # セッションの最終更新日を保存する
+    # Save the session last update date
     def save_last_update_date(self, last_update_date):
         self._update_status_yaml({"last_update_date": last_update_date})
 
-    # セッションのステータスを保存する
+    # Save the session status
     def save_status(self, status, error=""):
         if not os.path.exists(self.session_folder_path):
             os.makedirs(self.session_folder_path, exist_ok=True)
@@ -709,18 +709,18 @@ class DigiMSession:
         status_dict = dmu.read_yaml_file(self.session_status_path)
         return status_dict.get("response", "")
 
-    # セッションのアクティブ状態を更新する
+    # Update the session active state
     def save_active_session(self, active_flg):
         self._update_status_yaml({"active": active_flg})
 
-    # セッションのユーザーダイアログ保存状態を更新する
+    # Update the session user_dialog save state
     def save_user_dialog_session(self, user_dialog_status):
         if not os.path.exists(self.session_folder_path):
             os.makedirs(self.session_folder_path, exist_ok=True)
         status_dict = {"user_dialog": user_dialog_status}
         dmu.save_yaml_file(status_dict, self.session_status_path)
 
-    # DB ExportのステータスとlastSeqを取得
+    # Get the DB Export status and lastSeq
     def get_db_export_info(self):
         status_dict = dmu.read_yaml_file(self.session_status_path)
         info = status_dict.get("db_export")
@@ -728,17 +728,17 @@ class DigiMSession:
             return "", 0
         return info.get("status", ""), int(info.get("last_seq", 0))
 
-    # DB ExportステータスをDONEに更新
+    # Update the DB Export status to DONE
     def save_db_export_done(self, last_seq: int):
         dmu.save_yaml_file({"db_export": {"status": DB_EXPORT_DONE, "last_seq": last_seq}}, self.session_status_path)
 
-    # DB ExportステータスをUNDOに更新
+    # Update the DB Export status to UNDO
     def save_db_export_undo(self, last_seq: int):
         dmu.save_yaml_file({"db_export": {"status": DB_EXPORT_UNDO, "last_seq": last_seq}}, self.session_status_path)
 
-    # 会話履歴を一括保存する (B-5)
+    # Save chat history in bulk (B-5)
     # sub_seq_data: {sub_seq_str: {key: dict, ...}, ...}
-    # seq_setting_data: {key: dict, ...}  ← SETTING レベルに保存
+    # seq_setting_data: {key: dict, ...} -- saved at the SETTING level
     def save_history_batch(self, seq, sub_seq_data=None, seq_setting_data=None):
         with _get_file_lock(self.session_file_path):
             chat_history_dict = {}
@@ -760,30 +760,30 @@ class DigiMSession:
                         chat_history_dict[seq][sub_seq][key] = data
             with open(self.session_file_path, 'w', encoding='utf-8') as f:
                 json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
-            # 新しい会話が保存されたらDB ExportをUNDOにリセット
+            # Reset DB Export to UNDO when new conversation is saved
             export_status, last_exported_seq = self.get_db_export_info()
             if export_status == DB_EXPORT_DONE:
                 self.save_db_export_undo(last_exported_seq)
 
-    # 会話履歴を保存する
+    # Save chat history
     def save_history(self, seq, chat_dict_key, chat_dict, level="SEQ", sub_seq="1"):
         chat_history_dict = {}
 
-        # セッションフォルダがなければ作成
+        # Create the session folder if missing
         if not os.path.exists(self.session_folder_path):
             os.makedirs(self.session_folder_path, exist_ok=True)
 
-        # 保存済みの会話履歴を取得
+        # Read the saved chat history
         if os.path.exists(self.session_file_path):
             chat_history_dict = dmu.read_json_file(self.session_file_path)
 
-        # 会話履歴にseqがなければFLGと一緒に設定
+        # If the seq is missing, set it together with FLG
         if seq not in chat_history_dict:
             chat_history_dict[seq] = {}
             chat_history_dict[seq]["SETTING"] = {}
             chat_history_dict[seq]["SETTING"]["FLG"] = "Y"
 
-        # 会話履歴にデータを追加
+        # Append data to chat history
         if level == "SEQ":
             chat_history_dict[seq]["SETTING"][chat_dict_key] = chat_dict
         elif level == "SUB_SEQ":
@@ -791,15 +791,15 @@ class DigiMSession:
                 chat_history_dict[seq][sub_seq] = {}
             chat_history_dict[seq][sub_seq][chat_dict_key] = chat_dict
 
-        # 会話履歴を保存
+        # Save chat history
         with open(self.session_file_path, 'w', encoding='utf-8') as f:
             json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
-        # 新しい会話が保存されたらDB ExportをUNDOにリセット
+        # Reset DB Export to UNDO when new conversation is saved
         export_status, last_exported_seq = self.get_db_export_info()
         if export_status == DB_EXPORT_DONE:
             self.save_db_export_undo(last_exported_seq)
 
-    # セッション名を変更する
+    # Change the session name
     def chg_session_name(self, new_session_name):
         self.session_name = new_session_name
         self.save_session_name()
@@ -816,7 +816,7 @@ class DigiMSession:
             with open(self.session_file_path, 'w', encoding='utf-8') as f:
                 json.dump(session_file_dict, f, ensure_ascii=False, indent=4)
 
-    # 会話履歴のシーケンスを取得する
+    # Get a sequence of chat history
     def get_seq_history(self):
         seq = 0
         if os.path.exists(self.session_file_path):
@@ -825,7 +825,7 @@ class DigiMSession:
                 seq = max(int(key) for key in chat_history_dict.keys())
         return seq
 
-    # 会話履歴のシーケンスのステータスを変更する
+    # Change the status of a chat-history sequence
     def chg_seq_history(self, seq, value="N"):
         if os.path.exists(self.session_file_path):
             chat_history_dict = dmu.read_json_file(session_file_name, self.session_folder_path)
@@ -833,8 +833,8 @@ class DigiMSession:
         with open(self.session_file_path, 'w', encoding='utf-8') as f:
             json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
 
-    # 会話履歴のシーケンスのメモリ参照フラグを変更する
-    # MEMORY_FLG="N": 表示は残るがメモリ参照（LLMコンテキスト）から除外
+    # Change the memory-reference flag of a chat-history sequence
+    # MEMORY_FLG="N": display remains but excluded from memory references (LLM context)
     def chg_seq_memory_flg(self, seq, value="Y"):
         if os.path.exists(self.session_file_path):
             chat_history_dict = dmu.read_json_file(session_file_name, self.session_folder_path)
@@ -843,8 +843,8 @@ class DigiMSession:
                 with open(self.session_file_path, 'w', encoding='utf-8') as f:
                     json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
 
-    # 個別sub_seq単位のメモリ参照フラグを変更する（Phase 6: chain.PERSONAS用）
-    # setting.memory_flg = "N" の sub_seq は表示は残るがメモリ参照から除外
+    # Change the per-sub_seq memory-reference flag (Phase 6: for chain.PERSONAS)
+    # sub_seq with setting.memory_flg = "N" still displays but is excluded from memory references
     def chg_subseq_memory_flg(self, seq, sub_seq, value="Y"):
         with _get_file_lock(self.session_file_path):
             if not os.path.exists(self.session_file_path):
@@ -857,7 +857,7 @@ class DigiMSession:
                 with open(self.session_file_path, 'w', encoding='utf-8') as f:
                     json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
 
-    # 個別sub_seqの setting にキー/値を追加（Phase 6: chain_index/chain_role 等の付与用）
+    # Add a key/value to the per-sub_seq setting (Phase 6: for assigning chain_index / chain_role etc.)
     def update_subseq_setting(self, seq, sub_seq, updates):
         if not isinstance(updates, dict) or not updates:
             return
@@ -872,7 +872,7 @@ class DigiMSession:
                 with open(self.session_file_path, 'w', encoding='utf-8') as f:
                     json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
 
-    # 会話履歴にフィードバックを保存する
+    # Save feedback into chat history
     def set_feedback_history(self, seq, sub_seq, feedbacks={}):
         if os.path.exists(self.session_file_path):
             chat_history_dict = dmu.read_json_file(session_file_name, self.session_folder_path)
@@ -880,7 +880,7 @@ class DigiMSession:
         with open(self.session_file_path, 'w', encoding='utf-8') as f:
             json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
 
-    # 会話履歴に分析結果を保存する
+    # Save analytics result into chat history
     def set_analytics_history(self, seq, sub_seq, analytics={}):
         import logging
         _logger = logging.getLogger(__name__)
@@ -893,43 +893,43 @@ class DigiMSession:
         else:
             _logger.warning(f"set_analytics_history: file not found {self.session_file_path}")
 
-    # 会話履歴の詳細情報を取得する
+    # Get detailed info from chat history
     def get_detail_info(self, seq, sub_seq="1"):
         chat_detail_info = ""
         if os.path.exists(self.session_file_path):
             chat_history_dict = dmu.read_json_file(session_file_name, self.session_folder_path)
             chat_history_dict_seq = chat_history_dict[seq][sub_seq]
 
-            chat_detail_info += "\n【実行情報】\n"
-            chat_detail_info += "実行関数："+chat_history_dict_seq["setting"]["engine"]["FUNC_NAME"]+"\n"
-            chat_detail_info += "プロンプトテンプレート："+chat_history_dict_seq["prompt"]["prompt_template"]["setting"]+"\n"
-            chat_detail_info += "RAGデータ："
+            chat_detail_info += "\n[Execution info]\n"
+            chat_detail_info += "Function: "+chat_history_dict_seq["setting"]["engine"]["FUNC_NAME"]+"\n"
+            chat_detail_info += "Prompt template: "+chat_history_dict_seq["prompt"]["prompt_template"]["setting"]+"\n"
+            chat_detail_info += "RAG data: "
             for rag_set_dict in chat_history_dict_seq["prompt"]["knowledge_rag"]["setting"]:
                 chat_detail_info += str(rag_set_dict["DATA"])
             chat_detail_info += "\n"
 
-            chat_detail_info += "\n【実行結果】\n"
-            chat_detail_info += "エージェント："+chat_history_dict_seq["setting"]["agent_file"]+"\n"
-            chat_detail_info += "実行モデル："+chat_history_dict_seq["setting"]["engine"]["MODEL"]+"("+str(chat_history_dict_seq["setting"]["engine"]["PARAMETER"])+")\n"
-            chat_detail_info += "回答時間："+dmu.get_time_diff(chat_history_dict_seq["prompt"]["timestamp"], chat_history_dict_seq["response"]["timestamp"], format_str="%Y-%m-%d %H:%M:%S.%f")+"\n"
-            chat_detail_info += "入力トークン数："+str(chat_history_dict_seq["prompt"]["token"])+"\n"
-            chat_detail_info += "出力トークン数："+str(chat_history_dict_seq["response"]["token"])+"\n"
+            chat_detail_info += "\n[Execution result]\n"
+            chat_detail_info += "Agent: "+chat_history_dict_seq["setting"]["agent_file"]+"\n"
+            chat_detail_info += "Model: "+chat_history_dict_seq["setting"]["engine"]["MODEL"]+"("+str(chat_history_dict_seq["setting"]["engine"]["PARAMETER"])+")\n"
+            chat_detail_info += "Response time: "+dmu.get_time_diff(chat_history_dict_seq["prompt"]["timestamp"], chat_history_dict_seq["response"]["timestamp"], format_str="%Y-%m-%d %H:%M:%S.%f")+"\n"
+            chat_detail_info += "Prompt tokens: "+str(chat_history_dict_seq["prompt"]["token"])+"\n"
+            chat_detail_info += "Response tokens: "+str(chat_history_dict_seq["response"]["token"])+"\n"
 
             if "log" in chat_history_dict_seq:
-                chat_detail_info += "\n【実行履歴】\n"
+                chat_detail_info += "\n[Execution history]\n"
                 chat_detail_info += chat_history_dict_seq["log"]["timestamp_log"]
 
             if "digest" in chat_history_dict_seq:
-                chat_detail_info += "\n【会話のダイジェスト】\n"
-                chat_detail_info += "エージェント："+chat_history_dict_seq["digest"]["agent_file"]+"\n"
+                chat_detail_info += "\n[Conversation digest]\n"
+                chat_detail_info += "Agent: "+chat_history_dict_seq["digest"]["agent_file"]+"\n"
                 if "model" in chat_history_dict_seq["digest"]:
-                    chat_detail_info += "実行モデル："+chat_history_dict_seq["digest"]["model"]+"\n"
+                    chat_detail_info += "Model: "+chat_history_dict_seq["digest"]["model"]+"\n"
                 if "timestamp_start" in chat_history_dict_seq["digest"] and "timestamp" in chat_history_dict_seq["digest"]:
-                    chat_detail_info += "実行時間："+dmu.get_time_diff(chat_history_dict_seq["digest"]["timestamp_start"], chat_history_dict_seq["digest"]["timestamp"], format_str="%Y-%m-%d %H:%M:%S.%f")+"\n"
-                chat_detail_info += "出力トークン数："+str(chat_history_dict_seq["digest"]["token"])+"\n"
+                    chat_detail_info += "Duration: "+dmu.get_time_diff(chat_history_dict_seq["digest"]["timestamp_start"], chat_history_dict_seq["digest"]["timestamp"], format_str="%Y-%m-%d %H:%M:%S.%f")+"\n"
+                chat_detail_info += "Response tokens: "+str(chat_history_dict_seq["digest"]["token"])+"\n"
                 chat_detail_info += chat_history_dict_seq["digest"]["text"]+"\n"
 
-            chat_detail_info += "\n【メモリ】\n"
+            chat_detail_info += "\n[Memory]\n"
             for memory_set_dict in chat_history_dict_seq["response"]["reference"]["memory"]:
                 chat_detail_info += memory_set_dict["log"]
 
@@ -937,50 +937,50 @@ class DigiMSession:
                 thinking = chat_history_dict_seq["prompt"]["thinking"]
                 chat_detail_info += "\n【Thinking】\n"
                 if "agent_file" in thinking:
-                    chat_detail_info += "エージェント："+thinking["agent_file"]+"\n"
+                    chat_detail_info += "Agent: "+thinking["agent_file"]+"\n"
                 if "model" in thinking:
-                    chat_detail_info += "実行モデル："+thinking["model"]+"\n"
+                    chat_detail_info += "Model: "+thinking["model"]+"\n"
                 if "duration_sec" in thinking:
-                    chat_detail_info += "実行時間："+str(thinking["duration_sec"])+"秒\n"
+                    chat_detail_info += "Duration: "+str(thinking["duration_sec"])+"s\n"
                 if "prompt_token" in thinking:
-                    chat_detail_info += "入力トークン数："+str(thinking["prompt_token"])+"\n"
+                    chat_detail_info += "Prompt tokens: "+str(thinking["prompt_token"])+"\n"
                 if "response_token" in thinking:
-                    chat_detail_info += "出力トークン数："+str(thinking["response_token"])+"\n"
+                    chat_detail_info += "Response tokens: "+str(thinking["response_token"])+"\n"
                 if "reasoning" in thinking:
-                    chat_detail_info += "思考内容："+thinking["reasoning"]+"\n"
+                    chat_detail_info += "Reasoning: "+thinking["reasoning"]+"\n"
                 if "result" in thinking:
-                    chat_detail_info += "判定結果："+str(thinking["result"])+"\n"
+                    chat_detail_info += "Decision: "+str(thinking["result"])+"\n"
 
-            chat_detail_info += "\n【RAG検索用クエリ】\n"
+            chat_detail_info += "\n[RAG search query]\n"
             if chat_history_dict_seq["prompt"]["RAG_query_genetor"]:
                 rag_qg = chat_history_dict_seq["prompt"]["RAG_query_genetor"]
-                chat_detail_info += "エージェント："+rag_qg["agent_file"]+"\n"
-                chat_detail_info += "実行モデル："+rag_qg["model"]+"\n"
+                chat_detail_info += "Agent: "+rag_qg["agent_file"]+"\n"
+                chat_detail_info += "Model: "+rag_qg["model"]+"\n"
                 if "duration_sec" in rag_qg:
-                    chat_detail_info += "実行時間："+str(rag_qg["duration_sec"])+"秒\n"
+                    chat_detail_info += "Duration: "+str(rag_qg["duration_sec"])+"s\n"
                 if rag_qg.get("rag_query_hint"):
-                    chat_detail_info += "Thinkingヒント："+rag_qg["rag_query_hint"]+"\n"
-                chat_detail_info += "入力トークン数："+str(rag_qg["prompt_token"])+"\n"
-                chat_detail_info += "出力トークン数："+str(rag_qg["response_token"])+"\n"
+                    chat_detail_info += "Thinking hint: "+rag_qg["rag_query_hint"]+"\n"
+                chat_detail_info += "Prompt tokens: "+str(rag_qg["prompt_token"])+"\n"
+                chat_detail_info += "Response tokens: "+str(rag_qg["response_token"])+"\n"
                 chat_detail_info += rag_qg["llm_response"]+"\n"
 
-            chat_detail_info += "\n【メタ検索】\n"
+            chat_detail_info += "\n[Meta search]\n"
             if chat_history_dict_seq["prompt"]["meta_search"]:
                 meta_date = chat_history_dict_seq["prompt"]["meta_search"]["date"]
-                chat_detail_info += "[日付検索]\n"
-                chat_detail_info += "エージェント："+meta_date["agent_file"]+"\n"
-                chat_detail_info += "実行モデル："+meta_date["model"]+"\n"
+                chat_detail_info += "[Date search]\n"
+                chat_detail_info += "Agent: "+meta_date["agent_file"]+"\n"
+                chat_detail_info += "Model: "+meta_date["model"]+"\n"
                 if "duration_sec" in meta_date:
-                    chat_detail_info += "実行時間："+str(meta_date["duration_sec"])+"秒\n"
-                chat_detail_info += "入力トークン数："+str(meta_date["prompt_token"])+"\n"
-                chat_detail_info += "出力トークン数："+str(meta_date["response_token"])+"\n"
-                chat_detail_info += "検索条件："+str(meta_date["condition_list"])+"\n"
+                    chat_detail_info += "Duration: "+str(meta_date["duration_sec"])+"s\n"
+                chat_detail_info += "Prompt tokens: "+str(meta_date["prompt_token"])+"\n"
+                chat_detail_info += "Response tokens: "+str(meta_date["response_token"])+"\n"
+                chat_detail_info += "Conditions: "+str(meta_date["condition_list"])+"\n"
                 chat_detail_info += meta_date["llm_response"]+"\n"
 
-            # PageIndex選択ページの表示
+            # Display PageIndex selected pages
             page_index_refs = [r for r in chat_history_dict_seq["response"]["reference"]["knowledge_rag"] if "page_id" in r]
             if page_index_refs:
-                chat_detail_info += "\n【PageIndex選択ページ】\n"
+                chat_detail_info += "\n[PageIndex selected pages]\n"
                 for ref in page_index_refs:
                     ref_dict = dmu.parse_log_template(ref)
                     page_id = ref_dict.get("page_id", "")
@@ -989,57 +989,57 @@ class DigiMSession:
                     summary = ref_dict.get("summary", "")
                     chat_detail_info += f"[{page_id}] {title}（{category}）\n  {summary}\n"
 
-            chat_detail_info += "\n【RAGコンテキスト】\n["
+            chat_detail_info += "\n[RAG context]\n["
             for rag_set_dict in chat_history_dict_seq["response"]["reference"]["knowledge_rag"]:
                 chat_detail_info += "{"+ rag_set_dict.replace("\n", "").replace("$", "＄") + "},\n"
             if chat_detail_info.endswith(",\n"):
                 chat_detail_info = chat_detail_info[:-2] + "]"+"\n"
 
-            chat_detail_info += "\n【コンテンツコンテキスト】\n"
+            chat_detail_info += "\n[Content context]\n"
             for content_dict in chat_history_dict_seq["prompt"]["query"]["contents"]:
                 chat_detail_info += content_dict["context"]+"\n"
 
-            chat_detail_info += "\n【WEB検索結果】\n"
+            chat_detail_info += "\n[Web search result]\n"
             if "web_search" in chat_history_dict_seq["prompt"]:
                 web_dict = chat_history_dict_seq["prompt"]["web_search"]
                 if web_dict:
                     if "engine" in web_dict:
-                        chat_detail_info += "検索エンジン："+web_dict["engine"]+"\n"
+                        chat_detail_info += "Search engine: "+web_dict["engine"]+"\n"
                     if "model" in web_dict:
-                        chat_detail_info += "実行モデル："+web_dict["model"]+"\n"
+                        chat_detail_info += "Model: "+web_dict["model"]+"\n"
                     if "duration_sec" in web_dict:
-                        chat_detail_info += "実行時間："+str(web_dict["duration_sec"])+"秒\n"
+                        chat_detail_info += "Duration: "+str(web_dict["duration_sec"])+"s\n"
                     if "search_text" in web_dict:
-                        chat_detail_info += "検索テキスト："+web_dict["search_text"]+"\n"
+                        chat_detail_info += "Search text: "+web_dict["search_text"]+"\n"
                     chat_detail_info += web_dict["web_context"]+"\n"
-                    chat_detail_info += "参考URL：\n"
+                    chat_detail_info += "Reference URLs:\n"
                     for url in web_dict["urls"]:
                         url_title = url.get("title") or ""
                         url_date = url.get("date") or ""
                         url_link = url.get("url") or ""
                         chat_detail_info += f"{url_title}({url_date}){url_link}\n"
 
-            # ユーザーメモリ（注入されたコンテキスト）を表示
+            # Display user memory (injected context)
             _um_ctx = chat_history_dict_seq.get("prompt", {}).get("user_memory_context") or ""
             _um_used = chat_history_dict_seq.get("response", {}).get("reference", {}).get("user_memory") or []
             _um_meta = chat_history_dict_seq.get("prompt", {}).get("user_memory_meta") or {}
             _um_keywords = _um_meta.get("short_keywords") or []
             if _um_ctx or _um_used or _um_keywords:
-                chat_detail_info += "\n【ユーザーメモリ】\n"
+                chat_detail_info += "\n[User memory]\n"
                 if _um_used:
-                    chat_detail_info += "参照ID：" + ", ".join(str(x) for x in _um_used) + "\n"
+                    chat_detail_info += "Reference IDs: " + ", ".join(str(x) for x in _um_used) + "\n"
                 if _um_keywords:
-                    chat_detail_info += "Short検索キーワード：" + str(list(_um_keywords)) + "\n"
+                    chat_detail_info += "Short search keywords: " + str(list(_um_keywords)) + "\n"
                 if _um_ctx:
                     chat_detail_info += _um_ctx + "\n"
 
         return chat_detail_info
 
-    # コンテンツファイルを保存する
+    # Save the content file
     def save_contents_file(self, from_file_path, content_file_name):
         to_folder_path = self.session_contents_folder_path
         to_file_path = str(Path(to_folder_path) / content_file_name)
-        # コンテンツフォルダがなければ作成
+        # Create the content folder if missing
         if not os.path.exists(to_folder_path):
             os.makedirs(to_folder_path, exist_ok=True)
         if temp_move_flg == "Y":

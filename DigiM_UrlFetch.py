@@ -1,9 +1,9 @@
-"""URL取得ユーティリティ: ユーザー入力からURLを抽出し、安全性チェックの上でページ本文を取得する。
+"""URL fetch utility: extract URLs from user input and fetch the page body after safety checks.
 
-- SSRF対策: プライベート/ループバック/リンクローカルIPを拒否（DNS解決後も再確認）
-- スキーム・拡張子・ブロックリスト・サイズ・タイムアウト制御
-- 同一ドメイン内のサブページを幅優先で追加クロール可能
-- 結果はテキストとしてtempフォルダに保存、ファイルパスのリストを返す
+- SSRF protection: reject private / loopback / link-local IPs (re-verified after DNS resolution)
+- Controls on scheme / extension / block list / size / timeout
+- Optional BFS crawl of subpages within the same domain
+- Results are saved as text under the temp folder; returns a list of file paths
 """
 
 import ipaddress
@@ -27,21 +27,21 @@ DEFAULTS = {
     "MAX_DEPTH": 1,
     "USER_AGENT": "DigiMatsuAgent/1.0 (+URL fetch; respects robots intent)",
     "BLOCKED_DOMAINS": [],
-    "ALLOWED_DOMAINS": [],  # 非空ならホワイトリストモード（列挙されたドメインのみ許可）
-    "BLOCKLIST_FILE": "",   # hosts形式 or 1行1ドメインの外部ブロックリスト
+    "ALLOWED_DOMAINS": [],  # If non-empty, switches to whitelist mode (only listed domains allowed)
+    "BLOCKLIST_FILE": "",   # External blocklist file in hosts format or one-domain-per-line
     "BLOCKED_EXTENSIONS": [
         ".exe", ".bat", ".cmd", ".msi", ".scr", ".dll",
         ".vbs", ".ps1", ".jar", ".apk", ".dmg",
     ],
 }
 
-# ダークウェブ/匿名ネットワーク系TLD（通常のHTTPでは解決不可／SSRF/プロキシ悪用抑止のため明示ブロック）
+# Dark-web / anonymous-network TLDs (not resolvable over plain HTTP; explicitly blocked to deter SSRF / proxy abuse)
 DARK_WEB_TLDS = (
     ".onion", ".i2p", ".bit", ".loki", ".exit",
 )
 
-# 主要アダルト系ドメインの最小ビルトインリスト。より広範なブロックは BLOCKLIST_FILE で提供される
-# 公開カテゴリ別ブロックリスト（StevenBlack/hosts, UT1 "adult" 等）を指定してください
+# Minimal built-in list of major adult-content domains. For broader blocking provide a
+# public categorized blocklist (StevenBlack/hosts, UT1 "adult", etc.) via BLOCKLIST_FILE.
 BUILTIN_ADULT_DOMAINS = frozenset({
     "pornhub.com", "xvideos.com", "xnxx.com", "xhamster.com", "redtube.com",
     "youporn.com", "tube8.com", "spankbang.com", "brazzers.com",
@@ -56,7 +56,7 @@ _BLOCKLIST_CACHE = {"path": None, "mtime": 0.0, "domains": frozenset()}
 
 
 def _load_blocklist_file(path):
-    """hosts形式 (`0.0.0.0 domain`) や 1行1ドメインのブロックリストをロード。更新時刻でキャッシュ。"""
+    """Load a blocklist in hosts format (`0.0.0.0 domain`) or one-domain-per-line. Cached by mtime."""
     if not path:
         return frozenset()
     try:
@@ -69,12 +69,12 @@ def _load_blocklist_file(path):
     try:
         with open(path, "r", encoding="utf-8", errors="replace") as f:
             for line in f:
-                # コメントを剥がしてからトークナイズ
+                # Strip the comment, then tokenize
                 s = line.split("#", 1)[0].strip()
                 if not s:
                     continue
                 parts = s.split()
-                # hosts形式: "0.0.0.0 example.com" / "127.0.0.1 example.com" / "::1 example.com"
+                # hosts format: "0.0.0.0 example.com" / "127.0.0.1 example.com" / "::1 example.com"
                 if len(parts) >= 2 and parts[0] in ("0.0.0.0", "127.0.0.1", "::", "::1"):
                     cand = parts[1]
                 else:
@@ -90,7 +90,7 @@ def _load_blocklist_file(path):
 
 
 def _host_matches(host, domains):
-    """host が domains のいずれかと一致、またはそのサブドメインなら True。"""
+    """True if host equals any item in domains, or is a subdomain of one."""
     host = host.lower().lstrip(".")
     for d in domains:
         d = d.lower().lstrip(".")
@@ -142,7 +142,7 @@ def _is_private_ip(host):
 
 
 def _resolution_status(host):
-    """('ok', '') / ('unresolvable', msg) / ('private', msg) を返す。"""
+    """Return ('ok', '') / ('unresolvable', msg) / ('private', msg)."""
     try:
         infos = socket.getaddrinfo(host, None)
     except Exception as e:
@@ -162,7 +162,7 @@ def _resolution_status(host):
 
 
 def is_safe_url(url, settings=None):
-    """URLが安全かを判定し、(ok: bool, reason: str) を返す。"""
+    """Decide whether a URL is safe; returns (ok: bool, reason: str)."""
     settings = settings or _get_settings()
     try:
         p = urlparse(url)
@@ -179,26 +179,26 @@ def is_safe_url(url, settings=None):
     if host in ("localhost",) or host.endswith(".localhost"):
         return False, "localhost is blocked"
 
-    # ダークウェブ/匿名ネットワーク系TLD
+    # Dark-web / anonymous-network TLDs
     for tld in DARK_WEB_TLDS:
         if host == tld.lstrip(".") or host.endswith(tld):
             return False, f"dark-web TLD blocked: {tld}"
 
-    # ホワイトリストモード（非空のときのみ有効）
+    # Whitelist mode (only active when non-empty)
     allowed = [d for d in (settings.get("ALLOWED_DOMAINS") or []) if d and str(d).strip()]
     if allowed and not _host_matches(host, allowed):
         return False, "not in ALLOWED_DOMAINS (whitelist mode)"
 
-    # ビルトイン・アダルトドメイン
+    # Built-in adult-content domains
     if _host_matches(host, BUILTIN_ADULT_DOMAINS):
         return False, "adult content domain blocked (builtin)"
 
-    # setting.yaml の BLOCKED_DOMAINS
+    # BLOCKED_DOMAINS from setting.yaml
     blocked_domains = [str(b).lower().strip() for b in (settings.get("BLOCKED_DOMAINS") or []) if b]
     if _host_matches(host, blocked_domains):
         return False, "domain blocked (configured)"
 
-    # 外部ブロックリストファイル（hosts形式等）
+    # External blocklist file (hosts format, etc.)
     external = _load_blocklist_file(settings.get("BLOCKLIST_FILE") or "")
     if external and _host_matches(host, external):
         return False, "domain blocked (external blocklist)"
@@ -206,13 +206,13 @@ def is_safe_url(url, settings=None):
     if _is_private_ip(host):
         return False, "private/loopback IP is blocked"
 
-    # 拡張子チェック（DNSより先に軽量判定）
+    # Extension check (cheap check before DNS)
     path = (p.path or "").lower()
     for ext in settings.get("BLOCKED_EXTENSIONS", []) or []:
         if path.endswith(ext.lower()):
             return False, f"blocked file extension: {ext}"
 
-    # 解決先のIPも再確認（DNS rebinding / SSRF対策）
+    # Re-verify the resolved IP (mitigates DNS rebinding / SSRF)
     status, msg = _resolution_status(host)
     if status != "ok":
         return False, msg
@@ -239,11 +239,11 @@ def _extract_text(html, base_url):
     for tag in soup(["script", "style", "noscript", "template"]):
         tag.decompose()
     title = (soup.title.string.strip() if soup.title and soup.title.string else "")
-    # 本文抽出は <main>/<article> を優先、なければ body
+    # Prefer <main>/<article> for body extraction; fall back to body
     body = soup.find("main") or soup.find("article") or soup.body or soup
     text = body.get_text(separator="\n", strip=True)
     text = unescape(text)
-    # リンク一覧
+    # Link list
     links = []
     for a in soup.find_all("a", href=True):
         href = a["href"].strip()
@@ -255,7 +255,7 @@ def _extract_text(html, base_url):
 
 
 def fetch_page(url, settings=None):
-    """単一URLを取得し、{ok, url, final_url, title, text, links, error, truncated} を返す。"""
+    """Fetch a single URL and return {ok, url, final_url, title, text, links, error, truncated}."""
     settings = settings or _get_settings()
     ok, reason = is_safe_url(url, settings)
     if not ok:
@@ -270,7 +270,7 @@ def fetch_page(url, settings=None):
             url, headers=headers, timeout=settings["TIMEOUT"],
             stream=True, allow_redirects=True,
         ) as resp:
-            # リダイレクト先も安全性を再チェック
+            # Re-check the safety of the redirect target
             final_url = resp.url
             ok2, reason2 = is_safe_url(final_url, settings)
             if not ok2:
@@ -298,7 +298,7 @@ def fetch_page(url, settings=None):
 
 
 def fetch_with_subpages(url, settings=None):
-    """入力URLから同一ドメイン内のサブページをBFSで追加取得し、ページ結果のリストを返す。"""
+    """BFS-crawl subpages within the same domain from the seed URL, returning a list of page results."""
     settings = settings or _get_settings()
     max_pages = int(settings.get("MAX_SUBPAGES", 5)) + 1
     max_depth = int(settings.get("MAX_DEPTH", 1))
@@ -346,8 +346,8 @@ def _format_page(page):
 
 
 def fetch_urls_from_text(text, temp_folder, include_subpages=False, settings=None):
-    """テキスト中のURLを取得し、一時フォルダに.txtで保存。
-    戻り値: {"saved_paths": [...], "summaries": [...], "blocked": [...]}
+    """Fetch URLs found in the text and save them as .txt files under the temp folder.
+    Returns: {"saved_paths": [...], "summaries": [...], "blocked": [...]}
     """
     settings = settings or _get_settings()
     urls = extract_urls(text)

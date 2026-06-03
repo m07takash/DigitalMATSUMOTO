@@ -1,14 +1,14 @@
-"""バックグラウンドスケジューラ（マスタJSON駆動 / 複数ジョブ対応）。
+"""Background scheduler (master-JSON driven, multi-job support).
 
-ジョブ定義は user/common/mst/scheduled_jobs.json から読込:
-  kind="rag_update"          : RAGデータ再ベクトル化(dmc.generate_rag)
-  kind="user_memory_nowaday" : Nowaday→Persona の自動更新バッチ
-  kind="agent_run"           : エージェント実行(DigiMatsuExecute_Practice)
+Job definitions are loaded from user/common/mst/scheduled_jobs.json:
+  kind="rag_update"          : Re-vectorize RAG data (dmc.generate_rag)
+  kind="user_memory_nowaday" : Batch that updates Nowaday -> Persona
+  kind="agent_run"           : Run an agent (DigiMatsuExecute_Practice)
 
-cronの書式: "off" | "daily"(03:00) | "weekly"(月曜03:00) | "monthly"(1日03:00) | 5フィールドcron
-"off" / enabled=False のジョブは登録されない。
+cron format: "off" | "daily" (03:00) | "weekly" (Mon 03:00) | "monthly" (1st 03:00) | 5-field cron
+Jobs with "off" / enabled=False are not registered.
 
-APScheduler 未インストール環境では起動をスキップする（手動 run_now() は引き続き可能）。
+When APScheduler is not installed, startup is skipped (run_now() still works).
 """
 import logging
 import os
@@ -35,7 +35,7 @@ _scheduler_lock = threading.Lock()
 _active = {}  # job_id -> cron expr
 
 
-# ====== 設定読込 ======
+# ====== Settings loading ======
 
 def _normalize_expr(raw) -> str:
     if raw is None:
@@ -46,10 +46,10 @@ def _normalize_expr(raw) -> str:
     return _PRESETS.get(s.lower(), s)
 
 
-# ====== ジョブ実装 ======
+# ====== Job implementations ======
 
 def _run_job(job: dict):
-    """登録ジョブをkindごとにディスパッチ。実行結果をマスタに書き戻す。"""
+    """Dispatch a registered job by kind and write the result back to the master."""
     job_id = job.get("job_id", "")
     kind = job.get("kind", "")
     started_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -96,7 +96,7 @@ def _exec_user_memory_nowaday(job: dict):
 
 
 def _exec_agent_run(job: dict) -> str:
-    """エージェントを実行し、発番したセッションIDを返す。所有者ユーザーで実行。"""
+    """Run the agent and return the newly issued session ID. Runs as the owner user."""
     import DigiM_Execute as dme
     import DigiM_Session as dms
 
@@ -116,7 +116,7 @@ def _exec_agent_run(job: dict) -> str:
     session_id = "SCH" + dms.set_new_session_id()
     session_name = f"[Scheduler] {job.get('name') or job.get('job_id')}"
 
-    # エンジン切り替え（任意）
+    # Engine override (optional)
     overwrite_items = {}
     if engine:
         try:
@@ -137,7 +137,7 @@ def _exec_agent_run(job: dict) -> str:
     }
     exec_dict.update(execution or {})
 
-    # ジェネレータを最後まで消費（応答内容はチャット履歴に保存される）
+    # Drain the generator (response content is persisted to the chat history)
     for _ in dme.DigiMatsuExecute_Practice(
         service_info, user_info, session_id, session_name, agent_file, user_input,
         in_overwrite_items=overwrite_items, in_execution=exec_dict,
@@ -147,13 +147,13 @@ def _exec_agent_run(job: dict) -> str:
     return session_id
 
 
-# ====== APScheduler 制御 ======
+# ====== APScheduler control ======
 
 def _build_scheduler():
     try:
         from apscheduler.schedulers.background import BackgroundScheduler
     except Exception as e:
-        logger.warning(f"[scheduler] APScheduler未インストールのため起動スキップ: {e}")
+        logger.warning(f"[scheduler] APScheduler is not installed; startup skipped: {e}")
         return None
     return BackgroundScheduler(timezone=os.getenv("TIMEZONE") or "Asia/Tokyo")
 
@@ -193,7 +193,7 @@ def _start_all_locked() -> dict:
             trigger = CronTrigger.from_crontab(expr)
         except Exception as e:
             errors[job_id] = f"invalid cron: {expr}"
-            logger.warning(f"[scheduler] cron式不正 job_id={job_id} cron={expr}: {e}")
+            logger.warning(f"[scheduler] invalid cron job_id={job_id} cron={expr}: {e}")
             continue
 
         def _make_fn(job_def):
@@ -244,7 +244,7 @@ def reload() -> dict:
 
 
 def run_now(job_id: str) -> dict:
-    """指定ジョブを即時1回実行(同期)。WebUIの"Run Now"用。"""
+    """Run the specified job once immediately (synchronously). Used by the WebUI "Run Now" button."""
     j = dmsj.get(job_id)
     if not j:
         return {"ok": False, "error": "job not found"}
@@ -256,7 +256,7 @@ def run_now(job_id: str) -> dict:
 
 
 def get_status() -> dict:
-    """現在のスケジューラ状態。"""
+    """Current scheduler state."""
     jobs = dmsj.load_all()
     running = bool(_scheduler is not None and getattr(_scheduler, "running", False))
     return {
@@ -266,10 +266,10 @@ def get_status() -> dict:
     }
 
 
-# ====== 後方互換 ======
+# ====== Backward compatibility ======
 
 def start() -> bool:
-    """旧API互換。"""
+    """Legacy API compatibility."""
     res = start_all()
     return bool(res.get("started"))
 

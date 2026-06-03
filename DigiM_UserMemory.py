@@ -1,20 +1,20 @@
-"""ユーザーメモリ（History/Nowaday/Persona）のストレージ抽象化。
+"""Storage abstraction for user memory (History / Nowaday / Persona).
 
-3つの層を扱う:
-  - history (session_digest):    1セッション1レコード。終了時に生成。
-  - nowaday (period_profile):    期間ごとに集約（月次 or rolling）。
-  - persona (persona_profile):   1ユーザー1レコード。差分マージで更新。
+Handles three layers:
+  - history (session_digest):    One record per session, generated at session end.
+  - nowaday (period_profile):    Aggregated per period (monthly or rolling).
+  - persona (persona_profile):   One record per user, updated via diff merge.
 
-各層ごとに保存先を選択できる:
+Each layer can use a different storage backend:
   - "EXCEL":  user/common/user_memory/<layer>.xlsx
-  - "NOTION": NOTION_MST_FILE で指定したDB
+  - "NOTION": the DB specified by NOTION_MST_FILE
   - "RDB":    PostgreSQL (digim_user_memory_<layer>)
 
-system.env で層ごとに指定:
+Configure per-layer via system.env:
   USER_MEMORY_HISTORY_BACKEND, USER_MEMORY_NOWADAY_BACKEND, USER_MEMORY_PERSONA_BACKEND
-  USER_MEMORY_DEFAULT_LAYERS  (例: "persona,nowaday,history")
+  USER_MEMORY_DEFAULT_LAYERS  (e.g., "persona,nowaday,history")
 
-Personaは USER_MEMORY_PERSONA_TOKEN_LIMIT で要約注入される前提（呼び出し側で制御）。
+Persona is expected to be injected as a summary controlled by USER_MEMORY_PERSONA_TOKEN_LIMIT (managed by the caller).
 """
 import json
 import logging
@@ -43,18 +43,18 @@ _NOTION_MST_FILE = os.getenv("NOTION_MST_FILE")
 
 # ---------- Backend resolution ----------
 def get_backend(layer: str) -> str:
-    """層ごとのバックエンドを返す（EXCEL/NOTION/RDB）。デフォルトEXCEL。"""
+    """Return the backend per layer (EXCEL/NOTION/RDB). Default is EXCEL."""
     layer = (layer or "").lower()
     env_key = f"USER_MEMORY_{layer.upper()}_BACKEND"
     return (os.getenv(env_key) or "EXCEL").upper()
 
 
 def get_default_layers() -> list:
-    """デフォルトで有効な層リスト（system.envから）。
+    """Default list of enabled layers (read from system.env).
 
-    USER_MEMORY_DEFAULT_LAYERS の挙動:
-      - 未設定 (None) → "persona,nowaday,history" を適用
-      - 空文字列 ""    → 全層Off (空リストを返す)
+    Behavior of USER_MEMORY_DEFAULT_LAYERS:
+      - Unset (None) -> apply "persona,nowaday,history"
+      - Empty string "" -> all layers off (returns an empty list)
       - "persona,nowaday"    → ["persona", "nowaday"]
     """
     raw = os.getenv("USER_MEMORY_DEFAULT_LAYERS")
@@ -64,7 +64,7 @@ def get_default_layers() -> list:
 
 
 # ---------- Schema ----------
-# 各層の論理スキーマ（excerpt列はテキスト、tags/list列はJSON）
+# Logical schema per layer (excerpt is text; tags/list columns are JSON)
 _HISTORY_FIELDS = [
     "id", "service_id", "user_id", "session_id", "session_name",
     "create_date", "topic", "excerpt", "axis_tags",
@@ -86,7 +86,7 @@ _PERSONA_FIELDS = [
 ]
 _FIELDS = {"history": _HISTORY_FIELDS, "nowaday": _NOWADAY_FIELDS, "persona": _PERSONA_FIELDS}
 
-# JSON化対象の列
+# Columns to serialize as JSON
 _JSON_COLS = {
     "history": {"axis_tags", "source_seq", "emotions"},
     "nowaday": {"recurring_topics", "emerging", "declining", "shifts",
@@ -95,7 +95,7 @@ _JSON_COLS = {
                 "constraints", "communication_style", "avoid_topics", "big5"},
 }
 
-# JSONカラムの「空のとき」のデフォルト形(辞書 or 配列)。指定なしは [] 扱い。
+# Default "empty" form for JSON columns (dict or array). When unspecified, treated as [].
 _JSON_DEFAULTS = {
     "nowaday": {"basic_emotions": dict},
     "persona": {"big5": dict},
@@ -123,7 +123,7 @@ def _empty_record(layer: str) -> dict:
 
 
 def _normalize_record(layer: str, rec: dict) -> dict:
-    """欠損補完・型整形。"""
+    """Fill missing fields and normalize types."""
     base = _empty_record(layer)
     base.update({k: v for k, v in (rec or {}).items() if k in base})
     for c in _JSON_COLS[layer]:
@@ -153,7 +153,7 @@ def _excel_load_all(layer: str) -> list:
     try:
         df = pd.read_excel(path, sheet_name=layer, dtype=str).fillna("")
     except Exception as e:
-        logger.warning(f"[user_memory] Excel読込失敗 layer={layer}: {e}")
+        logger.warning(f"[user_memory] Excel load failed layer={layer}: {e}")
         return []
     records = []
     for _, row in df.iterrows():
@@ -268,7 +268,7 @@ def _ensure_rdb_table(conn, layer: str):
     with conn.cursor() as cur:
         cur.execute(_RDB_DDL[layer])
         if layer == "nowaday":
-            # 旧スキーマの UNIQUE(service_id,user_id,period) を撤廃（スナップショット履歴方式へ移行）
+            # The legacy UNIQUE(service_id,user_id,period) constraint is dropped (moved to snapshot-history form)
             cur.execute(
                 "ALTER TABLE digim_user_memory_nowaday "
                 "DROP CONSTRAINT IF EXISTS digim_user_memory_nowaday_service_id_user_id_period_key"
@@ -314,7 +314,7 @@ def _rdb_upsert(layer: str, rec: dict):
         conflict_keys = "(session_id)"
         update_cols = [c for c in cols if c not in ("id", "session_id")]
     elif layer == "nowaday":
-        # スナップショット履歴方式: id は生成毎に一意。同idの再upsertのみ更新（編集保存用）
+        # Snapshot history: id is unique per generation. Only re-upsert of the same id updates (for editing/saving)
         conflict_keys = "(id)"
         update_cols = [c for c in cols if c not in ("id",)]
     else:
@@ -351,22 +351,22 @@ def _rdb_delete(layer: str, key_filter: dict):
 
 
 def _to_notion_date(value) -> str:
-    """内部の日時表現（"YYYY-MM-DD HH:MM:SS[.ffffff]"）をNotionのISO 8601文字列へ変換。"""
+    """Convert the internal datetime form ("YYYY-MM-DD HH:MM:SS[.ffffff]") to a Notion ISO 8601 string."""
     if not value:
         return ""
     s = str(value).strip()
     if not s:
         return ""
-    # 空白区切り → ISO の T へ
+    # Whitespace separator -> ISO 'T'
     s = s.replace(" ", "T", 1)
-    # Notion は秒以下のマイクロ秒もISOの範囲内であれば許容するが、安全のため秒で打ち切る
+    # Notion accepts sub-second microseconds within ISO range, but truncate to seconds for safety
     if "." in s:
         s = s.split(".", 1)[0]
     return s
 
 
 # ---------- NOTION backend ----------
-# 各層ごとにNotionDBを使う場合は NOTION_MST_FILE のキーから取得
+# When a Notion DB is used per layer, read from the NOTION_MST_FILE key
 # NOTION_MST_FILE: { "DigiM_UserMemory_History": "<db_id>", ... }
 def _notion_db_id(layer: str):
     if not _NOTION_MST_FILE:
@@ -378,7 +378,7 @@ def _notion_db_id(layer: str):
 
 
 def _notion_property_text(prop):
-    """Notionプロパティから単純テキスト抽出。"""
+    """Extract plain text from a Notion property."""
     if not isinstance(prop, dict):
         return ""
     rich = prop.get("rich_text") or prop.get("title") or []
@@ -386,7 +386,7 @@ def _notion_property_text(prop):
 
 
 def _notion_fetch_db_schema(db_id: str) -> dict:
-    """NotionのDB定義から {プロパティ名: 型} を返す。"""
+    """Return {property name: type} from the Notion DB definition."""
     import os
     import requests
     notion_token = os.getenv("NOTION_TOKEN")
@@ -398,20 +398,20 @@ def _notion_fetch_db_schema(db_id: str) -> dict:
     try:
         r = requests.get(f"https://api.notion.com/v1/databases/{db_id}", headers=headers, timeout=15)
         if r.status_code != 200:
-            logger.warning(f"[user_memory] Notion DB schema取得失敗 {db_id}: {r.status_code} {r.text[:120]}")
+            logger.warning(f"[user_memory] Notion DB schema fetch failed {db_id}: {r.status_code} {r.text[:120]}")
             return {}
         data = r.json()
         return {name: (p or {}).get("type") for name, p in (data.get("properties") or {}).items()}
     except Exception as e:
-        logger.warning(f"[user_memory] Notion DB schema例外 {db_id}: {e}")
+        logger.warning(f"[user_memory] Notion DB schema exception {db_id}: {e}")
         return {}
 
 
 def _notion_add_properties(db_id: str, new_props: dict) -> dict:
-    """NotionDBに新規プロパティを追加する。new_props: {prop_name: type_str}.
+    """Add new properties to the Notion DB. new_props: {prop_name: type_str}.
 
-    既存のプロパティはこのPATCHでは触れない(部分更新)。type_strは rich_text/number/checkbox/date/select 等。
-    Returns: 実際に追加したプロパティ名 → 型 のdict (既に存在したものはスキップ)。
+    Existing properties are not touched (partial update). type_str is rich_text / number / checkbox / date / select, etc.
+    Returns: dict of {property name: type} actually added (existing ones are skipped).
     """
     import os
     import requests
@@ -439,7 +439,7 @@ def _notion_add_properties(db_id: str, new_props: dict) -> dict:
         elif t == "select":
             payload_props[name] = {"select": {}}
         else:
-            payload_props[name] = {"rich_text": {}}  # 不明な型は rich_text にフォールバック
+            payload_props[name] = {"rich_text": {}}  # Unknown types fall back to rich_text
     body = {"properties": payload_props}
     try:
         r = requests.patch(
@@ -447,25 +447,25 @@ def _notion_add_properties(db_id: str, new_props: dict) -> dict:
             headers=headers, json=body, timeout=30,
         )
         if r.status_code != 200:
-            logger.warning(f"[user_memory] Notionプロパティ追加失敗 {db_id}: {r.status_code} {r.text[:200]}")
+            logger.warning(f"[user_memory] Notion property add failed {db_id}: {r.status_code} {r.text[:200]}")
             return {}
         return to_add
     except Exception as e:
-        logger.warning(f"[user_memory] Notionプロパティ追加例外 {db_id}: {e}")
+        logger.warning(f"[user_memory] Notion property add exception {db_id}: {e}")
         return {}
 
 
 def ensure_notion_schema(layer: str) -> dict:
-    """指定layerのNotionDBに、現在のスキーマ(_FIELDS[layer])から欠けているプロパティを追加。
+    """Add properties missing from the current schema (_FIELDS[layer]) to the Notion DB for the given layer.
 
-    既存のプロパティ型はそのまま尊重し、欠けているもののみ rich_text として追加する。
-    JSON_COLS の列も rich_text（JSON文字列を格納するため）。
+    Existing property types are kept as-is; only missing ones are added as rich_text.
+    Columns in JSON_COLS are also rich_text (since they store JSON strings).
     Returns: {"added": {...}, "skipped_existing": [...], "db_id": "..."}
     """
     db_id = _notion_db_id(layer)
     if not db_id:
         return {"added": {}, "skipped_existing": [], "db_id": None,
-                "error": "NotionDB未設定"}
+                "error": "Notion DB not configured"}
     existing = _notion_fetch_db_schema(db_id)
     needed = {col: "rich_text" for col in _FIELDS[layer]}
     missing = {name: t for name, t in needed.items() if name not in existing}
@@ -480,7 +480,7 @@ def ensure_notion_schema(layer: str) -> dict:
 def _notion_load_all(layer: str) -> list:
     db_id = _notion_db_id(layer)
     if not db_id:
-        logger.warning(f"[user_memory] NotionDB未設定 layer={layer}")
+        logger.warning(f"[user_memory] Notion DB not configured layer={layer}")
         return []
     import DigiM_Notion as dmn
     pages = dmn.get_all_pages(db_id)
@@ -516,17 +516,17 @@ def _notion_load_all(layer: str) -> list:
 
 
 def _notion_upsert(layer: str, rec: dict):
-    """Notionへのupsert（同一キーの既存ページがあれば更新、無ければ作成）。"""
+    """Upsert into Notion (update an existing page with the same key; create if not found)."""
     db_id = _notion_db_id(layer)
     if not db_id:
-        logger.warning(f"[user_memory] NotionDB未設定のためupsertスキップ layer={layer}")
+        logger.warning(f"[user_memory] Skipping upsert because Notion DB is not configured layer={layer}")
         return
     import DigiM_Notion as dmn
 
     rec = _normalize_record(layer, rec)
     pages = dmn.get_all_pages(db_id)
 
-    # 一意キーでマッチング
+    # Match by the unique key
     if layer == "history":
         match_field = "session_id"
     elif layer == "nowaday":
@@ -543,27 +543,27 @@ def _notion_upsert(layer: str, rec: dict):
                 target_page_id = page["id"]
                 break
 
-    # Notionページタイトルはレコード一意キーにする。
-    # create_page() は同名タイトルの既存ページをアーカイブするため、
-    # タイトルが衝突すると別レコード（特にNowadayのスナップショット履歴や
-    # 同トピックHistory）が消える。一意キーで衝突を防ぐ。
+    # Use the unique key as the Notion page title.
+    # create_page() archives existing pages with the same title, so a title
+    # collision would wipe out different records (e.g. Nowaday snapshot history
+    # or same-topic History). The unique key prevents this collision.
     if layer == "nowaday":
         title_value = rec.get("id") or f"{rec.get('user_id','')}__{rec.get('period','')}"
     elif layer == "history":
         title_value = rec.get("session_id") or rec.get("id") or rec.get("topic") or "history"
-    else:  # persona: 1ユーザー1レコードなのでuser_idで一意
+    else:  # persona: one record per user, unique by user_id
         title_value = rec.get("user_id") or "user_memory"
     if target_page_id is None:
-        # 新規作成
+        # Create a new record
         resp = dmn.create_page(db_id, str(title_value)[:80], title_item="title")
         target_page_id = resp.get("id")
         if not target_page_id:
             return
 
-    # NotionDBスキーマからプロパティ型を取得（新規/既存どちらでも安定して取得できる）
+    # Read property types from the Notion DB schema (stable for both new and existing rows)
     schema_types = _notion_fetch_db_schema(db_id)
 
-    # 各フィールドを更新
+    # Update each field
     for col in _FIELDS[layer]:
         v = rec.get(col, "")
         ptype = schema_types.get(col)
@@ -571,7 +571,7 @@ def _notion_upsert(layer: str, rec: dict):
             if col in _JSON_COLS[layer]:
                 dmn.update_notion_rich_text_content(target_page_id, col, json.dumps(v, ensure_ascii=False))
             elif ptype == "checkbox":
-                # "Y"/"N"/bool/数値0,1 をbool化
+                # Coerce "Y"/"N"/bool/0/1 to bool
                 if isinstance(v, bool):
                     chk = v
                 elif isinstance(v, (int, float)):
@@ -593,7 +593,7 @@ def _notion_upsert(layer: str, rec: dict):
             else:
                 dmn.update_notion_rich_text_content(target_page_id, col, str(v) if v is not None else "")
         except Exception as e:
-            logger.debug(f"[user_memory] Notion更新スキップ {col}: {e}")
+            logger.debug(f"[user_memory] Notion update skipped {col}: {e}")
 
 
 def _notion_delete(layer: str, key_filter: dict):
@@ -608,12 +608,12 @@ def _notion_delete(layer: str, key_filter: dict):
             try:
                 dmn.archive_page(page["id"])
             except Exception as e:
-                logger.warning(f"[user_memory] Notionアーカイブ失敗: {e}")
+                logger.warning(f"[user_memory] Notion archive failed: {e}")
 
 
 # ---------- public API ----------
 def load_all(layer: str, service_id: str = "", user_id: str = "") -> list:
-    """指定層の全レコードを取得。service_id/user_idでフィルタ可。"""
+    """Fetch all records from the given layer. Can be filtered by service_id/user_id."""
     backend = get_backend(layer)
     if backend == "RDB":
         records = _rdb_load_all(layer)
@@ -629,7 +629,7 @@ def load_all(layer: str, service_id: str = "", user_id: str = "") -> list:
 
 
 def upsert(layer: str, record: dict):
-    """指定層に1レコードをupsert。"""
+    """Upsert one record into the given layer."""
     backend = get_backend(layer)
     if backend == "RDB":
         _rdb_upsert(layer, record)
@@ -637,7 +637,7 @@ def upsert(layer: str, record: dict):
     if backend == "NOTION":
         _notion_upsert(layer, record)
         return
-    # EXCEL: 全件読込→差し替え→全件保存
+    # EXCEL: load all -> replace -> save all
     records = _excel_load_all(layer)
     if layer == "history":
         match_field = "session_id"
@@ -657,7 +657,7 @@ def upsert(layer: str, record: dict):
 
 
 def delete(layer: str, key_filter: dict):
-    """指定層からレコード削除。"""
+    """Delete records from the given layer."""
     backend = get_backend(layer)
     if backend == "RDB":
         _rdb_delete(layer, key_filter)
@@ -671,7 +671,7 @@ def delete(layer: str, key_filter: dict):
 
 
 def get_one(layer: str, key_filter: dict):
-    """指定層から1レコード取得（無ければNone）。"""
+    """Fetch one record from the given layer (None if not found)."""
     records = load_all(layer)
     for r in records:
         if all(r.get(k) == v for k, v in key_filter.items()):
@@ -684,12 +684,12 @@ def make_history_id(service_id: str, user_id: str, session_id: str) -> str:
 
 
 def make_nowaday_id(service_id: str, user_id: str, period: str, gen_ts: str = "") -> str:
-    """Nowaday は生成ごとにスナップショットを追記する履歴方式。
+    """Nowaday is a snapshot history: a new snapshot is appended per generation.
 
-    gen_ts（生成時刻の数字列 例:20260516_103000）を付けると一意IDとなり、
-    同じ period でも上書きされず別レコードとして蓄積される。
-    コンテキスト/分析側は generated_at 降順で最新を選択する。
-    gen_ts 省略時は旧形式（後方互換）。
+    Passing gen_ts (a numeric string for the generation time, e.g. 20260516_103000) makes the ID unique,
+    so even the same `period` accumulates as a separate record instead of being overwritten.
+    Context/analysis code picks the latest by descending generated_at.
+    When gen_ts is omitted, the legacy form is used (backward compatible).
     """
     base = f"{service_id}__{user_id}__{period}"
     return f"{base}__{gen_ts}" if gen_ts else base

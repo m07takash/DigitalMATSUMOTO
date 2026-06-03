@@ -1,21 +1,22 @@
-"""エージェントペルソナのストレージ抽象化（Excel / RDB両対応）。
+"""Storage abstraction for agent personas (both Excel and RDB).
 
-AGENT_PERSONA_SOURCE で切替（既定: EXCEL）:
-  - "EXCEL": user/common/agent/persona_data/ 配下のxlsxを使用
-  - "RDB":   PostgreSQL の digim_agent_personas テーブルを使用
-  - "BOTH":  Excel + RDB をマージ（同persona_idはRDB優先）
+Switched by AGENT_PERSONA_SOURCE (default: EXCEL):
+  - "EXCEL": use xlsx files under user/common/agent/persona_data/
+  - "RDB":   use the PostgreSQL `digim_agent_personas` table
+  - "BOTH":  merge Excel + RDB (the same persona_id prefers RDB)
 
-psycopg2は遅延importなのでEXCEL運用時はDB不要。
+psycopg2 is lazy-imported, so no DB is required for the EXCEL mode.
 
-Excelスキーマ（シート名: personas、1行1ペルソナ）:
+Excel schema (sheet name: personas, one row per persona):
   persona_id / template_agent / org(JSON) /
   company / dept / name / act /
   personality(JSON) / habits(CSV or "ALL") /
   knowledge(CSV or "ALL") / define_code(JSON) /
   character_text / character_file / active(Y|N)
 
-ORGマッチング:
-  agent側ORG（dict）の全キーを、persona側ORG（dict）が同値で含めばマッチ（agent側がpersona側の部分集合）。
+ORG matching:
+  Matches when the persona-side ORG (dict) contains every key of the agent-side
+  ORG (dict) with equal values (the agent side is a subset of the persona side).
 """
 import json
 import logging
@@ -47,7 +48,7 @@ def get_source():
 
 
 def _parse_cell(col, value):
-    """セル値を正規化（None/空/JSON/CSV）。"""
+    """Normalize a cell value (None / empty / JSON / CSV)."""
     if value is None or (isinstance(value, float) and pd.isna(value)):
         s = ""
     else:
@@ -64,7 +65,7 @@ def _parse_cell(col, value):
         try:
             return json.loads(s)
         except Exception:
-            logger.warning(f"persona列 {col} のJSONパース失敗: {s!r}")
+            logger.warning(f"failed to parse JSON for persona column {col}: {s!r}")
             return {}
     if col in _LIST_COLUMNS:
         if s.upper() == "ALL":
@@ -96,12 +97,12 @@ def _load_personas_excel(persona_files=None):
     personas = []
     for path in targets:
         if not path.exists():
-            logger.warning(f"ペルソナファイル未存在: {path}")
+            logger.warning(f"persona file does not exist: {path}")
             continue
         try:
             df = pd.read_excel(str(path), sheet_name="personas", dtype=str).fillna("")
         except Exception as e:
-            logger.warning(f"ペルソナファイル読込失敗 {path}: {e}")
+            logger.warning(f"failed to read persona file {path}: {e}")
             continue
         for _, row in df.iterrows():
             persona = _row_to_persona(row)
@@ -249,9 +250,10 @@ def _upsert_persona_rdb(persona):
 
 # ---------- public API ----------
 def load_personas(template_agent=None, persona_files=None, source=None):
-    """全ペルソナ取得。template_agent指定時はそのテンプレ用または未指定（全テンプレ共通）に絞る。
-    sourceを指定するとエージェント単位で参照先を切替可能（"EXCEL"/"RDB"/"BOTH"）。
-    未指定時は環境変数 AGENT_PERSONA_SOURCE にフォールバック。"""
+    """Return all personas. When template_agent is specified, return only those
+    targeting that template (or those unspecified, i.e. shared across all templates).
+    Specifying source lets you switch the reference source per agent ("EXCEL"/"RDB"/"BOTH").
+    When unspecified, falls back to the AGENT_PERSONA_SOURCE environment variable."""
     src = (source or get_source()).upper()
     if src == "RDB":
         personas = _load_personas_rdb()
@@ -270,8 +272,9 @@ def load_personas(template_agent=None, persona_files=None, source=None):
 
 
 def find_personas_by_org(agent_org, template_agent=None, persona_files=None, source=None):
-    """agent側ORG（dict）の全キーを persona側ORGが同値で含むペルソナを返す（subset match）。
-    agent_orgが空dictなら全件返す。sourceでエージェント単位の参照先を切替可能。"""
+    """Return personas whose ORG (dict) contains every key of the agent-side ORG with equal
+    values (subset match). If agent_org is an empty dict, return all personas.
+    `source` lets you switch the reference source per agent."""
     personas = load_personas(template_agent, persona_files, source=source)
     if not isinstance(agent_org, dict) or not agent_org:
         return personas
@@ -286,8 +289,9 @@ def find_personas_by_org(agent_org, template_agent=None, persona_files=None, sou
 
 
 def upsert_personas_from_excel(file_path):
-    """ExcelファイルからRDBへ全ペルソナをUPSERT。active='N'の行も論理削除としてそのまま記録。
-    戻り値: 処理件数 (登録/更新, スキップ)"""
+    """UPSERT every persona from the Excel file into the RDB. Rows with active='N'
+    are also recorded as logical deletes (kept as-is).
+    Returns: counts (upsert, skip)."""
     df = pd.read_excel(file_path, sheet_name="personas", dtype=str).fillna("")
     cnt_upsert, cnt_skip = 0, 0
     for _, row in df.iterrows():

@@ -31,18 +31,18 @@ from docx import Document as DocxDocument
 from pptx import Presentation
 from pptx.util import Emu
 
-# system.envファイルをロードして環境変数を設定
+# Load system.env and set environment variables
 if os.path.exists("system.env"):
     load_dotenv("system.env")
 timezone = os.getenv("TIMEZONE")
 openai_api_key = os.getenv("OPENAI_API_KEY")
 gemini_api_key = os.getenv("GEMINI_API_KEY")
 embedding_model = os.getenv("EMBEDDING_MODEL")
-# 埋め込み生成のプロバイダ切替（"openai"=OpenAI, "azure"=Azure OpenAI）
+# Embedding provider switch ("openai"=OpenAI, "azure"=Azure OpenAI)
 embed_provider = (os.getenv("EMBED_PROVIDER") or "openai").lower()
-azure_openai_embed_model = os.getenv("AZURE_OPENAI_EMBED_MODEL")  # Azure側のデプロイ名
+azure_openai_embed_model = os.getenv("AZURE_OPENAI_EMBED_MODEL")  # Azure deployment name
 
-# ロギングの初期設定（アプリケーション起動時に一度呼び出す）
+# Logging initialization (call once at application startup)
 def setup_logging(level=logging.INFO):
     logging.basicConfig(
         level=level,
@@ -50,7 +50,7 @@ def setup_logging(level=logging.INFO):
         datefmt="%Y-%m-%d %H:%M:%S"
     )
 
-#タイムスタンプ文字列を時刻に変換
+# Convert a timestamp string to a time
 def safe_parse_timestamp(timestamp_str):
     jst = pytz.timezone(timezone)
     try:
@@ -58,26 +58,26 @@ def safe_parse_timestamp(timestamp_str):
     except ValueError:
         return datetime.now(jst).isoformat()
 
-#日付型文字列の変換
+# Convert a date-style string
 def parse_date(d):
     try:
         return datetime.fromisoformat(d)
     except Exception:
         return datetime.min
 
-# LOG_TEMPLATE形式の文字列をdictに安全にパース
+# Safely parse a LOG_TEMPLATE-formatted string into a dict
 def parse_log_template(ref_str: str) -> dict:
-    """LOG_TEMPLATE形式の文字列（'key': value, ...）をdictに変換。
-    テキスト内にシングルクォートやダブルクォート、特殊文字が含まれていてもパース可能。"""
+    """Convert a LOG_TEMPLATE-formatted string ('key': value, ...) to a dict.
+    Robust to single quotes, double quotes, and special characters inside the text."""
     import re
     s = str(ref_str).replace("\n", "").replace("$", "＄")
     try:
         return ast.literal_eval("{" + s + "}")
     except Exception:
         pass
-    # フォールバック: 既知のキー名で分割してパース
+    # Fallback: split by known key names and parse
     result = {}
-    # 'key': パターンの位置を全て検出
+    # Find every 'key': pattern position
     key_pattern = re.compile(r"'(\w+)'\s*:\s*")
     matches = list(key_pattern.finditer(s))
     for i, m in enumerate(matches):
@@ -85,11 +85,11 @@ def parse_log_template(ref_str: str) -> dict:
         val_start = m.end()
         val_end = matches[i + 1].start() if i + 1 < len(matches) else len(s)
         raw_val = s[val_start:val_end].strip().rstrip(",").strip()
-        # クォートを除去
+        # Strip quotes
         if (raw_val.startswith("'") and raw_val.endswith("'")) or \
            (raw_val.startswith('"') and raw_val.endswith('"')):
             raw_val = raw_val[1:-1]
-        # 数値変換を試みる
+        # Try to coerce to a number
         try:
             result[key] = int(raw_val)
         except (ValueError, TypeError):
@@ -99,76 +99,76 @@ def parse_log_template(ref_str: str) -> dict:
                 result[key] = raw_val
     return result
 
-# テキストのサニタイズ（JSON/XML禁則文字・制御文字を除去）
+# Sanitize text (remove JSON/XML-forbidden and control characters)
 def sanitize_text(text: str) -> str:
-    """LLM応答テキストからJSON/XMLで問題になる制御文字を除去する。
-    サロゲートペア（絵文字等）は保持する。"""
+    """Strip control characters that would break JSON/XML in LLM response text.
+    Surrogate pairs (e.g. emoji) are preserved."""
     if not isinstance(text, str):
         return str(text) if text is not None else ""
-    # NUL文字と制御文字（タブ・改行・CRは保持）を除去
+    # Strip NUL and control characters (keep tab / newline / CR)
     return re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
 
-# ファイル名のサニタイズ
+# Sanitize file names
 def sanitize_filename(name: str, replacement: str = "_", max_length: int = 255, keep_unicode: bool = True) -> str:
     """
-    ファイル名として危険/不便な文字を除去 or 置換して返す。
-    - パス区切り /, \\ や制御文字などは除去
-    - Windows 禁止文字 <>:"/\\|?* を除去
-    - 例にある ", ', $, %, / も除去対象
-    - 末尾のドット/スペースを除去（Windows対策）
-    - 空になった場合は 'untitled'
+    Return a file name with dangerous/inconvenient characters removed or replaced.
+    - Strip path separators /, \\ and control characters
+    - Strip Windows-forbidden characters <>:"/\\|?*
+    - Also remove ", ', $, %, / shown in examples
+    - Remove trailing dots/spaces (Windows safety)
+    - When the result is empty, return 'untitled'
     """
     if name is None:
         return "untitled"
     
-    # Windows予約語（拡張子無し部分がこれだと保存できない/面倒）
+    # Windows reserved names (cannot/should not save when the stem matches)
     _WINDOWS_RESERVED = {
         "CON", "PRN", "AUX", "NUL",
         *(f"COM{i}" for i in range(1, 10)),
         *(f"LPT{i}" for i in range(1, 10)),
     }
 
-    # 前後の空白（特に末尾の空白はWindowsで問題になりやすい）
+    # Surrounding whitespace (trailing whitespace causes issues on Windows)
     name = name.strip()
 
-    # Unicode正規化（見た目同じの文字を揃える）
+    # Unicode normalization (align look-alike characters)
     name = unicodedata.normalize("NFKC", name)
 
-    # 文字種の扱い：ASCIIに寄せたいなら keep_unicode=False
+    # Character handling: pass keep_unicode=False to flatten to ASCII
     if not keep_unicode:
         name = name.encode("ascii", "ignore").decode("ascii")
 
-    # 制御文字を除去
+    # Strip control characters
     name = "".join(ch for ch in name if unicodedata.category(ch)[0] != "C")
 
-    # パス区切りは絶対に消す（ディレクトリトラバーサル対策にもなる）
+    # Always strip path separators (mitigates directory traversal)
     name = name.replace("/", replacement).replace("\\", replacement)
 
-    # Windowsで禁止の文字を置換/除去: <>:"/\|?*
+    # Replace/remove Windows-forbidden characters: <>:"/\|?*
     name = re.sub(r'[<>:"/\\|?*]', replacement, name)
 
-    # 例の文字など、一般にファイル名で面倒になりやすい記号を広めに除去したい場合
-    # 必要に応じて増減してください
+    # Strip a broader set of awkward symbols (as in the docstring examples)
+    # Adjust this set as needed
     name = re.sub(r"""["'$%]""", "", name)
 
-    # 連続する replacement をまとめる
+    # Collapse consecutive replacement characters
     if replacement:
         rep_esc = re.escape(replacement)
         name = re.sub(rf"{rep_esc}+", replacement, name)
 
-    # 先頭/末尾の replacement やドット/スペースを整理
+    # Trim leading/trailing replacements and dots/spaces
     name = name.strip(" ._")
 
-    # 空になったら保険
+    # Fallback if the result is empty
     if not name:
         name = "untitled"
 
-    # Windows予約語対策（拡張子を除いた部分が予約語なら前に _ を付ける）
+    # Windows reserved-name guard: if the stem is reserved, prefix with _
     stem, dot, suffix = name.partition(".")
     if stem.upper() in _WINDOWS_RESERVED:
         name = f"_{name}"
 
-    # 長すぎる場合（拡張子はなるべく残す）
+    # If too long (preserve the extension when possible)
     if len(name) > max_length:
         p = Path(name)
         ext = p.suffix
@@ -179,20 +179,20 @@ def sanitize_filename(name: str, replacement: str = "_", max_length: int = 255, 
     name = name.rstrip(" .")
     return name
 
-# パスワードのハッシュ化と検証
+# Password hashing and verification
 def hash_password(plain: str) -> str:
-    # bcrypt は bytes を扱う
+    # bcrypt operates on bytes
     salt = bcrypt.gensalt(rounds=12)
     hashed = bcrypt.hashpw(plain.encode("utf-8"), salt)
     return hashed.decode("utf-8")
 
-# パスワードの検証
+# Verify a password
 def verify_password(plain: str, stored: str) -> bool:
     if stored.startswith("$2a$") or stored.startswith("$2b$") or stored.startswith("$2y$"):
         return bcrypt.checkpw(plain.encode("utf-8"), stored.encode("utf-8"))
     return plain == stored
 
-# ローカルファイルをStreamlitのUploadedFileと同じオブジェクト型に変換
+# Convert a local file into the same object type as Streamlit's UploadedFile
 class ConvertedLocalFile:
     def __init__(self, file_path):
         self.file_path = file_path
@@ -204,7 +204,7 @@ class ConvertedLocalFile:
         with open(self.file_path, 'rb') as f:
             return f.read()
 
-# パターンからリストを出力するPG
+# Helper to emit a list from a pattern
 def extract_list_pattern(text, pattern=r"(\[\s*{.*?}\s*\])"):
     match = re.search(pattern, text, re.DOTALL)
     if match:
@@ -215,7 +215,7 @@ def extract_list_pattern(text, pattern=r"(\[\s*{.*?}\s*\])"):
             return []
     return []
 
-# 期間リストの絞込
+# Trim a list of date ranges
 def merge_periods(periods):
     converted = [
         {
@@ -225,7 +225,7 @@ def merge_periods(periods):
         for p in periods
     ]
 
-    # startでソート
+    # Sort by start
     converted.sort(key=lambda x: x["start"])
     merged = []
     for p in converted:
@@ -234,7 +234,7 @@ def merge_periods(periods):
             continue
         last = merged[-1]
 
-        # 重なり or 隣接している場合はマージ
+        # Merge when overlapping or adjacent
         if p["start"] <= last["end"]:
             last["end"] = max(last["end"], p["end"])
         else:
@@ -251,16 +251,16 @@ def merge_periods(periods):
 
     return result
 
-# 辞書を再帰的に上書きする関数
+# Recursively overwrite a dictionary
 def update_dict(target, source):
     for key, value in source.items():
         if isinstance(value, dict) and key in target and isinstance(target[key], dict):
-            # ネストされた辞書がある場合、再帰的に更新
+            # Update recursively when a nested dict exists
             update_dict(target[key], value)
         else:
             target[key] = value
 
-# フォルダから複数ファイルを取得
+# Fetch multiple files from a folder
 def get_files(folder_path="", identifier="", file_sort="Y"):
     files = []
     if os.path.exists(folder_path):
@@ -270,11 +270,11 @@ def get_files(folder_path="", identifier="", file_sort="Y"):
             files.sort()
     return files
 
-# ファイルの移動
+# Move a file
 def copy_file(from_file_path, to_file_path):
     shutil.move(from_file_path, to_file_path)
 
-# テキストファイルの読込
+# Read a text file
 def read_text_file(file_name, folder_path=""):
     file_path = folder_path + file_name
     if os.path.exists(file_path):
@@ -284,37 +284,37 @@ def read_text_file(file_name, folder_path=""):
         data = ""
     return data
 
-# PDFファイルの読込
+# Read a PDF file
 def read_pdf_file(file_name, folder_path=""):
     file_path = folder_path + file_name
     pdf_dict = {}
     with pdfplumber.open(file_path) as pdf:
         for i, page in enumerate(pdf.pages):
-            # 各ページのテキストを抽出してページごとに辞書型に格納
+            # Extract each page's text and store per-page in a dict
             pdf_dict[f"Page_{i + 1}"] = page.extract_text()
     return pdf_dict
 
-# PDFファイルからテキスト＋画像を抽出
+# Extract text + images from a PDF
 def read_pdf_with_images(file_path, temp_folder):
-    """PDFからテキスト（ページ単位）と埋め込み画像を抽出する"""
+    """Extract per-page text and embedded images from a PDF."""
     pdf_text = {}
     image_files = []
     os.makedirs(temp_folder, exist_ok=True)
 
-    # テキスト抽出（pdfplumber）
+    # Text extraction (pdfplumber)
     with pdfplumber.open(file_path) as pdf:
         for i, page in enumerate(pdf.pages):
             text = page.extract_text() or ""
-            # テーブルも抽出
+            # Also extract tables
             tables = page.extract_tables()
             if tables:
                 for table in tables:
-                    text += "\n[表]\n"
+                    text += "\n[Table]\n"
                     for row in table:
                         text += " | ".join([str(cell) if cell else "" for cell in row]) + "\n"
             pdf_text[f"Page_{i + 1}"] = text
 
-    # 画像抽出（PyMuPDF）
+    # Image extraction (PyMuPDF)
     doc = fitz.open(file_path)
     img_idx = 0
     for page_num in range(len(doc)):
@@ -333,28 +333,28 @@ def read_pdf_with_images(file_path, temp_folder):
     doc.close()
     return pdf_text, image_files
 
-# DOCXファイルからテキスト＋画像を抽出
+# Extract text + images from DOCX
 def read_docx_file(file_path, temp_folder):
-    """DOCXから段落テキスト・テーブル・埋め込み画像を抽出する"""
+    """Extract paragraph text, tables, and embedded images from a DOCX."""
     os.makedirs(temp_folder, exist_ok=True)
     doc = DocxDocument(file_path)
     text_parts = []
     image_files = []
     img_idx = 0
 
-    # 段落テキスト
+    # Paragraph text
     for para in doc.paragraphs:
         if para.text.strip():
             text_parts.append(para.text)
 
-    # テーブル
+    # Tables
     for table in doc.tables:
-        text_parts.append("[表]")
+        text_parts.append("[Table]")
         for row in table.rows:
             cells = [cell.text for cell in row.cells]
             text_parts.append(" | ".join(cells))
 
-    # 埋め込み画像
+    # Embedded images
     for rel in doc.part.rels.values():
         if "image" in rel.reltype:
             img_data = rel.target_part.blob
@@ -367,24 +367,24 @@ def read_docx_file(file_path, temp_folder):
 
     return "\n".join(text_parts), image_files
 
-# XLSXファイルからテキストを抽出
+# Extract text from XLSX
 def read_xlsx_file(file_path):
-    """XLSXから全シートのセルデータをテーブル形式で抽出する"""
+    """Extract cell data from every sheet in an XLSX in table form."""
     import openpyxl
     wb = openpyxl.load_workbook(file_path, data_only=True)
     text_parts = []
     for sheet_name in wb.sheetnames:
         ws = wb[sheet_name]
-        text_parts.append(f"[シート: {sheet_name}]")
+        text_parts.append(f"[Sheet: {sheet_name}]")
         for row in ws.iter_rows(values_only=True):
             cells = [str(cell) if cell is not None else "" for cell in row]
             if any(cells):
                 text_parts.append(" | ".join(cells))
     return "\n".join(text_parts)
 
-# PPTXファイルからテキスト＋画像を抽出
+# Extract text + images from PPTX
 def read_pptx_file(file_path, temp_folder):
-    """PPTXからスライドごとのテキスト・テーブル・ノート・埋め込み画像を抽出する"""
+    """Extract per-slide text, tables, notes, and embedded images from a PPTX."""
     os.makedirs(temp_folder, exist_ok=True)
     prs = Presentation(file_path)
     text_parts = []
@@ -392,20 +392,20 @@ def read_pptx_file(file_path, temp_folder):
     img_idx = 0
 
     for slide_num, slide in enumerate(prs.slides, 1):
-        slide_text = f"\n[スライド {slide_num}]"
+        slide_text = f"\n[Slide {slide_num}]"
 
-        # タイトル
+        # Title
         if slide.shapes.title and slide.shapes.title.text:
-            slide_text += f"\nタイトル: {slide.shapes.title.text}"
+            slide_text += f"\nTitle: {slide.shapes.title.text}"
 
-        # テキスト・テーブル・画像
+        # Text / table / image
         for shape in slide.shapes:
             if shape.has_text_frame:
                 for para in shape.text_frame.paragraphs:
                     if para.text.strip():
                         slide_text += f"\n{para.text}"
             elif shape.has_table:
-                slide_text += "\n[表]"
+                slide_text += "\n[Table]"
                 for row in shape.table.rows:
                     cells = [cell.text for cell in row.cells]
                     slide_text += "\n" + " | ".join(cells)
@@ -418,21 +418,21 @@ def read_pptx_file(file_path, temp_folder):
                         f.write(img_blob)
                     image_files.append(img_path)
                     img_idx += 1
-                    slide_text += f"\n[画像: pptx_s{slide_num}_img{img_idx-1}.{ext}]"
+                    slide_text += f"\n[Image: pptx_s{slide_num}_img{img_idx-1}.{ext}]"
                 except Exception:
                     pass
 
-        # ノート
+        # Notes
         if slide.has_notes_slide and slide.notes_slide.notes_text_frame:
             notes = slide.notes_slide.notes_text_frame.text.strip()
             if notes:
-                slide_text += f"\nノート: {notes}"
+                slide_text += f"\nNotes: {notes}"
 
         text_parts.append(slide_text)
 
     return "\n".join(text_parts), image_files
 
-# JSONファイルの読込
+# Read a JSON file
 def read_json_file(file_name, folder_path=""):
     data = {}
     file_path = folder_path + file_name
@@ -441,7 +441,7 @@ def read_json_file(file_name, folder_path=""):
             data = json.load(file)
     return data
 
-# YAMLファイルの読込
+# Read a YAML file
 def read_yaml_file(file_name, folder_path=""):
     data = {}
     file_path = folder_path + file_name
@@ -452,7 +452,7 @@ def read_yaml_file(file_name, folder_path=""):
         data = {}
     return data
 
-# YAMLファイルの保存
+# Save a YAML file
 def save_text_file(data, file_path):
     with open(file_path, 'w', encoding="utf-8") as f:
         f.write(data)
@@ -469,7 +469,7 @@ def save_yaml_file(data, file_name, folder_path=""):
 #        yaml.dump(data, file, allow_unicode=True)
         yaml.dump(current_data, f, allow_unicode=True)
 
-# MP3ファイルをテキストに変換（TRANSCRIBE_PROVIDER で OpenAI / Azure を切替）
+# Convert an MP3 file to text (switch between OpenAI / Azure via TRANSCRIBE_PROVIDER)
 def mp3_to_text(file_name, folder_path=""):
     _provider = (os.getenv("TRANSCRIBE_PROVIDER") or "openai").lower()
     if _provider == "azure":
@@ -495,46 +495,46 @@ def mp3_to_text(file_name, folder_path=""):
         data = ""
     return data
 
-# 画像ファイルをbase64でエンコード　
+# Base64-encode an image file　
 def encode_image_file(image_path):
     image_base64 = None
     with open(image_path, "rb") as image_file:
         image_base64 = base64.b64encode(image_file.read()).decode('utf-8')
     return image_base64
 
-# 二つのタイムスタンプの差を文字列で得る
+# Return the difference between two timestamps as a string
 def get_time_diff(timestamp1, timestamp2, format_str="%Y-%m-%d %H:%M:%S.%f"):
     time1 = datetime.strptime(timestamp1, format_str)
     time2 = datetime.strptime(timestamp2, format_str)
     time_difference = time2 - time1
     return str(time_difference)
 
-# 日付型の変換
+# Convert a date type
 def convert_to_ymd(date_str, date_format='%Y-%m-%d'):
     try:
         if '/' in date_str:
-            # スラッシュを含む日付を解析
+            # Parse a date that contains a slash
             parsed_date = datetime.strptime(date_str, '%Y/%m/%d')
         else:
-            # スラッシュを含まない日付を自動解析
+            # Auto-parse a date without slashes
             parsed_date = parser.parse(date_str)
-        # 指定のフォーマットに変換
+        # Format using the requested layout
         formatted_date = parsed_date.strftime(date_format)
         return formatted_date
     except ValueError:
         return "Invalid date format"
 
-# Embeddingクライアント・トークナイザのシングルトン
+# Singleton embedding client / tokenizer
 _embed_client = None
 _embed_enc = None
 
 
 class _ApproxEncoder:
-    """tiktoken 不使用時の近似エンコーダ。
-    用途は『埋め込み API に渡す前にトークン上限で切り詰める』ことと『トークン数の表示』だけ
-    なので、CJK の最悪ケースに合わせて 1 文字 = 2 トークン換算とし、
-    既存の `max_tokens=8192` 判定をそのまま使うと実質 4096 文字でクリップされる。
-    encode/decode の往復で元のテキストが復元できるよう、トークン列は (char, "") のペア。
+    """Approximation encoder used when tiktoken is disabled.
+    Used only to (a) clip embedding input to the token cap and (b) display token counts,
+    so under a worst-case CJK assumption we treat 1 character = 2 tokens, meaning the
+    existing `max_tokens=8192` check effectively clips at 4096 characters.
+    Tokens are stored as (char, "") pairs so encode/decode reproduces the original text.
     """
     def encode(self, text):
         text = text or ""
@@ -545,7 +545,7 @@ class _ApproxEncoder:
         return out
 
     def decode(self, tokens):
-        # ペアの偶数要素のみ拾えば元のテキスト
+        # Picking the even-indexed elements of each pair restores the original text
         return "".join(tokens[::2])
 
 
@@ -554,36 +554,37 @@ def _tiktoken_disabled():
 
 
 def _load_tiktoken_encoding(name_or_model, by_model=False):
-    """tiktoken エンコーディングをロードする共通ヘルパ。
-    閉域環境では openaipublic.blob.core.windows.net への HTTPS 取得が落ちるため、
-    事前に TIKTOKEN_CACHE_DIR を設定して cl100k_base / o200k_base 等のキャッシュ
-    ファイルを配置しておく必要がある。ネットワーク失敗を検知した場合は
-    対処手順を含む RuntimeError を投げる。"""
+    """Common helper that loads a tiktoken encoding.
+    On closed networks the HTTPS fetch from openaipublic.blob.core.windows.net fails,
+    so cache files (cl100k_base / o200k_base, etc.) must be placed at TIKTOKEN_CACHE_DIR
+    beforehand. When network failure is detected, raise a RuntimeError that includes
+    the remediation steps.
+    """
     try:
         if by_model:
             return tiktoken.encoding_for_model(name_or_model)
         return tiktoken.get_encoding(name_or_model)
     except KeyError:
-        # 未知のモデル名（Azureデプロイ名等）→ cl100k_base（text-embedding-3系互換）にフォールバック
+        # Unknown model name (e.g. Azure deployment name) -> fall back to cl100k_base (text-embedding-3 compatible)
         if by_model:
             return _load_tiktoken_encoding("cl100k_base", by_model=False)
         raise
     except Exception as e:
-        _cache_dir = os.getenv("TIKTOKEN_CACHE_DIR") or "(未設定)"
+        _cache_dir = os.getenv("TIKTOKEN_CACHE_DIR") or "(not set)"
         raise RuntimeError(
-            f"tiktoken エンコーディング '{name_or_model}' のロードに失敗しました: {type(e).__name__}: {e}\n"
-            f"  原因: tiktoken は初回利用時に https://openaipublic.blob.core.windows.net/encodings/ から\n"
-            f"        BPE ファイルを取得します。閉域環境ではこのホストに到達できないため失敗します。\n"
-            f"  現在の TIKTOKEN_CACHE_DIR = {_cache_dir}\n"
-            f"  対処: 外向き通信が可能な端末で以下を実行してキャッシュを作り、\n"
-            f"        その中身を閉域 VM の任意のディレクトリにコピーし、\n"
-            f"        system.env に TIKTOKEN_CACHE_DIR=<そのパス> を追加して再起動してください。\n"
+            f"Failed to load tiktoken encoding '{name_or_model}': {type(e).__name__}: {e}\n"
+            f"  Cause: tiktoken fetches the BPE file from https://openaipublic.blob.core.windows.net/encodings/ on first use.\n"
+            f"         Closed networks cannot reach that host, which is why this fails.\n"
+            f"  Current TIKTOKEN_CACHE_DIR = {_cache_dir}\n"
+            f"  Remedy: on a machine with outbound connectivity, run the command below to build the cache,\n"
+            f"          copy the resulting files to any directory on this VM,\n"
+            f"          and add TIKTOKEN_CACHE_DIR=<that path> to system.env and restart.\n"
             f"        TIKTOKEN_CACHE_DIR=/tmp/tiktoken_cache python3 -c \"import tiktoken;\\\n"
             f"          [tiktoken.get_encoding(n) for n in ('cl100k_base','o200k_base','p50k_base','r50k_base')]\""
         ) from e
 
 def _get_embed_client():
-    """埋め込み生成クライアント。EMBED_PROVIDER=azure なら Azure OpenAI を使う。"""
+    """Embedding client. Uses Azure OpenAI when EMBED_PROVIDER=azure."""
     global _embed_client, _embed_enc
     if _embed_client is None:
         if embed_provider == "azure":
@@ -595,22 +596,22 @@ def _get_embed_client():
         else:
             _embed_client = OpenAI(api_key=openai_api_key)
     if _embed_enc is None:
-        # TIKTOKEN_DISABLE=true で tiktoken を完全に迂回し、文字長ベースの近似に切替（閉域向け）
+        # When TIKTOKEN_DISABLE=true, bypass tiktoken entirely and use a char-length approximation (closed-env friendly)
         if _tiktoken_disabled():
             _embed_enc = _ApproxEncoder()
         else:
-            # tiktoken は OpenAIモデル名を期待。Azureのデプロイ名は不明なので
-            # EMBEDDING_MODEL（実モデル名）で引き、失敗時は text-embedding-3 系互換の cl100k_base にフォールバック
+            # tiktoken expects an OpenAI model name. Since the Azure deployment name is unknown,
+            # look up by EMBEDDING_MODEL (the real model name); on failure fall back to cl100k_base (text-embedding-3 compatible)
             _embed_enc = _load_tiktoken_encoding(embedding_model or "text-embedding-3-large", by_model=True)
     return _embed_client, _embed_enc
 
 def _embed_model_name():
-    """API の model 引数に渡す名前。Azure ではデプロイ名、OpenAI ではモデル名。"""
+    """The name to pass as the API's model argument. Deployment name on Azure; model name on OpenAI."""
     if embed_provider == "azure":
         return azure_openai_embed_model or embedding_model
     return embedding_model
 
-# テキストを埋め込みベクトルに変換（EMBED_PROVIDER に応じて OpenAI / Azure OpenAI を使い分け）
+# Convert text to an embedding (selects OpenAI / Azure OpenAI based on EMBED_PROVIDER)
 def embed_text(text):
     client, enc = _get_embed_client()
     max_tokens = 8192
@@ -621,7 +622,7 @@ def embed_text(text):
     response = client.embeddings.create(model=_embed_model_name(), input=safe_text)
     return response.data[0].embedding
 
-# C-3: 複数テキストを1回のAPI呼び出しでベクトル化（バッチ処理）
+# C-3: Vectorize multiple texts with a single API call (batched)
 def embed_texts_batch(texts, batch_token_limit=250000):
     client, enc = _get_embed_client()
     max_tokens = 8192
@@ -632,7 +633,7 @@ def embed_texts_batch(texts, batch_token_limit=250000):
             tokens = tokens[:max_tokens]
         safe_texts.append(enc.decode(tokens))
 
-    # バッチをトークン上限で分割して送信
+    # Send batches split by the token cap
     all_embeddings = [None] * len(safe_texts)
     batch_start = 0
     while batch_start < len(safe_texts):
@@ -652,52 +653,52 @@ def embed_texts_batch(texts, batch_token_limit=250000):
 
     return all_embeddings
 
-# 埋め込みベクトルの配列を1つのnpyファイルに保存
+# Save an array of embedding vectors to a single .npy file
 def save_vectext_to_npy(vec_text, file_path, dtype="float32"):
     arr = np.asarray(vec_text, dtype=dtype)
     np.save(file_path, arr)
 
-# 埋め込みベクトルの配列をnpyファイルから読込
+# Load an array of embedding vectors from a .npy file
 def read_vectext_to_npy(file_path, mmap=False):
-    # ファイルが存在しない場合は空の配列を返す
+    # Return an empty array if the file does not exist
     if not os.path.exists(file_path):
         return np.array([])
 
-    # mmapがTrueの場合はメモリマップド配列として読み込む
+    # When mmap is True, load as a memory-mapped array
     if mmap:
         return np.load(file_path, mmap_mode="r")
     else:
         return np.load(file_path)
 
-# 形態素解析(Owakati)
+# Morphological analysis (Owakati)
 def tokenize_Owakati(text, mode="Default", stop_words=[], grammer=('名詞', '動詞', '形容詞', '副詞')):
     mecab = MeCab.Tagger("-Owakati")
     wakati_text = mecab.parse(text)
     tokens = wakati_text.split()
     if mode == "All":
-        # stop_wordsの除去
+        # Drop stop words
         tokens = [word for word in tokens if word not in stop_words]
     else:
-        mecab = MeCab.Tagger()  # 形態素解析のタグを取得するためにデフォルトのオプションで再度MeCabインスタンスを作成
+        mecab = MeCab.Tagger()  # Create another MeCab instance with default options to obtain morphological tags
         valid_tokens = []
         for token in tokens:
-            node = mecab.parseToNode(token)  # 各トークンに対して形態素解析を実行
+            node = mecab.parseToNode(token)  # Run morphological analysis on each token
             while node:
                 pos = node.feature.split(",")[0]
                 if pos.startswith(grammer) and token not in stop_words:
                     valid_tokens.append(token)
-                    break  # 同じトークンに対する重複検査を避けるためにループを終了
+                    break  # Exit the loop to avoid double-checking the same token
                 node = node.next
         tokens = valid_tokens
     return tokens
 
-# テキストの集合からTF-IDFベクトライザーを作成
+# Build a TF-IDF vectorizer from a set of texts
 def fit_tfidf(texts, mode="Default", stop_words=[], grammer=('名詞', '動詞', '形容詞', '副詞')):
     vectorizer = TfidfVectorizer(tokenizer=lambda x: tokenize_Owakati(x, mode, stop_words, grammer), lowercase=False)
     vectorizer.fit(texts)
     return vectorizer
 
-# キーワードのTF-IDF値を取得
+# Get the TF-IDF value for a keyword
 def get_tfidf(text, vectorizer):
     tfidf_matrix = vectorizer.transform([text])
     feature_names = vectorizer.get_feature_names_out()
@@ -707,15 +708,15 @@ def get_tfidf(text, vectorizer):
     #tfidf_pairs = [(word, score) for word, score in tfidf_dict.items()]
     return tfidf_pairs, tfidf_dict
 
-# リストからTF-IDFを取得
+# Get TF-IDF from a list
 def get_tfidf_list(text, vectorizer, TopN):
     tfidf_pairs, tfidf_dict = get_tfidf(text, vectorizer)
-    tfidf_topN = tfidf_pairs[:TopN] # 上位Nの項目を取得
+    tfidf_topN = tfidf_pairs[:TopN]  # Take the top-N items
     tfidf_topN_list = [i[0] for i in tfidf_topN]
     tfidf_topN_str = '、'.join([f'{item[0]}：{round(item[1], 10)}' for item in tfidf_topN])
     return tfidf_dict, tfidf_topN, tfidf_topN_str
 
-# ワードクラウドで可視化
+# Visualize as a word cloud
 def get_wordcloud(title, dict, folder_path="user/common/analytics/insight/"):
     font_path = "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf"
     wc = WordCloud(background_color="white", font_path=font_path, width=800, height=600, max_words=50, contour_color='steelblue')
@@ -723,12 +724,12 @@ def get_wordcloud(title, dict, folder_path="user/common/analytics/insight/"):
     file_name = folder_path + f"WordCloud_{title}.png"
     wc.to_file(file_name)
 
-# トークンの計算
+# Token counting
 def count_token(tokenizer, model, text):
     tokens = 0
     if tokenizer == "tiktoken":
         if _tiktoken_disabled():
-            # 文字数 × 2 で近似（CJK 最悪ケース見積もり）。表示用なので厳密性は不要
+            # Approximate as char_count * 2 (CJK worst-case). Display only; precision is not required.
             tokens = len(text or "") * 2
         else:
             encoding = _load_tiktoken_encoding("cl100k_base")
@@ -741,21 +742,21 @@ def count_token(tokenizer, model, text):
         tokens = len(text)
     return tokens
 
-# 類似度計算（コサイン距離）
+# Similarity computation (cosine distance)
 def calculate_cosine_distance(vec1, vec2):
-    # コサイン類似度を計算
+    # Compute cosine similarity
     dot_product = sum(p*q for p, q in zip(vec1, vec2))
     magnitude_vec1 = math.sqrt(sum(p**2 for p in vec1))
     magnitude_vec2 = math.sqrt(sum(q**2 for q in vec2))
     if magnitude_vec1 == 0 or magnitude_vec2 == 0:
-        # どちらかのベクトルの大きさが0の場合、類似度は定義できない
+        # When either vector has zero magnitude, similarity is undefined
         return 0
     cosine_similarity = dot_product / (magnitude_vec1 * magnitude_vec2)
-    # コサイン距離を計算(1-コサイン類似度)
+    # Compute cosine distance (1 - cosine similarity)
     cosine_distance = 1-cosine_similarity
     return cosine_distance
 
-# 類似度計算（ミンコフスキー距離）
+# Similarity computation (Minkowski distance)
 def calculate_minkowski_distance(vec1, vec2, p):
     if p == 0:
         raise ValueError("p cannot be zero")
@@ -764,31 +765,31 @@ def calculate_minkowski_distance(vec1, vec2, p):
     else:
         return sum(abs(a - b) ** p for a, b in zip(vec1, vec2)) ** (1 / p)
 
-# ペナルティ計算(線形)
+# Penalty (linear)
 def linear_penalty(difference, alpha=0.001):
     return alpha * difference
 
-# ペナルティ計算(指数関数)
+# Penalty (exponential)
 def exponential_penalty(difference, alpha=0.001):
     return 1 - math.exp(-alpha * difference)
 
-# ペナルティ計算(ロジスティック回帰)
+# Penalty (logistic)
 def logistic_penalty(difference, alpha=0.001):
     return 1 / (1 + math.exp(-alpha * difference))
 
-# ペナルティ計算(ステップ)
+# Penalty (step)
 def step_penalty(difference, alpha=0.001, beta=0.01, days=10):
-    q = difference // days  # 日数をdays単位で割った商
-    r = difference % days  # 日数をdays単位で割った余り
+    q = difference // days  # Quotient when dividing days by `days`
+    r = difference % days  # Remainder when dividing days by `days`
     return q*beta
 
-# ペナルティ計算(ステップごとに係数αが増加) ※関数を別途選択(linear_penalty, exponential_penalty, logistic_penalty)
+# Penalty (alpha increases per step) -- pick a base function separately (linear_penalty / exponential_penalty / logistic_penalty)
 def step_gain(difference, alpha=0.001, days=10, func="linear_penalty"):
-    quotient = difference // days  # 日数をdays単位で切る
+    quotient = difference // days  # Divide days by `days`
     alpha = quotient*alpha
     return globals()[func](difference, alpha)
 
-# 類似度計算（距離計算＋日付ペナルティ）
+# Similarity (distance + date penalty)
 def calculate_similarity_vec(vec1, vec2, logic="Cosine"):
     if logic == "Cosine":
         distance = calculate_cosine_distance(vec1, vec2)
@@ -798,6 +799,6 @@ def calculate_similarity_vec(vec1, vec2, logic="Cosine"):
         distance = calculate_minkowski_distance(vec1, vec2, 1)
     elif logic == "Chebyshev":
         distance = calculate_minkowski_distance(vec1, vec2, float('inf'))
-    else: #通常はコサイン距離
+    else:  # default to cosine distance
         distance = calculate_cosine_distance(vec1, vec2)
     return distance

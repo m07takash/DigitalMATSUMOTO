@@ -1,20 +1,21 @@
 """
-サポートエージェント パフォーマンス評価
-_build_intent_queries / _build_meta_searches を各エンジンで実行し、速度と出力を比較する
+Support-Agent performance evaluation.
+Run _build_intent_queries / _build_meta_searches against each engine and
+compare speed and output.
 
 CLI:
-  python3 DigiM_SupportEval.py input.xlsx                                          # 両方実行
-  python3 DigiM_SupportEval.py input.xlsx --target intent                          # RAGクエリ生成のみ
-  python3 DigiM_SupportEval.py input.xlsx --target meta                            # メタ検索のみ
-  python3 DigiM_SupportEval.py input.xlsx --agent agent_01DigitalMATSUMOTO.json    # エージェント指定
+  python3 DigiM_SupportEval.py input.xlsx                                          # Both
+  python3 DigiM_SupportEval.py input.xlsx --target intent                          # RAG query generation only
+  python3 DigiM_SupportEval.py input.xlsx --target meta                            # Meta search only
+  python3 DigiM_SupportEval.py input.xlsx --agent agent_01DigitalMATSUMOTO.json    # Specify an agent
 
-入力Excelフォーマット（シート名: questions）:
+Input Excel format (sheet name: questions):
   | no | question                          |
   |----|-----------------------------------|
-  | 1  | AIガバナンスについてどう思う？      |
-  | 2  | 最近読んだ本で面白かったのは？      |
+  | 1  | What do you think about AI governance? |
+  | 2  | What was a recent book you enjoyed?    |
 
-  ※ headerなしの場合は1列目をquestionとして扱います
+  * If there is no header, the first column is treated as `question`.
 """
 import os
 import io
@@ -28,11 +29,11 @@ import DigiM_Agent as dma
 import DigiM_Util as dmu
 import DigiM_Execute as dme
 
-# setting.yamlからフォルダパスを設定
+# Set folder paths from setting.yaml
 system_setting_dict = dmu.read_yaml_file("setting.yaml")
 test_folder_path = system_setting_dict["TEST_FOLDER"]
 
-# デフォルトのメインエージェント
+# Default main agent
 DEFAULT_AGENT_FILE = "agent_X0Sample.json"
 
 SERVICE_INFO = {"SERVICE_ID": "SupportEval", "SERVICE_DATA": {}}
@@ -42,7 +43,7 @@ def _new_session_id():
     return f"EVAL_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
 def load_questions(excel_path):
-    """Excelファイルから質問リストを読み込む"""
+    """Load the list of questions from the Excel file."""
     df = pd.read_excel(excel_path, sheet_name=0)
     if "question" in df.columns:
         return df["question"].dropna().tolist()
@@ -50,38 +51,38 @@ def load_questions(excel_path):
         return df.iloc[:, 0].dropna().tolist()
 
 def get_support_targets(agent_file):
-    """エージェントの評価可能なサポートエージェント情報を返す"""
+    """Return support-agent info that can be evaluated for this agent."""
     agent = dma.DigiM_Agent(agent_file)
     support_agent = agent.agent.get("SUPPORT_AGENT", {})
     targets = {}
     if "RAG_QUERY_GENERATOR" in support_agent:
         sa_file = support_agent["RAG_QUERY_GENERATOR"]
         engines = get_engines(sa_file)
-        targets["intent"] = {"agent_file": sa_file, "engines": engines, "label": "RAGクエリ生成"}
+        targets["intent"] = {"agent_file": sa_file, "engines": engines, "label": "RAG query generation"}
     if "EXTRACT_DATE" in support_agent:
         sa_file = support_agent["EXTRACT_DATE"]
         engines = get_engines(sa_file)
-        targets["meta"] = {"agent_file": sa_file, "engines": engines, "label": "メタ検索"}
+        targets["meta"] = {"agent_file": sa_file, "engines": engines, "label": "Meta search"}
     return targets
 
 def get_engines(agent_file):
-    """エージェントに定義されたエンジン一覧を取得"""
+    """Return the list of engines defined for an agent."""
     agent_data = dmu.read_json_file(agent_file, dma.agent_folder_path)
     return [k for k in agent_data["ENGINE"]["LLM"] if k != "DEFAULT"]
 
 def override_engine(support_agent, key, engine_name):
-    """support_agentのエージェントファイルのDEFAULTエンジンを一時的に差し替え"""
+    """Temporarily override the DEFAULT engine of the support agent's JSON."""
     agent_file = support_agent[key]
     agent_data = dmu.read_json_file(agent_file, dma.agent_folder_path)
     agent_data["ENGINE"]["LLM"]["DEFAULT"] = engine_name
     dma._agent_cache[agent_file] = (0, copy.deepcopy(agent_data))
 
 def restore_cache(agent_file):
-    """キャッシュをクリアして元に戻す"""
+    """Clear the cache to revert the override."""
     dma._agent_cache.pop(agent_file, None)
 
 def run_intent_eval(support_agent, engines, questions, question_vecs, progress_callback=None):
-    """RAGクエリ生成の評価"""
+    """Evaluate RAG query generation."""
     agent_file = support_agent["RAG_QUERY_GENERATOR"]
     session_id = _new_session_id()
     results = []
@@ -131,7 +132,7 @@ def run_intent_eval(support_agent, engines, questions, question_vecs, progress_c
     return results
 
 def run_meta_eval(support_agent, engines, questions, question_vecs, progress_callback=None):
-    """メタ検索の評価"""
+    """Evaluate meta search."""
     agent_file = support_agent["EXTRACT_DATE"]
     session_id = _new_session_id()
     results = []
@@ -185,7 +186,7 @@ def run_meta_eval(support_agent, engines, questions, question_vecs, progress_cal
     return results
 
 def build_summary(results):
-    """サマリーデータを構築"""
+    """Build the summary rows."""
     summary_rows = []
     for result_type in ["intent", "meta"]:
         type_results = [r for r in results if r["type"] == result_type]
@@ -213,7 +214,7 @@ def build_summary(results):
     return summary_rows
 
 def save_excel_bytes(results, questions):
-    """結果をExcelのバイト列として返す（WebUIダウンロード用）"""
+    """Return the result Excel as raw bytes (for WebUI downloads)."""
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         _write_excel_sheets(writer, results, questions)
@@ -221,13 +222,13 @@ def save_excel_bytes(results, questions):
     return buf.getvalue()
 
 def save_excel_file(results, output_path, questions):
-    """結果をExcelファイルに保存（CLI用）"""
+    """Save the results to an Excel file (CLI)."""
     with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
         _write_excel_sheets(writer, results, questions)
-    print(f"\n結果を {output_path} に保存しました。")
+    print(f"\nResults saved to {output_path}.")
 
 def _apply_wrap_format(writer, sheet_name):
-    """テキスト折り返しを有効にする"""
+    """Enable text wrapping."""
     from openpyxl.styles import Alignment
     ws = writer.sheets[sheet_name]
     wrap_align = Alignment(wrap_text=True, vertical="top")
@@ -237,7 +238,7 @@ def _apply_wrap_format(writer, sheet_name):
                 cell.alignment = wrap_align
 
 def _write_excel_sheets(writer, results, questions):
-    """Excel書き出し共通処理"""
+    """Shared Excel-writing logic."""
     for result_type in ["intent", "meta"]:
         type_results = [r for r in results if r["type"] == result_type]
         if not type_results:
@@ -260,12 +261,12 @@ def _write_excel_sheets(writer, results, questions):
         pd.DataFrame(summary_rows).to_excel(writer, sheet_name="summary", index=False)
 
 def print_summary(results, label):
-    """サマリーをコンソール表示"""
+    """Print the summary to the console."""
     engines = list(dict.fromkeys(r["engine"] for r in results))
     print(f"\n{'=' * 90}")
-    print(f"サマリー: {label}")
+    print(f"Summary: {label}")
     print(f"{'=' * 90}")
-    print(f"{'エンジン':<30} {'平均(s)':<10} {'最小(s)':<10} {'最大(s)':<10} {'成功':<6} {'エラー':<6}")
+    print(f"{'engine':<30} {'avg(s)':<10} {'min(s)':<10} {'max(s)':<10} {'OK':<6} {'err':<6}")
     print("-" * 90)
     for engine in engines:
         rows = [r for r in results if r["engine"] == engine]
@@ -277,22 +278,22 @@ def print_summary(results, label):
         else:
             print(f"{engine:<30} {'N/A':<10} {'N/A':<10} {'N/A':<10} {0:<6} {err:<6}")
 
-# ---------- WebUI用エントリポイント ----------
+# ---------- Entry point for the WebUI ----------
 def run_eval_for_ui(agent_file, target, engines, questions, progress_callback=None):
-    """WebUIから呼び出すための評価実行関数
+    """Evaluation entry point called from the WebUI.
     Args:
-        agent_file: メインエージェントファイル
+        agent_file: Main agent file.
         target: "intent" / "meta" / "both"
-        engines: 評価対象のエンジン名リスト
-        questions: 質問リスト
-        progress_callback: progress_callback(ratio, text) 形式のコールバック
+        engines: List of engine names to evaluate.
+        questions: List of questions.
+        progress_callback: Callback of the form progress_callback(ratio, text).
     Returns:
         (results, summary, excel_bytes)
     """
     agent = dma.DigiM_Agent(agent_file)
     support_agent = agent.agent["SUPPORT_AGENT"]
 
-    # 質問のベクトル化
+    # Vectorize the questions
     question_vecs = dmu.embed_texts_batch([q.replace("\n", "") for q in questions])
 
     all_results = []
@@ -325,45 +326,45 @@ def main():
             excel_file = arg
 
     if not excel_file:
-        print("使い方: python3 DigiM_SupportEval.py input.xlsx [--target intent|meta|both] [--agent agent_file.json]")
-        print(f"\n入力Excelの配置先: {test_folder_path}")
-        print("入力Excelの形式: 1列目にquestion列（ヘッダー: question）")
+        print("Usage: python3 DigiM_SupportEval.py input.xlsx [--target intent|meta|both] [--agent agent_file.json]")
+        print(f"\nInput Excel directory: {test_folder_path}")
+        print("Input Excel format: the `question` column in the first column (header: question)")
         sys.exit(1)
 
     excel_path = excel_file if os.path.isabs(excel_file) or os.path.exists(excel_file) else str(Path(test_folder_path) / excel_file)
 
     questions = load_questions(excel_path)
-    print(f"質問数: {len(questions)}")
+    print(f"Question count: {len(questions)}")
     for i, q in enumerate(questions):
         print(f"  Q{i+1}: {q}")
 
-    print(f"\nエージェント: {agent_file}")
+    print(f"\nAgent: {agent_file}")
     agent = dma.DigiM_Agent(agent_file)
     support_agent = agent.agent["SUPPORT_AGENT"]
 
-    print("\n質問のベクトル化中...")
+    print("\nVectorizing questions...")
     question_vecs = dmu.embed_texts_batch([q.replace("\n", "") for q in questions])
-    print("ベクトル化完了")
+    print("Vectorization complete")
 
     all_results = []
 
     if target in ("both", "intent"):
         rag_agent_file = support_agent["RAG_QUERY_GENERATOR"]
         engines = get_engines(rag_agent_file)
-        print(f"\n[RAGクエリ生成] エージェント: {rag_agent_file}")
-        print(f"エンジン: {engines}")
+        print(f"\n[RAG query generation] Agent: {rag_agent_file}")
+        print(f"Engines: {engines}")
         intent_results = run_intent_eval(support_agent, engines, questions, question_vecs)
         all_results.extend(intent_results)
-        print_summary(intent_results, "RAGクエリ生成")
+        print_summary(intent_results, "RAG query generation")
 
     if target in ("both", "meta"):
         meta_agent_file = support_agent["EXTRACT_DATE"]
         engines = get_engines(meta_agent_file)
-        print(f"\n[メタ検索] エージェント: {meta_agent_file}")
-        print(f"エンジン: {engines}")
+        print(f"\n[Meta search] Agent: {meta_agent_file}")
+        print(f"Engines: {engines}")
         meta_results = run_meta_eval(support_agent, engines, questions, question_vecs)
         all_results.extend(meta_results)
-        print_summary(meta_results, "メタ検索")
+        print_summary(meta_results, "Meta search")
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     input_name = Path(excel_path).stem

@@ -1,13 +1,13 @@
-"""ユーザーメモリ（History/Nowaday/Persona）の生成パイプライン。
+"""User memory generation pipeline (History / Nowaday / Persona).
 
-3つの層の責務:
-  - History: セッション終了時 / 任意タイミングで、そのセッションから1レコードを生成しupsert
-  - Nowaday: 期間内のHistoryレコードを集約しNowadayプロファイルを更新
-  - Persona: 既存Personaと新しいNowadayプロファイルをマージしPersonaを更新
+Responsibilities per layer:
+  - History: At session end (or any time), generate one record from that session and upsert.
+  - Nowaday: Aggregate History records within a period and update the Nowaday profile.
+  - Persona: Merge existing Persona with a new Nowaday profile and update Persona.
 
-LLMはユーザー設定済みの `agent_58/59/60` を呼び出す。
+Uses the user-configured `agent_58/59/60` for LLM calls.
 
-旧 DigiM_GeneUserDialog.py はこのモジュールに置換されました。
+Replaces the legacy DigiM_GeneUserDialog.py.
 """
 import json
 import logging
@@ -36,7 +36,7 @@ NOWADAY_AGENT_FILE = "agent_59UserMemoryNowaday.json"
 PERSONA_AGENT_FILE = "agent_60UserMemoryPersona.json"
 
 
-# ---------- 感情語彙 (Plutchik) / Big5 トレイト ----------
+# ---------- Plutchik emotion vocabulary / Big5 traits ----------
 PLUTCHIK_PRIMARY = (
     "joy", "trust", "fear", "surprise",
     "sadness", "disgust", "anger", "anticipation",
@@ -53,7 +53,7 @@ BIG5_TRAITS = (
 
 
 def _filter_plutchik_emotions(items):
-    """LLM出力の emotions リストを Plutchik 語彙のみに正規化。重複・大小も整える。"""
+    """Normalize the LLM output emotions list to Plutchik vocabulary only. Dedupe and normalize case."""
     if not isinstance(items, list):
         return []
     out, seen = [], set()
@@ -80,14 +80,14 @@ def _clip01(v, default=0.0):
 
 
 def _normalize_basic_emotions(d):
-    """basic_emotions を 8キーの dict[float 0..1] に強制。"""
+    """Coerce basic_emotions to a dict of 8 keys with float values in [0..1]."""
     if not isinstance(d, dict):
         d = {}
     return {k: _clip01(d.get(k), 0.0) for k in PLUTCHIK_PRIMARY}
 
 
 def _normalize_secondary_emotions(items):
-    """secondary_emotions を Plutchik 二次感情の英語キーのみに絞る。"""
+    """Restrict secondary_emotions to Plutchik secondary-emotion English keys only."""
     if not isinstance(items, list):
         return []
     out, seen = [], set()
@@ -102,7 +102,7 @@ def _normalize_secondary_emotions(items):
 
 
 def _normalize_big5(d):
-    """big5 を {trait: {score, confidence, status}} に正規化。"""
+    """Normalize big5 to {trait: {score, confidence, status}}."""
     if not isinstance(d, dict):
         d = {}
     out = {}
@@ -118,14 +118,14 @@ def _normalize_big5(d):
     return out
 
 
-# ---------- LLM出力パース ----------
+# ---------- LLM output parsing ----------
 def _strip_json_fences(text: str) -> str:
     if not text:
         return ""
     s = text.strip()
     s = re.sub(r"^```(?:json)?", "", s).strip()
     s = re.sub(r"```$", "", s).strip()
-    # 先頭にJSON以外の文字がある場合は最初の{～最後の}を抜き出す
+    # If there's non-JSON noise at the start, extract from the first '{' to the last '}'
     if not s.startswith("{"):
         m = re.search(r"\{.*\}", s, flags=re.DOTALL)
         if m:
@@ -140,11 +140,11 @@ def _parse_json_safely(text: str) -> dict:
     try:
         return json.loads(raw)
     except Exception:
-        logger.warning(f"[user_memory] JSONパース失敗: {raw[:200]!r}")
+        logger.warning(f"[user_memory] JSON parse failed: {raw[:200]!r}")
         return {}
 
 
-# ---------- LLM実行ヘルパ ----------
+# ---------- LLM execution helpers ----------
 def _run_agent(agent_file: str, prompt_template_cd: str, user_query: str, memories=None) -> str:
     agent = dma.DigiM_Agent(agent_file)
     model_type = "LLM"
@@ -158,13 +158,13 @@ def _run_agent(agent_file: str, prompt_template_cd: str, user_query: str, memori
 
 
 def _gather_session_dialog_text(session_id: str, model_name=None, tokenizer=None, memory_limit_tokens=8000) -> str:
-    """セッション全体からユーザー発言+応答+フィードバックをテキスト化。
+    """Convert user utterances + responses + feedback from a whole session into text.
 
-    除外条件:
-      - SETTING.FLG="N" の seq（chat_history_active_dict が既に弾く）
-      - SETTING.MEMORY_FLG="N" の seq（メモリ参照対象外）
-      - sub_seq の setting.memory_flg="N"（メモリ参照対象外）
-    フィードバックは role="feedback" として末尾に付与（本人意思の強い表明として扱う）。
+    Exclusion conditions:
+      - SETTING.FLG="N" seqs (already filtered by chat_history_active_dict)
+      - SETTING.MEMORY_FLG="N" seqs (excluded from memory references)
+      - sub_seq with setting.memory_flg="N" (excluded from memory references)
+    Feedback is appended at the end with role="feedback" (treated as a strong expression of intent).
     """
     session = dms.DigiMSession(session_id)
     history = session.chat_history_active_dict or {}
@@ -173,14 +173,14 @@ def _gather_session_dialog_text(session_id: str, model_name=None, tokenizer=None
         seq_block = history[k]
         if not isinstance(seq_block, dict):
             continue
-        # seq単位のメモリ除外フラグ
+        # seq-level memory-exclusion flag
         if seq_block.get("SETTING", {}).get("MEMORY_FLG", "Y") == "N":
             continue
         for sk in sorted([s for s in seq_block.keys() if s != "SETTING"], key=lambda x: int(x) if x.isdigit() else 0):
             sub = seq_block.get(sk)
             if not isinstance(sub, dict):
                 continue
-            # sub_seq単位のメモリ除外フラグ
+            # sub_seq-level memory-exclusion flag
             if (sub.get("setting", {}) or {}).get("memory_flg", "Y") == "N":
                 continue
             q = (sub.get("prompt", {}) or {}).get("query", {}) or {}
@@ -191,7 +191,7 @@ def _gather_session_dialog_text(session_id: str, model_name=None, tokenizer=None
                 rows.append({"role": "user", "seq": k, "sub_seq": sk, "content": user_text})
             if assistant_text:
                 rows.append({"role": "assistant", "seq": k, "sub_seq": sk, "content": assistant_text})
-            # フィードバック（本人意思が強く出るところ）
+            # Feedback (a strong expression of intent)
             fb = sub.get("feedback") or {}
             if isinstance(fb, dict):
                 fb_parts = []
@@ -207,15 +207,15 @@ def _gather_session_dialog_text(session_id: str, model_name=None, tokenizer=None
     return json.dumps(rows, ensure_ascii=False)
 
 
-# ---------- History メモリ ----------
+# ---------- History memory ----------
 def generate_history(service_id: str, user_id: str, session_id: str) -> dict:
-    """セッションからHistoryメモリレコードを生成しupsert。生成したレコードを返す。"""
+    """Generate a History memory record from a session and upsert. Returns the created record."""
     session = dms.DigiMSession(session_id)
     session_name = session.session_name or dms.get_session_name(session_id)
     create_date = dms.get_last_update_date(session_id)
     dialog_text = _gather_session_dialog_text(session_id)
     if not dialog_text or dialog_text == "[]":
-        logger.info(f"[user_memory.history] 会話履歴が空のためスキップ session={session_id}")
+        logger.info(f"[user_memory.history] empty conversation; skipping session={session_id}")
         return {}
 
     raw = _run_agent(HISTORY_AGENT_FILE, "User Memory History", dialog_text)
@@ -245,15 +245,15 @@ def generate_history(service_id: str, user_id: str, session_id: str) -> dict:
     return rec
 
 
-# ---------- Nowaday メモリ ----------
-# 1回のNowaday生成でLLMに渡す history_records 全体の最大文字数
+# ---------- Nowaday memory ----------
+# Max characters of history_records passed to the LLM in a single Nowaday generation
 NOWADAY_INPUT_MAX_CHARS = int(os.getenv("USER_MEMORY_NOWADAY_MAX_CHARS") or "50000")
 
 
 def _trim_histories_by_chars(histories: list, max_chars: int) -> tuple:
-    """create_date降順に並べ、JSON化サイズの合計が max_chars 以内になるまで詰める。
+    """Sort by create_date descending and pack until the total JSON-serialized size fits within max_chars.
 
-    Returns: (selected: list[最新→古い順], total_chars: int, dropped_count: int)
+    Returns: (selected: list[newest -> oldest], total_chars: int, dropped_count: int)
     """
     sorted_h = sorted(histories, key=lambda r: r.get("create_date") or "", reverse=True)
     selected = []
@@ -276,13 +276,13 @@ def _trim_histories_by_chars(histories: list, max_chars: int) -> tuple:
 
 
 def _resolve_period_window(period: str):
-    """period から (start, end) のdatetime対を返す。
+    """Return a (start, end) datetime pair from a period spec.
 
-    "all" / 空 → (None, None) フィルタなし（全期間）
-    "since_YYYY-MM-DD" → その日以降〜今
-    "YYYY-MM" → その月の1日0:00 〜 翌月1日0:00
-    "rolling_<N>d" → 今からN日前 〜 今
-    上記以外 → (None, None) フィルタなし
+    "all" / empty -> (None, None) no filter (all periods)
+    "since_YYYY-MM-DD" -> from that date until now
+    "YYYY-MM" -> 0:00 of day 1 of that month -> 0:00 of day 1 of the next month
+    "rolling_<N>d" -> N days ago until now
+    Anything else -> (None, None) no filter
     """
     if not period or period == "all":
         return None, None
@@ -320,7 +320,7 @@ def _filter_histories_by_period(histories: list, period: str) -> list:
         try:
             cd = str(r.get("create_date") or "").strip().replace("Z", "+00:00")
             ts = datetime.fromisoformat(cd)
-            # Notion等はタイムゾーン付き(+00:00)。ウィンドウはnaiveなので揃える
+            # Notion etc. are timezone-aware (+00:00); the window is naive, so align them
             if ts.tzinfo is not None:
                 ts = ts.replace(tzinfo=None)
             if start <= ts < end:
@@ -331,23 +331,23 @@ def _filter_histories_by_period(histories: list, period: str) -> list:
 
 
 def build_nowaday_profile(service_id: str, user_id: str, period: str) -> dict:
-    """指定期間のHistoryを集約してNowadayプロファイルをupsert。
+    """Aggregate History within the period and upsert the Nowaday profile.
 
     period: "YYYY-MM" or "rolling_<N>d" or "since_YYYY-MM-DD" or "all"
     """
     histories_all = dmum.load_all("history", service_id=service_id, user_id=user_id)
     histories = _filter_histories_by_period(histories_all, period)
     if not histories:
-        logger.info(f"[user_memory.nowaday] 期間内のHistoryが0件 user={user_id} period={period}")
+        logger.info(f"[user_memory.nowaday] zero History rows in period user={user_id} period={period}")
         return {}
 
-    # コンテキストウインドウ対策: 最新優先で文字数上限まで切り詰め、古い順に並べ直す
+    # Context-window safety: truncate to the char cap (newest first), then reorder oldest -> newest
     selected_desc, total_chars, dropped_count = _trim_histories_by_chars(histories, NOWADAY_INPUT_MAX_CHARS)
     history_records_for_llm = list(reversed(selected_desc))
     if dropped_count > 0:
-        logger.info(f"[user_memory.nowaday] history切り詰め user={user_id} period={period} kept={len(history_records_for_llm)} dropped={dropped_count} chars={total_chars}/{NOWADAY_INPUT_MAX_CHARS}")
+        logger.info(f"[user_memory.nowaday] history truncated user={user_id} period={period} kept={len(history_records_for_llm)} dropped={dropped_count} chars={total_chars}/{NOWADAY_INPUT_MAX_CHARS}")
 
-    # 増分シード: 同 service/user/period の最新スナップショット（履歴方式のため複数あり得る）
+    # Incremental seed: latest snapshot for the same service/user/period (multiple may exist due to history-style storage)
     _same = [m for m in dmum.load_all("nowaday", service_id=service_id, user_id=user_id)
              if (m.get("period") or "") == period and (m.get("active") or "Y") == "Y"]
     _same.sort(key=lambda r: r.get("generated_at") or "", reverse=True)
@@ -377,7 +377,7 @@ def build_nowaday_profile(service_id: str, user_id: str, period: str) -> dict:
     raw = _run_agent(NOWADAY_AGENT_FILE, "User Memory Nowaday", json.dumps(payload, ensure_ascii=False))
     parsed = _parse_json_safely(raw)
     if not parsed:
-        logger.warning(f"[user_memory.nowaday] LLM出力パース失敗 user={user_id}")
+        logger.warning(f"[user_memory.nowaday] LLM output parse failed user={user_id}")
         return {}
 
     summary = (parsed.get("summary_text") or "").strip()
@@ -406,7 +406,7 @@ def build_nowaday_profile(service_id: str, user_id: str, period: str) -> dict:
 
 
 def build_nowaday_for_all_users(period: str) -> dict:
-    """全ユーザーのNowadayプロファイルを更新（Historyに登場するuser_idを対象）。"""
+    """Update Nowaday profile for all users (targets user_ids that appear in History)."""
     histories = dmum.load_all("history")
     pairs = {(r.get("service_id", ""), r.get("user_id", "")) for r in histories if r.get("user_id")}
     done, errors = [], []
@@ -416,25 +416,25 @@ def build_nowaday_for_all_users(period: str) -> dict:
             if rec:
                 done.append((sid, uid))
         except Exception as e:
-            logger.error(f"[user_memory.nowaday] {uid} で失敗: {e}")
+            logger.error(f"[user_memory.nowaday] failed for {uid}: {e}")
             errors.append((sid, uid))
     return {"done": done, "errors": errors}
 
 
-# ---------- Persona メモリ ----------
+# ---------- Persona memory ----------
 PERSONA_TOKEN_LIMIT = int(os.getenv("USER_MEMORY_PERSONA_TOKEN_LIMIT") or "3000")
-# 雑な日本語近似: 1トークン≒1.5文字。安全側に倒し1トークン=1文字で扱う。
+# Rough Japanese approximation: 1 token ~= 1.5 chars. We round down to 1 token = 1 char for safety.
 PERSONA_CHAR_LIMIT = PERSONA_TOKEN_LIMIT
-# confidence がこの値以上のpending項目は自動でapprovedへ昇格
+# pending items with confidence >= this threshold are auto-promoted to approved
 PERSONA_AUTO_APPROVE_THRESHOLD = float(os.getenv("USER_MEMORY_AUTO_APPROVE_THRESHOLD") or "0.8")
-# 各フィールド(expertise等)で保持する Approved + Pending ラベルの合計文字数上限
+# Per field (expertise, etc.), total character cap for Approved + Pending labels
 PERSONA_MAX_CHARS_PER_FIELD = int(os.getenv("USER_MEMORY_PERSONA_MAX_CHARS_PER_FIELD") or "300")
-# 有効ステータス: pending(未レビュー) / approved(承認済) / deleted(削除済)
+# Valid statuses: pending (unreviewed) / approved / deleted
 _VALID_STATUSES = ("pending", "approved", "deleted")
 
 
 def _normalize_status(status: str) -> str:
-    """旧 'edited' 等を 'approved' へ寄せる。それ以外は既存ステータス、未知は 'pending'。"""
+    """Coerce legacy values like 'edited' to 'approved'. Otherwise keep; unknown -> 'pending'."""
     s = (status or "").strip().lower()
     if s == "edited":
         return "approved"
@@ -452,11 +452,12 @@ def _trim_summary_text(summary: str, char_limit: int) -> str:
 
 
 def _merge_persona_lists(existing: list, new: list, max_chars: int = None) -> list:
-    """existing(承認済はキープ) と new をラベル単位でマージし、confidence>=閾値は自動承認。
+    """Merge existing (approved kept) with new at the label level; auto-approve when confidence >= threshold.
 
-    保持上限は max_chars（Approved + Pending ラベルの合計文字数）。デフォルトは
-    PERSONA_MAX_CHARS_PER_FIELD。Approved を優先 → 同status内は confidence 降順で詰める。
-    deletedは削除記憶として全て保持(集計対象外)。
+    The cap is max_chars (total character count of Approved + Pending labels). Default is
+    PERSONA_MAX_CHARS_PER_FIELD. Approved is prioritized; within the same status, packed by
+    descending confidence.
+    Deleted entries are retained entirely (for deletion memory; excluded from aggregation).
     """
     if max_chars is None:
         max_chars = PERSONA_MAX_CHARS_PER_FIELD
@@ -485,7 +486,7 @@ def _merge_persona_lists(existing: list, new: list, max_chars: int = None) -> li
             continue
         if lbl in by_label:
             cur = by_label[lbl]
-            # approvedは保護（信頼度のみ最大値で更新）。pendingは新値で上書き。deletedは触らない。
+            # approved is protected (only confidence updated to the max). pending is overwritten. deleted is untouched.
             if cur["status"] == "approved":
                 cur["confidence"] = max(cur["confidence"], float(item.get("confidence") or 0.0))
             elif cur["status"] == "pending":
@@ -497,19 +498,19 @@ def _merge_persona_lists(existing: list, new: list, max_chars: int = None) -> li
                 "status": "pending",
                 "evidence": [],
             }
-    # 自動承認: pending かつ confidence >= 閾値 → approved
+    # Auto-approve: pending with confidence >= threshold -> approved
     for v in by_label.values():
         if v["status"] == "pending" and v["confidence"] >= PERSONA_AUTO_APPROVE_THRESHOLD:
             v["status"] = "approved"
-    # deletedはマージ後も保持（再提案を弾く用途）
+    # deleted is kept after merge (to reject re-suggestion)
     items = list(by_label.values())
-    # status優先 (approved > pending > deleted) → confidence降順
+    # status priority (approved > pending > deleted) -> confidence descending
     status_order = {"approved": 0, "pending": 1, "deleted": 2}
     items.sort(key=lambda x: (status_order.get(x.get("status"), 9), -x.get("confidence", 0)))
     visible = [x for x in items if x.get("status") != "deleted"]
     deleted = [x for x in items if x.get("status") == "deleted"]
 
-    # 文字数で打ち切り (Approved + Pending の label 文字数合計 <= max_chars)
+    # Truncate by character count (Approved + Pending label total <= max_chars)
     visible_kept = []
     total_chars = 0
     for it in visible:
@@ -528,11 +529,11 @@ _PERSONA_LIST_FIELDS = (
 
 
 def _merge_big5(existing: dict, new: dict) -> dict:
-    """既存Persona.big5(approvedは保護) と LLM出力の big5 をトレイト単位でマージ。
+    """Merge existing Persona.big5 (approved is protected) with LLM-output big5 per trait.
 
-    - approved: スコアは保持。confidence のみ上振れたら更新。
-    - pending : 新値で上書き。confidence>=閾値で自動approvedへ昇格。
-    - 欠損トレイトは中央(0.5)で補完。
+    - approved: keep the score; only update confidence when the new value is higher.
+    - pending : overwrite with the new value. Promote to approved when confidence >= threshold.
+    - Missing traits are filled with the midpoint (0.5).
     """
     existing = existing if isinstance(existing, dict) else {}
     new = new if isinstance(new, dict) else {}
@@ -569,10 +570,10 @@ def _merge_big5(existing: dict, new: dict) -> dict:
 
 
 def merge_persona(service_id: str, user_id: str, nowaday_profiles=None, save: bool = True) -> dict:
-    """既存PersonaとNowadayプロファイルをLLMでマージし、Persona DBにupsert。
+    """Merge existing Persona with Nowaday profile(s) via the LLM and upsert the Persona DB.
 
-    nowaday_profiles: list[dict]  指定がなければ最新のNowaday 1件を使う。
-    save: False を渡すと upsert せず、下書きの rec のみ返す（UIプレビュー用）。
+    nowaday_profiles: list[dict]. If not given, use the latest single Nowaday.
+    save: when False, do not upsert; only return the draft rec (for UI preview).
     """
     existing = dmum.get_one("persona", {"service_id": service_id, "user_id": user_id}) or {}
     if nowaday_profiles is None:
@@ -594,13 +595,13 @@ def merge_persona(service_id: str, user_id: str, nowaday_profiles=None, save: bo
         ],
     }
     if not payload["nowaday_profiles"]:
-        logger.info(f"[user_memory.persona] Nowadayプロファイルがないためスキップ user={user_id}")
+        logger.info(f"[user_memory.persona] no Nowaday profile; skipping user={user_id}")
         return {}
 
     raw = _run_agent(PERSONA_AGENT_FILE, "User Memory Persona", json.dumps(payload, ensure_ascii=False))
     parsed = _parse_json_safely(raw)
     if not parsed:
-        logger.warning(f"[user_memory.persona] LLM出力パース失敗 user={user_id}")
+        logger.warning(f"[user_memory.persona] LLM output parse failed user={user_id}")
         return {}
 
     merged_lists = {}
@@ -630,12 +631,12 @@ def merge_persona(service_id: str, user_id: str, nowaday_profiles=None, save: bo
     return rec
 
 
-# ---------- 検証ループ用 ----------
+# ---------- For the verification loop ----------
 def update_persona_item_status(service_id: str, user_id: str, field: str, label: str, status: str, new_label: str = "") -> bool:
-    """Personaの1項目のstatusを更新（検証ループUIから呼ばれる）。
+    """Update the status of one Persona item (called from the verification-loop UI).
 
-    status: "approved" | "pending" | "deleted"  (旧 "edited" は "approved" として扱う)
-    new_label: 指定があればラベルを差し替える。
+    status: "approved" | "pending" | "deleted"  (legacy "edited" is treated as "approved")
+    new_label: if given, replace the label.
     """
     if field not in _PERSONA_LIST_FIELDS:
         return False
@@ -653,7 +654,7 @@ def update_persona_item_status(service_id: str, user_id: str, field: str, label:
         items[target_idx]["label"] = new_label
     existing[field] = items
     existing["last_reviewed"] = dmum.now_ts()
-    # service_id/user_idがなければ補完
+    # Fill in service_id/user_id if missing
     existing.setdefault("service_id", service_id)
     existing.setdefault("user_id", user_id)
     dmum.upsert("persona", existing)
@@ -661,14 +662,14 @@ def update_persona_item_status(service_id: str, user_id: str, field: str, label:
 
 
 def save_history_for_unsaved_sessions(service_id: str = "", user_id: str = "") -> dict:
-    """全セッションのうち user_dialog 状態が UNSAVED のものを処理し、DISCARDのものはdelete。"""
+    """Process sessions whose user_dialog is UNSAVED; delete those marked DISCARD."""
     sessions = dms.get_session_list()
     saved, discarded, errors = [], [], []
     for s in sessions:
         sid = s.get("id")
         if not sid:
             continue
-        # service_id/user_id でフィルタ
+        # Filter by service_id/user_id
         if service_id and s.get("service_id") != service_id:
             continue
         if user_id and s.get("user_id") != user_id:
@@ -686,25 +687,25 @@ def save_history_for_unsaved_sessions(service_id: str = "", user_id: str = "") -
                 dmum.delete("history", {"session_id": sid})
                 discarded.append(sid)
         except Exception as e:
-            logger.error(f"[user_memory.history] {sid} で失敗: {e}")
+            logger.error(f"[user_memory.history] failed for {sid}: {e}")
             errors.append(sid)
     return {"saved": saved, "discarded": discarded, "errors": errors}
 
 
-# ---------- 統合パイプライン ----------
+# ---------- Combined pipeline ----------
 def update_user_memory_pipeline(target_user_ids=None, period: str = "all", service_id: str = "") -> dict:
-    """History → Nowaday → Persona を順に処理する統合パイプライン。
+    """Combined pipeline that runs History -> Nowaday -> Persona in order.
 
     Args:
-        target_user_ids: 対象ユーザーIDのリスト。None または空 → 全ユーザー
-        period: Nowaday/Persona 更新時の期間フィルタ。"all" or "since_YYYY-MM-DD" or 既存形式
-        service_id: 対象サービスID(History側のセッション絞込みに使用)
+        target_user_ids: List of target user IDs. None or empty -> all users.
+        period: Period filter for Nowaday/Persona update. "all" or "since_YYYY-MM-DD" or the existing form.
+        service_id: Target service ID (used to filter sessions on the History side).
 
     Returns: {"history": {...}, "nowaday": [...], "persona": [...], "errors": [...]}
     """
     result = {"history": {}, "nowaday": [], "persona": [], "errors": []}
 
-    # 1. History: 対象ユーザー(または全ユーザー)のUNSAVEDセッションを処理
+    # 1. History: process UNSAVED sessions for the target users (or all users)
     if target_user_ids:
         per_user_history = {"saved": [], "discarded": [], "errors": []}
         for uid in target_user_ids:
@@ -716,7 +717,7 @@ def update_user_memory_pipeline(target_user_ids=None, period: str = "all", servi
     else:
         result["history"] = save_history_for_unsaved_sessions(service_id=service_id)
 
-    # 2. 対象ユーザーリストの確定: 引数優先、無ければ History DBに登場するユーザー
+    # 2. Resolve the target user list: argument first; otherwise users appearing in History
     if target_user_ids:
         users = [(service_id, uid) for uid in target_user_ids]
     else:
@@ -725,14 +726,14 @@ def update_user_memory_pipeline(target_user_ids=None, period: str = "all", servi
             histories = [r for r in histories if r.get("service_id") == service_id]
         users = sorted({(r.get("service_id", ""), r.get("user_id", "")) for r in histories if r.get("user_id")})
 
-    # 3. Nowaday → Persona を各ユーザーで実行
+    # 3. Run Nowaday -> Persona per user
     for sid, uid in users:
         try:
             nowaday_rec = build_nowaday_profile(sid, uid, period or "all")
             if nowaday_rec:
                 result["nowaday"].append((sid, uid))
         except Exception as e:
-            logger.error(f"[user_memory.pipeline] nowaday失敗 {uid}: {e}")
+            logger.error(f"[user_memory.pipeline] nowaday failed {uid}: {e}")
             result["errors"].append(("nowaday", uid, str(e)))
             continue
         try:
@@ -740,17 +741,17 @@ def update_user_memory_pipeline(target_user_ids=None, period: str = "all", servi
             if persona_rec:
                 result["persona"].append((sid, uid))
         except Exception as e:
-            logger.error(f"[user_memory.pipeline] persona失敗 {uid}: {e}")
+            logger.error(f"[user_memory.pipeline] persona failed {uid}: {e}")
             result["errors"].append(("persona", uid, str(e)))
 
     return result
 
 
-# ---------- バックフィル ----------
-# 既存レコードに後追いで感情(Plutchik) / Big5 を埋める。本番パイプラインの
-# generate_history / build_nowaday_profile / merge_persona は対話全文や全Historyから
-# 作り直すのに対し、こちらは既存レコードの圧縮済み出力(topic/excerpt/summary/list)から
-# 抜けているフィールドだけを埋める「狭い」プロンプトを使う。
+# ---------- Backfill ----------
+# Backfill emotions (Plutchik) / Big5 into existing records.
+# Unlike the production pipeline (generate_history / build_nowaday_profile / merge_persona)
+# that rebuilds from full conversations or all History, this backfill uses a "narrow" prompt
+# that fills only the missing fields from the compressed outputs (topic/excerpt/summary/list).
 _BACKFILL_HISTORY_PROMPT = """以下の対話セッション要点(topic / excerpt / axis_tags)から、ユーザーが示した特徴的な感情をプルチックの感情の輪に基づいて推定し、英語キーのリストで出力してください。
 
 候補(英語キーで返答):
@@ -811,7 +812,7 @@ def _backfill_one(prompt_template: str, payload: dict) -> dict:
 
 
 def backfill_history_record(rec: dict, dry_run: bool = False) -> dict:
-    """1件のHistoryレコードに emotions が無ければLLMで推定して埋める。"""
+    """If a single History record has no emotions, estimate via the LLM and fill it in."""
     if rec.get("emotions"):
         return {"action": "skip_existing", "session_id": rec.get("session_id")}
     parsed = _backfill_one(_BACKFILL_HISTORY_PROMPT, {
@@ -828,7 +829,7 @@ def backfill_history_record(rec: dict, dry_run: bool = False) -> dict:
 
 
 def backfill_nowaday_record(rec: dict, dry_run: bool = False) -> dict:
-    """1件のNowadayレコードに basic_emotions / secondary_emotions を埋める。"""
+    """Fill basic_emotions / secondary_emotions for a single Nowaday record."""
     has_basic = isinstance(rec.get("basic_emotions"), dict) and any(
         (v or 0) > 0 for v in (rec.get("basic_emotions") or {}).values()
     )
@@ -854,7 +855,7 @@ def backfill_nowaday_record(rec: dict, dry_run: bool = False) -> dict:
 
 
 def backfill_persona_record(rec: dict, dry_run: bool = False) -> dict:
-    """1件のPersonaレコードに big5 を埋める(既存approvedは保護)。"""
+    """Fill big5 for a single Persona record (existing approved values are preserved)."""
     big5 = rec.get("big5") or {}
     has_any = isinstance(big5, dict) and any(
         isinstance(big5.get(t), dict) and (big5[t].get("confidence") or 0) > 0 for t in BIG5_TRAITS
@@ -880,7 +881,7 @@ def backfill_persona_record(rec: dict, dry_run: bool = False) -> dict:
 
 
 def _ensure_backfill_schema(layer: str):
-    """Notionバックエンド時のみ、新フィールドのプロパティをDBに追加。"""
+    """Only with the Notion backend: add properties for the new fields to the DB."""
     if dmum.get_backend(layer) != "NOTION":
         logger.info(f"[user_memory.backfill][{layer}] backend={dmum.get_backend(layer)} schema check skipped")
         return
@@ -891,13 +892,13 @@ def _ensure_backfill_schema(layer: str):
 
 def backfill_user_memory(layer_filter: str = "", user_filter: str = "",
                          ensure_schema: bool = True, dry_run: bool = False) -> dict:
-    """全(or指定)層の既存レコードに感情/Big5を後追いで埋める。
+    """Backfill emotions / Big5 into existing records across all (or specified) layers.
 
     Args:
-        layer_filter: "history" / "nowaday" / "persona" / 空(=全層)
-        user_filter:  user_id で対象を絞る
-        ensure_schema: Notionバックエンド時にDBプロパティを自動追加
-        dry_run: 保存せずLLM結果のみ表示
+        layer_filter: "history" / "nowaday" / "persona" / empty (= all layers)
+        user_filter:  Filter target rows by user_id
+        ensure_schema: With the Notion backend, auto-add DB properties
+        dry_run: Only print LLM output; do not save
     """
     layers = ("history", "nowaday", "persona") if not layer_filter else (layer_filter,)
     if ensure_schema:
@@ -936,7 +937,7 @@ def backfill_user_memory(layer_filter: str = "", user_filter: str = "",
 
 
 # ---------- CLI ----------
-# 既存レコードへの感情/Big5バックフィル用エントリ。
+# CLI entry for backfilling emotions / Big5 into existing records.
 #   python3 DigiM_GeneUserMemory.py --backfill
 #   python3 DigiM_GeneUserMemory.py --backfill --layer history --user RealMatsumoto
 #   python3 DigiM_GeneUserMemory.py --backfill --dry-run
@@ -944,11 +945,11 @@ if __name__ == "__main__":
     import argparse
     logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
     parser = argparse.ArgumentParser(description="User memory utilities (backfill, etc.)")
-    parser.add_argument("--backfill", action="store_true", help="既存レコードに感情/Big5を後追いで埋める")
+    parser.add_argument("--backfill", action="store_true", help="Backfill emotions/Big5 into existing records")
     parser.add_argument("--layer", choices=("history", "nowaday", "persona"), default="")
-    parser.add_argument("--user", default="", help="user_id で対象を絞る")
-    parser.add_argument("--no-schema", action="store_true", help="Notionスキーマ自動追加をスキップ")
-    parser.add_argument("--dry-run", action="store_true", help="LLM呼び出しのみで保存しない")
+    parser.add_argument("--user", default="", help="Filter targets by user_id")
+    parser.add_argument("--no-schema", action="store_true", help="Skip auto-adding Notion schema properties")
+    parser.add_argument("--dry-run", action="store_true", help="Only call the LLM; do not save")
     args = parser.parse_args()
     if args.backfill:
         result = backfill_user_memory(

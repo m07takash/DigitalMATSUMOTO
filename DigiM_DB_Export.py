@@ -18,7 +18,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------------ #
-# 設定読み込み
+# Configuration loading
 # ------------------------------------------------------------------ #
 load_dotenv("system.env")
 
@@ -37,20 +37,20 @@ DB_CONFIG = {
     "sslmode":  "require",
 }
 
-# setting.yaml から取得
+# Loaded from setting.yaml
 _setting = read_yaml_file("setting.yaml")
 
 SESSION_PREFIX = _setting["SESSION_FOLDER_PREFIX"]  # "session"
 
 def _trunc(value, max_len: int) -> str | None:
-    """文字列をmax_len文字以内にトランケート（Noneはそのまま返す）"""
+    """Truncate a string to max_len characters (returns None unchanged)."""
     if value is None:
         return None
     s = str(value)
     return s[:max_len] if len(s) > max_len else s
 
 def _safe_ts(value) -> datetime | None:
-    """文字列をdatetimeに変換（失敗したらNone）"""
+    """Convert a string to datetime (returns None on failure)."""
     if not value:
         return None
     try:
@@ -59,7 +59,7 @@ def _safe_ts(value) -> datetime | None:
         return None
 
 def _session_created_date(session_id: str) -> datetime | None:
-    """session_id (例: 20260324_070640_0) から作成日時を導出"""
+    """Derive the creation datetime from session_id (e.g., 20260324_070640_0)."""
     m = re.match(r"^(\d{8})_(\d{6})", str(session_id))
     if m:
         try:
@@ -69,7 +69,7 @@ def _session_created_date(session_id: str) -> datetime | None:
     return None
 
 def _parse_duration(timestamp_log: str) -> float | None:
-    """timestamp_log から [21.LLM実行開始] ～ [22.LLM実行完了] の秒数を算出"""
+    """Compute the duration in seconds between [21.LLM start] and [22.LLM end] in timestamp_log."""
     if not timestamp_log:
         return None
     try:
@@ -84,31 +84,31 @@ def _parse_duration(timestamp_log: str) -> float | None:
     return None
 
 def _parse_knowledge_ref(ref_str: str) -> dict:
-    """LOG_TEMPLATE形式の文字列をdictに変換"""
+    """Parse a LOG_TEMPLATE-formatted string into a dict."""
     from DigiM_Util import parse_log_template
     return parse_log_template(ref_str)
 
 def _get_prompt_template(prompt: dict) -> str:
-    """prompt.prompt_template から設定名を取得"""
+    """Read the setting name from prompt.prompt_template."""
     pt = prompt.get("prompt_template")
     if isinstance(pt, dict):
         return pt.get("setting") or pt.get("name") or ""
     return str(pt) if pt else ""
 
 def _get_model_name(engine: dict) -> str:
-    """engine dict から MODEL を安全に取得（_configs/_default混入を無視）"""
+    """Safely read MODEL from the engine dict (ignore _configs / _default contamination)."""
     return engine.get("MODEL", "") if isinstance(engine, dict) else ""
 
 
 # ------------------------------------------------------------------ #
-# パース: セッション1件分
+# Parser: a single session
 # ------------------------------------------------------------------ #
 def parse_session(session_id: str, status: dict, memory: dict, from_seq: int = 0) -> tuple[dict, list[dict], list[dict]]:
     """
     Returns:
-        session_row  : dict  → digim_sessions 1行
-        dialog_rows  : list  → digim_dialogs N行 (seq > from_seq のみ)
-        ref_rows     : list  → digim_references N行
+        session_row  : dict  -> one row for digim_sessions
+        dialog_rows  : list  -> N rows for digim_dialogs (only seq > from_seq)
+        ref_rows     : list  -> N rows for digim_references
     """
     session_id = str(status.get("id", ""))
 
@@ -142,7 +142,7 @@ def parse_session(session_id: str, status: dict, memory: dict, from_seq: int = 0
 
         setting_block = seq_val.get("SETTING", {})
         flg = setting_block.get("FLG", "Y")
-        seq_memory_flg = setting_block.get("MEMORY_FLG", "Y")  # 後方互換: seq単位
+        seq_memory_flg = setting_block.get("MEMORY_FLG", "Y")  # Backward compat: seq-level
         practice_name = setting_block.get("practice", {}).get("NAME", "")
 
         for sub_key, sub_val in seq_val.items():
@@ -177,7 +177,7 @@ def parse_session(session_id: str, status: dict, memory: dict, from_seq: int = 0
             meta_used = isinstance(meta_cond, list) and len(meta_cond) > 0
 
             sit = query.get("situation", {})
-            # memory_flg: sub_seq.setting.memory_flg を優先、無ければseq単位のSETTING.MEMORY_FLG
+            # memory_flg: prefer sub_seq.setting.memory_flg; otherwise fall back to the seq-level SETTING.MEMORY_FLG
             memory_flg = setting.get("memory_flg") or seq_memory_flg
             dialog_row = {
                 "session_id":                session_id,
@@ -246,7 +246,7 @@ def parse_session(session_id: str, status: dict, memory: dict, from_seq: int = 0
     return session_row, dialog_rows, ref_rows
 
 # ------------------------------------------------------------------ #
-# DB書き込み
+# DB writes
 # ------------------------------------------------------------------ #
 INSERT_SESSION = """
 INSERT INTO digim_sessions
@@ -310,7 +310,7 @@ def write_session(cur, session_row: dict, dialog_rows: list, ref_rows: list):
     for dr in dialog_rows:
         cur.execute(INSERT_DIALOG, dr)
 
-        # dialog_id を取得
+        # Fetch dialog_id
         cur.execute(
             "SELECT id FROM digim_dialogs WHERE session_id=%s AND seq=%s AND sub_seq=%s",
             (dr["session_id"], dr["seq"], dr["sub_seq"])
@@ -321,7 +321,7 @@ def write_session(cur, session_row: dict, dialog_rows: list, ref_rows: list):
             continue
         dialog_id = row[0]
 
-        # このdialogに紐づくreference行を追加
+        # Add reference rows associated with this dialog
         count = dr["knowledge_ref_count"] or 0
         for rr in ref_rows[ref_idx: ref_idx + count]:
             rr["dialog_id"] = dialog_id
@@ -329,7 +329,7 @@ def write_session(cur, session_row: dict, dialog_rows: list, ref_rows: list):
         ref_idx += count
 
 # ------------------------------------------------------------------ #
-# メイン
+# Main entry
 # ------------------------------------------------------------------ #
 def main():
     conn = psycopg2.connect(**DB_CONFIG)
@@ -351,18 +351,18 @@ def main():
 
         if export_status == dms.DB_EXPORT_DONE:
             if last_seq >= memory_max_seq:
-                logger.info(f"[SKIP] {folder_name}: 書き込み済み (last_seq={last_seq})")
+                logger.info(f"[SKIP] {folder_name}: already written (last_seq={last_seq})")
                 skip += 1
                 continue
-            # 新しいseqが存在する → UNDO に更新してから差分書き込み
+            # A newer seq exists -> mark as UNDO and write the delta
             dms.save_db_export_undo(session_id, last_seq)
-            logger.info(f"[UNDO] {folder_name}: seq {last_seq+1}～{memory_max_seq} を追加書き込み")
+            logger.info(f"[UNDO] {folder_name}: appending seq {last_seq+1}-{memory_max_seq}")
         else:
-            # 未エクスポート or UNDO → UNDO (last_seq=0 or 既存値) でマーク
+            # Not yet exported or already UNDO -> mark as UNDO (last_seq=0 or the existing value)
             dms.save_db_export_undo(session_id, last_seq)
-            logger.info(f"[UNDO] {folder_name}: seq {last_seq+1}～{memory_max_seq} を書き込み")
+            logger.info(f"[UNDO] {folder_name}: writing seq {last_seq+1}-{memory_max_seq}")
 
-        from_seq = last_seq  # 0 なら全件、N なら seq > N を対象
+        from_seq = last_seq  # 0 = all rows; N = only seq > N
 
         try:
             session_row, dialog_rows, ref_rows = parse_session(session_id, status, memory, from_seq)
@@ -378,23 +378,23 @@ def main():
 
     cur.close()
     conn.close()
-    logger.info(f"完了 — 全{total}件: 書込={done} スキップ={skip} エラー={error}")
+    logger.info(f"Done -- total={total}: wrote={done} skipped={skip} errors={error}")
 
 # ------------------------------------------------------------------ #
-# ベクトル化
+# Vectorization
 # ------------------------------------------------------------------ #
-EMBED_MAX_CHARS = 4000  # 日本語1文字≒2トークン、8192トークン上限対策
-EMBED_BATCH     = 10    # 1バッチあたりの件数
-EMBED_SLEEP     = 1.0   # バッチ間の待機秒数（レート制限対策）
+EMBED_MAX_CHARS = 4000  # ~2 tokens per Japanese character; safety margin against the 8192-token limit
+EMBED_BATCH     = 10    # Records per batch
+EMBED_SLEEP     = 1.0   # Seconds to sleep between batches (rate-limit mitigation)
 
 def vectorize_dialogs():
-    """未ベクトル化の digim_dialogs レコードに query_vec / response_vec を設定する"""
+    """Populate query_vec / response_vec for un-vectorized digim_dialogs rows."""
     azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
     azure_api_key  = os.getenv("AZURE_OPENAI_API_KEY")
     embed_model    = os.getenv("AZURE_OPENAI_EMBED_MODEL", "text-embedding-3-large")
 
     if not all([azure_endpoint, azure_api_key]):
-        logger.warning("[VEC] AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_API_KEY が未設定のためスキップします")
+        logger.warning("[VEC] AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_API_KEY are not set; skipping")
         return
 
     client = AzureOpenAI(
@@ -414,7 +414,7 @@ def vectorize_dialogs():
           AND response_text IS NOT NULL
     """)
     total = cur.fetchone()[0]
-    logger.info(f"[VEC] 未ベクトル化件数: {total}件")
+    logger.info(f"[VEC] un-vectorized rows: {total}")
 
     if total == 0:
         cur.close()
@@ -460,12 +460,12 @@ def vectorize_dialogs():
                 logger.error(f"[VEC][ERR] id={row['id']}: {e}")
                 error += 1
 
-        logger.info(f"[VEC] 進捗: {done}/{total}件完了 (エラー: {error}件)")
+        logger.info(f"[VEC] progress: {done}/{total} done (errors: {error})")
         time.sleep(EMBED_SLEEP)
 
     cur.close()
     conn.close()
-    logger.info(f"[VEC] 完了 — 成功: {done}件 / エラー: {error}件")
+    logger.info(f"[VEC] done -- success: {done} / errors: {error}")
 
 
 if __name__ == "__main__":

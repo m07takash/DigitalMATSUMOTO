@@ -14,10 +14,10 @@ import calendar
 import datetime
 from datetime import datetime, timedelta
 
-# system.envファイルをロードして環境変数を設定
+# Load system.env and set environment variables
 load_dotenv("system.env")
 
-# Notion接続情報の設定
+# Notion connection info
 notion_version = os.getenv("NOTION_VERSION")
 notion_token = os.getenv("NOTION_TOKEN")
 notion_headers = {
@@ -28,20 +28,20 @@ notion_headers = {
 }
 #notion_client = Client(auth=notion_token)
 
-# 〇で囲まれた数値を・に変換する関数
+# Convert circled numbers (1-20) to bullets
 def circlenum_to_dots(text):
-    # Unicodeのエンコーディング範囲を使用して、①から⑳までの文字を検出し、・に置換
+    # Detect codepoints from 1 to 20 (circled) and replace each with a bullet
     for i in range(1, 21):
         text = text.replace(chr(0x245F + i), "・")
     return text
 
-# NotionページIDを指定してページを取得
+# Fetch a page by Notion page ID
 def get_page(page_id):
     notion_client = Client(auth=notion_token)
     page = notion_client.pages.retrieve(page_id=page_id)
     return page
 
-# ページIDを指定してタイトルを取得
+# Fetch the title field for a page ID
 def get_title_by_id(pages, page_id, item):
     for page in pages:
         if page['id'] == page_id:
@@ -57,13 +57,13 @@ def get_title_by_id(pages, page_id, item):
             return first.get('plain_text', "") or ""
     return ""
 
-# ページIDを指定して数値項目を取得
+# Fetch a number field for a page ID
 def get_num_by_id(pages, page_id, item):
     for page in pages:
         if page['id'] == page_id:
             return page["properties"][item]["number"]
 
-# ページIDを指定して日付項目を取得
+# Fetch a date field for a page ID
 def get_date_by_id(pages, page_id, item):
     date = ""
     for page in pages:
@@ -71,32 +71,32 @@ def get_date_by_id(pages, page_id, item):
             date = page['properties'][item]['date']['start'][:10]
             return date
 
-# ページIDを指定してリッチテキスト項目を取得
+# Fetch a rich-text field for a page ID
 def get_rich_text_by_id(pages, page_id, item):
     for page in pages:
         if page['id'] == page_id:
             return page['properties'][item]['rich_text']
 
-# ページIDを指定してリッチテキスト項目の文字列（フォント設定等を除いたもの）を取得
+# Fetch a rich-text field as a plain string (stripping font settings and similar)
 def get_rich_text_item_by_id(pages, page_id, item):
     rich_texts = get_rich_text_by_id(pages, page_id, item)
     content = ''.join([text['text']['content'] for text in rich_texts])
     return content
 
-# ページIDを指定してチェック項目を取得
+# Fetch a checkbox field for a page ID
 def get_chk_by_id(pages, page_id, item):
     for page in pages:
         if page['id'] == page_id:
             return page["properties"][item]["checkbox"]
 
-# ページIDを指定して評価結果を取得
+# Fetch the select (rating) field for a page ID
 def get_select_by_id(pages, page_id, item):
     for page in pages:
         if page['id'] == page_id:
             sel = page['properties'][item].get('select')
             return sel['name'] if sel else None
 
-# ページIDを指定してマルチセレクト項目を取得（名前のリストを返す）
+# Fetch a multi-select field for a page ID (returns a list of names)
 def get_multi_select_by_id(pages, page_id, item):
     for page in pages:
         if page['id'] == page_id:
@@ -104,7 +104,7 @@ def get_multi_select_by_id(pages, page_id, item):
             return [m.get('name') for m in multi if m.get('name')]
     return []
 
-# ページIDを指定してURLを取得
+# Fetch the URL field for a page ID
 def get_url_by_id(pages, page_id, item):
     for page in pages:
         if page['id'] == page_id:
@@ -114,7 +114,7 @@ def get_url_by_id(pages, page_id, item):
                 url = ""
             return url
 
-# ページIDを指定してアイテムのデータ型によって値を取得
+# Fetch a field value dispatched by its data type
 def get_notion_item_by_id(pages, page_id, item, item_type):
     item_data = ""
     if item_type == "title":
@@ -134,12 +134,12 @@ def get_notion_item_by_id(pages, page_id, item, item_type):
     elif item_type == "url":
         item_data = get_url_by_id(pages, page_id, item)
     else:
-        item_data = "item_type_error" #NotionDBに無い固定値の場合はSettingファイルの記載文字列を設定
+        item_data = "item_type_error"  # For fixed values not in the Notion DB, the string from the Setting file is used
     if isinstance(item_data, str):
         item_data = circlenum_to_dots(item_data)
     return item_data
 
-# Notionデータベースから全ページを取得
+# Fetch all page IDs from a Notion database
 def get_all_page_ids(database_id):
     has_more = True
     next_cursor = None
@@ -163,7 +163,7 @@ def get_all_page_ids(database_id):
 
     return [result["id"] for result in all_results]
 
-# Notionデータベースから全ページを取得
+# Fetch all page IDs from a Notion database
 def get_all_pages(database_id):
     has_more = True
     next_cursor = None
@@ -187,7 +187,7 @@ def get_all_pages(database_id):
 
     return all_results
 
-# Notionデータベースから確定済ページを取得
+# Fetch confirmed pages from a Notion database
 def get_pages_done(database_id, chk_dict=None, date_dict=None, category_dict=None):
     has_more = True
     next_cursor = None
@@ -233,7 +233,7 @@ def get_pages_done(database_id, chk_dict=None, date_dict=None, category_dict=Non
                             }
                         ]
                     })
-            ###【追加開発中】###
+            ### [Under development] ###
             if category_dict is not None:
                 for category_item, set_category in category_dict.items():
                     payload["filter"]["and"].append({
@@ -254,7 +254,7 @@ def get_pages_done(database_id, chk_dict=None, date_dict=None, category_dict=Non
         next_cursor = response_json.get("next_cursor")
     return all_results
 
-# Notionページへのデータ上書き(リッチテキスト)
+# Overwrite a Notion page property (rich text)
 def update_notion_rich_text(page_id, property_name, new_value):
     url = f"https://api.notion.com/v1/pages/{page_id}"
     data = {
@@ -270,16 +270,16 @@ def update_notion_rich_text(page_id, property_name, new_value):
     else:
         return f"Failed to update. Reason: {response.text}"
 
-# Notionページへのデータ上書き(リッチテキストの内容)
+# Overwrite a Notion page property (rich-text content)
 def update_notion_rich_text_content(page_id, property_name, new_value):
     url = f"https://api.notion.com/v1/pages/{page_id}"
 
-    # 文字列を2000文字ごとに分割してrich_textブロックの形式に変換
+    # Split the string into 2000-character chunks and convert to rich_text blocks
     max_length = 2000
     chunks = [new_value[i:i + max_length] for i in range(0, len(new_value), max_length)]
     rich_text_blocks = [{"text": {"content": chunk}} for chunk in chunks]
 
-    # Notion APIに送信するデータ
+    # Payload sent to the Notion API
     data = {
         "properties": {
             property_name: {
@@ -293,7 +293,7 @@ def update_notion_rich_text_content(page_id, property_name, new_value):
     else:
         return f"Failed to update. Reason: {response.text}"
 
-# Notionページのデータ上書き(数値)
+# Overwrite a Notion page property (number)
 def update_notion_num(page_id, property_name, new_value):
     url = f"https://api.notion.com/v1/pages/{page_id}"
     data = {
@@ -309,7 +309,7 @@ def update_notion_num(page_id, property_name, new_value):
     else:
         return f"Failed to update. Reason: {response.text}"
 
-# Notionページのデータ上書き(選択)
+# Overwrite a Notion page property (select)
 def update_notion_select(page_id, property_name, new_value):
     url = f"https://api.notion.com/v1/pages/{page_id}"
     data = {
@@ -327,7 +327,7 @@ def update_notion_select(page_id, property_name, new_value):
     else:
         return f"Failed to update. Reason: {response.text}"
 
-# Notionページのデータ上書き(日付)
+# Overwrite a Notion page property (date)
 def update_notion_date(page_id, date_name, date):
     url = f"https://api.notion.com/v1/pages/{page_id}"
     data = {
@@ -347,7 +347,7 @@ def update_notion_date(page_id, date_name, date):
     else:
         return f"Failed to update. Reason: {response.text}"
 
-# NotionページのURL更新
+# Update the URL field on a Notion page
 def update_notion_url(page_id, property_name, item):
     url = f"https://api.notion.com/v1/pages/{page_id}"
     data = {
@@ -363,7 +363,7 @@ def update_notion_url(page_id, property_name, item):
     else:
         return f"Failed to update. Reason: {response.text}"
 
-# Notionページの任意のChk項目の設定
+# Set an arbitrary checkbox field on a Notion page
 def update_notion_chk(page_id, chk_item, chk=True):
     url = f"https://api.notion.com/v1/pages/{page_id}"
     data = {
@@ -379,7 +379,7 @@ def update_notion_chk(page_id, chk_item, chk=True):
     else:
         return f"Failed to update. Reason: {response.text}"
 
-# Notionページへのデータ上書き（ブロック）
+# Overwrite a Notion page (block)
 def update_notion_block(page_id, text):
     url = f"https://api.notion.com/v1/blocks/{page_id}/children"
     data = {
@@ -397,7 +397,7 @@ def update_notion_block(page_id, text):
     if response.status_code != 200:
         logger.error(f"Failed to update. Reason: {response.text}")
 
-# Notionページへのデータ上書き（ブロック）
+# Overwrite a Notion page (block)
 def update_notion_block_bold(page_id, text):
     url = f"https://api.notion.com/v1/blocks/{page_id}/children"
     data = {
@@ -415,7 +415,7 @@ def update_notion_block_bold(page_id, text):
     if response.status_code != 200:
         logger.error(f"Failed to update. Reason: {response.text}")
 
-# NotionページIDを指定してアーカイブ
+# Archive a Notion page by ID
 def archive_page(page_id):
     update_payload = {
         "archived": True
@@ -424,11 +424,11 @@ def archive_page(page_id):
     if response.status_code != 200:
         logger.error(f"Error archiving page {page_id}. Response: {response.json()}")
 
-# リッチテキスト配列をプレーン文字列化
+# Convert a rich-text array to a plain string
 def _rich_text_to_plain(rich_text_array):
     return "".join([rt.get("plain_text", "") for rt in (rich_text_array or [])])
 
-# Notionブロック配列をMarkdown風テキストに変換（再帰対応）
+# Convert a Notion block array to Markdown-like text (recursive)
 def _blocks_to_text(blocks, indent=0):
     lines = []
     prefix = "  " * indent
@@ -471,7 +471,7 @@ def _blocks_to_text(blocks, indent=0):
                 lines.append(child_text)
     return "\n".join(lines)
 
-# 指定ブロックID配下のchildrenを取得（ページング対応）
+# Fetch children blocks under the specified block ID (with pagination)
 def _get_children_blocks(block_id):
     all_blocks = []
     has_more = True
@@ -491,16 +491,16 @@ def _get_children_blocks(block_id):
         next_cursor = response_json.get("next_cursor")
     return all_blocks
 
-# Notionページの本文をMarkdown風テキストで取得
+# Fetch a Notion page body as Markdown-like text
 def get_page_body_text(page_id):
     blocks = _get_children_blocks(page_id)
     return _blocks_to_text(blocks)
 
-# Notionページ追加処理
-def create_page(db_id, page_title, title_item="名前"):
+# Create a Notion page
+def create_page(db_id, page_title, title_item="名前"):  # title_item is the Notion property name (default "名前"=Name)
     page_content = []
 
-    # 名前が重複する記事はアーカイブ
+    # Archive entries whose title duplicates the new one
     #page_ids = get_all_page_ids(db_id)
     pages = get_all_pages(db_id)
     if pages:
@@ -508,9 +508,9 @@ def create_page(db_id, page_title, title_item="名前"):
             entry_title = get_title_by_id(pages, page["id"], title_item)
             if entry_title == page_title:
                 archive_page(page["id"])
-                logger.info(entry_title+"をアーカイブしました")
+                logger.info(f"Archived: {entry_title}")
 
-    # エントリ詳細を追加
+    # Append entry detail
     page_content.append({
         "object": 'block',
         "type": 'paragraph',
@@ -523,7 +523,7 @@ def create_page(db_id, page_title, title_item="名前"):
             }
         },)
 
-    # Notionに新しいページを追加
+    # Create a new page in Notion
     payload = {
         "parent": {"database_id": db_id},
         "properties": {
@@ -539,8 +539,8 @@ def create_page(db_id, page_title, title_item="名前"):
         }
     response = requests.post("https://api.notion.com/v1/pages", headers=notion_headers, json=payload)
     response_json = response.json()
-    logger.info(page_title+"を作成しました")
+    logger.info(f"Created: {page_title}")
 
     if response.status_code != 200:
-        logger.error(f"エラーが発生しました。 {page_title}: {response_json}")
+        logger.error(f"Error creating {page_title}: {response_json}")
     return response_json

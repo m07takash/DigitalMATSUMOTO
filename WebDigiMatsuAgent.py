@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 import pytz
 from dotenv import load_dotenv
 
-# Streamlitインポート前にconfig.tomlを生成（アップロード上限の設定）
+# Generate config.toml before importing Streamlit (configures upload size limit)
 if os.path.exists("system.env"):
     load_dotenv("system.env", override=False)
 _max_upload = os.getenv("WEB_MAX_UPLOAD_SIZE", "500")
@@ -36,7 +36,7 @@ import DigiM_DB_Export as dmdbe
 import DigiM_AgentPersona as dap
 import DigiM_Scheduler as dmsch
 
-# バックグラウンドスケジューラ起動（setting.yaml の SCHEDULES に従う / "off" のみならスキップ）
+# Start the background scheduler (follows SCHEDULES in setting.yaml; skips when only "off")
 try:
     dmsch.start_all()
 except Exception:
@@ -64,7 +64,7 @@ class AppConfig:
 
 @st.cache_resource(show_spinner=False)
 def load_config() -> AppConfig:
-    # system.env は基本固定。ここで 1 回だけ読む
+    # system.env is essentially fixed; read it just once here
     if os.path.exists("system.env"):
         load_dotenv("system.env")
 
@@ -86,16 +86,16 @@ def load_config() -> AppConfig:
         web_default_agent_file=os.getenv("WEB_DEFAULT_AGENT_FILE"),
     )
 
-# 設定のキャッシュ
+# Cached settings
 cfg = load_config()
 
-# setting.yamlからフォルダパスなどを設定
+# Load folder paths and other settings from setting.yaml
 session_folder_prefix = cfg.session_folder_prefix
 agent_folder_path = cfg.agent_folder_path
 temp_folder_path = cfg.temp_folder_path
 mst_folder_path = cfg.mst_folder_path
 
-# system.envファイルをロードして環境変数を設定
+# Load system.env and set environment variables
 if os.path.exists("system.env"):
     load_dotenv("system.env")
 web_title = cfg.web_title
@@ -160,7 +160,7 @@ if 'last_archive_zip' not in st.session_state:
 if '_bg_task' not in st.session_state:
     st.session_state._bg_task = None  # {"type": "rag"|"knowledge"|"compare", "message": "..."}
 
-# DB接続情報が設定されているか確認
+# Check whether DB connection info is configured
 _db_configured = all([
     os.getenv("POSTGRES_HOST"),
     os.getenv("POSTGRES_DB"),
@@ -168,14 +168,14 @@ _db_configured = all([
     os.getenv("POSTGRES_PASSWORD"),
 ])
 
-# 時刻の設定
+# Time setup
 tz = pytz.timezone(cfg.timezone)
 now_time = datetime.now(tz)
 
-# Streamlitの設定
+# Streamlit settings
 st.set_page_config(page_title=web_title, layout="wide")
 
-# --- Cookie認証 ---
+# --- Cookie authentication ---
 _COOKIE_NAME = "digim_auth"
 _COOKIE_SECRET = os.getenv("COOKIE_SECRET", "digim_default_secret_key_2026")
 _COOKIE_EXPIRY_DAYS = 7
@@ -185,12 +185,12 @@ def _get_cookie_manager():
         st.session_state._cookie_manager = stx.CookieManager()
     return st.session_state._cookie_manager
 
-# user_idからHMACトークンを生成
+# Generate an HMAC token from user_id
 def _make_auth_token(user_id: str) -> str:
     sig = hmac.new(_COOKIE_SECRET.encode(), user_id.encode(), hashlib.sha256).hexdigest()
     return f"{user_id}:{sig}"
 
-# トークンを検証してuser_idを返す。不正ならNone
+# Verify the token and return user_id; None when invalid
 def _verify_auth_token(token: str):
     if not token or ":" not in token:
         return None
@@ -200,25 +200,25 @@ def _verify_auth_token(token: str):
         return user_id
     return None
 
-# ログイン成功時にCookieを設定
+# Set the cookie on successful login
 def _set_auth_cookie(cookie_manager, user_id: str):
     token = _make_auth_token(user_id)
     expires = datetime.now() + timedelta(days=_COOKIE_EXPIRY_DAYS)
     cookie_manager.set(_COOKIE_NAME, token, expires_at=expires)
 
-# ログアウト時にCookieを削除（KeyError回避のため期限切れで上書き）
+# Delete the cookie on logout (overwrite with an expired value to avoid KeyError)
 def _clear_auth_cookie(cookie_manager):
     try:
         expires = datetime.now() - timedelta(days=1)
         cookie_manager.set(_COOKIE_NAME, "", expires_at=expires)
     except Exception:
-        # 念のためのフォールバック（内部キャッシュに存在しない場合のKeyError等）
+        # Safety fallback (KeyError etc. when not in the internal cache)
         try:
             cookie_manager.delete(_COOKIE_NAME)
         except Exception:
             pass
 
-# ユーザーログイン（JSON / RDB は LOGIN_AUTH_METHOD で切替。詳細は DigiM_Auth.py 参照）
+# User login (JSON / RDB switched by LOGIN_AUTH_METHOD; see DigiM_Auth.py for details)
 import DigiM_Auth as dma_auth
 
 
@@ -226,30 +226,30 @@ def load_user_master():
     return dma_auth.load_user_master()
 
 
-# ログインユーザー情報の保持
+# Hold logged-in user info
 def save_user_master(users: dict):
-    """ユーザーマスタを保存（PWは平文/ハッシュどちらも許容）"""
+    """Save the user master (PW accepts both plaintext and hash)."""
     dma_auth.save_user_master(users)
 
-# パスワード変更
+# Change password
 def change_password(user_id: str, current_pw: str, new_pw: str) -> tuple[bool, str]:
-    """ログイン中ユーザーのパスワード変更。成功時はハッシュで保存する。"""
+    """Change the logged-in user's password. On success, save as a hash."""
     users = load_user_master()
     user_info = users.get(user_id)
     if not user_info:
-        return False, "ユーザーが見つかりませんでした。"
+        return False, "User not found."
     stored_pw = user_info.get("PW", "")
     if not dmu.verify_password(current_pw, stored_pw):
-        return False, "現在のパスワードが正しくありません。"
+        return False, "Current password is incorrect."
 
-    # 新PWをハッシュ化して保存（UIからは必ずハッシュ保存）
+    # Hash and save the new password (always store as a hash from the UI)
     users[user_id]["PW"] = dmu.hash_password(new_pw)
     save_user_master(users)
-    return True, "パスワードを変更しました。"
+    return True, "Password changed."
 
-# ログインユーザー情報をセッションに設定
+# Set logged-in user info into the session state
 def set_login_user_to_session(user_id: str, user_info: dict):
-    # Groupは文字列・リストの両方を受け付け、内部的にはリストに正規化
+    # Group accepts both string and list; normalized to a list internally
     raw_group = user_info.get("Group", "")
     if isinstance(raw_group, list):
         groups = [g for g in raw_group if g]
@@ -279,16 +279,16 @@ def set_login_user_to_session(user_id: str, user_info: dict):
     if st.session_state.login_user["Allowed"]:
         user_allowed_parameter(st.session_state.login_user["Allowed"])
 
-# ログイン処理
+# Login flow
 def ensure_login():
-    # すでにログイン済みなら何もしない
+    # If already logged in, do nothing
     if "login_user" in st.session_state and st.session_state.login_user:
         return
 
-    # Cookie認証: session_stateが消えてもCookieから復元
+    # Cookie auth: restore from cookie even if session_state is lost
     cookie_manager = _get_cookie_manager()
-    # 直前にLogoutした場合は、Cookie削除がブラウザ側に反映される前の再描画で
-    # 自動再ログインしてしまわないよう、この1回はCookie復元をスキップする
+    # If we just logged out, skip the cookie restore once so the rerender that fires
+    # before the browser-side cookie deletion takes effect does not auto re-login
     if st.session_state.pop("_just_logged_out", False):
         auth_token = None
     else:
@@ -299,7 +299,7 @@ def ensure_login():
             try:
                 users = load_user_master()
             except Exception:
-                # cookie復元時のロード失敗はログインフォームでもう一度ハンドリングする
+                # Load failures during cookie restore are re-handled in the login form
                 users = {}
             user_info = users.get(cookie_user_id)
             if user_info:
@@ -310,19 +310,19 @@ def ensure_login():
     st.title(web_title)
     st.subheader("Login:")
 
-    # ユーザーマスタの読み込み（LOGIN_AUTH_METHOD: JSON / RDB）
+    # Load the user master (LOGIN_AUTH_METHOD: JSON / RDB)
     try:
         users = load_user_master()
     except Exception as e:
-        st.error(f"ユーザーマスタの読み込みに失敗しました（LOGIN_AUTH_METHOD={dma_auth.get_method()}）: {e}")
+        st.error(f"Failed to load the user master (LOGIN_AUTH_METHOD={dma_auth.get_method()}): {e}")
         st.stop()
     if not users:
-        st.error(f"ユーザーマスタが空です（LOGIN_AUTH_METHOD={dma_auth.get_method()}）。マスタを設定してください。")
+        st.error(f"User master is empty (LOGIN_AUTH_METHOD={dma_auth.get_method()}). Please configure the master.")
         st.stop()
 
     tab_login, tab_change = st.tabs(["Login", "Change Password"])
 
-    # ログインフォーム
+    # Login form
     with tab_login:
         with st.form("login_form"):
             input_user_id = st.text_input("User ID")
@@ -334,29 +334,29 @@ def ensure_login():
             user_info = users.get(input_user_id)
             stored_pw = (user_info or {}).get("PW", "")
 
-            # PWは平文/ハッシュの両対応（DigiM_Util.verify_password が判定）
+            # PW accepts both plaintext and hash (DigiM_Util.verify_password decides)
             if user_info and dmu.verify_password(input_pw, stored_pw):
-                # 旧仕様（平文PW）のままログインできた場合は、次回以降のために自動でハッシュへ移行
+                # If login succeeded with the legacy plaintext PW, auto-migrate to a hash for next time
                 if stored_pw and not (isinstance(stored_pw, str) and stored_pw.startswith(("$2a$", "$2b$", "$2y$"))):
                     try:
                         users[input_user_id]["PW"] = dmu.hash_password(input_pw)
                         save_user_master(users)
                     except Exception:
-                        # 移行に失敗してもログイン自体は継続
+                        # Even if the migration fails, allow login to proceed
                         pass
 
                 set_login_user_to_session(input_user_id, user_info)
                 if remember_me:
                     _set_auth_cookie(cookie_manager, input_user_id)
-                st.success("ログインしました")
+                st.success("Logged in")
                 refresh_session_states()
                 st.rerun()
             else:
-                st.error("ユーザーID または パスワードが正しくありません")
+                st.error("User ID or password is incorrect")
 
-    # --- Change Password (ログイン前に実施できる方式：User ID + 現在PWで本人確認) ---
+    # --- Change Password (executable before login: identify by User ID + current PW) ---
     with tab_change:
-        st.caption("User ID と現在のパスワードを入力して、パスワードを変更します。")
+        st.caption("Enter your User ID and current password to change it.")
         with st.form("change_password_form"):
             cp_user_id = st.text_input("User ID", key="cp_user_id")
             cp_current_pw = st.text_input("Current Password", type="password", key="cp_current_pw")
@@ -369,25 +369,25 @@ def ensure_login():
             stored_pw = (user_info or {}).get("PW", "")
 
             if not user_info:
-                st.error("ユーザーID が見つかりません")
+                st.error("User ID not found")
             elif not dmu.verify_password(cp_current_pw, stored_pw):
-                st.error("現在のパスワードが正しくありません")
+                st.error("Current password is incorrect")
             elif not cp_new_pw:
-                st.error("新しいパスワードを入力してください")
+                st.error("Please enter the new password")
             elif cp_new_pw != cp_new_pw2:
-                st.error("新しいパスワード（確認）が一致しません")
+                st.error("The new password confirmation does not match")
             else:
                 try:
                     users[cp_user_id]["PW"] = dmu.hash_password(cp_new_pw)
                     save_user_master(users)
-                    st.success("パスワードを変更しました。Login タブからログインしてください。")
+                    st.success("Password changed. Please log in from the Login tab.")
                 except Exception as e:
-                    st.error(f"保存に失敗しました: {e}")
+                    st.error(f"Save failed: {e}")
 
-    # ここで処理を止めて、ログイン画面以降を表示させない
+    # Stop here so nothing after the login screen is rendered
     st.stop()
 
-# ユーザーの利用可能な画面機能の設定
+# Configure which UI features are available to the user
 def user_allowed_parameter(allowded_dict):
     st.session_state.allowed_rag_management = allowded_dict.get("RAG Management", True)
     st.session_state.allowed_knowledge_explorer = allowded_dict.get("Knowledge Explorer", True)
@@ -407,7 +407,7 @@ def user_allowed_parameter(allowded_dict):
     st.session_state.allowed_user_memory = allowded_dict.get("User Memory", True)
     st.session_state.allowed_scheduler = allowded_dict.get("Scheduler", False)
 
-# バックグラウンドタスク実行ヘルパー
+# Background task execution helper
 import threading as _threading
 
 import json as _json
@@ -436,7 +436,7 @@ def _clear_bg_task_status():
     except FileNotFoundError:
         pass
 
-# バックグラウンドでタスクを実行し、完了時にファイルフラグを立てる
+# Execute the task in the background and set a file-flag on completion
 def _run_bg_task(task_type, message, func, *args, **kwargs):
     st.session_state._bg_task = {"type": task_type, "message": message}
     _task_file = _bg_task_path()
@@ -466,7 +466,7 @@ def _run_bg_task(task_type, message, func, *args, **kwargs):
     djr.register_job(_job_id, _thread, task_type, message, user_id=_user_id)
     _thread.start()
 
-# セッションステートの初期宣言
+# Initial declarations of the session state
 def initialize_session_states():
     if 'web_service' not in st.session_state:
         st.session_state.web_service = dict(web_default_service)
@@ -491,7 +491,7 @@ def initialize_session_states():
     if 'agent_list' not in st.session_state:
         st.session_state.agent_list = [a1["AGENT"] for a1 in st.session_state.agents]
     if 'agent_list_index' not in st.session_state:
-        # default_agent がユーザのGroupで非表示の場合は先頭エージェントにフォールバック
+        # If default_agent is hidden for the user's Group, fall back to the first agent
         if st.session_state.display_name in st.session_state.agent_list:
             st.session_state.agent_list_index = st.session_state.agent_list.index(st.session_state.display_name)
         else:
@@ -577,8 +577,8 @@ def initialize_session_states():
     if 'file_uploader' not in st.session_state:
         st.session_state.file_uploader = st.file_uploader
     if 'file_uploader_key' not in st.session_state:
-        # ファイルアップローダーのkeyに使うカウンター。実行完了時にインクリメントして
-        # ウィジェットを「新しいインスタンス」として扱わせ、添付ファイルをクリアする
+        # Counter used as the file uploader key. Incrementing on completion makes Streamlit
+        # treat the widget as a fresh instance, which clears the attachment.
         st.session_state.file_uploader_key = 0
     if 'url_fetch_subpages' not in st.session_state:
         st.session_state.url_fetch_subpages = False
@@ -607,15 +607,15 @@ def initialize_session_states():
     if 'analytics_dimension_mode_compare' not in st.session_state:
         st.session_state.analytics_dimension_mode_compare = {}
 
-# セッション変数のリフレッシュ
+# Refresh session variables
 def refresh_session_states():
     st.session_state.web_service = dict(web_default_service)
     st.session_state.web_service["SERVICE_ID"] = st.session_state.service_id
     st.session_state.web_user = dict(web_default_user)
     st.session_state.web_user["USER_ID"] = st.session_state.user_id
     st.session_state.sidebar_message = ""
-    # User Memory のセッション内一時状態をリセット
-    # - 層チェックボックスは「マスタ保存値」に強制リセット（del だけだと Streamlit のウィジェット記憶で戻らないため）
+    # Reset transient session state for User Memory
+    # - Layer checkboxes are force-reset to the persisted master value (a plain del does not work because Streamlit remembers the widget state)
     try:
         import DigiM_UserMemorySetting as _dmus_reset
         _master_layers = _dmus_reset.load_user_setting(st.session_state.user_id).get("layers", [])
@@ -627,7 +627,7 @@ def refresh_session_states():
     st.session_state.display_name = st.session_state.default_agent
     st.session_state.agents = dma.get_display_agents(st.session_state.group_cd)
     st.session_state.agent_list = [a1["AGENT"] for a1 in st.session_state.agents]
-    # default_agent がユーザのGroupで非表示の場合は先頭エージェントにフォールバック
+    # If default_agent is hidden for the user's Group, fall back to the first agent
     if st.session_state.display_name in st.session_state.agent_list:
         st.session_state.agent_list_index = st.session_state.agent_list.index(st.session_state.display_name)
     else:
@@ -680,7 +680,7 @@ def refresh_session_states():
     st.session_state.analytics_knowledge_mode_compare = ""
     st.session_state.analytics_dimension_mode_compare = {}
 
-# セッションのリフレッシュ（ヒストリーを更新するために、同一セッションIDで再度Sessionクラスを呼び出すこともある）
+# Refresh the session (sometimes the Session class is re-instantiated with the same session ID to refresh history)
 def refresh_session(session_id, session_name, situation, new_session_flg=False):
     st.session_state._bg_user_input = ""
     st.session_state.is_processing = False
@@ -733,13 +733,13 @@ def refresh_session(session_id, session_name, situation, new_session_flg=False):
     st.session_state.overwrite_flg_rag = False
     #st.rerun()
 
-# セッションリストのリフレッシュ
+# Refresh the session list
 def refresh_session_list(service_id, user_id, user_admin_flg):
     st.session_state.session_list = dms.get_session_list_visible(service_id, user_id, user_admin_flg)
     st.session_state.session_inactive_list = dms.get_session_list_inactive_visible(service_id, user_id, user_admin_flg)
     st.session_state.session_inactive_list_selected = []
 
-# AIレスポンスのクリップボードコピーボタン
+# Copy-to-clipboard button for the AI response
 def render_copy_button(text, key):
     import html as _html
     escaped = _html.escape(text).replace("`", "\\`").replace("$", "\\$")
@@ -748,7 +748,7 @@ def render_copy_button(text, key):
     style="background:transparent;border:1px solid #888;border-radius:4px;padding:2px 10px;cursor:pointer;font-size:12px;color:#888;">Copy</button>
     """, height=32)
 
-# アップロードしたファイルの表示
+# Display the uploaded file
 def show_uploaded_files_memory(seq_key, file_path, file_name, file_type):
     uploaded_file = file_path+file_name
     if "text" in file_type:
@@ -762,9 +762,9 @@ def show_uploaded_files_memory(seq_key, file_path, file_name, file_type):
         df = pd.read_excel(uploaded_file)
         st.dataframe(df)
     elif "image" in file_type:
-        # st.image(path) は拡張子からMIME判定するため拡張子と実フォーマットが
-        # 一致しない場合（例: 中身JPEGなのに .png）に表示されない。
-        # バイトで渡してStreamlit側のフォーマット自動判定に任せる。
+        # st.image(path) infers MIME from the extension, so it fails to display when the
+        # extension and the actual format mismatch (e.g. JPEG bytes inside a .png file).
+        # Pass bytes and let Streamlit auto-detect the format.
         try:
             with open(uploaded_file, "rb") as _f:
                 st.image(_f.read())
@@ -775,7 +775,7 @@ def show_uploaded_files_memory(seq_key, file_path, file_name, file_type):
     elif "audio" in file_type:
         st.audio(uploaded_file)
 
-# ファイルアップローダー(Widget)で添付したファイルの表示
+# Display files attached via the file-uploader widget
 def show_uploaded_files_widget(uploaded_files):
     for uploaded_file in uploaded_files:
         file_type = uploaded_file.type
@@ -795,7 +795,7 @@ def show_uploaded_files_widget(uploaded_files):
         elif "audio" in file_type:
             st.audio(uploaded_file)
 
-# ダウンロード用ファイル形式の設定
+# Configure file formats for download
 def set_dl_file(chat_history, dl_type="Chats Only", file_id="Chat_History"):
     markdown_lines = []
     for msg in chat_history:
@@ -813,7 +813,7 @@ def set_dl_file(chat_history, dl_type="Chats Only", file_id="Chat_History"):
     return data, file_name, mime
 
 def set_dl_pdf(chat_history, dl_type="Chats Only", file_id="Chat_History"):
-    """チャット履歴をPDFバイト列として返す"""
+    """Return chat history as PDF bytes."""
     from fpdf import FPDF
     import logging as _log
     _log.getLogger("pdf").info(f"set_dl_pdf: {len(chat_history)} messages, dl_type={dl_type}")
@@ -849,7 +849,7 @@ def set_dl_pdf(chat_history, dl_type="Chats Only", file_id="Chat_History"):
                     pdf.image(msg["image"], w=100)
                     pdf.ln(3)
                 except Exception:
-                    pdf.cell(_w, 6, f"[画像]", new_x="LMARGIN", new_y="NEXT")
+                    pdf.cell(_w, 6, f"[image]", new_x="LMARGIN", new_y="NEXT")
             pdf.set_draw_color(200, 200, 200)
             pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
             pdf.ln(4)
@@ -860,23 +860,24 @@ def set_dl_pdf(chat_history, dl_type="Chats Only", file_id="Chat_History"):
 
 def seq_label(x: str) -> str:
     return {
-        "0": "クエリ①「入力そのまま」",
-        "1": "クエリ②「会話履歴付き入力」",
-        "2": "クエリ③「入力の意図」",
+        "0": "Query 1 (raw input)",
+        "1": "Query 2 (input + chat history)",
+        "2": "Query 3 (intent of the input)",
     }.get(x, x)
 
 def mode_label(x: str) -> str:
     if x == "NORMAL":
         return ""
     if isinstance(x, str) and x.startswith("(META_SEARCH:"):
-        return "＋期間の絞込"
+        return " + period filter"
     return x
 
 def _resolve_ku_file(_folder, _seq, _sub, _candidates, _logical_key, _rag):
-    """Knowledge Utility画像の実ファイル名を解決する。
-    1) 保存済み候補が実在すればそれを使う
-    2) 無ければセッション名に依存せず {seq}-{sub}-*<種別>*_{rag}.{ext} でglob補完
-    （セッション名が途中で変わってもファイルを見失わないようにするため）"""
+    """Resolve the actual file name for a Knowledge Utility image.
+    1) If a saved candidate exists, use it.
+    2) Otherwise, glob-fallback to {seq}-{sub}-*<kind>*_{rag}.{ext} (session-name independent),
+    so the file is not lost when the session name changes mid-session.
+    """
     _ext = "csv" if "csv" in str(_logical_key) else "png"
     for _f in (_candidates or []):
         if _f and str(_f).endswith(f"_{_rag}.{_ext}") and os.path.exists(os.path.join(_folder, _f)):
@@ -904,15 +905,15 @@ def ak_line(ak_dict):
     sa = ak_dict.get("similarity_A", "")
     ku = ak_dict.get("knowledge_utility", "")
 
-    # 数値は小数3桁に整形（数値でなければそのまま）
+    # Format numeric values to 3 decimal places (non-numeric passes through)
     fmt = lambda x: f"{x:.3f}" if isinstance(x, (int, float)) else x
     line = (
-        f'{title}（質問との近さ：{fmt(sq)}→回答との近さ：{fmt(sa)}'
-        f'=知識活用性：{fmt(ku)}）{query_seq}{query_mode}'
+        f'{title} (Q similarity: {fmt(sq)} -> A similarity: {fmt(sa)}'
+        f' = knowledge utility: {fmt(ku)}) {query_seq}{query_mode}'
     )
     return line
 
-### Knowledge Explorer画面 ###
+### Knowledge Explorer screen ###
 def _agent_engine_selectors(label, kp):
     _c1, _c2 = st.columns([1, 1])
     _al = st.session_state.agent_list
@@ -932,7 +933,7 @@ def _agent_engine_selectors(label, kp):
             _aj = {}
     _el = [e for e in _aj.get("ENGINE", {}).get("LLM", {}).keys() if e != "DEFAULT"]
     _eng = _c2.selectbox(f"{label} Engine:", _el, key=f"{kp}_expl_engine") if _el else None
-    # このエージェントがペルソナを持つ場合、ペルソナを1つ選択可能（任意・(none)で未適用）
+    # If this agent has personas, allow selecting one (optional; "(none)" means no override)
     _persona = None
     _pfiles = _aj.get("PERSONA_FILES")
     if _af and _pfiles:
@@ -949,18 +950,18 @@ def _agent_engine_selectors(label, kp):
     return _af, _ag, _eng, _persona
 
 def _explanation_block(state_base, template_name, fallback_agent, ctx_builder, label, kp, postprocess=None):
-    """解説: エージェント+エンジン選択→複数回実行→ドロップダウンで1件表示。表示中テキストを返す。"""
+    """Explanation: pick agent + engine, run multiple times, show one via a dropdown. Returns the currently displayed text."""
     _hk = f"{state_base}_history"
     _sk = f"{state_base}_sel"
-    st.markdown(f"**{label}の解説:**")
+    st.markdown(f"**{label} explanation:**")
     _af, _ag, _eng, _persona = _agent_engine_selectors(label, kp)
     if st.button(f"Explain {label}", key=f"{kp}_expl_run"):
         _ctx = ctx_builder()
         if not _ctx:
-            st.warning("解説対象のデータがありません。先に分析を実行してください。")
+            st.warning("No data to explain. Please run the analysis first.")
         else:
             _use_af = _af or fallback_agent
-            with st.spinner(f"{label}を解説中..."):
+            with st.spinner(f"Explaining {label}..."):
                 try:
                     _agent = dma.DigiM_Agent(_use_af, persona=_persona) if _persona else dma.DigiM_Agent(_use_af)
                     if _eng and _eng in _agent.agent.get("ENGINE", {}).get("LLM", {}):
@@ -988,7 +989,7 @@ def _explanation_block(state_base, template_name, fallback_agent, ctx_builder, l
                     st.session_state[_hk] = _h
                     st.session_state[_sk] = len(_h) - 1
                 except Exception as e:
-                    st.error(f"{label}解説エラー: {e}")
+                    st.error(f"{label} explanation error: {e}")
     _h = st.session_state.get(_hk) or []
     if not _h:
         return ""
@@ -996,7 +997,7 @@ def _explanation_block(state_base, template_name, fallback_agent, ctx_builder, l
     if _sel is None or _sel >= len(_h) or _sel < 0:
         _sel = len(_h) - 1
     _sel = st.selectbox(
-        f"{label} 解説履歴:", list(range(len(_h))), index=_sel,
+        f"{label} explanation history:", list(range(len(_h))), index=_sel,
         format_func=lambda i: f"[{i+1}/{len(_h)}] {_h[i]['timestamp']} / {_h[i]['agent']}{('・'+_h[i]['persona']) if _h[i].get('persona') else ''} / {_h[i]['engine']}",
         key=f"{kp}_expl_sel")
     st.session_state[_sk] = _sel
@@ -1009,7 +1010,7 @@ def _knowledge_explorer():
 
     _ANALYTICS_BASE = "user/common/analytics/knowledge_explorer/"
 
-    # Knowledge Explorer用の全session_stateキー
+    # All session_state keys for Knowledge Explorer
     _RAG_STATE_KEYS = [
         "_rag_searched", "_rag_cached_data", "_rag_cached_type", "_rag_prev_collection",
         "_rag_scatter_cache", "_rag_cluster_cache", "_rag_cluster_explanation", "_rag_cluster_names",
@@ -1023,20 +1024,20 @@ def _knowledge_explorer():
         "_rag_pi_sensitivity",
         "_rag_loaded_collection", "_rag_loaded_type",
         "_rag_analytics_folder",
-        # 再構成(Overall/Trend/Topic)で追加。既存キーはリネーム不可(pkl復元互換)
+        # Added by the (Overall/Trend/Topic) rebuild. Existing keys must not be renamed (pkl-restore compatibility)
         "_rag_cluster_expl_history", "_rag_cluster_expl_sel",
         "_rag_trend", "_rag_trend_expl_history", "_rag_trend_expl_sel",
         "_rag_topic", "_rag_topic_expl_history", "_rag_topic_expl_sel",
     ]
 
     def _save_analysis_session(collection_name):
-        """全Knowledge Explorer状態をフォルダに保存する"""
+        """Save all Knowledge Explorer state to a folder."""
         import pickle
         _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         _folder = os.path.join(_ANALYTICS_BASE, f"analytics{_ts}")
         os.makedirs(_folder, exist_ok=True)
 
-        # メタ情報
+        # Metadata
         _meta = {
             "collection": collection_name,
             "timestamp": _ts,
@@ -1044,7 +1045,7 @@ def _knowledge_explorer():
         }
         dmu.save_json_file(_meta, os.path.join(_folder, "meta.json"))
 
-        # 全状態をpickleで丸ごと保存
+        # Save all state as one pickle
         _state = {}
         for _k in _RAG_STATE_KEYS:
             if _k in st.session_state:
@@ -1052,29 +1053,29 @@ def _knowledge_explorer():
         with open(os.path.join(_folder, "state.pkl"), "wb") as f:
             pickle.dump(_state, f)
 
-        # 分析フォルダパスをsession_stateに保持
+        # Keep the analytics folder path in session_state
         st.session_state._rag_analytics_folder = _folder
 
-        # レポートがあればmdでも保存（人間が読める形で）
+        # If a report exists, also save it as .md (human-readable form)
         if st.session_state.get("_rag_report"):
             dmu.save_text_file(st.session_state._rag_report, os.path.join(_folder, "report.md"))
 
         return _folder
 
     def _load_analysis_session(folder_path):
-        """保存された全状態をsession_stateに復元する"""
+        """Restore the saved full state into session_state."""
         import pickle
         _meta_path = os.path.join(folder_path, "meta.json")
         if not os.path.exists(_meta_path):
             return None
         _meta = dmu.read_json_file(_meta_path)
 
-        # まず全RAGキーをクリア
+        # First clear all RAG keys
         for _k in _RAG_STATE_KEYS:
             if _k in st.session_state:
                 del st.session_state[_k]
 
-        # pickleから復元
+        # Restore from pickle
         _pkl_path = os.path.join(folder_path, "state.pkl")
         if os.path.exists(_pkl_path):
             with open(_pkl_path, "rb") as f:
@@ -1082,14 +1083,14 @@ def _knowledge_explorer():
             for _k, _v in _state.items():
                 st.session_state[_k] = _v
 
-        # 読み込み済みフラグ
+        # Loaded-flag
         st.session_state._rag_searched = True
         st.session_state._rag_loaded_collection = _meta.get("collection", "")
 
         return _meta
 
     def _list_saved_sessions():
-        """保存済み分析セッションの一覧を返す"""
+        """Return the list of saved analysis sessions."""
         if not os.path.exists(_ANALYTICS_BASE):
             return []
         sessions = []
@@ -1106,7 +1107,7 @@ def _knowledge_explorer():
         return sessions
 
     def _ask_agent_ui(context_text, key_prefix="rag"):
-        """Ask Agent共通UI: 実行設定+質問入力+DigiMatsuExecute実行。結果をsession_stateに保存。"""
+        """Shared Ask-Agent UI: exec settings + question input + DigiMatsuExecute run. Result is stored in session_state."""
         st.markdown("---")
         st.subheader("Ask Agent")
         _llm_agent_list = st.session_state.agent_list
@@ -1115,7 +1116,7 @@ def _knowledge_explorer():
             _llm_agent_idx = _llm_agent_list.index(st.session_state.agent_id)
         _llm_agent = st.selectbox("Agent:", _llm_agent_list, index=_llm_agent_idx, key=f"{key_prefix}_llm_agent")
 
-        # 実行設定
+        # Execution settings
         _ask_exp = st.expander("Exec Settings")
         with _ask_exp:
             _ask_c1, _ask_c2, _ask_c3, _ask_c4 = st.columns(4)
@@ -1124,12 +1125,12 @@ def _knowledge_explorer():
             _ask_thinking = _ask_c3.checkbox("Thinking Mode", value=False, key=f"{key_prefix}_ask_thinking")
             _ask_book = _ask_c4.checkbox("Use Books", value=False, key=f"{key_prefix}_ask_book")
 
-        _llm_query = st.text_area("Question:", placeholder="例: カテゴリごとの特徴を説明して", height=100, key=f"{key_prefix}_llm_query")
+        _llm_query = st.text_area("Question:", placeholder="e.g. Describe the characteristics per category", height=100, key=f"{key_prefix}_llm_query")
 
         if _llm_query and st.button("Ask", key=f"{key_prefix}_llm_ask"):
             _agent_file = next((a["FILE"] for a in st.session_state.agents if a["AGENT"] == _llm_agent), None)
             if _agent_file:
-                _user_input = f"{context_text}\n\n【質問】\n{_llm_query}"
+                _user_input = f"{context_text}\n\n[Question]\n{_llm_query}"
                 _exec = {
                     "MEMORY_USE": False, "MEMORY_SAVE": True, "SAVE_DIGEST": False,
                     "CONTENTS_SAVE": False, "STREAM_MODE": False, "MAGIC_WORD_USE": False,
@@ -1143,7 +1144,7 @@ def _knowledge_explorer():
                     _add_knowledge = _agent_data.get("BOOK", [])
 
                 _session_id = "KNOWLEDGE_EXPLORER_" + dms.set_new_session_id()
-                # analyticsフォルダ内にセッションを作成
+                # Create the session inside the analytics folder
                 _analytics_folder = st.session_state.get("_rag_analytics_folder", "")
                 if not _analytics_folder:
                     _analytics_folder = os.path.join(_ANALYTICS_BASE, f"analytics{datetime.now().strftime('%Y%m%d_%H%M%S')}")
@@ -1153,7 +1154,7 @@ def _knowledge_explorer():
                 _tmp_session.save_status("LOCKED")
                 _exec["_SESSION_BASE_PATH"] = _session_base
 
-                with st.spinner("エージェント実行中..."):
+                with st.spinner("Running the agent..."):
                     try:
                         _response = ""
                         _output_ref = {}
@@ -1175,27 +1176,27 @@ def _knowledge_explorer():
                             "output_ref": _output_ref,
                             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         }
-                        # 最新の結果（Detail/Analytics用）
+                        # Latest result (for Detail/Analytics)
                         st.session_state[f"_{key_prefix}_ask_result"] = _new_result
-                        # 会話履歴に追加
+                        # Append to chat history
                         if f"_{key_prefix}_ask_history" not in st.session_state:
                             st.session_state[f"_{key_prefix}_ask_history"] = []
                         st.session_state[f"_{key_prefix}_ask_history"].append(_new_result)
                     except Exception as e:
                         import traceback
-                        st.error(f"エージェント実行エラー: {type(e).__name__}: {e}")
+                        st.error(f"Agent execution error: {type(e).__name__}: {e}")
                         st.code(traceback.format_exc())
                     finally:
                         _tmp_session.save_status("UNLOCKED")
 
     def _show_ask_result(key_prefix="rag"):
-        """Ask Agentの会話履歴 + 最新結果のDetail/Analytics を表示"""
+        """Display Ask-Agent chat history + latest result Detail/Analytics."""
         _history = st.session_state.get(f"_{key_prefix}_ask_history", [])
         _result = st.session_state.get(f"_{key_prefix}_ask_result")
         if not _history and not _result:
             return None
 
-        # 過去の会話履歴を表示
+        # Show past chat history
         if len(_history) > 1:
             for _h in _history[:-1]:
                 with st.chat_message("user"):
@@ -1204,7 +1205,7 @@ def _knowledge_explorer():
                 with st.chat_message("assistant"):
                     st.markdown(_h["response"])
 
-        # 最新の回答
+        # Latest answer
         if _result:
             with st.chat_message("user"):
                 st.markdown(f"**[{_result.get('timestamp','')}] {_result.get('agent_name','')}**")
@@ -1230,9 +1231,9 @@ def _knowledge_explorer():
                         if _block:
                             st.markdown(_block.replace("\n", "<br>"), unsafe_allow_html=True)
             except Exception as e:
-                st.caption(f"Detail取得エラー: {e}")
+                st.caption(f"Failed to fetch Detail: {e}")
 
-        # Analytics Results（セッションデータが保存されている場合のみ表示）
+        # Analytics Results (shown only when session data has been saved)
         _session_check = dms.DigiMSession(_sid, base_path=_base_path) if _base_path else dms.DigiMSession(_sid)
         if not os.path.exists(_session_check.session_file_path):
             return _result["response"]
@@ -1285,10 +1286,10 @@ def _knowledge_explorer():
                                         "response": cmp_resp, "diff": round(cmp_diff, 3),
                                         "compare_text": cmp_text, "compare_model": cmp_text_model,
                                         "knowledge_rag": cmp_know_ref}
-                                _run_bg_task("compare", f"比較分析を実行中(Knowledge Explorer)", _run_cmp)
+                                _run_bg_task("compare", f"Running comparative analysis (Knowledge Explorer)", _run_cmp)
                                 st.rerun()
 
-                    # Compare結果表示
+                    # Compare results display
                     if st.session_state.get(f"_{key_prefix}_cmp_result"):
                         _cmp_r = st.session_state[f"_{key_prefix}_cmp_result"]
                         st.markdown(f"**Agent:** {_cmp_r.get('agent', '')} | **Model:** {_cmp_r.get('model_name', '')} | **Diff:** {_cmp_r.get('diff', '')}")
@@ -1316,7 +1317,7 @@ def _knowledge_explorer():
                                 import DigiM_VAnalytics as _dmva_ak
                                 _ref_ts = _v2.get("prompt", {}).get("timestamp", str(datetime.now()))
                                 _ak_title = f"KnowledgeExplorer_{_sid}"
-                                # analytics個別フォルダに保存（なければ一時的に作成）
+                                # Save into the analytics per-session folder (create one temporarily if missing)
                                 _ak_folder = st.session_state.get("_rag_analytics_folder", "")
                                 if not _ak_folder:
                                     _ak_folder = os.path.join(_ANALYTICS_BASE, f"analytics{datetime.now().strftime('%Y%m%d_%H%M%S')}")
@@ -1325,7 +1326,7 @@ def _knowledge_explorer():
                                 def _run_ak():
                                     _r = _dmva_ak.analytics_knowledge(_agent_file, _ref_ts, _ak_title, _ak_refs, _ak_folder, _ak_mode, _ak_dim)
                                     st.session_state[f"_{key_prefix}_ak_result"] = _r
-                                _run_bg_task("knowledge", "知識活用性を分析中(Knowledge Explorer)", _run_ak)
+                                _run_bg_task("knowledge", "Analyzing knowledge utility (Knowledge Explorer)", _run_ak)
                                 st.rerun()
 
                             if st.session_state.get(f"_{key_prefix}_ak_result"):
@@ -1341,13 +1342,13 @@ def _knowledge_explorer():
                                     st.json(_ak_r["similarity_utility"])
 
             except Exception as e:
-                st.caption(f"Analytics取得エラー: {e}")
+                st.caption(f"Failed to fetch Analytics: {e}")
 
         return _result["response"]
 
     st.subheader("Knowledge Explorer")
 
-    # サイドバーからの読み込みリクエストを処理
+    # Handle the load request from the sidebar
     if st.session_state.get("_rag_load_folder"):
         _load_path = st.session_state._rag_load_folder
         st.session_state._rag_load_folder = None
@@ -1356,9 +1357,9 @@ def _knowledge_explorer():
             st.session_state._rag_searched = True
             st.session_state._rag_loaded_collection = _loaded.get("collection", "")
             st.session_state._rag_loaded_type = _loaded.get("data_type", "ChromaDB")
-            st.info(f"分析セッションを読み込みました: {_loaded.get('created_at', '')} - {_loaded.get('collection', '')}")
+            st.info(f"Loaded analysis session: {_loaded.get('created_at', '')} - {_loaded.get('collection', '')}")
 
-    # 選択中エージェントのKNOWLEDGE/BOOKからデータソースを抽出
+    # Extract data sources from the selected agent's KNOWLEDGE/BOOK
     _agent_data = st.session_state.get("agent_data", {})
     _agent_db_names = set()
     _agent_pi_names = set()
@@ -1371,14 +1372,14 @@ def _knowledge_explorer():
             for _d in _k.get("DATA", []):
                 _agent_db_names.add(_d.get("DATA_NAME", ""))
 
-    # データソース一覧をエージェントの設定で絞り込み
+    # Filter the data-source list by the agent's settings
     _all_chroma = dmc.get_rag_list()
     _all_page_index = dmc.get_page_index_list()
     _chroma_list = [c for c in _all_chroma if c in _agent_db_names] if _agent_db_names else _all_chroma
     _page_index_names = [p for p in _all_page_index.keys() if p in _agent_pi_names] if _agent_pi_names else list(_all_page_index.keys())
     _page_index_dict = {k: v for k, v in _all_page_index.items() if k in _page_index_names} if _agent_pi_names else _all_page_index
 
-    # データソースが両方あるかでラジオボタン表示を制御
+    # Toggle radio-button display based on whether both data-source types are present
     _has_vectordb = bool(_chroma_list)
     _has_pageindex = bool(_page_index_names)
     _source_options = []
@@ -1387,7 +1388,7 @@ def _knowledge_explorer():
     if _has_pageindex:
         _source_options.append("PageIndex")
     if not _source_options:
-        st.info("選択中のエージェントにRAGデータが設定されていません")
+        st.info("The selected agent has no RAG data configured")
         return
 
     _source_type = st.radio("Data Source:", _source_options, horizontal=True, key="rag_source_type") if len(_source_options) > 1 else _source_options[0]
@@ -1399,12 +1400,12 @@ def _knowledge_explorer():
     else:
         _selected_list = st.multiselect("Collection:", _chroma_list, default=[], key="rag_collection_chromadb")
 
-    # 選択をソートして文字列化（キャッシュキーに使う）。ペルソナ選択もキーに含め、変更時に再取得
+    # Sort and stringify the selection (used as cache key). Persona selection is also part of the key so it re-fetches on change
     _persona_sig = str(sorted(st.session_state.get("selected_persona_ids") or []))
     _selected_key = str(sorted(_selected_list)) + "|persona:" + _persona_sig
 
-    # Collection変更時にキャッシュと検索状態をリセット
-    # （空選択時、読み込み済みセッションがある場合、BGタスク実行中はスキップ）
+    # Reset cache and search state when the Collection changes
+    # (skipped when nothing is selected, a saved session is loaded, or a background task is running)
     _has_loaded = st.session_state.get("_rag_loaded_collection", "")
     _is_bg_running = bool(st.session_state.get("_bg_task"))
     if (_selected_key and _selected_key != "[]"
@@ -1436,7 +1437,7 @@ def _knowledge_explorer():
         st.session_state._rag_filterable_cols = None
         st.session_state._rag_disp_sig = None
 
-    # 読み込み済みセッションがある場合、Collection未選択でも続行
+    # If a loaded session exists, proceed even without a Collection selection
     if not _selected_list:
         _loaded_col = st.session_state.get("_rag_loaded_collection", "")
         if _loaded_col and st.session_state.get("_rag_cached_data") is not None:
@@ -1445,27 +1446,27 @@ def _knowledge_explorer():
         else:
             return
 
-    # 表示用の選択名（レポート等で使用）
+    # Display name for the selection (used by reports etc.)
     _selected = ", ".join(_selected_list)
 
-    # ===== PageIndex専用画面 =====
+    # ===== PageIndex-only screen =====
     if _is_page_index:
         _pi_name = _selected_list[0].replace("[PageIndex] ", "")
         _pi_pages = _page_index_dict.get(_pi_name, [])
         _data_type = "PageIndex"
 
         if not _pi_pages:
-            st.warning("ページデータが0件です")
+            st.warning("There are 0 page entries.")
             return
 
         df = pd.DataFrame(_pi_pages)
         total_count = len(df)
 
-        # ツリー構造表示
+        # Tree-structure display
         st.subheader("Page Tree")
         _categories = {}
         for p in _pi_pages:
-            cat = p.get("category", "未分類")
+            cat = p.get("category", "Uncategorized")
             if cat not in _categories:
                 _categories[cat] = []
             _categories[cat].append(p)
@@ -1479,7 +1480,7 @@ def _knowledge_explorer():
         ax_tree.axis("off")
         ax_tree.set_title(f"Page Index: {_pi_name} ({total_count} pages)", fontsize=14, fontweight="bold")
 
-        # ハイライト対象のIDセット（感度分析後にセット）
+        # Set of IDs to highlight (set after sensitivity analysis)
         _highlight_ids = set()
         _pi_sens = st.session_state.get("_rag_pi_sensitivity")
         if _pi_sens and _pi_sens.get("pi_name") == _pi_name:
@@ -1487,7 +1488,7 @@ def _knowledge_explorer():
 
         y_pos = len(_pi_pages) + len(_categories) - 1
         for cat, pages in _categories.items():
-            # カテゴリヘッダー
+            # Category header
             ax_tree.text(0.3, y_pos, f"[{cat}]", fontsize=11, fontweight="bold", va="center",
                         fontfamily="IPAexGothic")
             y_pos -= 1
@@ -1504,20 +1505,20 @@ def _knowledge_explorer():
         st.pyplot(fig_tree)
         plt.close(fig_tree)
 
-        # データ一覧
+        # Data list
         _list_cols = [c for c in df.columns if c not in ("sort_order",)]
         st.dataframe(df[_list_cols], hide_index=True, use_container_width=True, height=300)
 
-        # PageIndex感度分析
+        # PageIndex sensitivity analysis
         st.markdown("---")
         st.subheader("Page Sensitivity")
-        _pi_query = st.text_input("Query:", placeholder="キーワードや文章を入力してページ選択をシミュレート", key="rag_pi_sens_query")
+        _pi_query = st.text_input("Query:", placeholder="Enter a keyword or sentence to simulate page selection", key="rag_pi_sens_query")
         _pi_max = st.slider("Max Pages:", min_value=1, max_value=min(10, total_count), value=min(5, total_count), key="rag_pi_max")
 
         if _pi_query and st.button("Analyze", key="rag_pi_sens_run"):
-            # PageIndex検索エージェントでページ選択をシミュレート
+            # Simulate page selection using the PageIndex search agent
             import DigiM_Tool as _dmt_pi
-            with st.spinner("ページ選択をシミュレート中..."):
+            with st.spinner("Simulating page selection..."):
                 try:
                     _exec_info = {"SERVICE_INFO": st.session_state.web_service, "USER_INFO": st.session_state.web_user}
                     _support_agent = "agent_59PageIndexSearch.json"
@@ -1527,34 +1528,34 @@ def _knowledge_explorer():
                         "query": _pi_query,
                         "selected_ids": _sel_ids,
                     }
-                    st.rerun()  # ツリーをハイライト付きで再描画
+                    st.rerun()  # Re-render the tree with highlights
                 except Exception as e:
-                    st.warning(f"ページ選択シミュレートでエラー: {e}")
+                    st.warning(f"Error simulating page selection: {e}")
 
-        # 感度分析結果表示
+        # Sensitivity analysis result display
         if _pi_sens and _pi_sens.get("pi_name") == _pi_name:
-            st.caption(f"Query: **{_pi_sens['query']}** → 選択ページ: **{', '.join(_pi_sens['selected_ids'])}**")
+            st.caption(f"Query: **{_pi_sens['query']}** -> Selected pages: **{', '.join(_pi_sens['selected_ids'])}**")
             _sel_pages = [p for p in _pi_pages if p["id"] in _pi_sens["selected_ids"]]
             if _sel_pages:
                 st.dataframe(pd.DataFrame(_sel_pages), hide_index=True, use_container_width=True)
 
-        # Ask Agent（PageIndex用）
-        _pi_context = f"以下のページインデックスデータと分析結果を踏まえて質問に回答してください。\n\nPageIndex: {_pi_name} ({total_count}ページ)\n\nページ一覧:\n"
+        # Ask Agent (for PageIndex)
+        _pi_context = f"Answer the question using the following PageIndex data and analysis results.\n\nPageIndex: {_pi_name} ({total_count} pages)\n\nPage list:\n"
         for p in _pi_pages:
             _pi_context += f"- [{p['id']}] {p.get('title','')} ({p.get('category','')}) : {p.get('summary','')}\n"
         if _pi_sens and _pi_sens.get("pi_name") == _pi_name:
-            _pi_context += f"\n感度分析結果 (Query: {_pi_sens['query']}):\n選択ページ: {', '.join(_pi_sens['selected_ids'])}\n"
+            _pi_context += f"\nSensitivity analysis result (Query: {_pi_sens['query']}):\nSelected pages: {', '.join(_pi_sens['selected_ids'])}\n"
         _ask_agent_ui(_pi_context, key_prefix="rag_pi")
         _show_ask_result(key_prefix="rag_pi")
 
-        # Export Report（PageIndex用）
+        # Export Report (for PageIndex)
         st.markdown("---")
         st.subheader("Export Report")
         if st.button("Generate Report", key="rag_pi_gen_report"):
             _now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             _report = f"# Knowledge Explorer {_now}\n\n"
-            _report += f"**分析実施日:** {_now}\n\n"
-            _report += f"**ページ数:** {total_count}\n\n"
+            _report += f"**Analysis date:** {_now}\n\n"
+            _report += f"**Page count:** {total_count}\n\n"
             _report += "## Page Tree\n\n"
             for cat, pages in _categories.items():
                 _report += f"### {cat}\n"
@@ -1564,7 +1565,7 @@ def _knowledge_explorer():
             _pi_sens = st.session_state.get("_rag_pi_sensitivity")
             if _pi_sens and _pi_sens.get("pi_name") == _pi_name:
                 _report += f"## Page Sensitivity\n\nQuery: {_pi_sens['query']}\n\n"
-                _report += f"選択ページ: {', '.join(_pi_sens['selected_ids'])}\n\n"
+                _report += f"Selected pages: {', '.join(_pi_sens['selected_ids'])}\n\n"
             _pi_history = st.session_state.get("_rag_pi_ask_history", [])
             if _pi_history:
                 _report += "## Ask Agent\n\n"
@@ -1575,19 +1576,19 @@ def _knowledge_explorer():
             st.session_state._rag_report = _report
             try:
                 _saved_path = _save_analysis_session(f"[PageIndex] {_pi_name}")
-                st.success(f"レポートを生成し、セッションを保存しました: {_saved_path}")
+                st.success(f"Generated report and saved the session: {_saved_path}")
             except Exception as e:
-                st.success("レポートを生成しました")
-                st.warning(f"セッション保存エラー: {e}")
+                st.success("Report generated")
+                st.warning(f"Failed to save the session: {e}")
 
         if st.session_state.get("_rag_report"):
             _report_name = f"Knowledge_Explorer_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
             st.download_button("Download (.md)", data=st.session_state._rag_report.encode("utf-8"),
                               file_name=f"{_report_name}.md", mime="text/markdown", key="rag_pi_dl_md")
 
-        return  # PageIndexはここで終了（以降のChromaDB用処理をスキップ）
+        return  # PageIndex ends here (skip the ChromaDB code below)
 
-    # ===== ChromaDB用画面（Overall / Trend / Topic / Ask Agent 構成） =====
+    # ===== ChromaDB screen (Overall / Trend / Topic / Ask Agent layout) =====
     import DigiM_VAnalytics as dmva
     import matplotlib
     matplotlib.use("Agg")
@@ -1600,9 +1601,9 @@ def _knowledge_explorer():
 
     _data_type = "ChromaDB"
     _MARKER_CHOICES = ["o", "s", "D", "^", "*", "P", "X", "v", "p", "h", "<", ">"]
-    _FAR_FUTURE = datetime(2099, 12, 31).date()  # 日付入力の未来日選択を許容する上限
+    _FAR_FUTURE = datetime(2099, 12, 31).date()  # Upper cap for allowing future-dated inputs
 
-    # コレクション(DATA_NAME) → RAG_NAME のマップ（エージェントのKNOWLEDGE/BOOK由来）
+    # Collection (DATA_NAME) -> RAG_NAME map (from the agent's KNOWLEDGE/BOOK)
     _col_to_rag_name = {}
     for _k in _agent_data.get("KNOWLEDGE", []) + _agent_data.get("BOOK", []):
         _rag_name_v = _k.get("RAG_NAME", "")
@@ -1613,8 +1614,8 @@ def _knowledge_explorer():
             if _dn:
                 _col_to_rag_name[_dn] = _rag_name_v
 
-    # データ取得（キャッシュがあればそれを使う）
-    # 選択中ペルソナの define_code を和集合で合成（KNOWLEDGEのDATA単位FILTERで絞り込むため）
+    # Fetch data (use cache if present)
+    # Compose the union of define_code from the selected personas (used by per-DATA FILTER in KNOWLEDGE)
     _persona_define_code = {}
     try:
         _sel_pids = list(st.session_state.get("selected_persona_ids") or [])
@@ -1639,7 +1640,7 @@ def _knowledge_explorer():
     except Exception:
         _persona_define_code = {}
 
-    # コレクション(DATA_NAME) → DATAエントリ(FILTER付き) のマップ
+    # Collection (DATA_NAME) -> DATA entry (with FILTER) map
     _data_entry_map = {}
     for _kn_entry in _agent_data.get("KNOWLEDGE", []) + _agent_data.get("BOOK", []):
         for _dt_entry in _kn_entry.get("DATA", []):
@@ -1648,7 +1649,7 @@ def _knowledge_explorer():
     _exec_info_ke = {"SERVICE_INFO": st.session_state.web_service, "USER_INFO": st.session_state.web_user}
 
     def _persona_where(_collection):
-        """選択ペルソナ時、そのコレクションのDATA-FILTERから絞り込みwhereを返す（未設定ならNone）"""
+        """When a persona is selected, return the filtering where dict from that collection's DATA-FILTER (None if absent)."""
         if not _persona_define_code:
             return None
         _de = _data_entry_map.get(_collection)
@@ -1679,7 +1680,7 @@ def _knowledge_explorer():
                 d["rag_name"] = _rn
             _all_raw_data.extend(_col_data)
         if not _all_raw_data:
-            st.warning("データが0件です")
+            st.warning("There are 0 data entries")
             return
         _has_pi = any(s.startswith("[PageIndex]") for s in _selected_list)
         _has_db = any(not s.startswith("[PageIndex]") for s in _selected_list)
@@ -1693,7 +1694,7 @@ def _knowledge_explorer():
 
     total_count = len(df)
 
-    # df_display / filterable をキャッシュ（毎回のlist→str変換コストを回避: 操作性改善）
+    # Cache df_display / filterable (avoids re-running list->str conversion every time; better UX)
     _disp_sig = (id(df), len(df), tuple(df.columns))
     if st.session_state.get("_rag_disp_sig") == _disp_sig and st.session_state.get("_rag_df_display") is not None:
         df_display = st.session_state._rag_df_display
@@ -1726,7 +1727,7 @@ def _knowledge_explorer():
         return _dfx[_ep + _rm]
 
     def _png(fig):
-        """figをPNGバイト列にして閉じる（再描画コスト回避のため計算時に1度だけ生成）"""
+        """Convert a fig to PNG bytes and close it (built once during compute to avoid re-render cost)."""
         buf = _io.BytesIO()
         fig.savefig(buf, format="png", dpi=140, bbox_inches="tight")
         plt.close(fig)
@@ -1805,7 +1806,7 @@ def _knowledge_explorer():
         return {cl: ("gray" if cl < 0 else _cm(i)) for i, cl in enumerate(_l)}
 
     def _cluster_png(_dfc, _names_map, _title, _cmap_fixed=None):
-        """_cmap_fixed を渡すと（Total基準の）固定色でプロット（RAG NAME間で色を統一）"""
+        """Pass _cmap_fixed to plot with fixed colors (Total-based) so RAG NAMEs share colors."""
         fig, ax = plt.subplots(figsize=(8, 6))
         _present = sorted(_dfc["Cluster"].unique())
         _cc = _cmap_fixed if _cmap_fixed else _build_cluster_cmap(_present)
@@ -1827,7 +1828,7 @@ def _knowledge_explorer():
         return _png(fig)
 
     def _extra_filter_ui(_base_df, kp, with_period=True):
-        """Overall範囲内での追加絞り込み: RAG NAME / Collection / 期間。(df_sub, 説明文)を返す"""
+        """Additional filter within the Overall scope: RAG NAME / Collection / period. Returns (df_sub, description text)."""
         _sub = _base_df.copy()
         _desc = []
         _c1, _c2, _c3 = st.columns([1, 1, 1])
@@ -1855,7 +1856,7 @@ def _knowledge_explorer():
                     _dd = pd.to_datetime(_sub["create_date"], errors="coerce")
                     _sub = _sub[(_dd >= pd.Timestamp(_pf)) & (_dd <= pd.Timestamp(_pt) + pd.Timedelta(days=1))]
                     _desc.append(f"{_pf}〜{_pt}")
-        return _sub, (" / ".join(_desc) if _desc else "絞り込みなし")
+        return _sub, (" / ".join(_desc) if _desc else "no filter")
 
     # =========================================================
     # 1. Overall
@@ -1869,7 +1870,7 @@ def _knowledge_explorer():
     if _filter_column != "(none)":
         _uv = sorted(df_display[_filter_column].dropna().unique().tolist())
         _filter_values = _fc2.multiselect("Filter Value:", _uv, key="rag_filter_val")
-    _search_text = _fc3.text_input("Text Search:", value="", placeholder="ワイルドカード * 対応", key="rag_search_text")
+    _search_text = _fc3.text_input("Text Search:", value="", placeholder="Supports wildcard *", key="rag_search_text")
 
     _exclude_private = False
     if "private" in df_display.columns:
@@ -1903,7 +1904,7 @@ def _knowledge_explorer():
     _s5, _s6 = st.columns([1, 1])
     _size_mode = _s5.radio("Dot Size:", ["Uniform", "Newer=Larger", "Highlight Period"], index=0, horizontal=True, key="rag_dot_size")
     _do_search = _s6.button("Search & Plot", key="rag_do_search", type="primary")
-    # Highlight Period モード時のサブ期間（Date From～To の範囲内で指定）。該当ドットだけ大きく描画
+    # Sub-period for Highlight Period mode (specified within Date From-To). Only matching dots are drawn larger
     _hl_from = None
     _hl_to = None
     if _size_mode == "Highlight Period" and _has_date and _date_from is not None and _date_to is not None:
@@ -1915,7 +1916,7 @@ def _knowledge_explorer():
         st.session_state._rag_searched = True
         st.session_state._rag_scatter_cache = None
     if not st.session_state.get("_rag_searched", False):
-        st.caption(f"**{_data_type}** | Total: **{total_count}** 件 | 条件を指定して **Search & Plot** を押してください（指定なしで全件）")
+        st.caption(f"**{_data_type}** | Total: **{total_count}** entries | Set conditions and press **Search & Plot** (no conditions = all entries)")
         return
 
     df_filtered = df_display.copy()
@@ -1932,22 +1933,22 @@ def _knowledge_explorer():
             lambda r: any(fnmatch.fnmatch(str(v).lower(), _pat.lower()) for v in r), axis=1)]
     df_filtered = _order_cols(df_filtered)
     filtered_count = len(df_filtered)
-    st.caption(f"**{_data_type}** | Total: **{total_count}** 件 | Filtered: **{filtered_count}** 件")
+    st.caption(f"**{_data_type}** | Total: **{total_count}** entries | Filtered: **{filtered_count}** entries")
 
     if _do_search and _has_vectors and filtered_count >= 3:
         _dfs = df[df["id"].isin(df_filtered["id"])].copy()
-        with st.spinner("次元削減＋散布図を生成中..."):
+        with st.spinner("Reducing dimensions + generating scatter plot..."):
             try:
                 _dfr, _dinfo = dmva.reduce_dimensions(_dfs, method=_dim_method, params=_dim_params)
                 if _marker_col != "(none)" and _marker_col not in _dfr.columns and _marker_col in _dfs.columns:
                     _dfr[_marker_col] = _dfr["id"].map(_dfs.set_index("id")[_marker_col])
-                _ttl = f"{_dim_method} - {_selected} ({filtered_count}件)\n{_dinfo}"
+                _ttl = f"{_dim_method} - {_selected} ({filtered_count} entries)\n{_dinfo}"
                 _png_total = _scatter_png(_dfr, _color_col, _marker_col, _size_mode, _ttl, _hl_from, _hl_to)
                 _png_rag = {}
                 for _rn in _rag_list(_dfr):
                     _sr = _dfr[_dfr["rag_name"].astype(str) == _rn]
                     if len(_sr) >= 1:
-                        _png_rag[_rn] = _scatter_png(_sr, _color_col, _marker_col, _size_mode, f"{_dim_method} - {_rn} ({len(_sr)}件)", _hl_from, _hl_to)
+                        _png_rag[_rn] = _scatter_png(_sr, _color_col, _marker_col, _size_mode, f"{_dim_method} - {_rn} ({len(_sr)} entries)", _hl_from, _hl_to)
                 st.session_state._rag_scatter_cache = {
                     "df_reduced": _dfr, "dim_info": _dinfo, "dim_method": _dim_method,
                     "color_col": _color_col, "marker_col": _marker_col, "size_mode": _size_mode,
@@ -1956,7 +1957,7 @@ def _knowledge_explorer():
                     "png_total": _png_total, "png_rag": _png_rag,
                 }
             except Exception as e:
-                st.warning(f"散布図の生成でエラー: {e}")
+                st.warning(f"Failed to generate scatter plot: {e}")
                 st.session_state._rag_scatter_cache = None
 
     _scc = st.session_state.get("_rag_scatter_cache")
@@ -1966,24 +1967,24 @@ def _knowledge_explorer():
         st.markdown("**Scatter Plot (Total):**")
         st.image(_scc["png_total"])
         if _scc.get("png_rag"):
-            st.markdown("**Scatter Plot (RAG NAMEごと):**")
+            st.markdown("**Scatter Plot (per RAG NAME):**")
             for _rn, _pb in _scc["png_rag"].items():
                 st.image(_pb)
         _dfr = _scc["df_reduced"]
         _df_show = _order_cols(df_filtered.merge(_dfr.set_index("id")[["X1", "X2"]], left_on="id", right_index=True, how="left"))
     else:
         if _has_vectors and filtered_count < 3:
-            st.info("散布図にはフィルタ後3件以上が必要です")
+            st.info("Scatter plot requires at least 3 rows after filtering")
         elif not _has_vectors:
-            st.info("ベクトルデータが無いため散布図はスキップしました")
+            st.info("Vector data is unavailable; scatter plot was skipped")
         _df_show = df_filtered
 
-    st.markdown("**Data 一覧（座標はTotal基準）:**")
+    st.markdown("**Data list (coordinates are based on Total):**")
     st.dataframe(_df_show, hide_index=True, use_container_width=True, height=380)
     st.download_button("CSV Download", data=_df_show.to_csv(index=False).encode("utf-8-sig"),
                        file_name=f"rag_{_selected}.csv", mime="text/csv", key="rag_csv_dl")
 
-    # ---- Clustering（Totalで定義したクラスターをRAG NAMEへ適用） ----
+    # ---- Clustering (apply the Total-defined clusters to each RAG NAME) ----
     if _has_scatter:
         st.markdown("####  Clustering")
         _cl1, _cl2, _cl3 = st.columns([1, 1, 1])
@@ -1995,7 +1996,7 @@ def _knowledge_explorer():
             _aeps = dmva.estimate_dbscan_eps(_scc["df_reduced"], k=5)
             _cl_params["min_samples"] = _cl3.number_input("min_samples:", value=5, min_value=2, step=1, key="rag_cl_min")
             _cl_params["eps"] = _cl2.number_input(f"eps (auto={_aeps}):", value=_aeps, min_value=0.1, step=0.5, format="%.2f", key="rag_cl_eps")
-        # クラスタリング対象期間（Overall の Date From～To の範囲内でさらに絞り込み）
+        # Target period for clustering (further filter within Overall's Date From-To)
         _cl_period_from = None
         _cl_period_to = None
         if _has_date and _date_from is not None and _date_to is not None:
@@ -2009,9 +2010,9 @@ def _knowledge_explorer():
             if _cl_period_from is not None and _cl_period_to is not None and "create_date" in _scope.columns:
                 _dd = pd.to_datetime(_scope["create_date"], errors="coerce")
                 _scope = _scope[(_dd >= pd.Timestamp(_cl_period_from)) & (_dd <= pd.Timestamp(_cl_period_to) + pd.Timedelta(days=1))]
-            with st.spinner("クラスタリング中..."):
+            with st.spinner("Clustering..."):
                 try:
-                    # Totalのみクラスタリング。RAG NAMEはTotalのクラスター割当をそのまま流用
+                    # Cluster only on Total; each RAG NAME inherits Total's cluster assignment
                     _dft, _info = dmva.apply_clustering(_scope, method=_cl_method, params=_cl_params)
                     _cmap_fixed = _build_cluster_cmap(_dft["Cluster"].unique())
                     _png_t = _cluster_png(_dft, None, f"Clustering (Total): {_info}", _cmap_fixed)
@@ -2022,7 +2023,7 @@ def _knowledge_explorer():
                             _sub = _dft[_dft["rag_name"].astype(str) == _rn]
                             if _sub.empty:
                                 continue
-                            _png_by[_rn] = _cluster_png(_sub, None, f"Clustering [RAG: {_rn}]（Total基準色）", _cmap_fixed)
+                            _png_by[_rn] = _cluster_png(_sub, None, f"Clustering [RAG: {_rn}] (Total-based colors)", _cmap_fixed)
                             _rag_dist[_rn] = {str(int(k)): int(v) for k, v in
                                               _sub["Cluster"].value_counts().sort_index().items()}
                     st.session_state._rag_cluster_cache = {
@@ -2036,7 +2037,7 @@ def _knowledge_explorer():
                     }
                     st.session_state._rag_cluster_names = None
                 except Exception as e:
-                    st.warning(f"クラスタリングでエラー: {e}")
+                    st.warning(f"Clustering error: {e}")
                     st.session_state._rag_cluster_cache = None
 
         _clc = st.session_state.get("_rag_cluster_cache")
@@ -2057,7 +2058,7 @@ def _knowledge_explorer():
                 st.dataframe(_order_cols(_dfm), hide_index=True, use_container_width=True, height=280)
             _by = _clc.get("png_by_rag") or {}
             if _by:
-                st.markdown("**RAG NAMEごと（Totalで定義したクラスター色を適用・横2列）:**")
+                st.markdown("**Per RAG NAME (Total-defined cluster colors applied, 2 columns):**")
                 _items = list(_by.items())
                 for _i in range(0, len(_items), 2):
                     _row = _items[_i:_i + 2]
@@ -2069,17 +2070,17 @@ def _knowledge_explorer():
                 _cc = st.session_state.get("_rag_cluster_cache")
                 if not _cc or not _cc.get("results"):
                     return ""
-                _txt = ("RAGデータ「" + _selected + "」のクラスタリング結果です。\n"
-                        f"[Total クラスタリング: {_cc.get('info','')}]\n{_cc.get('total_summary','')}\n")
+                _txt = ("Clustering result for RAG data \"" + _selected + "\".\n"
+                        f"[Total clustering: {_cc.get('info','')}]\n{_cc.get('total_summary','')}\n")
                 _rd = _cc.get("rag_dist") or {}
                 if _rd:
-                    _txt += "\n[RAG_NAMEごとに含まれるクラスター（クラスタ番号=件数）]\n"
+                    _txt += "\n[Clusters contained per RAG_NAME (cluster number = count)]\n"
                     for _rn, _dist in _rd.items():
                         _txt += f"  {_rn}: " + ", ".join(f"C{k}={v}" for k, v in _dist.items()) + "\n"
                 _ids = [c for c in (_cc.get("labels") or []) if c >= 0]
-                _txt += (f"\n対象クラスター番号: {_ids}\n"
+                _txt += (f"\nTarget cluster numbers: {_ids}\n"
                          "まずTotalで定義された各クラスターの特徴を解説し、"
-                         "続いて各RAG_NAMEがどのクラスターを含むかを踏まえて解説してください。")
+                         "続いて各RAG_NAMEがどのクラスターを含むかを踏まえて解説してください。")  # the trailing JP block is the LLM prompt content (kept JP)
                 return _txt
 
             def _cl_post(resp):
@@ -2102,19 +2103,19 @@ def _knowledge_explorer():
     st.markdown("---")
     st.subheader("Trend")
     if not _has_date:
-        st.info("create_date が無いため Trend は利用できません")
+        st.info("Trend is unavailable because create_date is missing")
     else:
         _df_trend, _trend_desc = _extra_filter_ui(df_filtered, "rag_trend")
-        st.caption(f"対象: {_trend_desc} | {len(_df_trend)}件")
+        st.caption(f"Target: {_trend_desc} | {len(_df_trend)} entries")
         _t1, _t2, _t3 = st.columns([1, 1, 1])
         _tr_period = _t1.selectbox("Period:", ["month", "quarter", "year"], index=0, key="rag_trend_period")
         _tr_topn = _t2.slider("Keywords/period:", min_value=3, max_value=20, value=7, key="rag_trend_topn")
         _tr_cat_opts = _filterable_cols or ["(none)"]
         _tr_cat_def = _tr_cat_opts.index("category") if "category" in _tr_cat_opts else 0
-        _tr_cat_col = _t3.selectbox("Category Column (棒グラフ内訳のみ):", _tr_cat_opts, index=_tr_cat_def, key="rag_trend_cat")
+        _tr_cat_col = _t3.selectbox("Category Column (bar-chart breakdown only):", _tr_cat_opts, index=_tr_cat_def, key="rag_trend_cat")
 
         if st.button("Analyze Trend", key="rag_run_trend"):
-            with st.spinner("Trend分析中..."):
+            with st.spinner("Running Trend analysis..."):
                 try:
                     _groups = [("Total", _df_trend)]
                     for _rn in _rag_list(_df_trend):
@@ -2130,20 +2131,20 @@ def _knowledge_explorer():
                             for _k2, _v2 in _nop.items():
                                 _no_period[f"{_gn}:{_k2}" if _gn != "Total" else _k2] = _v2
                         _wcmap = _bck.get("(all)", {})
-                        # 棒グラフ(構成推移)
+                        # Bar chart (composition over time)
                         _bar_png = None
                         if _cp is not None and not _cp.empty:
                             _cols = [_cat_color_map.get(c) for c in _cp.columns]
                             figb, axb = plt.subplots(figsize=(11, 4))
                             _cp.plot(kind="bar", stacked=True, ax=axb,
                                      color=_cols if all(_cols) else None, alpha=0.85)
-                            axb.set_title(f"{_tr_cat_col} 構成推移 ({_tr_period}) - {_gn}")
+                            axb.set_title(f"{_tr_cat_col} composition over time ({_tr_period}) - {_gn}")
                             axb.set_ylabel("Count")
                             axb.legend(loc="upper left", bbox_to_anchor=(1, 1), fontsize=7)
                             plt.xticks(rotation=45, ha="right")
                             plt.tight_layout()
                             _bar_png = _png(figb)
-                        # ワードクラウド(Period降順)
+                        # Word cloud (Period descending)
                         _wc_list = []
                         for _p in sorted(_per, reverse=True):
                             _fr = _wcmap.get(_p)
@@ -2152,7 +2153,7 @@ def _knowledge_explorer():
                             _wf = dmva.make_wordcloud_figure(_fr, title=str(_p), width=320, height=220)
                             if _wf is not None:
                                 _wc_list.append((str(_p), _png(_wf)))
-                        # キーワード表(Period降順)
+                        # Keyword table (Period descending)
                         _kw_rows = []
                         if _kw is not None and not _kw.empty:
                             _kw_rows = _kw.sort_values("period", ascending=False).to_dict(orient="records")
@@ -2163,14 +2164,14 @@ def _knowledge_explorer():
                         "category_col": _tr_cat_col, "desc": _trend_desc,
                     }
                 except Exception as e:
-                    st.warning(f"Trend分析でエラー: {e}")
+                    st.warning(f"Trend analysis error: {e}")
 
         _tr = st.session_state.get("_rag_trend")
         if _tr and _tr.get("groups"):
             if _tr.get("no_period"):
-                st.warning("期間情報(create_date)が無いRAGデータ: "
-                           + ", ".join(f"{k}: {v}件" for k, v in _tr["no_period"].items())
-                           + "（時間に関わる情報がありません）")
+                st.warning("RAG data without period info (create_date): "
+                           + ", ".join(f"{k}: {v}" for k, v in _tr["no_period"].items())
+                           + " (no time-related info)")
             for _g in _tr["groups"]:
                 st.markdown(f"##### [{_g['name']}]")
                 if _g.get("bar_png") is not None:
@@ -2185,8 +2186,8 @@ def _knowledge_explorer():
                         for _j, (_pl, _pb) in enumerate(_chunk):
                             _cols[_j].image(_pb, caption=_pl)
 
-            # Trend解説の対象期間（任意）: 指定すると全体期間の中で当該期間の特徴を中心に解説
-            _tr_focus_on = st.checkbox("解説の対象期間を指定する（指定なし＝全期間ベース＋今後のトピック推定）", value=False, key="rag_trend_focus_on")
+            # Optional focus period for the Trend explanation: when set, focuses the narrative on that sub-period
+            _tr_focus_on = st.checkbox("Specify a focus period (off = full-range narrative + future-topic estimation)", value=False, key="rag_trend_focus_on")
             _tr_focus_from = None
             _tr_focus_to = None
             if _tr_focus_on and _has_date and _date_from is not None and _date_to is not None:
@@ -2198,15 +2199,15 @@ def _knowledge_explorer():
                 _t = st.session_state.get("_rag_trend")
                 if not _t or not _t.get("groups"):
                     return ""
-                _x = f"RAGデータ「{_selected}」の期間別キーワード集計です（Total と各RAG_NAME）。\n"
+                _x = f"Per-period keyword aggregation for RAG data \"{_selected}\" (Total and per RAG_NAME).\n"
                 for _g in _t["groups"]:
                     if _g.get("summary"):
                         _x += f"\n[{_g['name']}]\n{_g['summary']}\n"
                 if _tr_focus_from is not None and _tr_focus_to is not None:
-                    _x += (f"\n【解説の対象期間】 {_tr_focus_from} 〜 {_tr_focus_to}\n"
+                    _x += (f"\n【解説の対象期間】 {_tr_focus_from} - {_tr_focus_to}\n"
                            "上記の全体期間データを背景としつつ、特に「解説の対象期間」に該当する期間の"
                            "特徴・話題・変化を中心に【概要】を記述してください。"
-                           "【今後のトピック推定】は対象期間以降の見通しとして提示してください。\n")
+                           "【今後のトピック推定】は対象期間以降の見通しとして提示してください。\n")  # LLM prompt content (kept JP)
                 return _x
 
             _tr_disp = _explanation_block("_rag_trend_expl", "Trend Analyst", "agent_23DataAnalyst.json",
@@ -2219,11 +2220,11 @@ def _knowledge_explorer():
     st.markdown("---")
     st.subheader("Topic")
     if not _has_scatter:
-        st.info("先に Overall で Search & Plot（散布図生成）を実行してください")
+        st.info("Please run Search & Plot (scatter generation) in Overall first")
     else:
         _df_topic, _topic_desc = _extra_filter_ui(df_filtered, "rag_topic")
-        st.caption(f"対象: {_topic_desc} | {len(_df_topic)}件")
-        _topic_query = st.text_input("Query:", placeholder="キーワードや文章を入力して知識の反応を分析", key="rag_topic_query")
+        st.caption(f"Target: {_topic_desc} | {len(_df_topic)} entries")
+        _topic_query = st.text_input("Query:", placeholder="Enter a keyword or sentence to analyze knowledge response", key="rag_topic_query")
         _p1, _p2, _p3 = st.columns([1, 1, 1])
         _tp_period = _p1.selectbox("Period:", ["month", "quarter", "year"], index=0, key="rag_topic_period")
         _tp_topn = _p2.slider("Top N:", min_value=5, max_value=100, value=30, key="rag_topic_topn")
@@ -2244,7 +2245,7 @@ def _knowledge_explorer():
             _dfr = _scc["df_reduced"]
             _dfsens = df[df["id"].isin(_df_topic["id"])].copy()
             _dfsens = _dfsens.merge(_dfr.set_index("id")[["X1", "X2"]], left_on="id", right_index=True, how="left")
-            with st.spinner("類似度を計算中..."):
+            with st.spinner("Computing similarity..."):
                 try:
                     _rank, _ = dmva.sensitivity_analysis(
                         _dfsens, _topic_query, top_n=max(_tp_topn, len(_dfsens)),
@@ -2255,7 +2256,7 @@ def _knowledge_explorer():
                     _tgres = []
                     for _gn, _gr in _grp:
                         _gr_top = _gr.head(_tp_topn)
-                        # 件数(棒)+スコア(折れ線: sum/avg/max) by Period
+                        # Count (bars) + score (line: sum/avg/max) by Period
                         _pst = dmva.topic_period_stats(_gr, period=_tp_period)
                         _chart_png = None
                         if _pst is not None and not _pst.empty:
@@ -2269,14 +2270,14 @@ def _knowledge_explorer():
                             ax2.plot(_xs, _pst["score_sum"], color="crimson", marker="o", label="score sum")
                             ax2.plot(_xs, _pst["score_avg"], color="darkorange", marker="s", label="score avg")
                             ax2.plot(_xs, _pst["score_max"], color="green", marker="^", label="score max")
-                            ax2.set_ylabel("Score (小さいほど関連強)")
+                            ax2.set_ylabel("Score (smaller = stronger relevance)")
                             _l1, _b1 = axc.get_legend_handles_labels()
                             _l2, _b2 = ax2.get_legend_handles_labels()
                             axc.legend(_l1 + _l2, _b1 + _b2, loc="upper left", bbox_to_anchor=(1.07, 1), fontsize=8)
-                            axc.set_title(f"件数 & 類似スコア ({_tp_period}) - {_gn}")
+                            axc.set_title(f"Count & similarity score ({_tp_period}) - {_gn}")
                             plt.tight_layout()
                             _chart_png = _png(figc)
-                        # 散布図: その母集団(gray) + 選択(スコアで濃淡)
+                        # Scatter: full population in gray + selected (shaded by score)
                         _pop = _dfr[_dfr["id"].isin(_gr["id"])] if _gn != "Total" else _dfr[_dfr["id"].isin(_rank["id"])]
                         _sc_png = None
                         if "X1" in _gr.columns:
@@ -2305,13 +2306,13 @@ def _knowledge_explorer():
                         "desc": _topic_desc, "period": _tp_period,
                     }
                 except Exception as e:
-                    st.warning(f"Topic分析でエラー: {e}")
+                    st.warning(f"Topic analysis error: {e}")
 
         _tp = st.session_state.get("_rag_topic")
         if _tp and _tp.get("selected") == _selected and _tp.get("groups"):
             st.caption(f"Query: **{_tp['query']}** | {_tp.get('desc','')}")
             for _g in _tp["groups"]:
-                st.markdown(f"##### [{_g['name']}] （{_g['n']}件中 上位{len(_g['rows'])}）")
+                st.markdown(f"##### [{_g['name']}] (top {len(_g['rows'])} of {_g['n']})")
                 if _g.get("chart_png") is not None:
                     st.image(_g["chart_png"])
                 if _g.get("scatter_png") is not None:
@@ -2323,11 +2324,11 @@ def _knowledge_explorer():
                 _t = st.session_state.get("_rag_topic")
                 if not _t or not _t.get("groups"):
                     return ""
-                _x = (f"クエリ「{_t['query']}」に対する知識の反応(類似度)分析です。\n"
+                _x = (f"Knowledge-response (similarity) analysis for query \"{_t['query']}\".\n"
                       "Total全体と各RAG_NAMEそれぞれについて、この入力に反応しそうな知識の特徴・傾向を"
-                      "分かりやすく語ってください。\n")
+                      "分かりやすく語ってください。\n")  # LLM prompt content (kept JP)
                 for _g in _t["groups"]:
-                    _x += f"\n\n[{_g['name']}] 上位{len(_g['rows'])}件:\n"
+                    _x += f"\n\n[{_g['name']}] top {len(_g['rows'])}:\n"
                     for _r in _g["rows"][:12]:
                         _x += f"  score={_r.get('score','')} {_r.get('title','')}: {str(_r.get('value_text',''))[:80]}\n"
                 return _x
@@ -2340,21 +2341,21 @@ def _knowledge_explorer():
     # 4. Ask Agent
     # =========================================================
     st.markdown("---")
-    _summary_lines = [f"以下のRAGデータと分析結果を踏まえて質問に回答してください。\n\nRAGデータ: {_selected} (フィルタ後: {filtered_count}件 / 全体: {total_count}件)"]
+    _summary_lines = [f"以下のRAGデータと分析結果を踏まえて質問に回答してください。\n\nRAGデータ: {_selected} (filtered: {filtered_count} / total: {total_count})"]  # LLM prompt prefix (kept JP)
     _df_for_llm = df_filtered.drop(columns=[c for c in df_filtered.columns if "vector" in c], errors="ignore")
     for col in _filterable_cols[:5]:
         if col in _df_for_llm.columns:
             _vc = _df_for_llm[col].value_counts().head(10).to_dict()
             if _vc:
-                _summary_lines.append(f"\n[{col}の分布]\n" + "\n".join(f"  {k}: {v}件" for k, v in _vc.items()))
+                _summary_lines.append(f"\n[Distribution of {col}]\n" + "\n".join(f"  {k}: {v}" for k, v in _vc.items()))
     _sample_n = min(30, len(_df_for_llm))
-    _summary_lines.append(f"\n[データ(先頭{_sample_n}件)]\n{_df_for_llm.head(_sample_n).to_csv(index=False)}")
+    _summary_lines.append(f"\n[Data (first {_sample_n} rows)]\n{_df_for_llm.head(_sample_n).to_csv(index=False)}")
     if st.session_state.get("_rag_cluster_explanation"):
-        _summary_lines.append(f"\n[Clustering解説]\n{st.session_state._rag_cluster_explanation[:600]}")
+        _summary_lines.append(f"\n[Clustering explanation]\n{st.session_state._rag_cluster_explanation[:600]}")
     if st.session_state.get("_rag_temporal_explanation"):
-        _summary_lines.append(f"\n[Trend解説]\n{st.session_state._rag_temporal_explanation[:600]}")
+        _summary_lines.append(f"\n[Trend explanation]\n{st.session_state._rag_temporal_explanation[:600]}")
     if st.session_state.get("_rag_sensitivity_explanation"):
-        _summary_lines.append(f"\n[Topic解説]\n{st.session_state._rag_sensitivity_explanation[:600]}")
+        _summary_lines.append(f"\n[Topic explanation]\n{st.session_state._rag_sensitivity_explanation[:600]}")
     _chromadb_context = "\n".join(_summary_lines)
     _ask_agent_ui(_chromadb_context, key_prefix="rag")
     _chromadb_response = _show_ask_result(key_prefix="rag")
@@ -2369,8 +2370,8 @@ def _knowledge_explorer():
     if st.button("Generate Report", key="rag_gen_report"):
         _now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         _report = f"# Knowledge Explorer {_now}\n\n"
-        _report += f"**対象データ:** {_selected}\n\n"
-        _report += f"**データ件数:** フィルタ後 {filtered_count}件 / 全体 {total_count}件\n\n"
+        _report += f"**Target data:** {_selected}\n\n"
+        _report += f"**Row count:** filtered {filtered_count} / total {total_count}\n\n"
 
         _scc = st.session_state.get("_rag_scatter_cache")
         if _scc and _scc.get("selected") == _selected:
@@ -2388,12 +2389,12 @@ def _knowledge_explorer():
         _cs = st.session_state.get("_rag_cluster_expl_sel")
         if _ch:
             _ci = _cs if (_cs is not None and 0 <= _cs < len(_ch)) else len(_ch) - 1
-            _report += f"### Clustering解説 ({_ch[_ci]['timestamp']} / {_ch[_ci]['agent']})\n\n{_ch[_ci]['response']}\n\n"
+            _report += f"### Clustering explanation ({_ch[_ci]['timestamp']} / {_ch[_ci]['agent']})\n\n{_ch[_ci]['response']}\n\n"
         _trr = st.session_state.get("_rag_trend")
         if _trr and _trr.get("groups"):
             _report += "## Trend\n\n"
             if _trr.get("no_period"):
-                _report += "**期間情報なし:** " + ", ".join(f"{k}:{v}件" for k, v in _trr["no_period"].items()) + "\n\n"
+                _report += "**Without period info:** " + ", ".join(f"{k}:{v}" for k, v in _trr["no_period"].items()) + "\n\n"
             for _g in _trr["groups"]:
                 _report += f"### {_g['name']}\n\n"
                 if _g.get("bar_png") is not None:
@@ -2404,7 +2405,7 @@ def _knowledge_explorer():
         _ts = st.session_state.get("_rag_trend_expl_sel")
         if _th:
             _ti = _ts if (_ts is not None and 0 <= _ts < len(_th)) else len(_th) - 1
-            _report += f"### Trend解説 ({_th[_ti]['timestamp']} / {_th[_ti]['agent']})\n\n{_th[_ti]['response']}\n\n"
+            _report += f"### Trend explanation ({_th[_ti]['timestamp']} / {_th[_ti]['agent']})\n\n{_th[_ti]['response']}\n\n"
         _tpr2 = st.session_state.get("_rag_topic")
         if _tpr2 and _tpr2.get("selected") == _selected and _tpr2.get("groups"):
             _report += f"## Topic\n\nQuery: {_tpr2.get('query','')}\n\n"
@@ -2418,33 +2419,33 @@ def _knowledge_explorer():
         _ps = st.session_state.get("_rag_topic_expl_sel")
         if _ph:
             _pi = _ps if (_ps is not None and 0 <= _ps < len(_ph)) else len(_ph) - 1
-            _report += f"### Topic解説 ({_ph[_pi]['timestamp']} / {_ph[_pi]['agent']})\n\n{_ph[_pi]['response']}\n\n"
+            _report += f"### Topic explanation ({_ph[_pi]['timestamp']} / {_ph[_pi]['agent']})\n\n{_ph[_pi]['response']}\n\n"
         if st.session_state.get("_rag_llm_response"):
             _report += "## Ask Agent\n\n" + st.session_state._rag_llm_response + "\n\n"
         _report += f"\n---\nGenerated: {_now}\n"
         st.session_state._rag_report = _report
         try:
             _saved_path = _save_analysis_session(_selected)
-            st.success(f"レポートを生成し、セッションを保存しました: {_saved_path}")
+            st.success(f"Generated report and saved the session: {_saved_path}")
         except Exception as e:
-            st.success("レポートを生成しました")
-            st.warning(f"セッション保存エラー: {e}")
+            st.success("Report generated")
+            st.warning(f"Failed to save the session: {e}")
 
     if st.session_state.get("_rag_report"):
         _report_name = f"Knowledge_Explorer_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         st.download_button("Download (.md)", data=st.session_state._rag_report.encode("utf-8"),
                           file_name=f"{_report_name}.md", mime="text/markdown", key="rag_dl_md")
 
-### Scheduler画面 ###
+### Scheduler screen ###
 def _scheduler_view():
-    """汎用スケジュール管理画面。ジョブ一覧 + 追加/編集 + Run Now + Reload。"""
+    """General scheduler management screen. Job list + add/edit + Run Now + Reload."""
     import DigiM_Scheduler as _dmsch
     import DigiM_ScheduledJobs as _dmsj
 
     st.subheader("Scheduler")
-    st.caption("バックグラウンドジョブの登録・編集・即時実行。設定変更後は **Reload Schedulers** で反映してください。")
+    st.caption("Register, edit, and immediately run background jobs. Press **Reload Schedulers** after changes to apply them.")
 
-    # 制御行
+    # Control row
     _ctl1, _ctl2, _ctl3 = st.columns([1, 1, 4])
     if _ctl1.button("Reload Schedulers", key="sch_reload"):
         try:
@@ -2462,10 +2463,10 @@ def _scheduler_view():
 
     st.markdown("---")
 
-    # 一覧
+    # List
     _jobs = _dmsj.load_all()
     if not _jobs:
-        st.info("ジョブはまだ登録されていません。**Add New Job** から追加してください。")
+        st.info("No jobs registered yet. Add one from **Add New Job**.")
     for _j in _jobs:
         _jid = _j.get("job_id")
         _label = f"**{_j.get('name') or '(no name)'}** — `{_j.get('kind')}` / cron=`{_j.get('cron')}` / enabled={_j.get('enabled')}"
@@ -2502,14 +2503,14 @@ def _scheduler_view():
             if _bc.button(("Disable" if _j.get("enabled") else "Enable"), key=f"sch_toggle_{_jid}"):
                 _new = dict(_j); _new["enabled"] = not _j.get("enabled")
                 _dmsj.upsert(_new)
-                st.session_state.sidebar_message = "Updated (Reloadで反映)"
+                st.session_state.sidebar_message = "Updated (apply via Reload)"
                 st.rerun()
             if _bd.button("Delete", key=f"sch_del_{_jid}"):
                 _dmsj.delete(_jid)
                 st.session_state.sidebar_message = f"Deleted: {_jid}"
                 st.rerun()
 
-    # 編集フォーム
+    # Edit form
     _edit_id = st.session_state.get("_sch_edit_id")
     if _edit_id:
         st.markdown("---")
@@ -2524,12 +2525,12 @@ def _scheduler_view():
         _cron = st.text_input(
             "Cron",
             value=_existing.get("cron", "off"),
-            help='"off" / "daily"(03:00) / "weekly"(月03:00) / "monthly"(1日03:00) / 5フィールドcron(例: "0 3 1 * *")',
+            help='"off" / "daily" (03:00) / "weekly" (Mon 03:00) / "monthly" (1st of month 03:00) / 5-field cron (e.g., "0 3 1 * *")',
             key="sch_f_cron",
         )
         _enabled = st.checkbox("Enabled", value=bool(_existing.get("enabled", False)), key="sch_f_enabled")
 
-        # agent_run の追加パラメータ
+        # Extra parameters for agent_run
         _params = dict(_existing.get("params") or {})
         if _kind == "agent_run":
             st.markdown("**Agent Run Params**")
@@ -2579,7 +2580,7 @@ def _scheduler_view():
             try:
                 _saved = _dmsj.upsert(_doc)
                 st.session_state._sch_edit_id = None
-                st.session_state.sidebar_message = f"Saved: {_saved.get('job_id')} (Reloadで反映)"
+                st.session_state.sidebar_message = f"Saved: {_saved.get('job_id')} (apply via Reload)"
             except Exception as e:
                 st.session_state.sidebar_message = f"Save failed: {e}"
             st.rerun()
@@ -2588,9 +2589,9 @@ def _scheduler_view():
             st.rerun()
 
 
-### User Memory Explorer画面 ###
+### User Memory Explorer screen ###
 def _user_memory_explorer():
-    """ユーザー理解のための分析。タブ②深掘り(個人) / タブ①横断(集団)。各タブにメモリ接地対話。"""
+    """User-understanding analytics. Tab 2: deep dive (individual) / Tab 1: cross cohort (group). Each tab includes memory-grounded chat."""
     import DigiM_UserMemoryExplorer as ux
     import matplotlib
     matplotlib.use("Agg")
@@ -2600,21 +2601,21 @@ def _user_memory_explorer():
 
     _UME_BASE = "user/common/analytics/user_memory_explorer/"
 
-    # 保存対象のsession_stateキー（分析キャッシュ・選択・対話履歴・レポート）
+    # session_state keys to save (analysis cache, selections, chat history, report)
     _UME_STATE_KEYS = [
-        # 共通
+        # Common
         "_ume_report",
-        # ユーザー理解(個人)
+        # User understanding (individual)
         "ume_deep_user", "ume_deep_traj_period",
         "_ume_deep_hist",
-        # グループ理解
+        # Group understanding
         "ume_cross_users", "ume_cross_pk", "ume_cross_nk",
         "_ume_pcluster", "_ume_ncluster", "_ume_pexp", "_ume_nexp",
         "_ume_cross_gtwin_sys", "_ume_cross_g_hist",
     ]
 
     def _ume_save_session(label):
-        """全UME分析状態をフォルダに保存。"""
+        """Save all UME analysis state to a folder."""
         import pickle
         _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         _folder = os.path.join(_UME_BASE, f"analytics{_ts}")
@@ -2633,7 +2634,7 @@ def _user_memory_explorer():
             with open(os.path.join(_folder, "state.pkl"), "wb") as f:
                 pickle.dump(_state, f)
         except Exception as e:
-            # pickle不能なオブジェクト混入時はテキスト系のみ保存
+            # If unpicklable objects are mixed in, save only the text-form data
             _safe = {k: v for k, v in _state.items()
                      if isinstance(v, (str, int, float, list, dict, tuple, bool, type(None)))}
             with open(os.path.join(_folder, "state.pkl"), "wb") as f:
@@ -2644,7 +2645,7 @@ def _user_memory_explorer():
         return _folder
 
     def _ume_load_session(folder_path):
-        """保存済みフォルダから session_state に復元。"""
+        """Restore from a saved folder into session_state."""
         import pickle
         _meta_path = os.path.join(folder_path, "meta.json")
         if not os.path.exists(_meta_path):
@@ -2664,19 +2665,19 @@ def _user_memory_explorer():
                 pass
         return _meta
 
-    # サイドバーからのロード要求を処理
+    # Handle the sidebar's load request
     if st.session_state.get("_ume_load_folder"):
         _lp = st.session_state._ume_load_folder
         st.session_state._ume_load_folder = None
         _lm = _ume_load_session(_lp)
         if _lm:
-            st.info(f"分析セッションを読み込みました: {_lm.get('created_at','')} - {_lm.get('label','')}")
+            st.info(f"Loaded analysis session: {_lm.get('created_at','')} - {_lm.get('label','')}")
 
     st.subheader("User Memory Explorer")
 
     _all_users = ux.list_users("")
     if not _all_users:
-        st.info("ユーザーメモリのレコードがまだありません。チャットを重ねるか Update User Memory を実行してください。")
+        st.info("No user-memory records yet. Continue chatting or run Update User Memory.")
         return
 
     def _radar(labels, values, title, vmax=1.0):
@@ -2696,7 +2697,7 @@ def _user_memory_explorer():
         return fig
 
     def _radar3(labels, series, title, vmax=1.0):
-        """series=[(name,color,values), ...] を1つのレーダーに重ねる（max/mean/min用）。"""
+        """Overlay series=[(name,color,values), ...] on a single radar (for max/mean/min)."""
         n = len(labels)
         ang = [i / float(n) * 2 * pi for i in range(n)]
         ang += ang[:1]
@@ -2716,24 +2717,24 @@ def _user_memory_explorer():
         return fig
 
     def _um_ask(context_text, key_prefix):
-        """メモリ接地エージェントとの対話。専用セッションに保存。"""
+        """Chat with the memory-grounded agent. Saved into a dedicated session."""
         st.markdown("---")
-        st.subheader("メモリ接地エージェントと対話")
+        st.subheader("Chat with the memory-grounded agent")
         if not context_text:
-            st.caption("対象データが空のため対話できません。")
+            st.caption("Cannot chat because the target data is empty.")
             return
-        with st.expander("接地コンテキスト（エージェントに渡す文脈）"):
+        with st.expander("Grounding context (the context passed to the agent)"):
             st.text(context_text[:4000])
 
         _agent_list = st.session_state.agent_list
         _aidx = _agent_list.index(st.session_state.agent_id) if st.session_state.get("agent_id") in _agent_list else 0
         _agent = st.selectbox("Agent:", _agent_list, index=_aidx, key=f"{key_prefix}_agent")
-        _q = st.text_area("質問:", placeholder="例: この人/この層の関心の変遷と背景を説明して",
+        _q = st.text_area("Question:", placeholder="e.g. Explain this person's / this cohort's interest evolution and background",
                           height=90, key=f"{key_prefix}_q")
         if _q and st.button("Ask", key=f"{key_prefix}_ask"):
             _af = next((a["FILE"] for a in st.session_state.agents if a["AGENT"] == _agent), None)
             if _af:
-                _ui = f"{context_text}\n\n【質問】\n{_q}"
+                _ui = f"{context_text}\n\n[Question]\n{_q}"
                 _exec = {
                     "MEMORY_USE": False, "MEMORY_SAVE": True, "SAVE_DIGEST": False,
                     "CONTENTS_SAVE": False, "STREAM_MODE": False, "MAGIC_WORD_USE": False,
@@ -2747,7 +2748,7 @@ def _user_memory_explorer():
                 _tmp = dms.DigiMSession(_sid, "User Memory Explorer", base_path=_sbase)
                 _tmp.save_status("LOCKED")
                 _exec["_SESSION_BASE_PATH"] = _sbase
-                with st.spinner("エージェント実行中..."):
+                with st.spinner("Running the agent..."):
                     try:
                         _resp = ""
                         for _, _, chunk, _, _oref in dme.DigiMatsuExecute(
@@ -2762,7 +2763,7 @@ def _user_memory_explorer():
                             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         })
                     except Exception as e:
-                        st.error(f"実行エラー: {type(e).__name__}: {e}")
+                        st.error(f"Execution error: {type(e).__name__}: {e}")
                     finally:
                         _tmp.save_status("UNLOCKED")
         for _h in st.session_state.get(f"_{key_prefix}_hist", []):
@@ -2773,13 +2774,13 @@ def _user_memory_explorer():
                 st.markdown(_h["response"])
 
     def _um_twin_chat(user_id, key_prefix="ume_deep"):
-        """選択ユーザーのメモリだけを持つAI（=そのユーザーのデジタルツイン）と対話。
+        """Chat with an AI that only has the selected user's memory (= that user's digital twin).
 
-        - サイドバーで選択中のエージェントに搭載されたLLMエンジンのみ選択
-        - サイドバーのエージェントのペルソナ/知識/システムプロンプトは一切使わない
-        - Persona/Nowaday/History を「ユーザーメモリのコンテキスト注入方式」で合成
-          （Historyは質問文のキーワードでスコアリングして選定）
-        - LLM単体で応答。AIの名前は選択ユーザー名
+        - Only LLM engines attached to the sidebar-selected agent can be chosen.
+        - The sidebar agent's persona / knowledge / system prompt are NOT used.
+        - Persona / Nowaday / History are composed via the "user memory context injection" form
+          (History is scored and selected by keywords in the question).
+        - The LLM replies directly. The AI is named after the selected user.
         """
         import DigiM_UserMemory as _dmum_t
         import DigiM_UserMemoryBuilder as _dmumb_t
@@ -2788,11 +2789,11 @@ def _user_memory_explorer():
         st.markdown("---")
         st.subheader("Chat with this User Twin")
         st.caption(
-            f"「{user_id}」のユーザーメモリ(Persona/Nowaday/History)だけを文脈に持つLLMと対話します。"
-            "サイドバーのエージェント設定（人格・知識・システムプロンプト）は使用しません。"
+            f"Chat with an LLM whose only context is user \"{user_id}\"'s memory (Persona/Nowaday/History). "
+            "The sidebar agent settings (personality / knowledge / system prompt) are not used."
         )
 
-        # 対象ユーザーの実 service_id を解決
+        # Resolve the real service_id for the target user
         _bd = ux.load_bundle(user_id, "")
         _svc = ""
         for _r in [_bd.get("persona") or {}] + (_bd.get("nowaday") or []) + (_bd.get("history") or []):
@@ -2800,25 +2801,25 @@ def _user_memory_explorer():
                 _svc = _r["service_id"]
                 break
 
-        # サイドバー選択中エージェントのLLMエンジン一覧（エンジンのみ選択）
+        # LLM engines of the sidebar-selected agent (engine selection only)
         try:
             _adata = dmu.read_json_file(st.session_state.agent_file, agent_folder_path)
         except Exception:
             _adata = st.session_state.get("agent_data", {}) or {}
         _eng_list = dma.get_engine_list(_adata, model_type="LLM")
         if not _eng_list:
-            st.caption("選択中エージェントにLLMエンジンが定義されていません。")
+            st.caption("The selected agent has no LLM engines defined.")
             return
         _eng_default = _adata.get("ENGINE", {}).get("LLM", {}).get("DEFAULT", _eng_list[0])
         _eidx = _eng_list.index(_eng_default) if _eng_default in _eng_list else 0
         _eng_name = st.selectbox("LLM Engine:", _eng_list, index=_eidx, key=f"{key_prefix}_engine")
 
-        _q = st.text_area("質問:", placeholder=f"例: 最近のあなた（{user_id}）の関心と、その背景を教えて",
+        _q = st.text_area("Question:", placeholder=f"e.g. Tell me about your recent ({user_id}) interests and what's behind them",
                           height=90, key=f"{key_prefix}_q")
         if _q and st.button("Ask", key=f"{key_prefix}_ask"):
-            with st.spinner("応答生成中..."):
+            with st.spinner("Generating response..."):
                 try:
-                    # 質問文でHistoryをスコアリングして文脈合成（ユーザーメモリ注入方式）
+                    # Score History against the question and compose context (user-memory injection)
                     _ctx, _used, _meta = _dmumb_t.build_context_text(
                         _svc, user_id, list(_dmum_t.LAYERS), query_text=_q)
                     _sys = (
@@ -2827,7 +2828,7 @@ def _user_memory_explorer():
                         f"この記憶だけに基づき、{user_id}本人になりきって一人称で回答してください。"
                         f"記憶に無いことは推測せず「記憶にない」と述べてください。"
                         f"外部知識やこの記憶以外の情報は使わないでください。\n\n"
-                        f"{_ctx or '（記憶情報がありません）'}"
+                        f"{_ctx or '(no memory information)'}"  # LLM prompt body (kept JP)
                     )
                     _eng = _adata["ENGINE"]["LLM"][_eng_name]
                     _resp = ""
@@ -2843,7 +2844,7 @@ def _user_memory_explorer():
                         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     })
                 except Exception as e:
-                    st.error(f"実行エラー: {type(e).__name__}: {e}")
+                    st.error(f"Execution error: {type(e).__name__}: {e}")
         _hist = st.session_state.get(f"_{key_prefix}_hist", [])
         if _hist and _hist[-1].get("context"):
             with st.expander("Context (User Twin)"):
@@ -2856,17 +2857,17 @@ def _user_memory_explorer():
                 st.markdown(_h["response"])
 
     def _um_group_twin(user_ids, key_prefix="ume_cross"):
-        """対象集団の代表AI（Group Twin）と対話。
+        """Chat with a representative AI for the cohort (Group Twin).
 
-        - 対象データ(Persona+Nowaday)からシステムプロンプトをLLM生成→手動修正可
-        - Big5/基本感情の平均 + 二次感情Top5 を統計ブロックとして付与
-        - サイドバー選択中エージェントのLLMエンジンのみ選択して対話（LLM単体）
+        - Generate the system prompt from the target data (Persona + Nowaday) via the LLM; manual edits allowed.
+        - Append a stats block: Big5 / basic-emotion means + top-5 secondary emotions.
+        - Only LLM engines of the sidebar-selected agent are selectable for chat (plain LLM).
         """
         import DigiM_FoundationModel as _dmfm_g
         st.markdown("---")
         st.subheader("Chat with this Group Twin")
         if not user_ids:
-            st.caption("対象ユーザーを選択してください。")
+            st.caption("Please select target users.")
             return
         try:
             _adata = dmu.read_json_file(st.session_state.agent_file, agent_folder_path)
@@ -2874,7 +2875,7 @@ def _user_memory_explorer():
             _adata = st.session_state.get("agent_data", {}) or {}
         _el = dma.get_engine_list(_adata, model_type="LLM")
         if not _el:
-            st.caption("選択中エージェントにLLMエンジンが定義されていません。")
+            st.caption("The selected agent has no LLM engines defined.")
             return
         _ed = _adata.get("ENGINE", {}).get("LLM", {}).get("DEFAULT", _el[0])
         _eng_name = st.selectbox("LLM Engine:", _el,
@@ -2883,10 +2884,10 @@ def _user_memory_explorer():
         _eng = _adata["ENGINE"]["LLM"][_eng_name]
 
         _bk = f"_{key_prefix}_gtwin_sys"
-        if st.button("システムプロンプト生成/再生成（Persona+Nowaday）", key=f"{key_prefix}_g_gen"):
-            with st.spinner("生成中..."):
+        if st.button("Generate / regenerate system prompt (Persona + Nowaday)", key=f"{key_prefix}_g_gen"):
+            with st.spinner("Generating..."):
                 st.session_state[_bk] = ux.build_group_twin_prompt(user_ids, "", _eng)
-        _base = st.text_area("システムプロンプト（手動修正可）",
+        _base = st.text_area("System prompt (editable)",
                              value=st.session_state.get(_bk, ""), height=170,
                              key=f"{key_prefix}_g_sysbox")
 
@@ -2895,22 +2896,22 @@ def _user_memory_explorer():
         _sec = ux.agg_secondary_emotions(user_ids, "")
         _stat = (
             "\n\n【この集団の統計】\n"
-            "・Big5平均: " + "、".join(f"{ux.BIG5_JA.get(t,t)}={_b5s[t]['mean']:.2f}"
+            "・Big5平均: " + "、".join(f"{ux.BIG5_JA.get(t,t)}={_b5s[t]['mean']:.2f}"  # stats block label (kept JP)
                                        for t in ux.BIG5_TRAITS)
-            + "\n・基本感情平均: " + "、".join(f"{ux.PLUTCHIK_JA.get(e,e)}={_es[e]['mean']:.2f}"
+            + "\n・基本感情平均: " + "、".join(f"{ux.PLUTCHIK_JA.get(e,e)}={_es[e]['mean']:.2f}"  # stats block label (kept JP)
                                               for e in ux.PLUTCHIK_PRIMARY)
-            + "\n・二次感情Top5: " + ("、".join(f"{ux.PLUTCHIK_JA.get(k,k)}({c})"
+            + "\n・二次感情Top5: " + ("、".join(f"{ux.PLUTCHIK_JA.get(k,k)}({c})"  # stats block label (kept JP)
                                                for k, c in _sec.most_common(5)) or "なし")
         )
-        with st.expander("付与される統計ブロック"):
+        with st.expander("Stats block that will be attached"):
             st.text(_stat)
 
-        _q = st.text_area("質問:", height=90, key=f"{key_prefix}_g_q",
-                          placeholder="例: この集団が最も重視している価値観は？")
+        _q = st.text_area("Question:", height=90, key=f"{key_prefix}_g_q",
+                          placeholder="e.g. Which value does this cohort prioritize most?")
         if _q and st.button("Ask", key=f"{key_prefix}_g_ask"):
-            with st.spinner("応答生成中..."):
+            with st.spinner("Generating response..."):
                 try:
-                    _sys = (_base or "あなたはこのユーザー集団を代表する人物です。") + _stat
+                    _sys = (_base or "You represent this user cohort.") + _stat
                     _resp = ""
                     for _p, _r, _c in _dmfm_g.call_function_by_name(
                             _eng["FUNC_NAME"], _q, _sys, _eng, [], [], {}, False):
@@ -2918,12 +2919,12 @@ def _user_memory_explorer():
                             _resp += _r
                     st.session_state.setdefault(f"_{key_prefix}_g_hist", [])
                     st.session_state[f"_{key_prefix}_g_hist"].append({
-                        "agent": f"Group Twin ({len(user_ids)}人 / {_eng_name})",
+                        "agent": f"Group Twin ({len(user_ids)} users / {_eng_name})",
                         "query": _q, "response": _resp,
                         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     })
                 except Exception as e:
-                    st.error(f"実行エラー: {type(e).__name__}: {e}")
+                    st.error(f"Execution error: {type(e).__name__}: {e}")
         for _h in st.session_state.get(f"_{key_prefix}_g_hist", []):
             with st.chat_message("user"):
                 st.markdown(f"**[{_h['timestamp']}] {_h['agent']}**")
@@ -2932,23 +2933,23 @@ def _user_memory_explorer():
                 st.markdown(_h["response"])
 
     _tab_edit, _tab_deep, _tab_cross = st.tabs(
-        ["マイメモリ", "ユーザー理解(個人)", "グループ理解"])
+        ["My Memory", "User Understanding (Individual)", "User Understanding (Group)"])
 
-    # ===== タブ: ユーザー理解(個人) =====
+    # ===== Tab: User Understanding (Individual) =====
     with _tab_deep:
-        _uid = st.selectbox("ユーザー:", _all_users, key="ume_deep_user")
+        _uid = st.selectbox("User:", _all_users, key="ume_deep_user")
         _b = ux.load_bundle(_uid, "")
         _p = _b["persona"] or {}
 
-        st.markdown("#### Persona（長期像）")
+        st.markdown("#### Persona (long-term profile)")
         if _p:
             if _p.get("role"):
-                st.markdown(f"**役割:** {_p.get('role')}")
+                st.markdown(f"**Role:** {_p.get('role')}")
             if _p.get("summary_text"):
                 st.caption(_p.get("summary_text"))
             _b5 = _p.get("big5") or {}
             _appr = []  # (label, score) for radar
-            _b5rows = []  # for table (特性/スコアのみ)
+            _b5rows = []  # for table (trait/score only)
             for t in ux.BIG5_TRAITS:
                 _it = _b5.get(t)
                 if not isinstance(_it, dict):
@@ -2958,7 +2959,7 @@ def _user_memory_explorer():
                     continue
                 _sc = float(_it.get("score", 0.5) or 0.5)
                 _appr.append((ux.BIG5_JA.get(t, t), _sc))
-                _b5rows.append({"特性": ux.BIG5_JA.get(t, t), "スコア": _sc})
+                _b5rows.append({"Trait": ux.BIG5_JA.get(t, t), "Score": _sc})
             if _appr:
                 _c1, _c2 = st.columns([1, 1])
                 with _c1:
@@ -2967,9 +2968,9 @@ def _user_memory_explorer():
                 with _c2:
                     st.dataframe(pd.DataFrame(_b5rows), hide_index=True)
             else:
-                st.caption("Big5はまだありません（下の要レビュー参照）")
+                st.caption("Big5 is not yet populated (see the review-needed section below)")
 
-            # 6属性の可視化（ツリーマップ → データテーブル）
+            # 6-attribute visualization (treemap -> data table)
             _PFLD_COLORS = {
                 "expertise": "#2E86AB",
                 "recurring_interests": "#A23B72",
@@ -2979,17 +2980,17 @@ def _user_memory_explorer():
                 "avoid_topics": "#7B68EE",
             }
             _PFLD_JA = {
-                "expertise": "専門", "recurring_interests": "関心",
-                "values_principles": "価値観", "constraints": "制約",
-                "communication_style": "口調", "avoid_topics": "避けたい話題",
+                "expertise": "Expertise", "recurring_interests": "Interests",
+                "values_principles": "Values", "constraints": "Constraints",
+                "communication_style": "Tone", "avoid_topics": "Topics to avoid",
             }
             _PSTATUS_COLOR = {
                 "approved": "#2E8B57", "pending": "#FFA500", "deleted": "#A0A0A0",
             }
             _has_p_items = any((_p.get(_pf) or []) for _pf in _PFLD_COLORS)
             if _has_p_items:
-                st.markdown("**Persona 属性の可視化（3案併記・比較用）**")
-                _stat_sel = st.multiselect("Statusフィルタ",
+                st.markdown("**Persona attribute visualization (3 layouts shown together for comparison)**")
+                _stat_sel = st.multiselect("Status filter",
                                             ["approved", "pending", "deleted"],
                                             default=["approved", "pending"],
                                             key="ume_deep_pfield_status")
@@ -3010,21 +3011,21 @@ def _user_memory_explorer():
                 _total_items = sum(len(v) for v in _by_pfield.values())
 
                 if _total_items == 0:
-                    st.caption("選択中のStatusに該当する属性がありません")
+                    st.caption("No attributes match the selected status filter")
                 else:
-                    # ===== ツリーマップ =====
-                    st.markdown("##### ツリーマップ（行=種別 / 面積=confidence比率 / 色=種別）")
+                    # ===== Treemap =====
+                    st.markdown("##### Treemap (row = category / area = confidence ratio / color = category)")
                     import matplotlib.patches as _mpatches_t
                     import textwrap as _tw_t
                     _field_totals = {pf: sum(x["confidence"] for x in its)
                                      for pf, its in _by_pfield.items() if its}
                     _grand = sum(_field_totals.values())
-                    # ラベル読みやすさのため、フィギュアを大きめ + 大きいフォント
+                    # Larger figure + bigger font for label readability
                     _fig_t, _ax_t = plt.subplots(figsize=(11, 6))
                     _canvas_w, _canvas_h = 100.0, 100.0
-                    _MAX_LBL_CHARS = 32  # ラベル最大文字数（超過時は…で切詰）
-                    _LBL_FS = 11         # ラベルのフォントサイズ
-                    _CONF_FS = 9         # confidence値のフォントサイズ
+                    _MAX_LBL_CHARS = 32  # Max label characters (truncate with ellipsis when exceeded)
+                    _LBL_FS = 11         # Label font size
+                    _CONF_FS = 9         # confidence font size
                     _cur_y = 0.0
                     for _pf, _its in _by_pfield.items():
                         if not _its:
@@ -3039,7 +3040,7 @@ def _user_memory_explorer():
                                 (_cur_x, _cur_y), _w_r, _strip_h,
                                 facecolor=_PFLD_COLORS[_pf], edgecolor="white", linewidth=1.5)
                             _ax_t.add_patch(_rect)
-                            # 折返し＆切詰: 矩形サイズに応じて1行の最大文字数と最大行数を決定
+                            # Wrap & truncate: derive per-line max chars and max lines from rectangle size
                             if _w_r > 5 and _strip_h > 4:
                                 _chars_per_line = max(3, int(_w_r * 0.50))
                                 _max_lines = max(1, int(_strip_h / 4.5))
@@ -3049,7 +3050,7 @@ def _user_memory_explorer():
                                     _lbl_t = _lbl_t[:max(1, min(_MAX_LBL_CHARS, _budget))] + "…"
                                 _wrapped = _tw_t.fill(_lbl_t, width=_chars_per_line,
                                                       break_long_words=True, break_on_hyphens=False)
-                                # ラベル本体（中央やや上）と confidence 数値（下）
+                                # Main label (slightly above center) and confidence value (bottom)
                                 _ax_t.text(_cur_x + _w_r / 2, _cur_y + _strip_h * 0.42,
                                            _wrapped, ha="center", va="center",
                                            fontsize=_LBL_FS, color="white",
@@ -3067,24 +3068,24 @@ def _user_memory_explorer():
                     plt.tight_layout()
                     st.pyplot(_fig_t)
                     plt.close(_fig_t)
-                    # 種別カラー凡例（下に表示）
+                    # Category color legend (shown below)
                     _tm_legend = " &nbsp;&nbsp; ".join(
                         f"<span style='color:{_c};font-weight:bold;font-size:1.05em'>■ {_PFLD_JA[_k]}</span>"
                         for _k, _c in _PFLD_COLORS.items()
                     )
                     st.markdown(_tm_legend, unsafe_allow_html=True)
 
-                    # ===== データテーブル =====
-                    st.markdown("##### データテーブル（種別=色 / confidence=進捗バー / ソート・検索可）")
+                    # ===== Data table =====
+                    st.markdown("##### Data table (category = color / confidence = progress bar / sortable & searchable)")
                     _rows_a = []
                     for _pf, _its in _by_pfield.items():
                         for _x in _its:
                             _rows_a.append({
-                                "種別": _PFLD_JA[_pf], "ラベル": _x["label"],
+                                "Category": _PFLD_JA[_pf], "Label": _x["label"],
                                 "confidence": _x["confidence"], "status": _x["status"],
                             })
                     _df_a = pd.DataFrame(_rows_a)
-                    # 種別列はツリーマップと同じ種別カラー、status列はstatusカラーで文字色を付ける
+                    # Color the Category column to match the treemap; color the status column by status
                     _ja_to_color = {_PFLD_JA[_k]: _c for _k, _c in _PFLD_COLORS.items()}
                     def _style_pfld_col(_vals):
                         return [f"color: {_ja_to_color.get(_v, '#000')}; font-weight: bold"
@@ -3094,7 +3095,7 @@ def _user_memory_explorer():
                                 for _v in _vals]
                     try:
                         _df_show = (_df_a.style
-                                    .apply(_style_pfld_col, subset=["種別"])
+                                    .apply(_style_pfld_col, subset=["Category"])
                                     .apply(_style_status_col, subset=["status"]))
                     except Exception:
                         _df_show = _df_a
@@ -3106,18 +3107,18 @@ def _user_memory_explorer():
                         },
                     )
         else:
-            st.caption("Persona未生成")
+            st.caption("Persona has not been generated yet")
 
-        st.markdown("#### Nowaday（最近の傾向）")
+        st.markdown("#### Nowaday (recent trends)")
         if _b["nowaday"]:
-            # スナップショット選択（generated_at 降順。先頭が最新）
+            # Select the snapshot (sorted by generated_at descending; first is latest)
             _nws_d = _b["nowaday"]
             _nw_opts_d = {f"{m.get('period','')} @ {m.get('generated_at','')}": m for m in _nws_d}
-            _osel_d = st.selectbox("スナップショット（period @ 生成時刻、上が最新）",
+            _osel_d = st.selectbox("Snapshot (period @ generated_at; top is latest)",
                                     list(_nw_opts_d.keys()),
                                     index=0, key="ume_deep_nw_sel")
             _nw = _nw_opts_d[_osel_d]
-            st.markdown(f"**期間:** {_nw.get('period','')}")
+            st.markdown(f"**Period:** {_nw.get('period','')}")
             if _nw.get("summary_text"):
                 st.caption(_nw["summary_text"])
             _be = _nw.get("basic_emotions") or {}
@@ -3126,29 +3127,29 @@ def _user_memory_explorer():
                 _ec1, _ec2 = st.columns([1, 1])
                 with _ec1:
                     st.pyplot(_radar([ux.PLUTCHIK_JA.get(e, e) for e in ux.PLUTCHIK_PRIMARY],
-                                     _vals, "基本感情（強度）"))
+                                     _vals, "Basic emotions (intensity)"))
                 with _ec2:
                     st.dataframe(pd.DataFrame(
-                        [{"特性": ux.PLUTCHIK_JA.get(e, e),
-                          "スコア": round(float(_be.get(e, 0) or 0), 2)}
+                        [{"Trait": ux.PLUTCHIK_JA.get(e, e),
+                          "Score": round(float(_be.get(e, 0) or 0), 2)}
                          for e in ux.PLUTCHIK_PRIMARY]), hide_index=True)
             if _nw.get("secondary_emotions"):
-                st.markdown("**二次感情:** " + "、".join(
+                st.markdown("**Secondary emotions:** " + ", ".join(
                     ux.PLUTCHIK_JA.get(s, s) for s in _nw["secondary_emotions"]))
-            for _lbl, _k in (("継続", "recurring_topics"), ("新規", "emerging"),
-                             ("減退", "declining"), ("変化", "shifts")):
+            for _lbl, _k in (("Recurring", "recurring_topics"), ("Emerging", "emerging"),
+                             ("Declining", "declining"), ("Shifts", "shifts")):
                 if _nw.get(_k):
                     st.markdown(f"**{_lbl}:** " + "、".join(str(x) for x in _nw[_k]))
         else:
-            st.caption("Nowaday未生成")
+            st.caption("Nowaday has not been generated yet")
 
-        st.markdown("#### History 感情トラジェクトリ")
+        st.markdown("#### History emotion trajectory")
         _traj_all = ux.user_emotion_trajectory(_uid, "")
         if _traj_all:
             _def_end = now_time.date()
             _def_start = (now_time - timedelta(days=30)).date()
             _rng = st.date_input(
-                "期間（このユーザーのHistory日付で絞り込み）",
+                "Period (filtered by this user's History dates)",
                 value=(_def_start, _def_end), key="ume_deep_traj_period",
             )
             if isinstance(_rng, (list, tuple)) and len(_rng) == 2:
@@ -3158,7 +3159,7 @@ def _user_memory_explorer():
             else:
                 _s, _e = _rng.isoformat(), _def_end.isoformat()
             _traj = [(d, t, es) for d, t, es in _traj_all if _s <= d <= _e]
-            st.caption(f"対象 {_s} 〜 {_e}: {len(_traj)}件 / 全{len(_traj_all)}件")
+            st.caption(f"Target {_s} - {_e}: {len(_traj)} / total {len(_traj_all)}")
             if _traj:
                 _rows = []
                 for _d, _t, _emos in _traj:
@@ -3170,29 +3171,29 @@ def _user_memory_explorer():
                 if not _df.empty and len(_df.columns) > 1:
                     _agg = _df.groupby("date").sum(numeric_only=True)
                     st.area_chart(_agg)
-                with st.expander(f"セッション別 感情ログ（{len(_traj)}件）"):
+                with st.expander(f"Per-session emotion log ({len(_traj)} sessions)"):
                     st.dataframe(pd.DataFrame(
                         [{"date": d, "topic": t, "emotions": "、".join(ux.PLUTCHIK_JA.get(e, e) for e in es)}
                          for d, t, es in reversed(_traj)], ), hide_index=True)
             else:
-                st.caption("指定期間にHistoryがありません")
+                st.caption("No History entries in the specified period")
         else:
-            st.caption("History未生成")
+            st.caption("History has not been generated yet")
 
         _rev = ux.persona_review_items(_uid, "")
         if _rev["big5"] or _rev["lists"]:
-            with st.expander("要レビュー（pending）項目"):
+            with st.expander("Review-needed (pending) items"):
                 if _rev["big5"]:
                     st.markdown("**Big5:** " + "、".join(
                         f"{ux.BIG5_JA.get(t,t)}(score={s},conf={c})" for t, s, c in _rev["big5"]))
                 for _f, _items in _rev["lists"].items():
                     st.markdown(f"**{_f}:** " + "、".join(_items))
 
-        # ============ Agent との関係性・コミュニケーション分析 ============
+        # ============ Agent relationship / communication analysis ============
         st.markdown("---")
         st.markdown("### Relationship with Agent")
         _ua_ag = st.selectbox(
-            "対話相手のエージェント",
+            "Conversation partner agent",
             st.session_state.agent_list,
             index=(st.session_state.agent_list.index(st.session_state.agent_id)
                    if st.session_state.get("agent_id") in st.session_state.agent_list else 0),
@@ -3223,7 +3224,7 @@ def _user_memory_explorer():
                 "Period To:", value=_today_ua,
                 min_value=_date_ua(2000, 1, 1), max_value=_FAR_FUTURE_UA,
                 key="ume_deep_ua_period_to")
-            st.caption("※ 期間を指定して『分析を実行』を押すと、活動推移〜Knowledge参照までの一連のパネルを期間で絞り込みます。")
+            st.caption("* Specify the period and press \"Run analysis\" to filter the panels from activity to Knowledge references with that period.")
 
             def _ua_scan(uid, af, p_from, p_to):
                 _pf_s = p_from.isoformat()
@@ -3267,11 +3268,11 @@ def _user_memory_explorer():
                             })
                 return _result
 
-            _run_btn = st.button("分析を実行", key="ume_deep_ua_run", type="primary",
-                                  help="対話履歴を集計して各パネルを描画します")
+            _run_btn = st.button("Run analysis", key="ume_deep_ua_run", type="primary",
+                                  help="Aggregate the dialog history and render each panel")
             _cache_key = f"_ume_deep_ua_cache_{_uid}_{_ua_af}"
             if _run_btn:
-                with st.spinner("対話履歴をスキャン中..."):
+                with st.spinner("Scanning dialog history..."):
                     _scan_result = _ua_scan(_uid, _ua_af, _ua_period_from, _ua_period_to)
                 _chunk_refs_tmp = {}
                 for _s in _scan_result:
@@ -3307,7 +3308,7 @@ def _user_memory_explorer():
                             _col_to_rag_name_ua[_dn] = _rn_v
                 _bns_to_fetch = sorted(set(list(_col_to_rag_name_ua.keys()) + [b for b, _ in _chunk_refs_tmp.keys()]))
                 if _bns_to_fetch:
-                    with st.spinner("RAGメタデータを取得中..."):
+                    with st.spinner("Fetching RAG metadata..."):
                         for _bn in _bns_to_fetch:
                             try:
                                 _rows = dmc.get_rag_collection_data(_bn)
@@ -3327,9 +3328,9 @@ def _user_memory_explorer():
                 }
             _cached = st.session_state.get(_cache_key)
             if _cached is None:
-                st.caption("エージェント・期間を選んで『分析を実行』を押すと結果を表示します。")
+                st.caption("Pick an agent and period, then press \"Run analysis\" to display results.")
             elif not _cached.get("seqs"):
-                st.info(f"「{_uid}」と「{_ua_ag}」の対話履歴がありません（期間: {_ua_period_from} 〜 {_ua_period_to}）")
+                st.info(f"No dialog history between \"{_uid}\" and \"{_ua_ag}\" (period: {_ua_period_from} - {_ua_period_to})")
             else:
                 _ua_seqs = _cached["seqs"]
                 _chunk_refs = _cached["chunk_refs"]
@@ -3343,30 +3344,30 @@ def _user_memory_explorer():
                 from datetime import datetime as _dt_a, timedelta as _td_a
                 from collections import Counter as _Cnt_a
 
-                st.caption(f"対象期間: **{_cached_pf} 〜 {_cached_pt}** / セッション: {len(_sess_ids)} / ターン: {len(_ua_seqs)}")
+                st.caption(f"Target period: **{_cached_pf} - {_cached_pt}** / sessions: {len(_sess_ids)} / turns: {len(_ua_seqs)}")
 
-                # ===== ① 基本サマリ =====
+                # ===== 1. Basic summary =====
                 st.markdown("#### Summary")
                 _kc = st.columns(5)
-                _kc[0].metric("セッション数", len(_sess_ids))
-                _kc[1].metric("ターン数", len(_ua_seqs))
+                _kc[0].metric("Sessions", len(_sess_ids))
+                _kc[1].metric("Turns", len(_ua_seqs))
                 _total_chars = sum(len(s["query"]) + len(s["response"]) for s in _ua_seqs)
-                _kc[2].metric("総文字数", f"{_total_chars:,}")
+                _kc[2].metric("Total chars", f"{_total_chars:,}")
                 _avg_turns_per = round(len(_ua_seqs) / max(len(_sess_ids), 1), 1)
-                _kc[3].metric("平均ターン/Sess", _avg_turns_per)
+                _kc[3].metric("Avg turns/session", _avg_turns_per)
                 _last_ts = max((s["timestamp"] for s in _ua_seqs if s["timestamp"]), default="")
-                _kc[4].metric("最終対話", _last_ts[:10] if _last_ts else "—")
+                _kc[4].metric("Last contact", _last_ts[:10] if _last_ts else "-")
 
-                # ===== ② 活動推移 =====
-                st.markdown("#### 活動推移")
-                _gran = st.selectbox("単位", ["月", "週", "日"], index=0, key="ume_deep_ua_actgran")
+                # ===== 2. Activity trend =====
+                st.markdown("#### Activity trend")
+                _gran = st.selectbox("Granularity", ["月", "週", "日"], index=0, key="ume_deep_ua_actgran")  # values are JP because the bucket logic matches on them
 
                 def _gkey(_ts, _g):
                     if not _ts:
-                        return "未設定"
-                    if _g == "月":
+                        return "Unset"
+                    if _g == "月":  # "Month"
                         return _ts[:7]
-                    if _g == "日":
+                    if _g == "日":  # "Day"
                         return _ts[:10]
                     try:
                         _tt = pd.Timestamp(_ts[:10])
@@ -3387,22 +3388,22 @@ def _user_memory_explorer():
                 if _keys:
                     _fig_act, _ax_act = plt.subplots(figsize=(10, 3.6))
                     _ax_act.bar(_keys, [_by_g_s[k] for k in _keys],
-                                color="#4A90D9", alpha=0.75, label="セッション数")
+                                color="#4A90D9", alpha=0.75, label="Sessions")
                     _ax2 = _ax_act.twinx()
                     _ax2.plot(_keys, [_by_g_t[k] for k in _keys],
-                              color="#E74C3C", marker="o", label="ターン数")
-                    _ax_act.set_ylabel("セッション数", color="#4A90D9")
-                    _ax2.set_ylabel("ターン数", color="#E74C3C")
+                              color="#E74C3C", marker="o", label="Turns")
+                    _ax_act.set_ylabel("Sessions", color="#4A90D9")
+                    _ax2.set_ylabel("Turns", color="#E74C3C")
                     _ax_act.set_xticks(range(len(_keys)))
                     _ax_act.set_xticklabels(_keys, rotation=45, ha="right", fontsize=9)
                     _ax_act.grid(True, alpha=0.3)
                     plt.tight_layout()
                     st.pyplot(_fig_act); plt.close(_fig_act)
                 else:
-                    st.caption("対象期間にデータがありません")
+                    st.caption("No data in the target period")
 
-                # ===== ③ 会話の傾向 (Q字数×R字数 のKMeansクラスタリング + LLM解説) =====
-                st.markdown("#### 会話の傾向")
+                # ===== 3. Conversation pattern (KMeans on Q chars x R chars + LLM explanation) =====
+                st.markdown("#### Conversation pattern")
                 _qlens_all = [len(s["query"]) for s in _ua_seqs]
                 _rlens_all = [len(s["response"]) for s in _ua_seqs]
                 _qmin_a, _qmax_a = (min(_qlens_all), max(_qlens_all)) if _qlens_all else (0, 0)
@@ -3410,32 +3411,32 @@ def _user_memory_explorer():
                 _avg_q = sum(_qlens_all) / max(len(_qlens_all), 1)
                 _avg_r = sum(_rlens_all) / max(len(_rlens_all), 1)
                 _kpc = st.columns(3)
-                _kpc[0].metric("平均 質問字数", int(_avg_q))
-                _kpc[1].metric("平均 応答字数", int(_avg_r))
-                _kpc[2].metric("応答/質問 比", f"{(_avg_r / max(_avg_q, 1)):.1f}x")
+                _kpc[0].metric("Avg query chars", int(_avg_q))
+                _kpc[1].metric("Avg response chars", int(_avg_r))
+                _kpc[2].metric("Response/query ratio", f"{(_avg_r / max(_avg_q, 1)):.1f}x")
 
                 _fq1, _fq2 = st.columns(2)
                 if _qmax_a > _qmin_a:
-                    _qr = _fq1.slider("質問字数 範囲", min_value=int(_qmin_a), max_value=int(_qmax_a),
+                    _qr = _fq1.slider("Query-char range", min_value=int(_qmin_a), max_value=int(_qmax_a),
                                       value=(int(_qmin_a), int(_qmax_a)), key="ume_deep_ua_qrange")
                 else:
-                    _qr = (int(_qmin_a), int(_qmax_a)); _fq1.caption(f"質問字数: {int(_qmin_a)} (単一値)")
+                    _qr = (int(_qmin_a), int(_qmax_a)); _fq1.caption(f"Query chars: {int(_qmin_a)} (single value)")
                 if _rmax_a > _rmin_a:
-                    _rr = _fq2.slider("応答字数 範囲", min_value=int(_rmin_a), max_value=int(_rmax_a),
+                    _rr = _fq2.slider("Response-char range", min_value=int(_rmin_a), max_value=int(_rmax_a),
                                       value=(int(_rmin_a), int(_rmax_a)), key="ume_deep_ua_rrange")
                 else:
-                    _rr = (int(_rmin_a), int(_rmax_a)); _fq2.caption(f"応答字数: {int(_rmin_a)} (単一値)")
+                    _rr = (int(_rmin_a), int(_rmax_a)); _fq2.caption(f"Response chars: {int(_rmin_a)} (single value)")
                 _filt_qr = [s for s in _ua_seqs
                             if _qr[0] <= len(s["query"]) <= _qr[1] and _rr[0] <= len(s["response"]) <= _rr[1]]
 
                 _kc1, _kc2 = st.columns([1, 3])
-                _kk = _kc1.number_input("クラスタ数 (k)", min_value=2, max_value=8, value=3,
+                _kk = _kc1.number_input("Number of clusters (k)", min_value=2, max_value=8, value=3,
                                          step=1, key="ume_deep_ua_kmeans_k")
-                _run_cl = _kc2.button("クラスタリング実行 (KMeans)", key="ume_deep_ua_kmeans_run")
+                _run_cl = _kc2.button("Run clustering (KMeans)", key="ume_deep_ua_kmeans_run")
                 _cl_cache_key = f"_ume_deep_ua_kmeans_{_uid}_{_ua_af}"
                 if _run_cl:
                     if len(_filt_qr) < int(_kk):
-                        st.warning(f"クラスタ数 k={_kk} に対しデータ件数が不足しています（{len(_filt_qr)}件）")
+                        st.warning(f"Not enough data ({len(_filt_qr)} rows) for k={_kk}")
                     else:
                         try:
                             from sklearn.cluster import KMeans as _KM_qr
@@ -3451,7 +3452,7 @@ def _user_memory_explorer():
                             }
                             st.session_state[f"{_cl_cache_key}_names"] = None
                         except Exception as _e:
-                            st.warning(f"KMeansでエラー: {_e}")
+                            st.warning(f"KMeans error: {_e}")
 
                 _clc_qr = st.session_state.get(_cl_cache_key)
                 _names_qr = st.session_state.get(f"{_cl_cache_key}_names") or {}
@@ -3475,7 +3476,7 @@ def _user_memory_explorer():
                         _lh_qr.append(_L2D_qr([0], [0], marker="o", linestyle="",
                                               color=_c2col[cl], markersize=8, label=_lab_qr))
                     _ax_qa.legend(handles=_lh_qr, loc="upper left", bbox_to_anchor=(1.02, 1), fontsize=8)
-                    _ax_qa.set_title(f"seq単位の質問×応答字数（KMeans k={_clc_qr.get('k')}）")
+                    _ax_qa.set_title(f"Per-seq query x response chars (KMeans k={_clc_qr.get('k')})")
                 else:
                     _u_m = sorted(set(s["timestamp"][:7] for s in _filt_qr if s["timestamp"]))
                     _m_idx = {m: i for i, m in enumerate(_u_m)}
@@ -3484,8 +3485,8 @@ def _user_memory_explorer():
                         _col_q = _cmap_qa(_m_idx.get(s["timestamp"][:7], 0)) if s["timestamp"] else "gray"
                         _ax_qa.scatter(len(s["query"]), len(s["response"]),
                                        color=_col_q, alpha=0.65, s=50, edgecolors="white", linewidths=0.6)
-                    _ax_qa.set_title("seq単位の質問×応答字数（色=月）")
-                _ax_qa.set_xlabel("質問字数 (seq単位)"); _ax_qa.set_ylabel("応答字数 (seq単位)")
+                    _ax_qa.set_title("Per-seq query x response chars (color = month)")
+                _ax_qa.set_xlabel("Query chars (per seq)"); _ax_qa.set_ylabel("Response chars (per seq)")
                 _ax_qa.grid(True, alpha=0.3)
                 plt.tight_layout()
                 st.pyplot(_fig_qa); plt.close(_fig_qa)
@@ -3495,7 +3496,7 @@ def _user_memory_explorer():
                         _cc = st.session_state.get(_cl_cache_key)
                         if not _cc:
                             return ""
-                        _txt = ("会話（seq単位）の質問字数×応答字数 のKMeansクラスタリング結果です。\n"
+                        _txt = ("KMeans clustering result on (per-seq) query x response chars.\n"
                                 f"k={_cc.get('k')}\n")
                         _by_cl = {}
                         for it in (_cc.get("items") or []):
@@ -3504,12 +3505,12 @@ def _user_memory_explorer():
                             _xs = _by_cl[_cl]
                             _qq = [len(s["query"]) for s in _xs]
                             _rr2 = [len(s["response"]) for s in _xs]
-                            _txt += (f"\n【Cluster {int(_cl)}】({len(_xs)}件) "
-                                     f"質問字数 平均={sum(_qq)/len(_qq):.0f} (min={min(_qq)}, max={max(_qq)}), "
-                                     f"応答字数 平均={sum(_rr2)/len(_rr2):.0f} (min={min(_rr2)}, max={max(_rr2)})\n")
+                            _txt += (f"\n[Cluster {int(_cl)}] ({len(_xs)} rows) "
+                                     f"query chars avg={sum(_qq)/len(_qq):.0f} (min={min(_qq)}, max={max(_qq)}), "
+                                     f"response chars avg={sum(_rr2)/len(_rr2):.0f} (min={min(_rr2)}, max={max(_rr2)})\n")
                             for s in _xs[:3]:
                                 _txt += f"  - Q: {s['query'][:80]} / R: {s['response'][:80]}\n"
-                        _txt += "\n各クラスタの特徴（やりとりの性質）を、ユーザー×エージェントの関係性の観点で短く名付けてください。"
+                        _txt += "\nNote each cluster's characteristics (interaction nature) succinctly from the user-agent relationship perspective."
                         return _txt
 
                     def _cl_qa_post(resp):
@@ -3522,11 +3523,11 @@ def _user_memory_explorer():
                                 pass
                         return _re.sub(r"```json\s*\{.*?\}\s*```\s*", "", resp, count=1, flags=_re.DOTALL).strip()
                     _explanation_block("_ume_deep_ua_qa_expl", "Cluster Analyst UME", "agent_23DataAnalyst.json",
-                                       _cl_qa_ctx, "会話クラスタ", "ume_deep_ua_qa", postprocess=_cl_qa_post)
+                                       _cl_qa_ctx, "Conversation cluster", "ume_deep_ua_qa", postprocess=_cl_qa_post)
 
-                # ===== ④ 感情のトーン =====
-                st.markdown("#### 感情のトーン")
-                st.caption("元データ: User Memory **history** テーブル（history.emotions: 各セッションでLLMが推定した感情タグ）。基本感情は最大値で正規化したレーダー、二次感情は出現回数の上位リスト。")
+                # ===== 4. Emotional tone =====
+                st.markdown("#### Emotional tone")
+                st.caption("Source: User Memory **history** table (history.emotions: emotion tags estimated by the LLM per session). Basic emotions are normalized by max to a radar; secondary emotions are the top-N by occurrence.")
                 _emo_c = _Cnt_a()
                 for sid in _sess_ids:
                     _h = _hist_by_sid.get(sid)
@@ -3540,24 +3541,24 @@ def _user_memory_explorer():
                     _ec1, _ec2 = st.columns([1, 1])
                     with _ec1:
                         st.pyplot(_radar([ux.PLUTCHIK_JA.get(e, e) for e in ux.PLUTCHIK_PRIMARY],
-                                          _bvals_n, "基本感情の出現比率（正規化）"))
+                                          _bvals_n, "Basic emotion occurrence ratio (normalized)"))
                     with _ec2:
                         _sec_pairs = [(_e, _emo_c[_e]) for _e in _emo_c if _e in ux.PLUTCHIK_SECONDARY]
                         _sec_pairs.sort(key=lambda x: x[1], reverse=True)
                         if _sec_pairs:
-                            st.markdown("**二次感情 上位**")
+                            st.markdown("**Top secondary emotions**")
                             st.dataframe(
-                                pd.DataFrame([{"感情": ux.PLUTCHIK_JA.get(e, e), "回数": c}
+                                pd.DataFrame([{"Emotion": ux.PLUTCHIK_JA.get(e, e), "Count": c}
                                               for e, c in _sec_pairs[:10]]),
                                 hide_index=True, use_container_width=True)
                         else:
-                            st.caption("二次感情データなし")
+                            st.caption("No secondary-emotion data")
                 else:
-                    st.caption("感情データなし")
+                    st.caption("No emotion data")
 
-                # ===== ⑤ 相性スコア =====
-                st.markdown("#### 相性スコア")
-                st.caption("元データ: chat_memory.json（質問字数・応答字数・RAG参照数・タイムスタンプ）＋ User Memory **history** テーブル（axis_tags.interests）。継続性=対話期間(月)/12, 頻度=ターン÷活動月数÷20, 集中度=最頻興味タグ比率×2, 充実度=平均応答字数/500, 能動性=平均質問字数/200, 知識活用=平均RAG参照数/5。いずれも0〜1にクリップ。")
+                # ===== 5. Compatibility score =====
+                st.markdown("#### Compatibility score")
+                st.caption("Source: chat_memory.json (query chars / response chars / RAG references / timestamps) + User Memory **history** table (axis_tags.interests). Continuity = dialog span (months) / 12, Frequency = turns / active months / 20, Focus = top interest tag ratio * 2, Richness = avg response chars / 500, Engagement = avg query chars / 200, Knowledge use = avg RAG references / 5. All clipped to 0..1.")
                 _all_ts = sorted([s["timestamp"] for s in _ua_seqs if s["timestamp"]])
                 _span_months = 0
                 if len(_all_ts) >= 2:
@@ -3585,27 +3586,27 @@ def _user_memory_explorer():
                 _engagement = min(_avg_q / 200.0, 1.0)
                 _kn_per_turn = sum(len(s["knowledge_rag"]) for s in _ua_seqs) / max(len(_ua_seqs), 1)
                 _knowledge_use = min(_kn_per_turn / 5.0, 1.0)
-                _comp_labels = ["継続性", "頻度", "集中度", "充実度", "能動性", "知識活用"]
+                _comp_labels = ["Continuity", "Frequency", "Focus", "Richness", "Engagement", "Knowledge use"]
                 _comp_vals = [_continuity, _frequency, _focus, _richness, _engagement, _knowledge_use]
                 _crc1, _crc2 = st.columns([1, 1])
                 with _crc1:
-                    st.pyplot(_radar(_comp_labels, _comp_vals, "相性スコア", vmax=1.0))
+                    st.pyplot(_radar(_comp_labels, _comp_vals, "Compatibility score", vmax=1.0))
                 with _crc2:
                     st.dataframe(
-                        pd.DataFrame([{"観点": _l, "スコア(0-1)": round(_v, 2)}
+                        pd.DataFrame([{"Axis": _l, "Score (0-1)": round(_v, 2)}
                                       for _l, _v in zip(_comp_labels, _comp_vals)]),
                         hide_index=True, use_container_width=True)
                     _verdict = []
-                    _verdict.append("長期関係" if _continuity >= 0.5 else ("継続中" if _continuity >= 0.2 else "短期"))
-                    _verdict.append("高頻度" if _frequency >= 0.5 else ("中頻度" if _frequency >= 0.2 else "低頻度"))
-                    _verdict.append("テーマ集中型" if _focus >= 0.5 else "多テーマ型")
-                    _verdict.append("詳細応答" if _richness >= 0.5 else "簡潔応答")
-                    _verdict.append("知識依存高" if _knowledge_use >= 0.5 else ("知識参照中" if _knowledge_use >= 0.2 else "知識参照低"))
-                    st.markdown(f"**関係性ラベル:** {' / '.join(_verdict)}")
+                    _verdict.append("Long-term" if _continuity >= 0.5 else ("Ongoing" if _continuity >= 0.2 else "Short-term"))
+                    _verdict.append("High-frequency" if _frequency >= 0.5 else ("Medium-frequency" if _frequency >= 0.2 else "Low-frequency"))
+                    _verdict.append("Focused" if _focus >= 0.5 else "Multi-theme")
+                    _verdict.append("Verbose-response" if _richness >= 0.5 else "Concise-response")
+                    _verdict.append("High-knowledge-use" if _knowledge_use >= 0.5 else ("Medium-knowledge-use" if _knowledge_use >= 0.2 else "Low-knowledge-use"))
+                    st.markdown(f"**Relationship label:** {' / '.join(_verdict)}")
 
-                # ===== ⑥ テーマの重なり =====
-                st.markdown("#### テーマの重なり")
-                st.caption("元データ: User Memory **history** テーブル（history.axis_tags: interests / values / constraints）。このエージェントとの対話分のみを集計。")
+                # ===== 6. Theme overlap =====
+                st.markdown("#### Theme overlap")
+                st.caption("Source: User Memory **history** table (history.axis_tags: interests / values / constraints). Aggregated only over conversations with this agent.")
                 _ax_c = {"interests": _Cnt_a(), "values": _Cnt_a(), "constraints": _Cnt_a()}
                 for sid in _sess_ids:
                     _h = _hist_by_sid.get(sid)
@@ -3616,25 +3617,25 @@ def _user_memory_explorer():
                                 _ax_c[_ck][_x] += 1
                 _tc1, _tc2, _tc3 = st.columns(3)
                 for _ic, (_jl, _ck, _co) in enumerate([
-                    ("興味 (interests)", "interests", _tc1),
-                    ("価値観 (values)", "values", _tc2),
-                    ("制約 (constraints)", "constraints", _tc3),
+                    ("Interests", "interests", _tc1),
+                    ("Values", "values", _tc2),
+                    ("Constraints", "constraints", _tc3),
                 ]):
                     with _co:
                         st.markdown(f"**{_jl}**")
                         _items = _ax_c[_ck].most_common(10)
                         if _items:
-                            st.dataframe(pd.DataFrame(_items, columns=["項目", "回数"]),
+                            st.dataframe(pd.DataFrame(_items, columns=["Item", "Count"]),
                                          hide_index=True, use_container_width=True)
                         else:
                             st.caption("—")
 
-                # ===== ⑦ Knowledge参照（散布図＋一覧, KE Overall方式） =====
-                st.markdown("#### Knowledge参照（散布図＋一覧）")
-                st.caption("元データ: chat_memory.json `response.reference.knowledge_rag` ＋ RAGコレクション metadata（vector_data_value_text を含む）。**指定期間の最終時点 (≤Period To) のRAGデータ全件**を散布図に描画し、その中で **期間内に参照されたチャンク** のみカテゴリ色で表示（他はライトグレー）。Dot Size は Knowledge Explorer Overall と同じ3パターン。")
+                # ===== 7. Knowledge references (scatter + list, KE-Overall style) =====
+                st.markdown("#### Knowledge references (scatter + list)")
+                st.caption("Source: chat_memory.json `response.reference.knowledge_rag` + RAG collection metadata (including vector_data_value_text). The scatter plots **all RAG data as of the period's end (<= Period To)**; within that, only **chunks referenced in the period** are shown in category colors (others in light gray). Dot Size has the same 3 modes as Knowledge Explorer Overall.")
 
                 if not _all_chunks_by_bn:
-                    st.caption("対象期間にRAG参照履歴がありません")
+                    st.caption("No RAG-reference history in the target period")
                 else:
                     import io as _io_kn
                     import numpy as _np_k
@@ -3710,8 +3711,8 @@ def _user_memory_explorer():
                         _ids = _df_red["id"].astype(str).tolist()
                         _bns = [_r.get("__bn__", "") for _r in _kept]
                         _rags = [_r.get("__rag_name__", "") for _r in _kept]
-                        _cats = (_df_red["category"].fillna("未設定").astype(str).tolist()
-                                 if "category" in _df_red.columns else ["未設定"] * len(_ids))
+                        _cats = (_df_red["category"].fillna("Unset").astype(str).tolist()
+                                 if "category" in _df_red.columns else ["Unset"] * len(_ids))
                         _titles = (_df_red["title"].fillna("").astype(str).tolist()
                                    if "title" in _df_red.columns else _ids)
                         _cdates = (_df_red["create_date"].fillna("").astype(str).tolist()
@@ -3760,7 +3761,7 @@ def _user_memory_explorer():
                         _lh = []
                         _lh.append(_L2D_kn([0], [0], marker="o", linestyle="",
                                             markerfacecolor=_gray, markeredgecolor="white",
-                                            markersize=8, label="未参照（期間内）"))
+                                            markersize=8, label="Not referenced in period"))
                         for _c in _cats_in_period:
                             _lh.append(_L2D_kn([0], [0], marker="o", linestyle="",
                                                 color=_cat2col[_c], markersize=8, label=_c))
@@ -3784,15 +3785,15 @@ def _user_memory_explorer():
                                 "CreateDate": _cdates[_i_],
                                 "X1": round(float(_x[_i_]), 3),
                                 "X2": round(float(_y[_i_]), 3),
-                                "参照回数": len(_refs2),
-                                "期間内参照": "Y" if _is_ref[_i_] else "",
-                                "平均 similarity_Q": round(float(sum(_sQs) / len(_sQs)), 3) if _sQs else None,
-                                "知識活用性_合計": round(float(_arr.sum()), 3) if _refs2 else None,
-                                "知識活用性_平均": round(float(_arr.mean()), 3) if _refs2 else None,
-                                "知識活用性_中央値": round(float(_np_k.median(_arr)), 3) if _refs2 else None,
-                                "知識活用性_最大": round(float(_arr.max()), 3) if _refs2 else None,
-                                "知識活用性_最小": round(float(_arr.min()), 3) if _refs2 else None,
-                                "知識活用性_分散": round(float(_arr.var()), 3) if _refs2 else None,
+                                "Ref count": len(_refs2),
+                                "Ref in period": "Y" if _is_ref[_i_] else "",
+                                "Avg similarity_Q": round(float(sum(_sQs) / len(_sQs)), 3) if _sQs else None,
+                                "Knowledge utility (sum)": round(float(_arr.sum()), 3) if _refs2 else None,
+                                "Knowledge utility (avg)": round(float(_arr.mean()), 3) if _refs2 else None,
+                                "Knowledge utility (median)": round(float(_np_k.median(_arr)), 3) if _refs2 else None,
+                                "Knowledge utility (max)": round(float(_arr.max()), 3) if _refs2 else None,
+                                "Knowledge utility (min)": round(float(_arr.min()), 3) if _refs2 else None,
+                                "Knowledge utility (var)": round(float(_arr.var()), 3) if _refs2 else None,
                             })
                         return _png, pd.DataFrame(_rows_out)
 
@@ -3813,15 +3814,15 @@ def _user_memory_explorer():
                             _png_t, _df_t = _build_scatter(_total_rows, _title="Total")
                         except Exception as _e:
                             _png_t, _df_t = None, pd.DataFrame()
-                            st.warning(f"Totalの描画でエラー: {_e}")
+                            st.warning(f"Error drawing Total: {_e}")
                         if _png_t is not None:
                             st.image(_png_t)
                         if not _df_t.empty:
                             st.dataframe(
-                                _df_t.sort_values(["期間内参照", "参照回数"], ascending=[False, False]),
+                                _df_t.sort_values(["Ref in period", "Ref count"], ascending=[False, False]),
                                 hide_index=True, use_container_width=True, height=320)
 
-                    st.markdown("**RAG_NAMEごと（横2列）**")
+                    st.markdown("**Per RAG_NAME (2 columns)**")
                     try:
                         _agent_data_disp = dmu.read_json_file(_ua_af, agent_folder_path) or {}
                     except Exception:
@@ -3835,7 +3836,7 @@ def _user_memory_explorer():
                             _png_b, _df_b = _build_scatter(_rows_by_rag[_rn], _title=f"RAG_NAME: {_rn}")
                         except Exception as _e:
                             _png_b, _df_b = None, pd.DataFrame()
-                            st.warning(f"{_rn} の描画でエラー: {_e}")
+                            st.warning(f"Error drawing {_rn}: {_e}")
                         if _png_b is not None:
                             _rag_panels.append((_rn, _png_b, _df_b))
                     for _i in range(0, len(_rag_panels), 2):
@@ -3845,22 +3846,22 @@ def _user_memory_explorer():
                             _cols[_j].image(_pb, caption=f"RAG_NAME: {_rn}")
                     for _rn, _pb, _df_b in _rag_panels:
                         if not _df_b.empty:
-                            with st.expander(f"データ一覧: {_rn}", expanded=False):
+                            with st.expander(f"Data list: {_rn}", expanded=False):
                                 st.dataframe(
-                                    _df_b.sort_values(["期間内参照", "参照回数"], ascending=[False, False]),
+                                    _df_b.sort_values(["Ref in period", "Ref count"], ascending=[False, False]),
                                     hide_index=True, use_container_width=True, height=320)
 
         _um_twin_chat(_uid, "ume_deep")
 
-    # ===== タブ: グループ理解 =====
+    # ===== Tab: Group understanding =====
     with _tab_cross:
         import DigiM_VAnalytics as _dmva_g
-        st.markdown("#### 対象ユーザー選択")
-        _cohort = st.multiselect("対象ユーザー", _all_users,
+        st.markdown("#### Select target users")
+        _cohort = st.multiselect("Target users", _all_users,
                                   default=list(_all_users), key="ume_cross_users")
-        st.caption(f"{len(_cohort)}人 選択中")
+        st.caption(f"{len(_cohort)} selected")
         if not _cohort:
-            st.info("対象ユーザーを1人以上選択してください。")
+            st.info("Please select at least one target user.")
         else:
             _b5L = [ux.BIG5_JA.get(t, t) for t in ux.BIG5_TRAITS]
             _emL = [ux.PLUTCHIK_JA.get(e, e) for e in ux.PLUTCHIK_PRIMARY]
@@ -3871,14 +3872,14 @@ def _user_memory_explorer():
             _pc1, _pc2 = st.columns([1, 1])
             with _pc1:
                 st.pyplot(_radar3(_b5L, [
-                    ("最大", "#d62728", [_b5s[t]["max"] for t in ux.BIG5_TRAITS]),
-                    ("平均", "#1f77b4", [_b5s[t]["mean"] for t in ux.BIG5_TRAITS]),
-                    ("最小", "#2ca02c", [_b5s[t]["min"] for t in ux.BIG5_TRAITS]),
+                    ("Max", "#d62728", [_b5s[t]["max"] for t in ux.BIG5_TRAITS]),
+                    ("Mean", "#1f77b4", [_b5s[t]["mean"] for t in ux.BIG5_TRAITS]),
+                    ("Min", "#2ca02c", [_b5s[t]["min"] for t in ux.BIG5_TRAITS]),
                 ], "Big5 (max / mean / min)"))
             with _pc2:
                 st.dataframe(pd.DataFrame([
-                    {"特性": ux.BIG5_JA.get(t, t), "最大": _b5s[t]["max"],
-                     "平均": _b5s[t]["mean"], "最小": _b5s[t]["min"]}
+                    {"Trait": ux.BIG5_JA.get(t, t), "Max": _b5s[t]["max"],
+                     "Mean": _b5s[t]["mean"], "Min": _b5s[t]["min"]}
                     for t in ux.BIG5_TRAITS]), hide_index=True)
 
             _ptext = "\n".join(ux.persona_text(u, "") for u in _cohort)
@@ -3889,9 +3890,9 @@ def _user_memory_explorer():
                     st.pyplot(_wcf)
 
             _pkmax = max(2, len(_cohort))
-            _pk = st.number_input("Personaクラスタ数", 2, _pkmax,
+            _pk = st.number_input("Persona cluster count", 2, _pkmax,
                                   min(3, _pkmax), key="ume_cross_pk")
-            if st.button("Personaクラスタリング実行", key="ume_cross_pcl"):
+            if st.button("Run Persona clustering", key="ume_cross_pcl"):
                 st.session_state["_ume_pcluster"] = ux.cluster_users(
                     [(u, ux.persona_text(u, "")) for u in _cohort], int(_pk), "")
                 st.session_state["_ume_pexp"] = None
@@ -3902,8 +3903,8 @@ def _user_memory_explorer():
                 else:
                     st.caption(_pcl["info"])
                     st.dataframe(_pcl["df"], hide_index=True)
-                    if st.button("クラスタを解説（Persona）", key="ume_cross_pexp_btn"):
-                        with st.spinner("解説生成中..."):
+                    if st.button("Explain clusters (Persona)", key="ume_cross_pexp_btn"):
+                        with st.spinner("Generating explanation..."):
                             st.session_state["_ume_pexp"] = ux.explain_clusters(_pcl["summary"])
                     if st.session_state.get("_ume_pexp"):
                         st.markdown(st.session_state["_ume_pexp"])
@@ -3914,41 +3915,41 @@ def _user_memory_explorer():
             _nc1, _nc2 = st.columns([1, 1])
             with _nc1:
                 st.pyplot(_radar3(_emL, [
-                    ("最大", "#d62728", [_es[e]["max"] for e in ux.PLUTCHIK_PRIMARY]),
-                    ("平均", "#1f77b4", [_es[e]["mean"] for e in ux.PLUTCHIK_PRIMARY]),
-                    ("最小", "#2ca02c", [_es[e]["min"] for e in ux.PLUTCHIK_PRIMARY]),
-                ], "基本感情 (max / mean / min)"))
+                    ("Max", "#d62728", [_es[e]["max"] for e in ux.PLUTCHIK_PRIMARY]),
+                    ("Mean", "#1f77b4", [_es[e]["mean"] for e in ux.PLUTCHIK_PRIMARY]),
+                    ("Min", "#2ca02c", [_es[e]["min"] for e in ux.PLUTCHIK_PRIMARY]),
+                ], "Basic emotions (max / mean / min)"))
             with _nc2:
                 st.dataframe(pd.DataFrame([
-                    {"感情": ux.PLUTCHIK_JA.get(e, e), "最大": _es[e]["max"],
-                     "平均": _es[e]["mean"], "最小": _es[e]["min"]}
+                    {"Emotion": ux.PLUTCHIK_JA.get(e, e), "Max": _es[e]["max"],
+                     "Mean": _es[e]["mean"], "Min": _es[e]["min"]}
                     for e in ux.PLUTCHIK_PRIMARY]), hide_index=True)
 
             _sec = ux.agg_secondary_emotions(_cohort, "")
             if _sec:
-                st.markdown("**二次感情ランキング（合計件数）**")
+                st.markdown("**Secondary-emotion ranking (total count)**")
                 st.dataframe(pd.DataFrame([
-                    {"二次感情": ux.PLUTCHIK_JA.get(k, k), "件数": c}
+                    {"Secondary emotion": ux.PLUTCHIK_JA.get(k, k), "Count": c}
                     for k, c in _sec.most_common()]), hide_index=True)
 
             _nfc = ux.nowaday_field_corpus(_cohort, "")
-            st.markdown("**Nowadayワードクラウド**")
+            st.markdown("**Nowaday word cloud**")
             _wcc = st.columns(2)
             for _i, (_fk, _fl) in enumerate(
-                    [("summary", "サマリー"), ("recurring", "継続"),
-                     ("emerging", "新規"), ("declining", "減退"), ("shifts", "変化")]):
+                    [("summary", "Summary"), ("recurring", "Recurring"),
+                     ("emerging", "Emerging"), ("declining", "Declining"), ("shifts", "Shifts")]):
                 _fr = ux.word_freq(_nfc.get(_fk, ""))
                 if _fr:
                     _wf = _dmva_g.make_wordcloud_figure(_fr, title=_fl, width=360, height=220)
                     if _wf is not None:
                         _wcc[_i % 2].pyplot(_wf)
                 else:
-                    _wcc[_i % 2].caption(f"{_fl}: データなし")
+                    _wcc[_i % 2].caption(f"{_fl}: no data")
 
             _nkmax = max(2, len(_cohort))
-            _nk = st.number_input("Nowadayクラスタ数", 2, _nkmax,
+            _nk = st.number_input("Nowaday cluster count", 2, _nkmax,
                                   min(3, _nkmax), key="ume_cross_nk")
-            if st.button("Nowadayクラスタリング実行", key="ume_cross_ncl"):
+            if st.button("Run Nowaday clustering", key="ume_cross_ncl"):
                 st.session_state["_ume_ncluster"] = ux.cluster_users(
                     [(u, ux.nowaday_text(u, "")) for u in _cohort], int(_nk), "")
                 st.session_state["_ume_nexp"] = None
@@ -3959,68 +3960,68 @@ def _user_memory_explorer():
                 else:
                     st.caption(_ncl["info"])
                     st.dataframe(_ncl["df"], hide_index=True)
-                    if st.button("クラスタを解説（Nowaday）", key="ume_cross_nexp_btn"):
-                        with st.spinner("解説生成中..."):
+                    if st.button("Explain clusters (Nowaday)", key="ume_cross_nexp_btn"):
+                        with st.spinner("Generating explanation..."):
                             st.session_state["_ume_nexp"] = ux.explain_clusters(_ncl["summary"])
                     if st.session_state.get("_ume_nexp"):
                         st.markdown(st.session_state["_ume_nexp"])
 
-            # ---------- History 感情トラジェクトリ（合計） ----------
-            st.markdown("### History 感情トラジェクトリ（合計）")
+            # ---------- History emotion trajectory (total) ----------
+            st.markdown("### History emotion trajectory (total)")
             _ht = ux.cohort_history_emotion_totals(_cohort, "")
             if _ht:
                 st.bar_chart(pd.Series(
-                    {ux.PLUTCHIK_JA.get(k, k): v for k, v in _ht.items()}, name="件数"))
-                st.caption(f"対象 {len(_cohort)}人の全History合計: "
+                    {ux.PLUTCHIK_JA.get(k, k): v for k, v in _ht.items()}, name="Count"))
+                st.caption(f"Total across all History entries for the {len(_cohort)} selected users: "
                            + "、".join(f"{ux.PLUTCHIK_JA.get(k,k)}={v}"
                                        for k, v in list(_ht.items())[:8]))
             else:
-                st.caption("History未生成")
+                st.caption("History has not been generated yet")
 
             # ---------- Chat with this Group Twin ----------
             _um_group_twin(_cohort, "ume_cross")
 
-    # ===== タブ: マイメモリ（自分のメモリのみ確認・修正） =====
+    # ===== Tab: My Memory (view/edit own memory only) =====
     with _tab_edit:
         import DigiM_UserMemory as _dmum_e
         _me = st.session_state.get("user_id", "")
-        st.caption(f"対象: **{_me}**（自分のユーザーメモリのみ編集できます）")
+        st.caption(f"Target: **{_me}** (you can edit only your own user memory)")
         if not _me:
-            st.info("ログインユーザーが特定できません。")
+            st.info("Could not identify the logged-in user.")
         else:
             _mb = ux.load_bundle(_me, "")
             _emo_all = list(ux.PLUTCHIK_PRIMARY) + list(ux.PLUTCHIK_SECONDARY)
             _stat_opts = ["approved", "pending", "deleted"]
 
             # ---- Persona ----
-            with st.expander("Persona（長期像）を編集", expanded=True):
+            with st.expander("Edit Persona (long-term)", expanded=True):
                 _pr = _mb["persona"] or {}
                 if not _pr:
-                    st.caption("Persona未生成")
+                    st.caption("Persona has not been generated yet")
                 else:
-                    _role = st.text_input("役割(role)", value=_pr.get("role", ""), key="ume_e_role")
-                    # Persona Summary 下書き再生成（保存ボタンを押さない限り反映されない）
+                    _role = st.text_input("Role", value=_pr.get("role", ""), key="ume_e_role")
+                    # Regenerate the Persona Summary draft (not persisted until the save button is pressed)
                     _pcg1, _pcg2 = st.columns([1, 4])
-                    if _pcg1.button("Summary下書きを再生成", key="ume_e_regen_persona"):
+                    if _pcg1.button("Regenerate Summary draft", key="ume_e_regen_persona"):
                         import DigiM_GeneUserMemory as _gum
-                        with st.spinner("Personaサマリを再生成中..."):
+                        with st.spinner("Regenerating Persona summary..."):
                             try:
                                 _draft = _gum.merge_persona(_pr.get("service_id", ""), _me, save=False)
                                 if _draft and _draft.get("summary_text"):
                                     st.session_state["ume_e_summary"] = _draft["summary_text"]
-                                    st.session_state.sidebar_message = "Personaサマリの下書きを再生成（『Persona を保存』で反映）"
+                                    st.session_state.sidebar_message = "Regenerated Persona summary draft (apply via \"Save Persona\")"
                                     st.rerun()
                                 else:
-                                    st.warning("再生成できませんでした（Nowadayプロファイルが必要）")
+                                    st.warning("Could not regenerate (a Nowaday profile is required)")
                             except Exception as e:
-                                st.error(f"再生成エラー: {type(e).__name__}: {e}")
-                    _pcg2.caption("※ 下書きを生成しても、下の『Persona を保存』を押さない限り保存されません。")
-                    _summary = st.text_area("要約(summary_text)", value=_pr.get("summary_text", ""),
+                                st.error(f"Regeneration error: {type(e).__name__}: {e}")
+                    _pcg2.caption("* Generating a draft does NOT save it; press \"Save Persona\" below.")
+                    _summary = st.text_area("Summary text", value=_pr.get("summary_text", ""),
                                             height=120, key="ume_e_summary")
                     _flds = {
-                        "expertise": "専門", "recurring_interests": "関心",
-                        "values_principles": "価値観", "constraints": "制約",
-                        "communication_style": "口調/説明の好み", "avoid_topics": "避けたい話題",
+                        "expertise": "Expertise", "recurring_interests": "Interests",
+                        "values_principles": "Values", "constraints": "Constraints",
+                        "communication_style": "Tone / explanation preference", "avoid_topics": "Topics to avoid",
                     }
                     for _f, _jl in _flds.items():
                         _items = _pr.get(_f) or []
@@ -4057,7 +4058,7 @@ def _user_memory_explorer():
                             _bc3.selectbox(f"b5st_{_t}", _stat_opts,
                                            index=_stat_opts.index(_bs),
                                            key=f"ume_e_b5st_{_t}", label_visibility="collapsed")
-                    if st.button("Persona を保存", key="ume_e_save_persona"):
+                    if st.button("Save Persona", key="ume_e_save_persona"):
                         _upd = dict(_pr)
                         _upd["role"] = st.session_state.get("ume_e_role", _upd.get("role", ""))
                         _upd["summary_text"] = st.session_state.get("ume_e_summary", _upd.get("summary_text", ""))
@@ -4085,15 +4086,15 @@ def _user_memory_explorer():
                             _upd["big5"] = _nb5
                         _upd["last_reviewed"] = _dmum_e.now_ts()
                         _dmum_e.upsert("persona", _upd)
-                        st.session_state.sidebar_message = "Persona を保存しました"
+                        st.session_state.sidebar_message = "Saved Persona"
                         st.rerun()
 
             # ---- Nowaday ----
-            with st.expander("Nowaday（最近の傾向）を編集"):
-                # 新規スナップショット生成（期間指定 / 既存スナップショットに上書きせず新規追加）
-                st.markdown("**新しいスナップショットを生成**")
+            with st.expander("Edit Nowaday (recent trends)"):
+                # Generate a new snapshot (with a period; appended as new, never overwrites existing snapshots)
+                st.markdown("**Generate a new snapshot**")
                 _ngc1, _ngc2, _ngc3 = st.columns([1.5, 1.5, 1])
-                _pmode = _ngc1.selectbox("期間モード",
+                _pmode = _ngc1.selectbox("Period mode",
                                           ["YYYY-MM", "since_YYYY-MM-DD", "rolling_<N>d", "all"],
                                           key="ume_e_nw_pmode")
                 _period_val = "all"
@@ -4104,44 +4105,44 @@ def _user_memory_explorer():
                     _sd = _ngc2.date_input("Since", value=(datetime.now() - timedelta(days=30)).date(), key="ume_e_nw_sd")
                     _period_val = f"since_{_sd.isoformat()}"
                 elif _pmode == "rolling_<N>d":
-                    _nd = _ngc2.number_input("N日", min_value=1, max_value=365, value=30, step=1, key="ume_e_nw_nd")
+                    _nd = _ngc2.number_input("N days", min_value=1, max_value=365, value=30, step=1, key="ume_e_nw_nd")
                     _period_val = f"rolling_{int(_nd)}d"
-                if _ngc3.button("新規スナップショット生成", key="ume_e_nw_gen"):
+                if _ngc3.button("Generate new snapshot", key="ume_e_nw_gen"):
                     import DigiM_GeneUserMemory as _gum_nw
                     _svc_for_nw = ((_mb.get("nowaday") or [{}])[0].get("service_id", "") if _mb.get("nowaday") else "")
-                    with st.spinner(f"Nowaday({_period_val})を生成中..."):
+                    with st.spinner(f"Generating Nowaday ({_period_val})..."):
                         try:
                             _new = _gum_nw.build_nowaday_profile(_svc_for_nw, _me, _period_val)
                             if _new:
-                                st.session_state.sidebar_message = f"Nowadayスナップショット({_period_val})を生成しました"
+                                st.session_state.sidebar_message = f"Generated Nowaday snapshot ({_period_val})"
                                 st.rerun()
                             else:
-                                st.warning("期間内にHistoryがありません")
+                                st.warning("No History entries in the period")
                         except Exception as e:
-                            st.error(f"生成エラー: {type(e).__name__}: {e}")
+                            st.error(f"Generation error: {type(e).__name__}: {e}")
                 st.markdown("---")
                 _nws = _mb["nowaday"]
                 if not _nws:
-                    st.caption("Nowaday未生成")
+                    st.caption("Nowaday has not been generated yet")
                 else:
-                    # _nws は generated_at 降順。スナップショット履歴のため period@生成時刻で一意表示
+                    # _nws is sorted by generated_at descending; uniquely identified by period @ generation time
                     _nw_opts = {
                         f"{m.get('period','')} @ {m.get('generated_at','')}": m for m in _nws
                     }
-                    _osel = st.selectbox("スナップショット（period @ 生成時刻、上が最新）",
+                    _osel = st.selectbox("Snapshot (period @ generated_at; top is latest)",
                                          list(_nw_opts.keys()), key="ume_e_nw_period")
                     _nw = _nw_opts[_osel]
                     _psel = _nw.get("period", "")
                     _k = "".join(ch for ch in str(_nw.get("id", _osel)) if ch.isalnum() or ch == "_")
-                    _nw_sum = st.text_area("要約(summary_text)", value=_nw.get("summary_text", ""),
+                    _nw_sum = st.text_area("Summary text", value=_nw.get("summary_text", ""),
                                            height=110, key=f"ume_e_nw_sum_{_k}")
-                    _listflds = {"recurring_topics": "継続トピック", "emerging": "新規関心",
-                                 "declining": "減退話題", "shifts": "変化"}
+                    _listflds = {"recurring_topics": "Recurring topics", "emerging": "Emerging interests",
+                                 "declining": "Declining topics", "shifts": "Shifts"}
                     for _lf, _lj in _listflds.items():
-                        st.text_area(f"{_lj}（1行1項目）",
+                        st.text_area(f"{_lj} (one per line)",
                                      value="\n".join(str(x) for x in (_nw.get(_lf) or [])),
                                      height=80, key=f"ume_e_nw_{_lf}_{_k}")
-                    st.markdown("**基本感情（強度0-1）**")
+                    st.markdown("**Basic emotions (intensity 0-1)**")
                     _be = _nw.get("basic_emotions") or {}
                     _bcols = st.columns(4)
                     for _ei, _e in enumerate(ux.PLUTCHIK_PRIMARY):
@@ -4150,10 +4151,10 @@ def _user_memory_explorer():
                             value=float(_be.get(_e, 0) or 0), step=0.05,
                             key=f"ume_e_nw_be_{_e}_{_k}")
                     _sec_cur = [s for s in (_nw.get("secondary_emotions") or []) if s in ux.PLUTCHIK_SECONDARY]
-                    st.multiselect("二次感情", list(ux.PLUTCHIK_SECONDARY), default=_sec_cur,
+                    st.multiselect("Secondary emotions", list(ux.PLUTCHIK_SECONDARY), default=_sec_cur,
                                    format_func=lambda s: ux.PLUTCHIK_JA.get(s, s),
                                    key=f"ume_e_nw_sec_{_k}")
-                    if st.button("Nowaday を保存", key=f"ume_e_save_nw_{_k}"):
+                    if st.button("Save Nowaday", key=f"ume_e_save_nw_{_k}"):
                         _u = dict(_nw)
                         _u["summary_text"] = st.session_state.get(f"ume_e_nw_sum_{_k}", _u.get("summary_text", ""))
                         for _lf in _listflds:
@@ -4164,35 +4165,35 @@ def _user_memory_explorer():
                             for _e in ux.PLUTCHIK_PRIMARY}
                         _u["secondary_emotions"] = list(st.session_state.get(f"ume_e_nw_sec_{_k}", []))
                         _dmum_e.upsert("nowaday", _u)
-                        st.session_state.sidebar_message = f"Nowaday({_psel}) を保存しました"
+                        st.session_state.sidebar_message = f"Saved Nowaday ({_psel})"
                         st.rerun()
 
             # ---- History ----
-            with st.expander("History（セッション要点）を編集"):
+            with st.expander("Edit History (session summary)"):
                 _hs = _mb["history"]
                 if not _hs:
-                    st.caption("History未生成")
+                    st.caption("History has not been generated yet")
                 else:
                     _hopts = {
                         f"{str(h.get('create_date') or '')[:16]} | {str(h.get('topic') or '')[:30]} | {h.get('session_id','')}": h
                         for h in _hs}
-                    _hsel = st.selectbox("セッション", list(_hopts.keys()), key="ume_e_h_sel")
+                    _hsel = st.selectbox("Session", list(_hopts.keys()), key="ume_e_h_sel")
                     _h = _hopts[_hsel]
                     _hk = _h.get("session_id", "x")
-                    st.text_input("トピック", value=_h.get("topic", ""), key=f"ume_e_h_topic_{_hk}")
-                    st.text_area("抜粋(excerpt)", value=_h.get("excerpt", ""), height=110,
+                    st.text_input("Topic", value=_h.get("topic", ""), key=f"ume_e_h_topic_{_hk}")
+                    st.text_area("Excerpt", value=_h.get("excerpt", ""), height=110,
                                  key=f"ume_e_h_exc_{_hk}")
                     _hemo = [e for e in (_h.get("emotions") or []) if e in _emo_all]
-                    st.multiselect("感情(プルチック)", _emo_all, default=_hemo,
+                    st.multiselect("Emotions (Plutchik)", _emo_all, default=_hemo,
                                    format_func=lambda s: ux.PLUTCHIK_JA.get(s, s),
                                    key=f"ume_e_h_emo_{_hk}")
                     st.number_input("confidence", min_value=0.0, max_value=1.0,
                                     value=float(_h.get("confidence") or 0.0), step=0.05,
                                     key=f"ume_e_h_conf_{_hk}")
-                    st.checkbox("有効(active) — オフで一覧/コンテキストから除外",
+                    st.checkbox("Active -- uncheck to exclude from lists/context",
                                 value=((_h.get("active") or "Y") == "Y"),
                                 key=f"ume_e_h_act_{_hk}")
-                    if st.button("History を保存", key=f"ume_e_save_h_{_hk}"):
+                    if st.button("Save History", key=f"ume_e_save_h_{_hk}"):
                         _u = dict(_h)
                         _u["topic"] = st.session_state.get(f"ume_e_h_topic_{_hk}", _u.get("topic", ""))
                         _u["excerpt"] = st.session_state.get(f"ume_e_h_exc_{_hk}", _u.get("excerpt", ""))
@@ -4200,7 +4201,7 @@ def _user_memory_explorer():
                         _u["confidence"] = float(st.session_state.get(f"ume_e_h_conf_{_hk}", 0.0))
                         _u["active"] = "Y" if st.session_state.get(f"ume_e_h_act_{_hk}", True) else "N"
                         _dmum_e.upsert("history", _u)
-                        st.session_state.sidebar_message = "History を保存しました"
+                        st.session_state.sidebar_message = "Saved History"
                         st.rerun()
 
     # =========================================================
@@ -4212,17 +4213,17 @@ def _user_memory_explorer():
         _now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         _r = [f"# User Memory Explorer {_now}", ""]
 
-        # ---- ユーザー理解(個人) ----
+        # ---- User understanding (individual) ----
         _ud = st.session_state.get("ume_deep_user")
         if _ud:
-            _r.append("## ユーザー理解(個人)")
-            _r.append(f"- **対象ユーザー:** {_ud}")
+            _r.append("## User understanding (individual)")
+            _r.append(f"- **Target user:** {_ud}")
             _bd = ux.load_bundle(_ud, "")
             _pp = _bd.get("persona") or {}
             if _pp:
-                _r.append(f"- **役割:** {_pp.get('role','') or '-'}")
+                _r.append(f"- **Role:** {_pp.get('role','') or '-'}")
                 if _pp.get("summary_text"):
-                    _r.append(f"- **要約:** {_pp.get('summary_text')}")
+                    _r.append(f"- **Summary:** {_pp.get('summary_text')}")
                 _b5 = _pp.get("big5") or {}
                 _b5lines = []
                 for _t in ux.BIG5_TRAITS:
@@ -4238,13 +4239,13 @@ def _user_memory_explorer():
                 if _nw.get("summary_text"):
                     _r.append(_nw["summary_text"])
                 _be = _nw.get("basic_emotions") or {}
-                _r.append("- **基本感情:** " + "、".join(
+                _r.append("- **Basic emotions:** " + ", ".join(
                     f"{ux.PLUTCHIK_JA.get(e,e)}={float(_be.get(e,0) or 0):.2f}" for e in ux.PLUTCHIK_PRIMARY))
                 if _nw.get("secondary_emotions"):
-                    _r.append("- **二次感情:** " + "、".join(
+                    _r.append("- **Secondary emotions:** " + ", ".join(
                         ux.PLUTCHIK_JA.get(s,s) for s in _nw["secondary_emotions"]))
-                for _lbl, _k in (("継続","recurring_topics"),("新規","emerging"),
-                                 ("減退","declining"),("変化","shifts")):
+                for _lbl, _k in (("Recurring","recurring_topics"),("Emerging","emerging"),
+                                 ("Declining","declining"),("Shifts","shifts")):
                     if _nw.get(_k):
                         _r.append(f"- **{_lbl}:** " + "、".join(str(x) for x in _nw[_k]))
             _traj_all = ux.user_emotion_trajectory(_ud, "")
@@ -4262,9 +4263,9 @@ def _user_memory_explorer():
                     for _x in _es:
                         _ct[ux.PLUTCHIK_JA.get(_x, _x)] += 1
                 _r.append("")
-                _r.append(f"### History 感情トラジェクトリ ({_s or '全期間'} 〜 {_e or '今'}, {len(_tj)}件 / 全{len(_traj_all)}件)")
+                _r.append(f"### History emotion trajectory ({_s or 'all'} - {_e or 'now'}, {len(_tj)} / total {len(_traj_all)})")
                 if _ct:
-                    _r.append("- **集計:** " + "、".join(f"{k}={v}" for k, v in _ct.most_common()))
+                    _r.append("- **Aggregate:** " + ", ".join(f"{k}={v}" for k, v in _ct.most_common()))
             _dh = st.session_state.get("_ume_deep_hist") or []
             if _dh:
                 _r.append("")
@@ -4275,52 +4276,52 @@ def _user_memory_explorer():
                     _r.append(f"  - A: {_h.get('response','')}")
             _r.append("")
 
-        # ---- グループ理解 ----
+        # ---- Group understanding ----
         _ch = st.session_state.get("ume_cross_users") or []
         if _ch:
-            _r.append("## グループ理解")
-            _r.append(f"- **対象ユーザー({len(_ch)}人):** " + ", ".join(_ch))
+            _r.append("## Group understanding")
+            _r.append(f"- **Target users ({len(_ch)}):** " + ", ".join(_ch))
             _b5s = ux.cohort_big5_stats(_ch, "")
             _r.append("")
             _r.append("### Persona — Big5 (max/mean/min)")
-            _r.append("| 特性 | 最大 | 平均 | 最小 |")
+            _r.append("| Trait | Max | Mean | Min |")
             _r.append("|---|---|---|---|")
             for _t in ux.BIG5_TRAITS:
                 _r.append(f"| {ux.BIG5_JA.get(_t,_t)} | {_b5s[_t]['max']:.2f} | {_b5s[_t]['mean']:.2f} | {_b5s[_t]['min']:.2f} |")
             _es = ux.cohort_basic_emotion_stats(_ch, "")
             _r.append("")
-            _r.append("### Nowaday — 基本感情 (max/mean/min)")
-            _r.append("| 感情 | 最大 | 平均 | 最小 |")
+            _r.append("### Nowaday - basic emotions (max/mean/min)")
+            _r.append("| Emotion | Max | Mean | Min |")
             _r.append("|---|---|---|---|")
             for _e in ux.PLUTCHIK_PRIMARY:
                 _r.append(f"| {ux.PLUTCHIK_JA.get(_e,_e)} | {_es[_e]['max']:.2f} | {_es[_e]['mean']:.2f} | {_es[_e]['min']:.2f} |")
             _sec = ux.agg_secondary_emotions(_ch, "")
             if _sec:
                 _r.append("")
-                _r.append("### 二次感情ランキング")
+                _r.append("### Secondary-emotion ranking")
                 _r.append("- " + "、".join(f"{ux.PLUTCHIK_JA.get(k,k)}({c})" for k, c in _sec.most_common()))
             _pc = st.session_state.get("_ume_pcluster") or {}
             if _pc.get("df") is not None:
                 _r.append("")
-                _r.append(f"### Personaクラスタリング ({_pc.get('info','')})")
+                _r.append(f"### Persona clustering ({_pc.get('info','')})")
                 _r.append(_pc["df"].to_markdown(index=False))
                 if st.session_state.get("_ume_pexp"):
                     _r.append("")
-                    _r.append("#### クラスタ解説")
+                    _r.append("#### Cluster explanation")
                     _r.append(str(st.session_state["_ume_pexp"]))
             _nc = st.session_state.get("_ume_ncluster") or {}
             if _nc.get("df") is not None:
                 _r.append("")
-                _r.append(f"### Nowadayクラスタリング ({_nc.get('info','')})")
+                _r.append(f"### Nowaday clustering ({_nc.get('info','')})")
                 _r.append(_nc["df"].to_markdown(index=False))
                 if st.session_state.get("_ume_nexp"):
                     _r.append("")
-                    _r.append("#### クラスタ解説")
+                    _r.append("#### Cluster explanation")
                     _r.append(str(st.session_state["_ume_nexp"]))
             _ht = ux.cohort_history_emotion_totals(_ch, "")
             if _ht:
                 _r.append("")
-                _r.append("### History 感情トラジェクトリ（合計）")
+                _r.append("### History emotion trajectory (total)")
                 _r.append("- " + "、".join(f"{ux.PLUTCHIK_JA.get(k,k)}={v}" for k, v in _ht.items()))
             _gsys = st.session_state.get("_ume_cross_gtwin_sys")
             if _gsys:
@@ -4343,10 +4344,10 @@ def _user_memory_explorer():
         try:
             _label = (_ud or "") + (f"+{len(_ch)}users" if _ch else "")
             _saved = _ume_save_session(_label or "session")
-            st.success(f"レポートを生成し、セッションを保存しました: {_saved}")
+            st.success(f"Generated report and saved the session: {_saved}")
         except Exception as e:
-            st.success("レポートを生成しました")
-            st.warning(f"セッション保存エラー: {e}")
+            st.success("Report generated")
+            st.warning(f"Failed to save the session: {e}")
 
     if st.session_state.get("_ume_report"):
         _rname = f"UserMemoryExplorer_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -4354,9 +4355,9 @@ def _user_memory_explorer():
                            file_name=f"{_rname}.md", mime="text/markdown", key="ume_dl_md")
 
 
-### Support Agent Test画面 ###
+### Support Agent Test screen ###
 def _support_agent_test():
-    """サポートエージェント評価（旧サイドバー Support Eval をメインビューへ移設）。"""
+    """Support-Agent evaluation (the legacy sidebar Support Eval, moved to the main view)."""
     st.subheader("Support Agent Test")
 
     _agent_file = st.session_state.get("agent_file", "")
@@ -4367,14 +4368,14 @@ def _support_agent_test():
         except Exception:
             pass
 
-    st.caption(f"対象エージェント: {_agent_file or '(未選択)'}")
+    st.caption(f"Target agent: {_agent_file or '(none selected)'}")
     if not _eval_targets:
-        st.info("選択中エージェントにサポートエージェントが未設定です。")
+        st.info("The selected agent has no support agent configured.")
         return
 
     _target_options = {v["label"]: k for k, v in _eval_targets.items()}
-    _target_options["両方"] = "both"
-    _selected_label = st.selectbox("対象", list(_target_options.keys()), key="eval_target_select")
+    _target_options["Both"] = "both"
+    _selected_label = st.selectbox("Target", list(_target_options.keys()), key="eval_target_select")
     _selected_target = _target_options[_selected_label]
 
     _all_engines = []
@@ -4382,19 +4383,19 @@ def _support_agent_test():
         if _selected_target in ("both", k):
             _all_engines.extend(v["engines"])
     _all_engines = list(dict.fromkeys(_all_engines))
-    _selected_engines = st.multiselect("エンジン", _all_engines, default=_all_engines, key="eval_engines")
+    _selected_engines = st.multiselect("Engines", _all_engines, default=_all_engines, key="eval_engines")
 
-    _num_questions = st.number_input("質問数", min_value=1, max_value=20, value=3, key="eval_num_q")
-    _default_questions = "AIガバナンスについてどう思う？\n最近読んだ本で面白かったのは？\n自己紹介してください"
-    _questions_text = st.text_area("質問（改行区切り）", value=_default_questions,
+    _num_questions = st.number_input("Question count", min_value=1, max_value=20, value=3, key="eval_num_q")
+    _default_questions = "What do you think about AI governance?\nWhat was a recent book you enjoyed?\nPlease introduce yourself"
+    _questions_text = st.text_area("Questions (one per line)", value=_default_questions,
                                    height=120, key="eval_questions")
     _questions = [q.strip() for q in _questions_text.strip().split("\n") if q.strip()][:_num_questions]
 
-    if st.button("評価実行", key="run_support_eval", disabled=bool(st.session_state._bg_task)):
+    if st.button("Run evaluation", key="run_support_eval", disabled=bool(st.session_state._bg_task)):
         if not _selected_engines:
-            st.warning("エンジンを選択してください")
+            st.warning("Please select engines")
         elif not _questions:
-            st.warning("質問を入力してください")
+            st.warning("Please enter questions")
         else:
             _eval_af = _agent_file
             _eval_tgt = _selected_target
@@ -4405,7 +4406,7 @@ def _support_agent_test():
                     _eval_af, _eval_tgt, _eval_eng, _eval_qs)
                 st.session_state.eval_results_excel = _excel
                 st.session_state.eval_summary = _summary
-            _run_bg_task("eval", "サポートエージェント評価を実行中", _run_eval)
+            _run_bg_task("eval", "Running support-agent evaluation", _run_eval)
             st.rerun()
 
     if st.session_state.eval_summary:
@@ -4413,7 +4414,7 @@ def _support_agent_test():
 
     if st.session_state.eval_results_excel:
         st.download_button(
-            label="結果Excel",
+            label="Result Excel",
             data=st.session_state.eval_results_excel,
             file_name=f"support_eval_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -4421,29 +4422,29 @@ def _support_agent_test():
         )
 
 
-### Streamlit画面 ###
+### Streamlit screens ###
 def main():
-    # セッションステートを初期化
+    # Initialize the session state
     initialize_session_states()
 
-    # ログイン処理の実行
+    # Run the login flow
     if login_enable_flg == "Y":
         ensure_login()
 
-    # サイドバーの設定
+    # Sidebar setup
     with st.sidebar:
         st.title(web_title)
 
-        # ログインユーザー情報の表示
+        # Show the logged-in user info
         if login_enable_flg == "Y":
             if "login_user" in st.session_state and st.session_state.login_user:
                 lu = st.session_state.login_user
                 st.markdown(f"User: {lu.get('Name', '')}")
                 if st.button("Logout"):
                     _clear_auth_cookie(_get_cookie_manager())
-                    # UIキャッシュ（session_state）を全クリア。
-                    # 別ユーザーで再ログインしたときに前ユーザーの
-                    # セッション一覧・エージェント設定・権限フラグ等が残らないようにする。
+                    # Clear all UI cache (session_state).
+                    # When another user logs in, don't leave behind the previous user's
+                    # session list, agent settings, permission flags, etc.
                     _preserved = {"_cookie_manager"}
                     for key in list(st.session_state.keys()):
                         if key in _preserved:
@@ -4452,7 +4453,7 @@ def main():
                     st.session_state._just_logged_out = True
                     st.rerun()
 
-        # メインビュー切り替え
+        # Switch the main view
         _view_options = ["Chat"]
         if st.session_state.allowed_knowledge_explorer:
             _view_options.append("Knowledge Explorer")
@@ -4469,10 +4470,10 @@ def main():
         else:
             st.session_state.main_view = "Chat"
 
-        # エージェントを選択（JSON)
+        # Select the agent (JSON)
         if agent_id_selected := st.selectbox("Select Agent:", st.session_state.agent_list, index=st.session_state.agent_list_index):
             if st.session_state.agent_id != agent_id_selected:
-                # エージェント切替時はORG/Persona選択をリセット
+                # Reset ORG / Persona selection when the agent changes
                 st.session_state.selected_org = None
                 st.session_state.selected_persona_ids = []
             st.session_state.agent_id = agent_id_selected
@@ -4481,7 +4482,7 @@ def main():
             st.session_state.engine_name = st.session_state.agent_data.get("ENGINE", {}).get("LLM", {}).get("DEFAULT", "")
             st.session_state.imagegen_engine_name = st.session_state.agent_data.get("ENGINE", {}).get("IMAGEGEN", {}).get("DEFAULT", "")
 
-        # ORG / Persona 選択（エージェントに ORG が定義されている場合のみ表示）
+        # ORG / Persona selection (only when the agent has ORG defined)
         _agent_orgs = st.session_state.agent_data.get("ORG") or []
         if isinstance(_agent_orgs, list) and _agent_orgs:
             def _format_org(org_dict):
@@ -4492,7 +4493,7 @@ def main():
             _org_labels = [_format_org(o) for o in _agent_orgs]
             _label_to_org = dict(zip(_org_labels, _agent_orgs))
 
-            # 既存選択があれば対応するindexを復元、無ければ先頭
+            # If there's an existing selection, restore that index; otherwise pick the first
             _current_idx = 0
             if st.session_state.selected_org in _agent_orgs:
                 _current_idx = _agent_orgs.index(st.session_state.selected_org)
@@ -4500,9 +4501,9 @@ def main():
             _selected_org = _label_to_org[_selected_label]
             if st.session_state.selected_org != _selected_org:
                 st.session_state.selected_org = _selected_org
-                st.session_state.selected_persona_ids = []  # ORG切替時はPersona選択をリセット
+                st.session_state.selected_persona_ids = []  # Reset Persona selection when ORG changes
 
-            # ORGに合致するペルソナを取得
+            # Fetch personas matching the ORG
             _persona_files = st.session_state.agent_data.get("PERSONA_FILES") or None
             _persona_source = st.session_state.agent_data.get("PERSONA_SOURCE")
             try:
@@ -4514,7 +4515,7 @@ def main():
                 )
             except Exception as _e:
                 _candidate_personas = []
-                st.warning(f"ペルソナ取得失敗: {_e}")
+                st.warning(f"Failed to fetch personas: {_e}")
 
             if _candidate_personas:
                 _persona_labels = [f"{p['persona_id']}: {p['name']}" for p in _candidate_personas]
@@ -4524,14 +4525,14 @@ def main():
                 _selected_labels = st.multiselect("Personas:", _persona_labels, default=_default_labels, key="persona_select")
                 st.session_state.selected_persona_ids = [_label_to_pid[lbl] for lbl in _selected_labels]
                 if len(st.session_state.selected_persona_ids) >= 2:
-                    st.caption(f"複数ペルソナ並列実行モード ({len(st.session_state.selected_persona_ids)}人)")
+                    st.caption(f"Multi-persona parallel-execution mode ({len(st.session_state.selected_persona_ids)} personas)")
             else:
-                st.caption("該当するペルソナがありません")
+                st.caption("No matching personas")
                 st.session_state.selected_persona_ids = []
 
         side_col1, side_col2 = st.columns(2)
 
-        # 新しいセッションを発番（IDを指定して、新規にセッションリフレッシュ）
+        # Issue a new session (specify the ID, refresh the session anew)
         if st.session_state.get("main_view") == "Knowledge Explorer":
             if side_col1.button("New Analysis", key="new_analysis_sidebar"):
                 for _k in list(st.session_state.keys()):
@@ -4555,34 +4556,34 @@ def main():
                 refresh_session_states()
                 refresh_session(session_id, session_name, situation, True)
 
-        # 会話履歴の更新
+        # Update the chat history
         if side_col2.button("Refresh List", key="refresh_session_list"):
             st.session_state.sidebar_message = ""
             refresh_session_list(st.session_state.service_id, st.session_state.user_id, st.session_state.user_admin_flg)
 
-        # エージェントのエンジンを選択
+        # Select the agent's engines
         engines_expander = st.expander("Engines")
         with engines_expander:
-            # LLMエンジン選択
+            # LLM engine selection
             _engine_list = dma.get_engine_list(st.session_state.agent_data, model_type="LLM")
             if _engine_list:
                 _engine_index = _engine_list.index(st.session_state.engine_name) if st.session_state.engine_name in _engine_list else 0
                 st.session_state.engine_name = st.selectbox("Select Engine(LLM):", _engine_list, index=_engine_index)
 
-            # IMAGEGENエンジン選択
+            # IMAGEGEN engine selection
             _imagegen_engine_list = dma.get_engine_list(st.session_state.agent_data, model_type="IMAGEGEN")
             if _imagegen_engine_list:
                 _imagegen_index = _imagegen_engine_list.index(st.session_state.imagegen_engine_name) if st.session_state.imagegen_engine_name in _imagegen_engine_list else 0
                 st.session_state.imagegen_engine_name = st.selectbox("Select Engine(IMAGEGEN):", _imagegen_engine_list, index=_imagegen_index)
 
-        # セッションの管理
+        # Session management
         sessions_expander = st.expander("Sessions")
         with sessions_expander:
-            # 実行中バックグラウンドジョブの管理
+            # Manage in-flight background jobs
             _running_jobs = djr.list_jobs(user_id=st.session_state.get("user_id")) if st.session_state.get("user_admin_flg") != "Y" else djr.list_jobs()
             st.markdown("**Background Jobs**")
             if not _running_jobs:
-                st.caption("実行中のジョブはありません")
+                st.caption("No jobs in flight")
             else:
                 _job_labels = []
                 _label_to_id = {}
@@ -4599,7 +4600,7 @@ def main():
                         _jid = _label_to_id.get(_lbl)
                         if _jid and djr.cancel_job(_jid):
                             _cancelled += 1
-                    st.session_state.sidebar_message = f"{_cancelled}件のバックグラウンドジョブにキャンセルを要求しました"
+                    st.session_state.sidebar_message = f"Requested cancellation for {_cancelled} background job(s)"
                     st.rerun()
             st.markdown("---")
 
@@ -4613,18 +4614,18 @@ def main():
                     activate_session.save_active_session("Y")
                     activate_session.save_user_dialog_session("UNSAVED")
                 activate_sessions_str = ", ".join(st.session_state.session_inactive_list_selected)
-                st.session_state.sidebar_message = f"セッションを再表示しました({activate_sessions_str})"
+                st.session_state.sidebar_message = f"Re-displayed sessions ({activate_sessions_str})"
                 st.rerun()
 
-            # DB Export / Archive（Session Archiveが許可されたユーザーのみ表示）
+            # DB Export / Archive (shown only to users with Session Archive permission)
             if st.session_state.allowed_session_archive:
                 st.markdown("---")
 
-                # DB Exportボタン（接続情報が設定されている場合のみ表示）
+                # DB Export button (shown only when connection info is configured)
                 if _db_configured:
-                    # 接続テスト: psycopg2で軽くSELECT 1（タイムアウト5秒）
+                    # Connection test: lightweight psycopg2 SELECT 1 (5s timeout)
                     if st.button("Check DB Connection", key="db_check"):
-                        with st.spinner("DB接続を確認中..."):
+                        with st.spinner("Checking DB connection..."):
                             try:
                                 import psycopg2
                                 _cfg = dict(dmdbe.DB_CONFIG)
@@ -4633,44 +4634,44 @@ def main():
                                     with _conn.cursor() as _cur:
                                         _cur.execute("SELECT version()")
                                         _ver = _cur.fetchone()[0]
-                                st.session_state.sidebar_message = f"DB接続OK: {_ver}"
+                                st.session_state.sidebar_message = f"DB connection OK: {_ver}"
                             except Exception as _e:
-                                st.session_state.sidebar_message = f"DB接続失敗: {_e}"
+                                st.session_state.sidebar_message = f"DB connection failed: {_e}"
                         st.rerun()
 
                     if st.button("Export to DB", key="db_export"):
-                        with st.spinner("DBへエクスポート中..."):
+                        with st.spinner("Exporting to DB..."):
                             try:
                                 dmdbe.main()
-                                st.session_state.sidebar_message = "DBエクスポートが完了しました"
+                                st.session_state.sidebar_message = "DB export completed"
                             except Exception as e:
-                                st.session_state.sidebar_message = f"DBエクスポートでエラーが発生しました: {e}"
-                        with st.spinner("ベクトル化中..."):
+                                st.session_state.sidebar_message = f"DB export error: {e}"
+                        with st.spinner("Vectorizing..."):
                             try:
                                 dmdbe.vectorize_dialogs()
                             except Exception as e:
-                                st.session_state.sidebar_message += f" / ベクトル化でエラーが発生しました: {e}"
+                                st.session_state.sidebar_message += f" / Vectorization error: {e}"
                         st.rerun()
 
-                # Archiveボタン
+                # Archive button
                 _archive_days = st.number_input(
                     "Archive Older Than (days)", min_value=1, value=30, step=1,
                     key="archive_days_input",
-                    help="この日数より古い（最終更新日基準）セッションをZIPに圧縮します",
+                    help="Compress sessions older than this many days (by last update date) into a ZIP",
                 )
                 if st.button("Archive Old Sessions", key="archive_sessions"):
-                    with st.spinner("アーカイブ中..."):
+                    with st.spinner("Archiving..."):
                         try:
                             result = dms.archive_old_sessions(days=int(_archive_days))
                             archived_count = len(result["archived"])
-                            st.session_state.sidebar_message = f"アーカイブ完了: {archived_count}件を圧縮しました"
+                            st.session_state.sidebar_message = f"Archive complete: compressed {archived_count} sessions"
                             st.session_state.last_archive_zip = result["zip_path"]
                         except Exception as e:
-                            st.session_state.sidebar_message = f"アーカイブでエラーが発生しました: {e}"
+                            st.session_state.sidebar_message = f"Archive error: {e}"
                             st.session_state.last_archive_zip = None
                     st.rerun()
 
-                # アーカイブZipのダウンロード（常時表示）
+                # Archive ZIP download (always shown)
                 _archive_dir = dms.archive_folder
                 _zip_files = sorted(
                     [f for f in os.listdir(_archive_dir) if f.endswith(".zip")],
@@ -4688,40 +4689,40 @@ def main():
                             key="download_archive_zip",
                         )
                 else:
-                    st.caption("アーカイブZIPはありません")
+                    st.caption("No archive ZIPs available")
 
-        # 知識更新の処理
+        # Knowledge update flow
         if st.session_state.allowed_rag_management:
             rag_expander = st.expander("RAG Management")
             with rag_expander:
-                # RAGの更新処理
+                # RAG update flow
                 if st.button("Update RAG Data", key="update_rag", disabled=bool(st.session_state._bg_task)):
                     def _rag_update():
                         dmc.generate_rag()
-                        # 旧UserDialog自動保存（互換維持）。auto_save_flg=Yで起動。
+                        # Legacy UserDialog auto-save (kept for compat). Triggered when auto_save_flg=Y.
                         if cfg.user_dialog_auto_save_flg == "Y":
                             try:
                                 dmgu.save_user_dialogs(st.session_state.web_service, st.session_state.web_user)
                             except Exception:
                                 pass
-                        # 新UserMemory短期: 未保存セッションを自動処理
+                        # New short-term UserMemory: auto-process unsaved sessions
                         if (os.getenv("USER_MEMORY_HISTORY_AUTO_SAVE_FLG") or "N") == "Y":
                             import DigiM_GeneUserMemory as _dmgum_rag
                             try:
                                 _dmgum_rag.save_history_for_unsaved_sessions()
                             except Exception:
                                 pass
-                    _run_bg_task("rag", "RAGデータを更新中", _rag_update)
+                    _run_bg_task("rag", "Updating RAG data", _rag_update)
                     st.rerun()
 
-                # RAGの削除処理(未選択は全削除)
+                # RAG deletion (delete all if none selected)
                 st.session_state.rag_data_list_selected = st.multiselect("RAG DB", st.session_state.rag_data_list)
                 if st.button("Delete RAG DB", key="delete_rag_db"):
                     dmc.del_rag_db(st.session_state.rag_data_list_selected)
-                    st.session_state.sidebar_message = "RAGを削除しました"
+                    st.session_state.sidebar_message = "Deleted RAG"
                     st.session_state.rag_data_list = dmc.get_rag_list()
 
-                # PageIndex Export: 選択したPageIndexをExcel+個別ファイルのZIPでローカル保存
+                # PageIndex Export: download the selected PageIndex as a ZIP of Excel + individual files
                 _pi_dict = dmc.get_page_index_list()
                 _pi_names = list(_pi_dict.keys())
                 if _pi_names:
@@ -4733,7 +4734,7 @@ def main():
                             _pi_zip = dmc.export_pageindex_as_excel_bundle(_pi_export)
                         except Exception as _pi_err:
                             _pi_zip = None
-                            st.error(f"エクスポート失敗: {_pi_err}")
+                            st.error(f"Export failed: {_pi_err}")
                         if _pi_zip:
                             st.download_button(
                                 "Download (Excel + Files)", data=_pi_zip,
@@ -4741,13 +4742,13 @@ def main():
                                 key=f"pi_dl_{_pi_export}",
                             )
 
-                # セッションのユーザーダイアログ保存
+                # Save the session's user dialog
                 if cfg.user_dialog_auto_save_flg == "N":
                     st.markdown("---")
                     st.markdown("**User Dialog**")
                     if st.button("Save User Dialog", key="save_user_dialog"):
                         dmgu.save_user_dialogs(st.session_state.web_service, st.session_state.web_user)
-                        st.session_state.sidebar_message = "ユーザーダイアログを保存しました"
+                        st.session_state.sidebar_message = "Saved the user dialog"
 
                 # User Memory (backend display, manual update)
                 if st.session_state.allowed_user_memory:
@@ -4802,16 +4803,16 @@ def main():
                         _run_bg_task("um_pipeline", _label, _um_pipeline)
                         st.rerun()
 
-        # スケジュール管理は別メニュー(Scheduler)に移管。RAG Management からは触れません。
+        # Schedule management is in a separate menu (Scheduler) and is not touched from RAG Management.
 
         # User Memory expander moved to the main area (below BOOK).
 
-        # Web API管理
+        # Web API management
         if st.session_state.allowed_web_api:
             api_expander = st.expander("Web API")
             with api_expander:
                 import subprocess
-                # FastAPIプロセスの状態確認
+                # Check FastAPI process status
                 _api_check = subprocess.run(
                     ["pgrep", "-f", "uvicorn DigiM_API:app"],
                     capture_output=True, text=True
@@ -4822,7 +4823,7 @@ def main():
                     st.success("FastAPI: Running (port 8899)")
                     if st.button("Stop API Server", key="stop_api"):
                         subprocess.run(["pkill", "-f", "uvicorn DigiM_API:app"])
-                        st.session_state.sidebar_message = "FastAPIを停止しました"
+                        st.session_state.sidebar_message = "Stopped FastAPI"
                         st.rerun()
                 else:
                     st.warning("FastAPI: Stopped")
@@ -4835,10 +4836,10 @@ def main():
                         )
                         import time
                         time.sleep(2)
-                        st.session_state.sidebar_message = "FastAPIを起動しました"
+                        st.session_state.sidebar_message = "Started FastAPI"
                         st.rerun()
 
-                # ヘルスチェック
+                # Health check
                 if _api_running:
                     if st.button("Health Check", key="api_health"):
                         try:
@@ -4849,16 +4850,16 @@ def main():
                         except Exception as e:
                             st.error(f"Health Check Failed: {e}")
 
-        # サポートエージェント評価は メインビューの「Support Agent Test」へ移設
+        # Support-agent evaluation has moved to the "Support Agent Test" main view
 
-        # バックグラウンドタスクモニター
+        # Background-task monitor
         if st.session_state._bg_task:
             _task_status = _read_bg_task_status()
             if _task_status.get("status") == "done":
                 if _task_status.get("error"):
-                    st.error(f"エラー: {_task_status['error']}")
+                    st.error(f"Error: {_task_status['error']}")
                 else:
-                    st.session_state.sidebar_message = f"{_task_status.get('message', '')}が完了しました"
+                    st.session_state.sidebar_message = f"{_task_status.get('message', '')} completed"
                 st.session_state._bg_task = None
                 _clear_bg_task_status()
                 st.rerun()
@@ -4869,18 +4870,18 @@ def main():
                     if _ts.get("status") == "done":
                         st.session_state._bg_task_refresh = True
                         st.rerun(scope="app")
-                    st.info(f"⏳ {_ts.get('message', '実行中...')}")
+                    st.info(f"⏳ {_ts.get('message', 'Running...')}")
                 _task_monitor()
 
         st.write(st.session_state.sidebar_message)
 
-        # セッション一覧はChat画面でのみ表示
+        # Session list is shown only on the Chat screen
         if st.session_state.get("main_view", "Chat") == "Chat":
             st.markdown("----")
-            # セッション名の検索フィルタ
-            _session_filter = st.text_input("Session Name:", value="", placeholder="検索（ワイルドカード * 対応）", label_visibility="collapsed")
+            # Session-name search filter
+            _session_filter = st.text_input("Session Name:", value="", placeholder="Search (wildcard * supported)", label_visibility="collapsed")
 
-            # セッションリストの表示
+            # Render the session list
             num_sessions = 0
             for session_dict in st.session_state.session_list:
                 try:
@@ -4891,7 +4892,7 @@ def main():
                         session_name_list = session_list.session_name
                         session_active_flg = session_list.get_active_session()
                         if session_active_flg != "N":
-                            # セッション名フィルタ（ワイルドカード * 対応）
+                            # Session-name filter (wildcard * supported)
                             if _session_filter:
                                 import fnmatch
                                 _pattern = _session_filter if "*" in _session_filter else f"*{_session_filter}*"
@@ -4915,15 +4916,15 @@ def main():
                                 del_session = dms.DigiMSession(session_id_list, session_name_list)
                                 del_session.save_active_session("N")
                                 del_session.save_user_dialog_session("DISCARD")
-                                st.session_state.sidebar_message = f"セッションを非表示にしました({session_id_list}_{session_name_list})"
+                                st.session_state.sidebar_message = f"Hid session ({session_id_list}_{session_name_list})"
                                 st.rerun()
                             num_sessions += 1
                 except Exception as e:
                     sid = session_dict["id"]
-                    st.warning(f"セッション {sid} の描画でエラーのためスキップしました: {e}")
+                    st.warning(f"Skipped session {sid} due to render error: {e}")
                     continue
 
-        # Knowledge Explorer用: 保存済み分析セッション一覧
+        # Knowledge Explorer: saved analysis sessions
         elif st.session_state.get("main_view", "Chat") == "Knowledge Explorer":
             st.markdown("----")
             _analytics_base = "user/common/analytics/knowledge_explorer/"
@@ -4940,7 +4941,7 @@ def main():
                             st.session_state._rag_load_folder = os.path.join(_analytics_base, _sf)
                             st.rerun()
 
-        # User Memory Explorer用: 保存済み分析セッション一覧
+        # User Memory Explorer: saved analysis sessions
         elif st.session_state.get("main_view", "Chat") == "User Memory Explorer":
             st.markdown("----")
             _ume_base = "user/common/analytics/user_memory_explorer/"
@@ -4958,7 +4959,7 @@ def main():
                             st.session_state._ume_load_folder = os.path.join(_ume_base, _sf)
                             st.rerun()
 
-    # メインエリアの画面切り替え
+    # Switch main-area screens
     if st.session_state.get("main_view") == "Knowledge Explorer":
         _knowledge_explorer()
         return
@@ -4972,19 +4973,19 @@ def main():
         _scheduler_view()
         return
 
-    # チャットセッション名の設定
+    # Configure the chat session name
     if session_name := st.text_input("Chat Name:", value=st.session_state.session.session_name):
         st.session_state.session = dms.DigiMSession(st.session_state.session.session_id, session_name)
         if session_name != dms.get_session_name(st.session_state.session.session_id) and dms.get_session_name(st.session_state.session.session_id) != "":
             if st.button("Change Session Name", key="chg_session_name"):
                 st.session_state.session.chg_session_name(session_name)
-                st.session_state.sidebar_message = "セッション名を変更しました"
+                st.session_state.sidebar_message = "Changed the session name"
                 st.rerun()
 
-    # Webパーツのレイアウト
+    # Web component layout
     header_col1, header_col2, header_col3, header_col4 = st.columns(4)
 
-    # 時刻の設定
+    # Time setup
     header_col1.markdown("Time Setting:")
     _time_modes = ["Real Date", "Custom Date", "No Date"]
     _time_mode_idx = _time_modes.index(st.session_state.time_mode) if st.session_state.time_mode in _time_modes else 0
@@ -5004,70 +5005,70 @@ def main():
         with _cd_tab2:
             if "custom_time_input" not in st.session_state:
                 st.session_state.custom_time_input = ""
-            selected_time_setting = st.text_input("Situation Date:", key="custom_time_input", placeholder="例: BC500年, 天保3年 江戸, 西暦30000年")
+            selected_time_setting = st.text_input("Situation Date:", key="custom_time_input", placeholder="e.g. 500 BC, Tenpo 3 Edo, AD 30000")
             if not selected_time_setting:
                 selected_time_setting = datetime.combine(_cd_date, _cd_time).strftime("%Y/%m/%d %H:%M:%S")
     time_setting = str(selected_time_setting)
     st.session_state.time_setting = time_setting
 
-    # 実行の設定
+    # Execution settings
     if st.session_state.allowed_exec_setting:
         header_col2.markdown("Exec Setting:")
 
-        # ストリーミングの設定
+        # Streaming setting
         if header_col2.checkbox("Streaming Mode", value=st.session_state.stream_mode):
             st.session_state.stream_mode = True
         else:
             st.session_state.stream_mode = False
 
-        # 会話メモリ利用の設定
+        # Conversation memory toggle
         if header_col2.checkbox("Memory Use", value=st.session_state.memory_use):
             st.session_state.memory_use = True
         else:
             st.session_state.memory_use = False
 
-        # メモリダイジェスト保存の設定
+        # Memory digest save toggle
         if header_col2.checkbox("Save Digest", value=st.session_state.save_digest):
             st.session_state.save_digest = True
         else:
             st.session_state.save_digest = False
 
-        # マジックワード利用の設定
+        # Magic-word toggle
         if header_col2.checkbox("Magic Word", value=st.session_state.magic_word_use):
             st.session_state.magic_word_use = True
         else:
             st.session_state.magic_word_use = False
 
-    #    # メモリ保存の設定
+    #    # Memory save toggle
     #    if header_col2.checkbox("Memory Save", value=st.session_state.memory_save):
     #        st.session_state.memory_save = True
     #    else:
     #        st.session_state.memory_save = False
 
-    #    # メモリ類似度の設定
+    #    # Memory similarity toggle
     #    if header_col2.checkbox("Memory Similarity", value=st.session_state.memory_similarity):
     #        st.session_state.memory_similarity = True
     #    else:
     #        st.session_state.memory_similarity = False
 
 
-    # 実行の設定
+    # Execution settings
     if st.session_state.allowed_rag_setting:
         header_col3.markdown("RAG Setting:")
 
-        # RAG検索用クエリ生成の設定
+        # RAG search-query generation toggle
         if header_col3.checkbox("RAG Query Gen", value=st.session_state.RAG_query_gene):
             st.session_state.RAG_query_gene = True
         else:
             st.session_state.RAG_query_gene = False
 
-        # メタ検索の設定
+        # Meta-search toggle
         if header_col3.checkbox("Meta Search", value=st.session_state.meta_search):
             st.session_state.meta_search = True
         else:
             st.session_state.meta_search = False
 
-    # 会話履歴の表示対象切替
+    # Toggle which chat history is shown
     num_seq_visible = 10
     sub_header_col1, sub_header_col2 = header_col4.columns(2)
     option = sub_header_col1.radio("History Seq Visible:", ("LATEST", "FULL"))
@@ -5078,26 +5079,26 @@ def main():
     elif option == "FULL":
         st.session_state.seq_visible_set = False
 
-    # 会話履歴の表示件数
+    # Chat history row count
     option = header_col4.radio("History Detail Visible:", ("ALL", "SUMMARY"))
     if option == "ALL":
         st.session_state.chat_history_visible_dict = st.session_state.session.chat_history_active_dict
     elif option == "SUMMARY":
         st.session_state.chat_history_visible_dict = st.session_state.session.chat_history_active_omit_dict
 
-    # 会話履歴の削除（ボタン）
+    # Delete chat history (button)
     if header_col4.button("Delete Chat History(Chk)", key="delete_chat_history"):
         if st.session_state.seq_memory:
             for del_seq in st.session_state.seq_memory:
                 st.session_state.session.chg_seq_history(del_seq, "N")
-            st.session_state.sidebar_message = "会話履歴を削除しました"
+            st.session_state.sidebar_message = "Deleted chat history"
             st.session_state.seq_memory = []
             st.rerun()
 
-    # シチュエーションの設定
+    # Situation setup
     situation_setting = st.text_input("Situation Setting:", value=st.session_state.situation_setting)
 
-    # 会話履歴の表示件数の設定
+    # Configure Chat history row count
     max_seq = dms.max_seq_dict(st.session_state.chat_history_visible_dict)
     seq_visible_key = 0
     if st.session_state.seq_visible_set:
@@ -5105,7 +5106,7 @@ def main():
     else:
         seq_visible_key = 0
 
-    # 会話履歴の表示
+    # Render chat history
     download_data = []
     for k, v in st.session_state.chat_history_visible_dict.items():
         if int(k) >= seq_visible_key:
@@ -5141,13 +5142,13 @@ def main():
                                 agent_feedback = v2["setting"]["feedback"]
 
                                 if agent_feedback["ACTIVE"] == "Y":
-                                    # カテゴリ選択肢を取得
+                                    # Fetch category choices
                                     _cat_map = dmu.read_json_file("category_map.json", mst_folder_path)
-                                    _cat_options = list(_cat_map.get("Category", {}).keys()) if _cat_map else ["未設定"]
+                                    _cat_options = list(_cat_map.get("Category", {}).keys()) if _cat_map else ["Unset"]
                                     _default_cat = agent_feedback.get("DEFAULT_CATEGORY") or _cat_options[0]
 
-                                    # セッション切替時に同じ(seq, sub_seq)で前セッションの下書きが残らないよう、
-                                    # ウィジェットキーに session_id を含める
+                                    # Include session_id in the widget key so that a draft for the same (seq, sub_seq)
+                                    # does not linger when switching sessions
                                     _sid = st.session_state.session.session_id
 
                                     with st.chat_message("Feedback"):
@@ -5183,10 +5184,10 @@ def main():
                                             if any(k != "name" for k in fb_item):
                                                 st.session_state.session.set_feedback_history(k, k2, feedback)
                                                 dmgf.create_feedback_data(st.session_state.session.session_id, v2["setting"]["agent_file"])
-                                                st.session_state.sidebar_message = f"フィードバックを保存しました({k}_{k2})"
+                                                st.session_state.sidebar_message = f"Saved feedback ({k}_{k2})"
                                                 st.rerun()
                                             else:
-                                                st.session_state.sidebar_message = f"フィードバックに変更はありません({k}_{k2})"
+                                                st.session_state.sidebar_message = f"No changes to feedback ({k}_{k2})"
 
                         # Detail
                         if st.session_state.allowed_details:
@@ -5195,7 +5196,7 @@ def main():
                                 chat_expander = st.expander("Detail Information")
                                 with chat_expander:
                                     _detail_info = st.session_state.session.get_detail_info(k, k2)
-                                    # 【】ブロックごとに分割してコピーボタンを付与
+                                    # Split into 【】 blocks and attach a copy button to each
                                     import re as _re
                                     _blocks = _re.split(r'\n(?=【)', _detail_info)
                                     for _bi, _block in enumerate(_blocks):
@@ -5277,7 +5278,7 @@ def main():
                                                                           "response": cmp_resp, "diff": cmp_diff, "knowledge_rag": cmp_know_ref},
                                                         "compare_text": {"compare_model_name": cmp_text_model, "text": cmp_text}})
                                                     _cmp_session.set_analytics_history(_cmp_k, _cmp_k2, _cmp_analytics_dict)
-                                                _run_bg_task("compare", f"比較分析を実行中({_cmp_k}_{_cmp_k2})", _run_compare)
+                                                _run_bg_task("compare", f"Running comparative analysis ({_cmp_k}_{_cmp_k2})", _run_compare)
                                                 st.rerun()
                                     if st.session_state.allowed_analytics_knowledge:
                                         if v2["response"]["reference"]["knowledge_rag"]:
@@ -5301,7 +5302,7 @@ def main():
                                                     result = dmva.analytics_knowledge(_ak_agent_file, ref_timestamp, _ak_title, _ak_refs, _ak_folder, _ak_mode, _ak_dim)
                                                     _ak_analytics_dict["knowledge_utility"] = result
                                                     _ak_session.set_analytics_history(_ak_k, _ak_k2, _ak_analytics_dict)
-                                                _run_bg_task("knowledge", f"知識活用性を分析中({_ak_k}_{_ak_k2})", _run_ak)
+                                                _run_bg_task("knowledge", f"Analyzing knowledge utility ({_ak_k}_{_ak_k2})", _run_ak)
                                                 st.rerun()
                                     if "compare_agents" in analytics_dict:
                                         chat_expander_compare = st.expander("Analytics Results - Compare Agents")
@@ -5349,7 +5350,7 @@ def main():
                                                                 result = dmva.analytics_knowledge(_cak_agent_file, _cak_timestamp, _cak_title, _cak_refs, _cak_folder, _cak_mode, _cak_dim)
                                                                 _cak_analytics_dict["compare_agents"][_cak_idx]["compare_agent"]["knowledge_utility"] = result
                                                                 _cak_session.set_analytics_history(_cak_k, _cak_k2, _cak_analytics_dict)
-                                                            _run_bg_task("knowledge", f"知識活用性を分析中({_cak_k}_{_cak_k2}_compare{_cak_idx})", _run_cak)
+                                                            _run_bg_task("knowledge", f"Analyzing knowledge utility ({_cak_k}_{_cak_k2}_compare{_cak_idx})", _run_cak)
                                                             st.rerun()
                                             st.markdown("")
                                             st.markdown(compare_agent_info["response"].replace("\n", "<br>"), unsafe_allow_html=True)
@@ -5430,22 +5431,22 @@ def main():
                                                         for ak_dict in analytics_dict["knowledge_utility"]["similarity_rank"][rag_category]:
                                                             st.markdown(ak_line(ak_dict))
 
-            # 会話履歴の論理削除設定
+            # Chat-history logical-delete setting
             if st.checkbox(f"Delete(seq:{k})", key="del_chat_seq"+k):
                 st.session_state.seq_memory.append(k)
 
-            # メモリ参照のみ除外（表示は残す）。トグル変更時にその場で永続化
+            # Exclude from memory references only (display remains). Persist on toggle change.
             _seq_setting = v.get("SETTING", {})
             _mem_off_now = (_seq_setting.get("MEMORY_FLG", "Y") == "N")
             _mem_off_new = st.checkbox(f"Memory Off(seq:{k})", value=_mem_off_now,
                                        key="mem_off_chat_seq"+k,
-                                       help="ONにするとこのseqは画面には残るがLLMの会話メモリには含まれなくなります")
+                                       help="When ON, this seq stays visible but is excluded from the LLM's conversation memory")
             if _mem_off_new != _mem_off_now:
                 st.session_state.session.chg_seq_memory_flg(k, "N" if _mem_off_new else "Y")
                 st.rerun()
 
     if st.session_state.session_user_id == st.session_state.user_id:
-        # ファイルアップローダー（実行完了後にkeyをincrementしてウィジェットを再生成→添付クリア）
+        # File uploader (after run completion, increment the key to re-instantiate the widget -> clear attachments)
         uploaded_files = st.file_uploader(
             "Attached Files:",
             type=["txt", "vtt", "csv", "json", "pdf", "md", "docx", "xlsx", "pptx", "jpg", "jpeg", "png", "mp3"],
@@ -5455,7 +5456,7 @@ def main():
         st.session_state.uploaded_files = uploaded_files
         show_uploaded_files_widget(st.session_state.uploaded_files)
 
-        # WEB検索の設定
+        # Web search settings
         if st.session_state.allowed_web_search:
             _ws_col1, _ws_col2 = st.columns([1, 2])
             if _ws_col1.checkbox("WEB Search", value=st.session_state.web_search):
@@ -5468,14 +5469,14 @@ def main():
             else:
                 st.session_state.web_search = False
 
-        # URL取得: 入力中のhttp(s)リンクは自動でフェッチして添付扱い。
-        # サブページの追加クロールは任意（デフォルトOFF）。
+        # URL fetch: http(s) links in the input are auto-fetched and treated as attachments.
+        # Crawling subpages is optional (default OFF).
         st.session_state.url_fetch_subpages = st.checkbox(
             "Include URL Subpages", value=st.session_state.url_fetch_subpages,
-            help="入力にURLが含まれていれば自動で取得します。ONにすると同一ドメイン内のリンク先も可能な範囲で追加取得します（上限はsetting.yamlのURL_FETCH）。",
+            help="If the input contains a URL, it is fetched automatically. When ON, also fetches in-domain links where possible (caps in setting.yaml URL_FETCH).",
         )
 
-        # Include Query: 直前seqが複数ペルソナ実行だった場合のみ表示
+        # Include Query: shown only when the previous seq ran multi-persona
         def _prev_seq_is_multi_persona():
             try:
                 _hist = st.session_state.session.chat_history_active_dict or {}
@@ -5483,10 +5484,10 @@ def main():
                     return False
                 _max_seq = max(_hist.keys(), key=int)
                 _seq_block = _hist.get(_max_seq, {})
-                # seq単位のMEMORY_FLG=N（Phase 4: whole-practice並列）
+                # seq-level MEMORY_FLG=N (Phase 4: whole-practice parallel)
                 if _seq_block.get("SETTING", {}).get("MEMORY_FLG") == "N":
                     return True
-                # 2つ以上のsub_seqで persona_id が設定されている（Phase 6: chain.PERSONAS）
+                # persona_id is set in 2+ sub_seqs (Phase 6: chain.PERSONAS)
                 _sub_seqs = [k for k in _seq_block.keys() if k != "SETTING"]
                 if len(_sub_seqs) >= 2:
                     _persona_count = sum(
@@ -5501,9 +5502,9 @@ def main():
 
         if _prev_seq_is_multi_persona():
             st.session_state.include_query = st.checkbox(
-                "Include Query (前回ペルソナ応答を入力に含める)",
+                "Include Query (include previous personas' responses)",
                 value=st.session_state.get("include_query", False),
-                help="ONにすると、直前seqの各ペルソナ応答全文を次ターン入力の先頭に埋め込みます。RAGクエリ生成には影響しません。",
+                help="When ON, embed each persona's full response from the previous seq at the head of the next turn's input. Does not affect RAG query generation.",
             )
         else:
             st.session_state.include_query = False
@@ -5520,18 +5521,18 @@ def main():
             st.session_state.thinking_mode = False
         if st.session_state.thinking_mode:
             _thinking_options = ["Habit", "Web Search", "RAG Query", "Books"]
-            # Personasオプションは ORG が定義されているエージェントのみ追加
+            # The Personas option is added only for agents with ORG defined
             _agent_orgs = st.session_state.agent_data.get("ORG") or []
             if isinstance(_agent_orgs, list) and _agent_orgs:
                 _thinking_options.append("Personas")
-            # 既存の選択値からエージェントが対応していない項目を除外
+            # Drop choices not supported by the current agent from existing selection
             _saved_targets = [t for t in st.session_state.thinking_targets if t in _thinking_options]
             st.session_state.thinking_targets = st.multiselect(
                 "Thinking Targets", _thinking_options,
                 default=_saved_targets, label_visibility="collapsed",
             )
 
-            # Max Personas: Thinking Mode ON かつ Personas が選択されているときのみ表示
+            # Max Personas: shown only when Thinking Mode is ON and Personas is selected
             if "Personas" in st.session_state.thinking_targets:
                 try:
                     _yaml = dmu.read_yaml_file("setting.yaml")
@@ -5539,14 +5540,14 @@ def main():
                 except Exception:
                     _default_max_p = 3
                 st.session_state.max_personas = st.number_input(
-                    "Max Personas (Thinking時の上限)",
+                    "Max Personas (cap when using Thinking)",
                     min_value=1, max_value=20,
                     value=int(st.session_state.get("max_personas", _default_max_p)),
                     step=1,
-                    help="chain.PERSONAS=\"THINKING\" のステップでPersonaSelectorが選定する上限。手動選択(multiselect)には影響しません。",
+                    help="Upper bound for PersonaSelector in chain.PERSONAS=\"THINKING\" steps. Does not affect the manual multiselect.",
                 )
 
-        # BOOKから選択（エージェントに1つ以上のBookが設定されているときだけ表示）
+        # Select from BOOK (shown only when the agent has at least one Book configured)
         if st.session_state.allowed_book:
             _book_list = st.session_state.agent_data.get("BOOK") or []
             if isinstance(_book_list, list) and len(_book_list) > 0:
@@ -5554,7 +5555,7 @@ def main():
                     "BOOK", [item["RAG_NAME"] for item in _book_list]
                 )
 
-        # User Memory（メイン画面・BOOKの直下に配置。Allowed.User Memory=True で表示）
+        # User Memory (placed directly below BOOK on the main screen; shown when Allowed.User Memory=True)
         if st.session_state.allowed_user_memory:
             import DigiM_UserMemorySetting as _dmus
             _uid_for_um = st.session_state.user_id
@@ -5564,7 +5565,7 @@ def main():
                 _active_layers = _dmus.resolve_active_layers(_uid_for_um)
                 st.caption(f"Active layers: {', '.join(_active_layers) if _active_layers else '(all off)'}")
 
-                # Layer On/Off (3列横並び) + Save Layer Setting
+                # Layer On/Off (3 columns) + Save Layer Setting
                 _checked_layers = _user_setting.get("layers", [])
                 _layer_cols = st.columns(3)
                 _new_layers = []
@@ -5572,17 +5573,17 @@ def main():
                     _val = _layer_cols[_i].checkbox(_l, value=(_l in _checked_layers), key=f"um_layer_{_l}")
                     if _val:
                         _new_layers.append(_l)
-                # Save しなくてもこのセッション(次回チャット)では現在のチェック状態を即時反映
+                # The current checkbox state is reflected immediately for this session (next chat) without pressing Save
                 st.session_state.user_memory_layers_now = _new_layers
                 if st.button("Save Layer Setting", key="um_save_layers"):
                     _dmus.save_user_setting(_uid_for_um, _new_layers)
                     st.session_state.sidebar_message = "Layer setting saved."
                     st.rerun()
 
-                # Persona/Nowaday/History の確認・修正は
-                # User Memory Explorer の「③ マイメモリ編集」タブへ移管。
+                # Reviewing/editing Persona/Nowaday/History has moved
+                # to the User Memory Explorer's tab 3 (Edit My Memory).
 
-    # ファイルダウンローダー
+    # File downloader
     if st.session_state.allowed_download_md:
         footer_col1, footer_col2, footer_col3 = st.columns(3)
         st.session_state.dl_type = footer_col1.radio("Download Mode:", ("Chats Only", "ALL"))
@@ -5592,15 +5593,15 @@ def main():
         pdf_data, pdf_file_name = set_dl_pdf(download_data, st.session_state.dl_type, file_id=dl_file_id)
         footer_col3.download_button(label="Download(.pdf)", data=pdf_data, file_name=pdf_file_name, mime="application/pdf")
 
-    # ユーザーの問合せ入力
+    # User query input
     if st.session_state.session_user_id == st.session_state.user_id:
 
-        # チャット入力（ロック中 or バックグラウンド実行中はポーリングで監視）
+        # Chat input (while locked or background-running, poll to monitor)
         _status_locked = st.session_state.session.get_status() == "LOCKED"
         _bg_running = bool(st.session_state._bg_user_input)
         is_locked = _status_locked or _bg_running
         if is_locked:
-            # 実行中のユーザー入力を表示
+            # Display the in-flight user input
             if st.session_state._bg_user_input:
                 with st.chat_message("user"):
                     st.markdown(st.session_state._bg_user_input.replace("\n", "<br>"), unsafe_allow_html=True)
@@ -5608,7 +5609,7 @@ def main():
             def _lock_monitor():
                 _still_locked = st.session_state.session.get_status() == "LOCKED"
                 if not _still_locked:
-                    # バックグラウンド完了: クリーンアップしてフルリロード
+                    # Background completed: clean up and full reload
                     st.session_state._bg_user_input = ""
                     st.session_state.is_processing = False
                     refresh_session_list(st.session_state.service_id, st.session_state.user_id, st.session_state.user_admin_flg)
@@ -5617,16 +5618,16 @@ def main():
                 if _partial:
                     st.markdown(_partial)
                 _msg = st.session_state.session.get_status_message()
-                st.info(f"⏳ {_msg}" if _msg else "⏳ 実行中です...")
+                st.info(f"⏳ {_msg}" if _msg else "⏳ Running...")
             with st.chat_message("ai"):
                 _lock_monitor()
 
-        # バックグラウンド実行のエラー表示（status.yamlから読み取り、即クリア）
+        # Show background-execution errors (read from status.yaml and clear immediately)
         if not is_locked:
             _bg_error = st.session_state.session.get_status_error()
             if _bg_error:
                 st.session_state.session.save_status("UNLOCKED")
-                st.error(f"実行中にエラーが発生しました: {_bg_error}")
+                st.error(f"Error during execution: {_bg_error}")
 
         _chat_disabled = is_locked or st.session_state.is_processing
         if raw_input := st.chat_input("Your Message", disabled=_chat_disabled):
@@ -5637,7 +5638,7 @@ def main():
         if st.session_state.is_processing and st.session_state.pending_input:
             user_input = st.session_state.pending_input
             st.session_state.pending_input = ""
-            # 添付ファイルの設定
+            # Attachment settings
             uploaded_contents = []
             if st.session_state.uploaded_files:
                 for uploaded_file in st.session_state.uploaded_files:
@@ -5645,13 +5646,13 @@ def main():
                     with open(uploaded_file_path, "wb") as f:
                         f.write(uploaded_file.getbuffer())
                     uploaded_contents.append(uploaded_file_path)
-                # 実行に取り込んだら WebUI 上の添付はリリース（次レンダーで空のアップローダーを再描画）
+                # Release attachments from the WebUI once consumed by the run (next render re-instantiates an empty uploader)
                 st.session_state.uploaded_files = []
                 st.session_state.file_uploader_key += 1
 
-            # URL取得（入力中のhttp(s)リンクを自動検出しフェッチ）
+            # URL fetch (auto-detect and fetch http(s) links in the input)
             if dmuf.extract_urls(user_input):
-                with st.spinner("URLの内容を取得しています..."):
+                with st.spinner("Fetching URL content..."):
                     try:
                         _uf_result = dmuf.fetch_urls_from_text(
                             user_input,
@@ -5661,37 +5662,37 @@ def main():
                     except Exception as _uf_err:
                         _uf_result = {"saved_paths": [], "summaries": [], "blocked": [],
                                       "error": str(_uf_err)}
-                        st.error(f"URL取得で例外が発生しました: {_uf_err}")
+                        st.error(f"Exception fetching URL: {_uf_err}")
                 for _p in _uf_result.get("saved_paths", []):
                     uploaded_contents.append(_p)
                 for _s in _uf_result.get("summaries", []):
-                    st.info(f"取得: {_s.get('title') or _s['url']}（{_s['pages']}ページ） → {_s['file']}")
+                    st.info(f"Fetched: {_s.get('title') or _s['url']} ({_s['pages']} pages) -> {_s['file']}")
                 for _b in _uf_result.get("blocked", []):
-                    st.warning(f"ブロック/取得失敗: {_b.get('url')} — {_b.get('reason')}")
+                    st.warning(f"Blocked / fetch failed: {_b.get('url')} - {_b.get('reason')}")
 
-            # オーバーライト項目の設定
+            # Overwrite-items setup
             overwrite_items = {}
-            # エンジン切り替え（LLM）
+            # Engine switch (LLM)
             if st.session_state.engine_name and st.session_state.engine_name in st.session_state.agent_data.get("ENGINE", {}).get("LLM", {}):
                 overwrite_items.setdefault("ENGINE", {})["LLM"] = st.session_state.agent_data["ENGINE"]["LLM"][st.session_state.engine_name]
-            # エンジン切り替え（IMAGEGEN）
+            # Engine switch (IMAGEGEN)
             if st.session_state.imagegen_engine_name and st.session_state.imagegen_engine_name in st.session_state.agent_data.get("ENGINE", {}).get("IMAGEGEN", {}):
                 overwrite_items.setdefault("ENGINE", {})["IMAGEGEN"] = st.session_state.agent_data["ENGINE"]["IMAGEGEN"][st.session_state.imagegen_engine_name]
 
-            # 知識の追加
+            # Knowledge addition
             add_knowledges = []
-            # BOOKの設定
+            # BOOK setup
             if st.session_state.book_selected:
                 for book_data in st.session_state.agent_data["BOOK"]:
                     if book_data["RAG_NAME"] in st.session_state.book_selected:
                         add_knowledges.append(book_data)
 
-            # シチュエーションの設定
+            # Situation setup
             situation = {}
             situation["TIME"] = time_setting
             situation["SITUATION"] = situation_setting
 
-            # 実行の設定
+            # Execution settings
             execution = {}
             execution["MEMORY_USE"] = st.session_state.memory_use
             execution["MEMORY_SAVE"] = st.session_state.memory_save
@@ -5705,7 +5706,7 @@ def main():
             execution["WEB_SEARCH_ENGINE"] = st.session_state.get("web_search_engine", "")
             execution["PRIVATE_MODE"] = st.session_state.private_mode
             execution["THINKING_MODE"] = st.session_state.thinking_mode
-            # User Memory: 現在のチェック状態を最優先（Save押下に関わらず即時反映）
+            # User Memory: current checkbox state takes top priority (reflected immediately regardless of Save)
             if "user_memory_layers_now" in st.session_state:
                 execution["USER_MEMORY_LAYERS"] = list(st.session_state.user_memory_layers_now or [])
             _targets = st.session_state.thinking_targets if st.session_state.thinking_mode else []
@@ -5717,13 +5718,13 @@ def main():
                 "personas": "Personas" in _targets,
             }
 
-            # バックグラウンドで実行開始（事前ロック）
+            # Start execution in the background (pre-locked)
             import threading
             st.session_state.session.save_status("LOCKED")
             execution["_PRE_LOCKED"] = True
-            # Phase 7: PersonaSelectorの上限をexecutionに注入
+            # Phase 7: inject PersonaSelector cap into execution
             execution["MAX_PERSONAS"] = int(st.session_state.get("max_personas", 3))
-            # 選択中のペルソナIDを実ペルソナdictに解決
+            # Resolve the selected persona IDs into real persona dicts
             _resolved_personas = []
             _selected_pids = list(st.session_state.get("selected_persona_ids") or [])
             if _selected_pids and st.session_state.get("selected_org"):
@@ -5741,8 +5742,8 @@ def main():
                 except Exception:
                     _resolved_personas = []
 
-            # Include Query: 直前seqがMEMORY_FLG=N（マルチペルソナ等）なら、その全sub_seq応答を
-            # ユーザー入力の先頭に埋め込み。RAGクエリには元の入力（rag_query_text）を使う。
+            # Include Query: if the previous seq is MEMORY_FLG=N (multi-persona etc.), embed every
+            # sub_seq response at the head of the user input. RAG query still uses the original input (rag_query_text).
             _enriched_input = user_input
             _rag_query_text = ""
             if st.session_state.get("include_query"):
@@ -5762,8 +5763,8 @@ def main():
                                     _persona_blobs.append(f"- {_pname}:\n{_resp}")
                             if _persona_blobs:
                                 _enriched_input = (
-                                    "[前回の各ペルソナの回答]\n" + "\n\n".join(_persona_blobs)
-                                    + "\n\n[今回の質問]\n" + user_input
+                                    "[Each persona's previous response]\n" + "\n\n".join(_persona_blobs)
+                                    + "\n\n[Current question]\n" + user_input
                                 )
                                 _rag_query_text = user_input
                 except Exception:
@@ -5800,10 +5801,10 @@ def main():
                         in_rag_query_text=params.get("rag_query_text") or "",
                         in_org=params.get("org"),
                     ):
-                        pass  # チャンクを消費（結果はchat_memory.jsonに保存される）
+                        pass  # Drain chunks (results are saved to chat_memory.json)
                 except Exception as e:
                     _exec_error = str(e)
-                # セッション名の自動生成（エラー時もスキップしない）
+                # Auto-generate the session name (don't skip on error either)
                 try:
                     _session = dms.DigiMSession(params["session_id"], params["session_name"])
                     if not _session.session_name or _session.session_name == "New Chat":
@@ -5813,10 +5814,10 @@ def main():
                         _session.chg_session_name(new_name)
                 except Exception:
                     pass
-                # エラーがあった場合のみステータスに記録（UNLOCKはDigiMatsuExecute_Practice内で処理済み）
+                # Record into status only on error (UNLOCK is handled inside DigiMatsuExecute_Practice)
                 if _exec_error:
                     _session = dms.DigiMSession(params["session_id"])
-                    # ダイジェストスレッドが動いている可能性があるので、UNLOCK完了を待ってからエラーを記録
+                    # The digest thread may still be running; record the error after UNLOCK completes
                     import time as _time
                     for _ in range(30):
                         if _session.get_status() != "LOCKED":
