@@ -41,7 +41,7 @@ def is_cancelled(job_id):
 
 def list_jobs(user_id=None):
     with _LOCK:
-        # 生きていないスレッドのエントリを掃除
+        # Sweep entries whose threads are no longer alive
         for jid in list(_JOBS.keys()):
             if not _JOBS[jid]["thread"].is_alive():
                 del _JOBS[jid]
@@ -61,7 +61,7 @@ def list_jobs(user_id=None):
         return result
 
 
-# スレッドに非同期例外を注入して停止を試みる
+# Inject an async exception into the thread to try to stop it
 def _async_raise(thread_ident, exctype):
     if thread_ident is None:
         return False
@@ -71,7 +71,7 @@ def _async_raise(thread_ident, exctype):
         logger.warning(f"async_raise: invalid thread id {thread_ident}")
         return False
     if res > 1:
-        # 想定外の複数スレッドにヒット → ロールバック
+        # Unexpectedly hit multiple threads -> roll back
         ctypes.pythonapi.PyThreadState_SetAsyncExc(tid, ctypes.c_long(0))
         logger.error("async_raise: PyThreadState_SetAsyncExc hit multiple threads")
         return False

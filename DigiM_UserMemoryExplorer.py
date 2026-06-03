@@ -1,12 +1,13 @@
-"""User Memory Explorer のバックエンド。
+"""Backend for the User Memory Explorer.
 
-ユーザーメモリ（Persona/Nowaday/History）を「ユーザー理解」の観点で分析するための
-集計・コホート合成・対話用コンテキスト生成をまとめる。WebUIから利用する。
+Provides aggregation, cohort synthesis, and dialogue-context generation for analyzing
+User Memory (Persona / Nowaday / History) from a "user understanding" perspective.
+Called from the WebUI.
 
-WebUI(WebDigiMatsuAgent._user_memory_explorer)が描画、ここはデータ加工に専念する。
-- 横断(集団): 複数ユーザーをコホートとして3層を集計 + 関心トピックの変遷
-- 深掘り(個人): 1ユーザーの3層タイムライン + 感情トラジェクトリ + 要レビュー項目
-- 各タブの対話: 集団/個人のメモリを合成した文脈テキストを生成（エージェントに被せる）
+The WebUI (WebDigiMatsuAgent._user_memory_explorer) handles rendering; this module focuses on data shaping.
+- Cross-cohort: aggregate the three layers across multiple users + interest-topic evolution
+- Deep-dive (individual): single-user 3-layer timeline + emotion trajectory + review items
+- Dialogue per tab: synthesize cohort/individual memory into a context text (overlaid on the agent)
 """
 import logging
 from collections import Counter, defaultdict
@@ -23,9 +24,9 @@ BIG5_TRAITS = dmgum.BIG5_TRAITS
 PLUTCHIK_JA = dict(dmumb._PLUTCHIK_JA)
 BIG5_JA = dict(dmumb._BIG5_JA)
 
-# 分析対象に含めるステータス（deletedのみ除外。pendingも"一応"含める）
-_APPROVED = ("approved", "edited")  # 確定扱い
-_INCLUDED = ("approved", "edited", "pending")  # 分析・集計に含める
+# Statuses included in analysis (only `deleted` is excluded; `pending` is included "tentatively")
+_APPROVED = ("approved", "edited")  # Treated as confirmed
+_INCLUDED = ("approved", "edited", "pending")  # Included in analysis/aggregation
 
 
 def _is_included(item) -> bool:
@@ -34,9 +35,9 @@ def _is_included(item) -> bool:
     return (item.get("status") or "").strip().lower() != "deleted"
 
 
-# ---------- データ取得 ----------
+# ---------- Data loading ----------
 def list_users(service_id: str = "") -> list:
-    """3層いずれかに登場する user_id を昇順で返す。"""
+    """Return all user_ids that appear in any of the three layers, sorted ascending."""
     users = set()
     for layer in dmum.LAYERS:
         try:
@@ -45,12 +46,12 @@ def list_users(service_id: str = "") -> list:
                 if uid:
                     users.add(uid)
         except Exception as e:
-            logger.warning(f"[um_explorer] list_users {layer}失敗: {e}")
+            logger.warning(f"[um_explorer] list_users {layer} failed: {e}")
     return sorted(users)
 
 
 def load_bundle(user_id: str, service_id: str = "") -> dict:
-    """1ユーザーの3層を取得。nowaday/historyは時系列降順。"""
+    """Fetch a single user's three layers. nowaday/history are time-descending."""
     persona = dmum.get_one("persona", {"service_id": service_id, "user_id": user_id}) if service_id \
         else _first(dmum.load_all("persona", user_id=user_id))
     nowaday = dmum.load_all("nowaday", service_id=service_id, user_id=user_id)
@@ -66,13 +67,13 @@ def _first(lst):
     return lst[0] if lst else {}
 
 
-# ---------- コホート絞り込み ----------
+# ---------- Cohort filtering ----------
 def resolve_cohort(user_ids=None, service_id: str = "", interest_kw: str = "",
                    emotion_key: str = "", big5_trait: str = "", big5_min: float = None) -> list:
-    """条件でユーザーを絞り込む。user_ids未指定なら全ユーザーが母集団。
+    """Filter users by conditions. When user_ids is omitted, the entire user pool is the base.
 
-    interest_kw : Persona.recurring_interests / Nowaday.recurring_topics に部分一致
-    emotion_key : 最新Nowaday.basic_emotions[emotion_key] > 0 のユーザー
+    interest_kw : Partial match against Persona.recurring_interests / Nowaday.recurring_topics
+    emotion_key : Users whose latest Nowaday.basic_emotions[emotion_key] > 0
     big5_trait + big5_min : Persona.big5[trait].score >= big5_min
     """
     base = list(user_ids) if user_ids else list_users(service_id)
@@ -112,11 +113,11 @@ def _user_interest_terms(bundle: dict) -> list:
     return [t for t in terms if t]
 
 
-# ---------- 横断集計 ----------
+# ---------- Cross aggregation ----------
 def agg_big5(user_ids: list, service_id: str = "") -> dict:
-    """Big5 を特性ごとに集計（deletedのみ除外、pendingも含む）。
+    """Aggregate Big5 per trait (only `deleted` excluded; `pending` is included).
 
-    {trait:{mean,n,n_pending,per_user:[(uid,score,status)]}}。
+    {trait:{mean,n,n_pending,per_user:[(uid,score,status)]}}
     """
     acc = {t: [] for t in BIG5_TRAITS}
     for uid in user_ids:
@@ -143,7 +144,7 @@ def agg_big5(user_ids: list, service_id: str = "") -> dict:
 
 
 def agg_basic_emotions(user_ids: list, service_id: str = "", period: str = "") -> dict:
-    """最新（or 指定period）の Nowaday.basic_emotions をユーザー平均。{emotion:mean}。"""
+    """Per-user average of the latest (or specified period) Nowaday.basic_emotions. {emotion:mean}."""
     sums = {e: 0.0 for e in PLUTCHIK_PRIMARY}
     n = 0
     for uid in user_ids:
@@ -185,7 +186,7 @@ def agg_secondary_emotions(user_ids: list, service_id: str = "", period: str = "
 
 
 def agg_interests(user_ids: list, service_id: str = "", top_n: int = 30) -> list:
-    """Persona.recurring_interests + 最新Nowaday.recurring_topics の出現頻度トップN。"""
+    """Top-N frequencies across Persona.recurring_interests + latest Nowaday.recurring_topics."""
     c = Counter()
     for uid in user_ids:
         b = load_bundle(uid, service_id)
@@ -200,9 +201,9 @@ def agg_interests(user_ids: list, service_id: str = "", top_n: int = 30) -> list
 
 
 def topic_evolution(user_ids: list, service_id: str = "") -> dict:
-    """期間ごとの recurring/emerging/declining をコホート横断で集計。
+    """Aggregate recurring / emerging / declining across the cohort per period.
 
-    Returns: {"periods":[...昇順...],
+    Returns: {"periods":[...ascending...],
               "recurring":{period:Counter}, "emerging":{...}, "declining":{...}}
     """
     rec = defaultdict(Counter)
@@ -232,9 +233,9 @@ def topic_evolution(user_ids: list, service_id: str = "") -> dict:
     }
 
 
-# ---------- 個人トラジェクトリ ----------
+# ---------- Individual trajectory ----------
 def user_emotion_trajectory(user_id: str, service_id: str = "") -> list:
-    """History を時系列昇順で [(create_date, [emotion_keys])] に。"""
+    """Map History entries (ascending order) to [(create_date, [emotion_keys])]."""
     hs = load_bundle(user_id, service_id)["history"]
     out = []
     for h in sorted(hs, key=lambda r: r.get("create_date") or ""):
@@ -245,7 +246,7 @@ def user_emotion_trajectory(user_id: str, service_id: str = "") -> list:
 
 
 def user_nowaday_emotion_series(user_id: str, service_id: str = "") -> list:
-    """Nowaday を period 昇順で [(period, {emotion:intensity})] に。"""
+    """Map Nowaday entries (ascending period) to [(period, {emotion:intensity})]."""
     nws = load_bundle(user_id, service_id)["nowaday"]
     out = []
     for m in sorted(nws, key=lambda r: r.get("period") or ""):
@@ -256,7 +257,7 @@ def user_nowaday_emotion_series(user_id: str, service_id: str = "") -> list:
 
 
 def persona_review_items(user_id: str, service_id: str = "") -> dict:
-    """pending の Big5 / リスト項目（要レビュー）を抽出。"""
+    """Extract pending Big5 / list items (review-needed)."""
     p = load_bundle(user_id, service_id)["persona"]
     big5_pending = []
     for t in BIG5_TRAITS:
@@ -274,24 +275,24 @@ def persona_review_items(user_id: str, service_id: str = "") -> dict:
     return {"big5": big5_pending, "lists": list_pending}
 
 
-# ---------- 対話用コンテキスト ----------
+# ---------- Dialogue context ----------
 def build_user_context(user_id: str, service_id: str = "") -> str:
-    """個人の3層を「対話相手についての情報」テキストに（既存ビルダー再利用）。"""
+    """Compose an individual's three layers into the "About the dialogue partner" text (reuses the existing builder)."""
     try:
         text, _used, _meta = dmumb.build_context_text(
             service_id, user_id, list(dmum.LAYERS), query_text="")
         return text or ""
     except Exception as e:
-        logger.warning(f"[um_explorer] build_user_context失敗 {user_id}: {e}")
+        logger.warning(f"[um_explorer] build_user_context failed {user_id}: {e}")
         return ""
 
 
 def build_cohort_context(user_ids: list, service_id: str = "",
                          history_sample_per_user: int = 1,
                          max_chars: int = 4000) -> str:
-    """コホートを統計合成した「集団プロファイル」テキスト。
+    """A statistically synthesized "group profile" text for the cohort.
 
-    個人サマリの羅列ではなく Big5平均/感情平均/関心トップN + 代表History抜粋。
+    Not a list of individual summaries: Big5 means / emotion means / top-N interests + representative History excerpts.
     """
     if not user_ids:
         return ""
@@ -323,7 +324,7 @@ def build_cohort_context(user_ids: list, service_id: str = "",
         parts.append("## 共通の関心トップ\n・"
                      + "、".join(f"{w}({c})" for w, c in interests))
 
-    # 代表History抜粋（各ユーザー最新N件、合計文字数で打ち切り）
+    # Representative History excerpts (latest N per user; truncated by total chars)
     excerpts = []
     total = 0
     for uid in user_ids:
@@ -343,10 +344,10 @@ def build_cohort_context(user_ids: list, service_id: str = "",
     return text
 
 
-# ---------- グループ理解（横断）用 ----------
+# ---------- For group understanding (cross-cohort) ----------
 import DigiM_Util as dmu
 
-# ワードクラウド/キーワード抽出用ストップワード（最小限）
+# Minimal stop-word list for word-cloud / keyword extraction
 _STOP_WORDS = [
     "こと", "もの", "ため", "それ", "これ", "あれ", "よう", "ところ", "とき",
     "人", "自分", "相手", "方", "今", "前", "後", "場合", "必要", "重要", "意味",
@@ -356,7 +357,7 @@ _STOP_WORDS = [
 
 
 def user_big5_scores(user_id: str, service_id: str = "") -> dict:
-    """approved+pending（deletedのみ除外）のBig5スコア。欠損は0.5。{trait: score}。"""
+    """Big5 scores for approved+pending entries (only `deleted` excluded). Missing -> 0.5. {trait: score}."""
     big5 = (load_bundle(user_id, service_id)["persona"].get("big5") or {})
     out = {}
     for t in BIG5_TRAITS:
@@ -372,7 +373,7 @@ def user_big5_scores(user_id: str, service_id: str = "") -> dict:
 
 
 def cohort_big5_stats(user_ids: list, service_id: str = "") -> dict:
-    """Big5特性ごとに max/mean/min を返す。{trait:{max,mean,min,n}}。"""
+    """Return max/mean/min per Big5 trait. {trait:{max,mean,min,n}}."""
     acc = {t: [] for t in BIG5_TRAITS}
     for uid in user_ids:
         sc = user_big5_scores(uid, service_id)
@@ -395,7 +396,7 @@ def _latest_nowaday(uid: str, service_id: str = "") -> dict:
 
 
 def cohort_basic_emotion_stats(user_ids: list, service_id: str = "") -> dict:
-    """最新Nowadayの基本8感情ごとに max/mean/min。{emotion:{max,mean,min,n}}。"""
+    """max/mean/min for each of the 8 basic emotions in the latest Nowaday. {emotion:{max,mean,min,n}}."""
     acc = {e: [] for e in PLUTCHIK_PRIMARY}
     for uid in user_ids:
         be = (_latest_nowaday(uid, service_id).get("basic_emotions") or {})
@@ -418,7 +419,7 @@ def cohort_basic_emotion_stats(user_ids: list, service_id: str = "") -> dict:
 
 
 def persona_text(user_id: str, service_id: str = "") -> str:
-    """1ユーザーのPersonaを1テキストに連結（role/summary/各リストlabel）。"""
+    """Concatenate a single user's Persona into one text (role / summary / each list label)."""
     p = load_bundle(user_id, service_id)["persona"] or {}
     parts = [str(p.get("role") or ""), str(p.get("summary_text") or "")]
     for f in ("expertise", "recurring_interests", "values_principles",
@@ -430,7 +431,7 @@ def persona_text(user_id: str, service_id: str = "") -> str:
 
 
 def nowaday_text(user_id: str, service_id: str = "") -> str:
-    """1ユーザーの最新Nowadayを1テキストに連結。"""
+    """Concatenate the latest Nowaday for a single user into one text."""
     m = _latest_nowaday(user_id, service_id)
     if not m:
         return ""
@@ -441,7 +442,7 @@ def nowaday_text(user_id: str, service_id: str = "") -> str:
 
 
 def nowaday_field_corpus(user_ids: list, service_id: str = "") -> dict:
-    """5フィールド別に全ユーザー分テキストを連結。{summary,recurring,emerging,declining,shifts}。"""
+    """Concatenate text per field across all users. {summary,recurring,emerging,declining,shifts}."""
     fields = {"summary": [], "recurring": [], "emerging": [],
               "declining": [], "shifts": []}
     fmap = {"summary": "summary_text", "recurring": "recurring_topics",
@@ -461,7 +462,7 @@ def nowaday_field_corpus(user_ids: list, service_id: str = "") -> dict:
 
 
 def cohort_history_emotion_totals(user_ids: list, service_id: str = "") -> dict:
-    """選択ユーザー全Historyのプルチック感情を合計カウント。{emotion_key: count}（降順dict）。"""
+    """Total Plutchik emotion counts across all selected users' History entries. {emotion_key: count} (descending dict)."""
     c = Counter()
     for uid in user_ids:
         for h in load_bundle(uid, service_id)["history"]:
@@ -472,42 +473,42 @@ def cohort_history_emotion_totals(user_ids: list, service_id: str = "") -> dict:
 
 
 def word_freq(text: str, top_n: int = 80) -> dict:
-    """テキストからMeCab名詞を抽出し頻度dictを返す（ワードクラウド用）。"""
+    """Extract MeCab nouns from text and return a frequency dict (for word clouds)."""
     if not text or not text.strip():
         return {}
     try:
         toks = dmu.tokenize_Owakati(text, mode="Default",
                                     stop_words=_STOP_WORDS, grammer=("名詞",))
     except Exception as e:
-        logger.warning(f"[um_explorer] tokenize失敗: {e}")
+        logger.warning(f"[um_explorer] tokenize failed: {e}")
         return {}
     c = Counter(t for t in toks if len(t) >= 2 and not t.isdigit())
     return dict(c.most_common(top_n))
 
 
 def cluster_users(items: list, n_clusters: int = 3, service_id: str = "") -> dict:
-    """items=[(user_id, text)] を埋め込み→2D→KMeans。
+    """Embed items=[(user_id, text)] -> 2D reduction -> KMeans.
 
     Returns: {"df": DataFrame[user,Cluster,X1,X2,Big5...], "info": str,
-              "summary": str(LLM解説用)} / 失敗時 {"error": str}
+              "summary": str (for LLM explanation)} / on failure {"error": str}
     """
     import pandas as pd
     import DigiM_VAnalytics as dmva
     rows = [(u, t) for u, t in items if t and t.strip()]
     if len(rows) < 2:
-        return {"error": "テキストのあるユーザーが2人未満です（クラスタリング不可）"}
+        return {"error": "Fewer than 2 users have text (cannot cluster)"}
     k = max(2, min(int(n_clusters), len(rows)))
     recs = []
     for u, t in rows:
         try:
             vec = dmu.embed_text(t.replace("\n", " ")[:6000])
         except Exception as e:
-            logger.warning(f"[um_explorer] embed失敗 {u}: {e}")
+            logger.warning(f"[um_explorer] embed failed {u}: {e}")
             continue
         recs.append({"id": u, "user": u, "value_text": t[:400],
                      "vector_data_value_text": vec})
     if len(recs) < 2:
-        return {"error": "埋め込み生成に失敗しました"}
+        return {"error": "Failed to generate embeddings"}
     df = pd.DataFrame(recs)
     try:
         df, dim_info = dmva.reduce_dimensions(
@@ -515,8 +516,8 @@ def cluster_users(items: list, n_clusters: int = 3, service_id: str = "") -> dic
         df, cl_info = dmva.apply_clustering(
             df, method="K-Means", params={"n_clusters": k})
     except Exception as e:
-        return {"error": f"クラスタリング失敗: {e}"}
-    # Big5列を付与
+        return {"error": f"Clustering failed: {e}"}
+    # Attach Big5 columns
     for t in BIG5_TRAITS:
         df[BIG5_JA.get(t, t)] = df["user"].map(
             lambda u: round(user_big5_scores(u, service_id)[t], 2))
@@ -530,7 +531,7 @@ def cluster_users(items: list, n_clusters: int = 3, service_id: str = "") -> dic
 
 def explain_clusters(summary_text: str, agent_file: str = "agent_23DataAnalyst.json",
                      engine: str = "") -> str:
-    """build_cluster_summary のテキストをLLMで解説（Knowledge Explorer同様）。"""
+    """Have the LLM explain build_cluster_summary text (same as Knowledge Explorer)."""
     if not summary_text or not summary_text.strip():
         return ""
     import DigiM_Agent as dma
@@ -548,19 +549,19 @@ def explain_clusters(summary_text: str, agent_file: str = "agent_23DataAnalyst.j
                 resp += ch
         return resp
     except Exception as e:
-        logger.warning(f"[um_explorer] explain_clusters失敗: {e}")
-        return f"(解説生成エラー: {e})"
+        logger.warning(f"[um_explorer] explain_clusters failed: {e}")
+        return f"(explanation generation error: {e})"
 
 
 def build_group_twin_prompt(user_ids: list, service_id: str = "",
                             engine_cfg: dict = None) -> str:
-    """対象集団のPersona/NowadayからグループツインのベースシステムプロンプトをLLM生成。
+    """Generate a base system prompt for the group twin using the cohort's Persona/Nowaday via an LLM.
 
-    engine_cfg を渡せばそのLLMで生成（無ければ agent_23DataAnalyst.json 既定）。
+    Pass engine_cfg to generate via that LLM (otherwise defaults to agent_23DataAnalyst.json).
     """
     if not user_ids:
         return ""
-    # 素材: 各ユーザーのpersona/nowaday要約を圧縮連結
+    # Source material: compress and concatenate each user's persona/nowaday summary
     mats = []
     for uid in user_ids[:30]:
         p = load_bundle(uid, service_id)["persona"] or {}
@@ -595,5 +596,5 @@ def build_group_twin_prompt(user_ids: list, service_id: str = "",
                 resp += ch
         return resp.strip()
     except Exception as e:
-        logger.warning(f"[um_explorer] build_group_twin_prompt失敗: {e}")
+        logger.warning(f"[um_explorer] build_group_twin_prompt failed: {e}")
         return ""

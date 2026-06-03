@@ -22,28 +22,28 @@ import DigiM_Util as dmu
 
 logger = logging.getLogger(__name__)
 
-# setting.yamlからフォルダパスなどを設定
+# Load folder paths and other settings from setting.yaml
 system_setting_dict = dmu.read_yaml_file("setting.yaml")
 mst_folder_path = system_setting_dict["MST_FOLDER"]
 rag_folder_db_path = system_setting_dict["RAG_FOLDER_DB"]
 
-# エージェントのシンプルな実行
+# Simple agent execution
 def genLLMAgentSimple(service_info, user_info, session_id, session_name, agent_file, model_type="LLM", sub_seq=1, query="", import_contents=[], situation={}, overwrite_items={}, add_knowledge=[], prompt_temp_cd="No Template", execution={}, seq_limit="", sub_seq_limit=""):
-    # overwrite適用後のmodel_nameを取得
+    # Get model_name after applying overwrite
     agent = dma.DigiM_Agent(agent_file)
     if overwrite_items:
         dmu.update_dict(agent.agent, overwrite_items)
         agent.set_property(agent.agent)
     model_name = agent.agent["ENGINE"][model_type]["MODEL"]
 
-    # 実行の設定
+    # Execution settings
     execution = {}
     execution["CONTENTS_SAVE"] = False
     execution["MEMORY_SAVE"] = False
     execution["STREAM_MODE"] = True
     execution["SAVE_DIGEST"] = False
 
-    # LLM実行
+    # Run the LLM
     response = ""
     for response_service_info, response_user_info, response_chunk, export_contents, knowledge_ref in dme.DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_file, model_type, sub_seq, query, import_contents, situation=situation, overwrite_items=overwrite_items, add_knowledge=add_knowledge, prompt_temp_cd=prompt_temp_cd, execution=execution, seq_limit=seq_limit, sub_seq_limit=sub_seq_limit):
         if response_chunk and not str(response_chunk).startswith("[STATUS]"):
@@ -51,7 +51,7 @@ def genLLMAgentSimple(service_info, user_info, session_id, session_name, agent_f
 
     return response_service_info, response_user_info, response, model_name, export_contents, knowledge_ref
 
-# 知識活用性のグラフを作成
+# Build the knowledge-utility chart
 def create_similarity_plot_file(file_title, analytics_file_path, rag_name, group):
     fig, ax = plt.subplots(figsize=(24, 8))
     bar_height = 0.4  # Adjust bar height to separate the bars
@@ -74,7 +74,7 @@ def create_similarity_plot_file(file_title, analytics_file_path, rag_name, group
 
     return similarity_plot_file
 
-# PCA/TSNEを算出してプロットしたファイルを作成
+# Compute PCA/TSNE and generate plot files
 def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, mode={"method":"PCA", "params":{}}, category_map={}):
     scatter_plot_file_category = ""
     scatter_plot_file_ref = ""
@@ -87,14 +87,14 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
     params = mode["params"]
     xcol, ycol = "X1", "X2"
 
-    # タイトルに付ける説明率文字列
+    # Explained-variance string for the title
     pca_info_text = ""
 
     if method == "PCA":
         model = PCA(n_components=2)
         emb = model.fit_transform(vectors)
 
-        # 第1・第2主成分の説明率と累積説明率
+        # PC1/PC2 explained variance and cumulative
         pc1_ratio = model.explained_variance_ratio_[0]
         pc2_ratio = model.explained_variance_ratio_[1]
         cumulative_ratio = pc1_ratio + pc2_ratio
@@ -124,7 +124,7 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
     df[xcol] = emb[:, 0]
     df[ycol] = emb[:, 1]
 
-    # --- リファレンス散布図 ---
+    # --- Reference scatter ---
     scatter_plot_file_ref = f"{file_title}_ScatterRefPlot({method})_{rag_name}.png"
     scatter_plot_filename_ref = str(Path(analytics_file_path) / scatter_plot_file_ref)
 
@@ -135,7 +135,7 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
     fig_ref.savefig(scatter_plot_filename_ref, dpi=150, bbox_inches="tight")
     plt.close(fig_ref)
 
-    # カテゴリーの散布図
+    # Category scatter
     if "category_color" in df.columns:
         scatter_plot_file_category = f"{file_title}_ScatterCategoryPlot({method})_{rag_name}.png"
         scatter_plot_filename_category = str(Path(analytics_file_path) / scatter_plot_file_category)
@@ -151,14 +151,14 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
                 for key, color in category_map.items()
             ]
             category_handles.append(
-                plt.Line2D([0], [0], marker="o", color="w", label="その他", markersize=10, markerfacecolor="gray")
+                plt.Line2D([0], [0], marker="o", color="w", label="Other", markersize=10, markerfacecolor="gray")
             )
-            ax_cat.legend(handles=category_handles, loc="upper left", bbox_to_anchor=(1, 1), title="カテゴリ")
+            ax_cat.legend(handles=category_handles, loc="upper left", bbox_to_anchor=(1, 1), title="Category")
 
         fig_cat.savefig(scatter_plot_filename_category, dpi=150, bbox_inches="tight")
         plt.close(fig_cat)
 
-    # 散布図にプロットされるデータ(CSV)
+    # Data plotted on the scatter (saved as CSV)
     if "category_color" in df.columns:
         display_items = ["id", "title", "create_date", xcol, ycol, "category_color", "category_sum", "category", "db", "value_text"]
     else:
@@ -173,11 +173,11 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
 
     return scatter_plot_file_category, scatter_plot_file_ref, scatter_plot_file_csv
 
-# Knowledge Explorer用: ベクトルデータの次元削減（散布図座標を返す）
+# Knowledge Explorer: vector dimensionality reduction (returns scatter coordinates)
 def reduce_dimensions(df, vector_col="vector_data_value_text", method="PCA", params={}):
-    """DataFrameのベクトルカラムを2次元に削減し、X1/X2カラムを追加して返す。infoテキストも返す。"""
+    """Reduce the DataFrame's vector column to 2D, add X1/X2 columns, and return. Also returns an info string."""
     vectors_raw = df[vector_col].tolist()
-    # 文字列の場合はパースする
+    # Parse strings into lists
     vectors = []
     for v in vectors_raw:
         if isinstance(v, str):
@@ -209,9 +209,9 @@ def reduce_dimensions(df, vector_col="vector_data_value_text", method="PCA", par
     df_result["X2"] = emb[:, 1]
     return df_result, info_text
 
-# Knowledge Explorer用: DBSCANのeps自動推定（k-距離法）
+# Knowledge Explorer: DBSCAN eps auto-estimation (k-distance method)
 def estimate_dbscan_eps(df, k=5):
-    """X1/X2座標のk番目近傍距離から最適なepsを推定する"""
+    """Estimate optimal eps from the k-th nearest-neighbor distance on X1/X2 coordinates."""
     from sklearn.neighbors import NearestNeighbors
     coords = df[["X1", "X2"]].values
     k = min(k, len(coords) - 1)
@@ -219,7 +219,7 @@ def estimate_dbscan_eps(df, k=5):
     nn.fit(coords)
     distances, _ = nn.kneighbors(coords)
     k_distances = np.sort(distances[:, -1])
-    # 2次差分（加速度）が最大の点 = 「急に距離が増える点」
+    # The point with the maximum second derivative ("acceleration") = where distance suddenly rises
     if len(k_distances) < 3:
         return float(np.median(k_distances))
     diffs = np.diff(k_distances)
@@ -228,13 +228,13 @@ def estimate_dbscan_eps(df, k=5):
         return float(np.median(k_distances))
     elbow_idx = np.argmax(diffs2) + 2
     eps = float(k_distances[min(elbow_idx, len(k_distances) - 1)])
-    # 最低値を保証（0に近すぎると全ノイズになる）
+    # Enforce a floor (too close to zero makes everything noise)
     eps = max(eps, float(np.percentile(k_distances, 10)))
     return round(eps, 2)
 
-# Knowledge Explorer用: クラスタリング実行
+# Knowledge Explorer: run clustering
 def apply_clustering(df, method="K-Means", params={}):
-    """X1/X2座標を使ってクラスタリングし、Cluster列を追加して返す。info文字列も返す。"""
+    """Cluster on the X1/X2 coordinates and append a Cluster column. Also returns an info string."""
     coords = df[["X1", "X2"]].values
     info = ""
 
@@ -252,7 +252,7 @@ def apply_clustering(df, method="K-Means", params={}):
         labels = model.fit_predict(coords)
         n_clusters = len(set(labels)) - (1 if -1 in labels else 0)
         n_noise = (labels == -1).sum()
-        info = f"DBSCAN (eps={eps}, min_samples={min_samples}) → {n_clusters}クラスタ, ノイズ{n_noise}件"
+        info = f"DBSCAN (eps={eps}, min_samples={min_samples}) -> {n_clusters} clusters, {n_noise} noise"
     elif method == "Hierarchical":
         n_clusters = params.get("n_clusters", 5)
         model = AgglomerativeClustering(n_clusters=n_clusters)
@@ -265,18 +265,18 @@ def apply_clustering(df, method="K-Means", params={}):
     df_result["Cluster"] = labels
     return df_result, info
 
-# クラスターごとのサマリーを生成（LLM解説用コンテキスト）
+# Build a per-cluster summary (context for LLM explanation)
 def build_cluster_summary(df, text_col="value_text", max_samples=5):
-    """クラスターごとのサンプルデータをテキストにまとめる"""
+    """Summarize sample data per cluster as text."""
     summary_lines = []
     for cluster_id in sorted(df["Cluster"].unique()):
         cluster_df = df[df["Cluster"] == cluster_id]
-        label = f"Cluster {cluster_id}" if cluster_id >= 0 else "ノイズ（未分類）"
-        summary_lines.append(f"\n【{label}】({len(cluster_df)}件)")
+        label = f"Cluster {cluster_id}" if cluster_id >= 0 else "Noise (unclassified)"
+        summary_lines.append(f"\n[{label}] ({len(cluster_df)} items)")
         if "category" in cluster_df.columns:
             cat_dist = cluster_df["category"].value_counts().head(5).to_dict()
-            summary_lines.append("  カテゴリ分布: " + ", ".join(f"{k}:{v}件" for k, v in cat_dist.items()))
-        # サンプルテキスト
+            summary_lines.append("  Category distribution: " + ", ".join(f"{k}:{v}" for k, v in cat_dist.items()))
+        # Sample text
         _col = text_col if text_col in cluster_df.columns else "title" if "title" in cluster_df.columns else None
         if _col:
             samples = cluster_df[_col].dropna().head(max_samples).tolist()
@@ -284,10 +284,10 @@ def build_cluster_summary(df, text_col="value_text", max_samples=5):
                 summary_lines.append(f"  - {str(s)[:120]}")
     return "\n".join(summary_lines)
 
-# Knowledge Explorer用: 感度分析（入力テキストに対する全チャンクのコサイン距離+期間ボーナス）
+# Knowledge Explorer: sensitivity analysis (cosine distance of every chunk vs. input + period bonus)
 def sensitivity_analysis(df, query_text, vector_col="vector_data_value_text", top_n=20,
                          date_from=None, date_to=None, date_bonus=0.0):
-    """入力テキストをembed→全チャンクとcosine距離を計算→期間ボーナス適用→スコアでランキング"""
+    """Embed the input text -> compute cosine distance against every chunk -> apply period bonus -> rank by score."""
     query_vec = dmu.embed_text(query_text.replace("\n", ""))
 
     distances = []
@@ -301,23 +301,23 @@ def sensitivity_analysis(df, query_text, vector_col="vector_data_value_text", to
     df_result = df.copy()
     df_result["cos_distance"] = distances
 
-    # 期間ボーナスの適用
+    # Apply the period bonus
     df_result["bonus_applied"] = False
     if date_from and date_to and date_bonus > 0 and "create_date" in df_result.columns:
         _dates = pd.to_datetime(df_result["create_date"], errors="coerce")
         _in_range = (_dates >= pd.Timestamp(date_from)) & (_dates <= pd.Timestamp(date_to) + pd.Timedelta(days=1))
         df_result.loc[_in_range, "bonus_applied"] = True
 
-    # スコア計算: ボーナス対象はcos_distance * bonus（値が小さいほど上位）
+    # Score: bonus targets get cos_distance * bonus (lower is better)
     df_result["score"] = df_result.apply(
         lambda r: r["cos_distance"] * date_bonus if r["bonus_applied"] else r["cos_distance"], axis=1)
     df_result = df_result.sort_values("score", ascending=True)
 
-    # 表示用カラム（ベクトル除外）
+    # Columns for display (vectors excluded)
     _exclude = [c for c in df_result.columns if "vector_data" in c]
     df_display = df_result.drop(columns=_exclude, errors="ignore")
 
-    # クラスター別の平均スコア（Cluster列がある場合）
+    # Per-cluster mean score (when a Cluster column exists)
     cluster_stats = None
     if "Cluster" in df_result.columns:
         cluster_stats = df_result.groupby("Cluster")["score"].agg(["mean", "min", "count"]).reset_index()
@@ -326,9 +326,9 @@ def sensitivity_analysis(df, query_text, vector_col="vector_data_value_text", to
 
     return df_display.head(top_n), cluster_stats
 
-# Knowledge Explorer用: 時系列分析（期間ごとのキーワード+カテゴリ推移）
+# Knowledge Explorer: time-series analysis (per-period keywords + category trend)
 def temporal_analysis(df, period="month", top_n_keywords=10, text_col="value_text", category_col="category"):
-    """create_dateで期間集約し、TF-IDFキーワード+指定カラム構成を返す"""
+    """Aggregate by create_date period and return TF-IDF keywords + the structure of the specified column."""
     if "create_date" not in df.columns or text_col not in df.columns:
         return None, None, ""
 
@@ -338,7 +338,7 @@ def temporal_analysis(df, period="month", top_n_keywords=10, text_col="value_tex
     if df_work.empty:
         return None, None, ""
 
-    # 期間ラベル生成
+    # Build period labels
     if period == "year":
         df_work["_period"] = df_work["_date"].dt.strftime("%Y")
     elif period == "quarter":
@@ -347,26 +347,26 @@ def temporal_analysis(df, period="month", top_n_keywords=10, text_col="value_tex
         df_work["_period"] = df_work["_date"].dt.strftime("%Y-%m")
     periods = sorted(df_work["_period"].unique())
 
-    # カテゴリ(指定カラム)推移
+    # Category (specified column) trend
     category_pivot = None
     if category_col and category_col in df_work.columns:
         cat_cross = df_work.groupby(["_period", category_col]).size().reset_index(name="count")
         category_pivot = cat_cross.pivot_table(index="_period", columns=category_col, values="count", fill_value=0)
         category_pivot = category_pivot.reindex(periods)
 
-    # 期間ごとのTF-IDFキーワード抽出
+    # Per-period TF-IDF keyword extraction
     period_texts = df_work.groupby("_period")[text_col].apply(lambda x: " ".join(x.dropna().astype(str))).to_dict()
     all_texts = list(period_texts.values())
     if not all_texts or all(t.strip() == "" for t in all_texts):
         return category_pivot, None, ""
 
-    # 名詞のみ抽出 + ストップワードで一般的な語を除外
+    # Extract nouns only and drop common terms via stop words
     _stop_words = [
-        # 形式名詞・代名詞
+        # Formal nouns and pronouns
         "こと", "もの", "ため", "それ", "これ", "あれ", "ここ", "そこ", "どこ",
         "よう", "ところ", "とき", "なか", "うち", "ほう", "わけ", "はず", "つもり",
         "ほか", "まま", "あと", "とおり", "せい", "おかげ", "くせ",
-        # 一般的すぎる名詞
+        # Overly common nouns
         "人", "自分", "相手", "方", "さん", "たち", "みんな", "皆",
         "今", "前", "後", "上", "下", "中", "内", "外", "間", "先", "次", "最初", "最後",
         "場合", "必要", "可能", "重要", "大切", "意味", "問題", "結果", "状況", "状態",
@@ -374,14 +374,14 @@ def temporal_analysis(df, period="month", top_n_keywords=10, text_col="value_tex
         "感じ", "形", "点", "面", "側", "度", "回", "件", "個", "本", "種", "数",
         "目", "手", "力", "気", "声", "話", "言葉", "名前", "時間", "日", "月", "年",
         "的", "性", "化", "用", "系", "式", "型", "版", "別", "向け",
-        # 動作・状態の名詞化
+        # Nominalizations of actions/states
         "対応", "実行", "実現", "実施", "実装", "利用", "活用", "使用", "導入", "設定",
         "確認", "理解", "認識", "判断", "検討", "議論", "説明", "表現", "表示", "提供",
         "作成", "生成", "構築", "開発", "設計", "管理", "運用", "処理", "変更", "更新",
         "追加", "削除", "取得", "選択", "指定", "定義", "評価", "分析", "比較", "改善",
         "影響", "関係", "関連", "連携", "統合", "機能", "役割", "目的", "効果", "価値",
         "情報", "データ", "内容", "対象", "範囲", "条件", "基準", "観点", "視点", "傾向",
-        # 接尾辞的な語
+        # Suffix-like words
         "こちら", "そちら", "あちら", "どちら",
     ]
     vectorizer = dmu.fit_tfidf(all_texts, stop_words=_stop_words, grammer=('名詞',))
@@ -397,22 +397,22 @@ def temporal_analysis(df, period="month", top_n_keywords=10, text_col="value_tex
         keyword_rows.append({"period": p, "count": count, "keywords": keywords})
     keyword_df = pd.DataFrame(keyword_rows)
 
-    # LLM解説用サマリー
-    summary_lines = [f"期間: {periods[0]}〜{periods[-1]} ({len(periods)}期間, {len(df_work)}件)"]
+    # Summary for LLM explanation
+    summary_lines = [f"Period: {periods[0]} - {periods[-1]} ({len(periods)} periods, {len(df_work)} rows)"]
     for row in keyword_rows:
         if row["keywords"]:
-            summary_lines.append(f"  {row['period']} ({row['count']}件): {row['keywords']}")
+            summary_lines.append(f"  {row['period']} ({row['count']} rows): {row['keywords']}")
     summary_text = "\n".join(summary_lines)
 
     return category_pivot, keyword_df, summary_text
 
-# 知識参照度と知識活用度の分析
+# Knowledge reference and utilization analysis
 def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_file_path, ak_mode="Default", dim_mode={"method":"PCA", "params":{}}):
 #    end_date_str = datetime.strptime(ref_timestamp, "%Y-%m-%d %H:%M:%S.%f").strftime("%Y-%m-%d")
     end_date_str = dmu.parse_date(ref_timestamp).strftime("%Y-%m-%d")
     df = pd.DataFrame(reference)
 
-    # 正規化
+    # Normalize
     if ak_mode == "Norm(All)":
         max_val_Q = df["similarity_Q"].max()
         max_val_A = df["similarity_A"].max()
@@ -425,11 +425,11 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
     df['knowledge_utility'] = round(df['similarity_Q'] - df['similarity_A'], 3)
     file_title = dmu.sanitize_filename(title[:30])
 
-    # エージェントのKNOWLEDGE→BOOKの定義順を取得
+    # Get the agent's KNOWLEDGE -> BOOK declaration order
     agent = dma.DigiM_Agent(agent_file)
     rag_order = [k.get("NAME", "") for k in agent.knowledge] + [b.get("RAG_NAME", "") for b in agent.book]
 
-    # similarity_Qの統計量を算出
+    # Compute similarity_Q statistics
     similarity_Q_stats = df.groupby('rag')['similarity_Q'].agg([
         ('min', 'min'),
         ('mean', 'mean'),
@@ -438,7 +438,7 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
         ('variance', lambda x: np.var(x, ddof=1))
     ]).reset_index()
 
-    # similarity_Aの統計量を算出
+    # Compute similarity_A statistics
     similarity_A_stats = df.groupby('rag')['similarity_A'].agg([
         ('min', 'min'),
         ('mean', 'mean'),
@@ -447,7 +447,7 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
         ('variance', lambda x: np.var(x, ddof=1))
     ]).reset_index()
 
-    # 知識活用性の統計量を算出
+    # Compute knowledge-utility statistics
     knowledge_utility_stats = df.groupby('rag')['knowledge_utility'].agg([
         ('min', 'min'),
         ('mean', 'mean'),
@@ -456,19 +456,19 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
         ('variance', lambda x: np.var(x, ddof=1))
     ]).reset_index()
 
-    # RAGごとの知識活用性（Q最小値-A最小値）を算出
+    # Compute per-RAG knowledge-utility (Q min - A min)
     knowledge_utility_stats_dict = dict(zip(similarity_Q_stats['rag'], knowledge_utility_stats['max']))
 
-    # 出力用に辞書形式に変換（エージェントのKNOWLEDGE定義順で並べ替え）
+    # Convert to a dict for output (ordered by the agent's KNOWLEDGE declaration)
     def _order_dict_by_rag(d):
-        """辞書をrag_orderの順序で並べ替える"""
+        """Reorder the dict according to rag_order."""
         ordered = {}
         for rn in rag_order:
-            # キーが直接rag名の場合（similarity_rank, utility等）
+            # When keys are rag names directly (similarity_rank, utility, etc.)
             if rn in d:
                 ordered[rn] = d[rn]
             else:
-                # キーがint indexで値にragフィールドがある場合（stats系）
+                # When keys are int indices and the value has a rag field (stats-style)
                 for k, v in d.items():
                     if isinstance(v, dict) and v.get('rag') == rn and k not in ordered.values():
                         ordered[k] = v
@@ -484,11 +484,11 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
     similarity_rank_raw = (df.sort_values(['rag', 'similarity_Q'], ascending=[True, True]).groupby('rag')[['DB', 'ID', 'title', 'similarity_Q', 'similarity_A','knowledge_utility', 'QUERY_SEQ', 'QUERY_MODE']].apply(lambda x: x.to_dict(orient='records')).to_dict())
     similarity_rank = _order_dict_by_rag(similarity_rank_raw)
 
-    # フォルダがなければ作成
+    # Create the folder if missing
     if not os.path.exists(analytics_file_path):
         os.makedirs(analytics_file_path, exist_ok=True)
 
-    # テキストファイルの保存
+    # Save text file
     similarity_Q_stats_file = f"{file_title}_KUtilStats(Q).txt"
     similarity_A_stats_file = f"{file_title}_KUtilStats(A).txt"
     similarity_utility_file = f"{file_title}_KUtilStats(A-Q).txt"
@@ -506,10 +506,10 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
     # Sort data by similarity_Q in descending order within each rag
     sorted_plot_data = df.sort_values(by=['rag', 'similarity_Q'], ascending=[True, False])
 
-    # フォントを設定
+    # Configure the font
     rcParams['font.family'] = 'Noto Sans CJK JP'
 
-    # 保存用のファイルリスト
+    # List of files to save
     scatter_plot_category_files = []
     scatter_plot_ref_files = []
     scatter_plot_csv_files = []
@@ -521,15 +521,15 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
     if "CategoryColor" in category_map_json:
         category_map = category_map_json["CategoryColor"]
 
-    # KnowledgeのRAGデータ毎に処理（エージェントのKNOWLEDGE→BOOKの定義順で出力）
+    # Process each Knowledge RAG dataset (output in the agent's KNOWLEDGE -> BOOK declaration order)
     db_client = dmc.get_chroma_client()
     knowledge_map = {k.get("RAG_NAME"): k for k in agent.knowledge}
-    # QUERY_SEQ（クエリ種別）ごとの色。seq_label と対応:
-    #   "0" = クエリ①「入力そのまま」      → 水色
-    #   "1" = クエリ②「会話履歴付き入力」  → 青色
-    #   "2" = クエリ③「入力の意図」        → 紫色
-    # タプルは (NORMAL=濃色, それ以外(＋期間の絞込等)=淡色)。
-    # キーは文字列。QUERY_SEQ が int/str どちらでも str() で正規化して引く
+    # Color per QUERY_SEQ (query type). Mapped to seq_label:
+    #   "0" = query 1 "raw input"                -> sky blue
+    #   "1" = query 2 "input + chat history"     -> blue
+    #   "2" = query 3 "intent of the input"       -> purple
+    # Tuples are (NORMAL=dark color, others (e.g., period-filtered)=light color).
+    # Keys are strings; normalize with str() so QUERY_SEQ as int/str both work.
     color_map = {
         "0": ("deepskyblue", "lightskyblue"),
         "1": ("blue", "cornflowerblue"),
@@ -543,7 +543,7 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
     ordered_groups = [(name, grouped[name]) for name in rag_order if name in grouped]
     ordered_groups += [(name, grp) for name, grp in grouped.items() if name not in rag_order]
 
-    # 必要なコレクションデータを並列で事前取得
+    # Pre-fetch required collection data in parallel
     _collections_needed = {}
     for rag_name, group in ordered_groups:
         knowledge = knowledge_map.get(rag_name)
@@ -597,7 +597,7 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
                     v["vector_data_key_text"] = embeddings[i] if isinstance(embeddings[i], list) else embeddings[i].tolist()
                     v["ref_color"] = id_color_map.get(ids[i], "gray")
                     if "category" in v and cat_category:
-                        v["category_sum"] = cat_category.get(v["category"], "その他")
+                        v["category_sum"] = cat_category.get(v["category"], "Other")
                         v["category_color"] = cat_color.get(v["category_sum"], "gray")
                     rag_data_list.append(v)
 
@@ -634,9 +634,9 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
     return result
 
 
-# ===== Knowledge Explorer 再構成用ヘルパー =====
+# ===== Knowledge Explorer reconstruction helpers =====
 
-# Trend用ストップワード（temporal_analysisと同等。名詞TF-IDF抽出用）
+# Stop words for the Trend tab (same as temporal_analysis; for noun TF-IDF extraction)
 TEMPORAL_STOP_WORDS = [
     "こと", "もの", "ため", "それ", "これ", "あれ", "ここ", "そこ", "どこ",
     "よう", "ところ", "とき", "なか", "うち", "ほう", "わけ", "はず", "つもり",
@@ -657,16 +657,16 @@ TEMPORAL_STOP_WORDS = [
     "こちら", "そちら", "あちら", "どちら",
 ]
 
-# 日本語フォント（ワードクラウド用）。無ければNone（英数のみ）
+# Japanese font (for word cloud). None means alphanumeric only
 IPA_FONT_PATH = "/usr/share/fonts/opentype/ipaexfont-gothic/ipaexg.ttf"
 
 
-# Knowledge Explorer(Overall)用: Total + Categoryカラム値ごとにクラスタリング
+# Knowledge Explorer (Overall): cluster Total + per Category column value
 def cluster_by_category(df, category_col=None, method="K-Means", params={}, min_rows=3):
-    """Total と Categoryカラム値ごとに apply_clustering を実行する。
-    返り値: {"_total": (df_clustered, info, summary),
-             "<カテゴリ値>": (df_clustered, info, summary), ...}
-    データが僅少な値はスキップ。"""
+    """Run apply_clustering for Total and each value of the Category column.
+    Returns: {"_total": (df_clustered, info, summary),
+             "<category value>": (df_clustered, info, summary), ...}
+    Skips values with too little data."""
     results = {}
     try:
         _dft, _it = apply_clustering(df, method=method, params=params)
@@ -690,20 +690,20 @@ def cluster_by_category(df, category_col=None, method="K-Means", params={}, min_
     return results
 
 
-# Knowledge Explorer(Trend)用: Categoryカラム値×Period のキーワード頻度（ワードクラウド用）
+# Knowledge Explorer (Trend): keyword frequencies by Category column value x Period (for word cloud)
 def temporal_keywords_by_category(df, category_col=None, period="month",
                                   top_n=30, text_col="value_text"):
-    """返り値:
-      periods: [期間ラベル...]（昇順）
-      by_cat: {カテゴリ値: {期間: {語: 重み}}}
-      no_period_rags: {rag_name: 件数}  # create_dateが解釈不能な行
+    """Returns:
+      periods: [period labels...] (ascending)
+      by_cat: {category value: {period: {term: weight}}}
+      no_period_rags: {rag_name: count}  # rows whose create_date cannot be parsed
     """
     if "create_date" not in df.columns or text_col not in df.columns:
         return [], {}, {}
     w = df.copy()
     w["_date"] = pd.to_datetime(w["create_date"], errors="coerce")
 
-    # 期間情報なし（create_date解釈不能）の集計
+    # Aggregate rows with no period info (create_date unparseable)
     no_period_rags = {}
     _np = w[w["_date"].isna()]
     if not _np.empty:
@@ -757,10 +757,10 @@ def temporal_keywords_by_category(df, category_col=None, period="month",
     return periods, by_cat, no_period_rags
 
 
-# Knowledge Explorer(Topic)用: Categoryカラム値ごとの件数/スコア統計（総合チャート用）
+# Knowledge Explorer (Topic): per-Category count/score statistics (for the overall chart)
 def topic_category_stats(ranking_df, category_col):
-    """sensitivity_analysisのranking(df)からCategory値別の
-    count / score合計 / 平均 / 最大 を返す（scoreは小さいほど関連が強い）。"""
+    """From sensitivity_analysis ranking(df), return per-Category
+    count / score total / mean / max (lower score = stronger relevance)."""
     if ranking_df is None or getattr(ranking_df, "empty", True):
         return None
     if "score" not in ranking_df.columns:
@@ -773,10 +773,10 @@ def topic_category_stats(ranking_df, category_col):
     return g.sort_values("count", ascending=False).reset_index(drop=True)
 
 
-# Knowledge Explorer(Topic)用: Periodごとの件数/スコア統計（Total/RAG NAME別の総合チャート用）
+# Knowledge Explorer (Topic): per-Period count/score statistics (for the Total / per-RAG_NAME overall chart)
 def topic_period_stats(ranking_df, period="month"):
-    """sensitivity_analysisのranking(df)からPeriod別の
-    count / score合計 / 平均 / 最大 を返す（scoreは小さいほど関連が強い）。"""
+    """From sensitivity_analysis ranking(df), return per-Period
+    count / score total / mean / max (lower score = stronger relevance)."""
     if ranking_df is None or getattr(ranking_df, "empty", True):
         return None
     if "score" not in ranking_df.columns or "create_date" not in ranking_df.columns:
@@ -798,9 +798,9 @@ def topic_period_stats(ranking_df, period="month"):
     return g.sort_values("period").reset_index(drop=True)
 
 
-# Knowledge Explorer用: 頻度辞書からワードクラウドのmatplotlib figを生成
+# Knowledge Explorer: build a matplotlib figure of a word cloud from a frequency dict
 def make_wordcloud_figure(freq_dict, title="", width=360, height=260):
-    """{語:重み} からワードクラウドのfigを返す。日本語フォント指定。空ならNone。"""
+    """Return a matplotlib word-cloud figure from {term: weight}. Uses a Japanese font. Returns None when empty."""
     if not freq_dict:
         return None
     try:

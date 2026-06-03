@@ -11,23 +11,23 @@ import DigiM_Util as dmu
 import DigiM_Session as dms
 import DigiM_Execute as dme
 
-# setting.yamlからフォルダパスなどを設定
+# Load folder paths and other settings from setting.yaml
 system_setting_dict = dmu.read_yaml_file("setting.yaml")
 mst_folder_path = system_setting_dict["MST_FOLDER"]
 character_folder_path = system_setting_dict["CHARACTER_FOLDER"]
 practice_folder_path = system_setting_dict["PRACTICE_FOLDER"]
 
-# 文字列から関数名を取得
+# Resolve a function by its string name
 def call_function_by_name(service_info, user_info, func_name, *args, **kwargs):
     if func_name in globals():
         func = globals()[func_name]
-        return func(service_info, user_info, *args, **kwargs)  # 引数を関数に渡す
+        return func(service_info, user_info, *args, **kwargs)  # Forward arguments to the function
     else:
         response = f"Error: Tool function '{func_name}' not found."
         export_contents = []
         return service_info, user_info, response, export_contents
 
-# 固定メッセージの回答
+# Reply with a fixed message
 def fixed_message(service_info, user_info, session_id, session_name, agent_file, input, import_contents=[], add_info={}):
     session = dms.DigiMSession(session_id)
     chat_history_dict = session.get_history()
@@ -40,7 +40,7 @@ def fixed_message(service_info, user_info, session_id, session_name, agent_file,
 
     return response_service_info, response_user_info, response, export_contents
 
-# セッションの会話履歴の削除
+# Delete the session's chat history
 def forget_history(service_info, user_info, session_id, session_name, agent_file, input, import_contents=[], add_info={}):
     session = dms.DigiMSession(session_id)
     chat_history_dict = session.get_history()
@@ -48,7 +48,7 @@ def forget_history(service_info, user_info, session_id, session_name, agent_file
     for seq in chat_history_dict.keys():
         session.chg_seq_history(seq, "N")
 
-    response = "会話履歴を全て忘れました"
+    response = "All conversation history has been forgotten."
     export_contents = []
 
     response_service_info = service_info
@@ -56,7 +56,7 @@ def forget_history(service_info, user_info, session_id, session_name, agent_file
 
     return response_service_info, response_user_info, response, export_contents
 
-# セッションの会話履歴の回復
+# Restore the session's chat history
 def remember_history(service_info, user_info, session_id, session_name, agent_file, input, import_contents=[], add_info={}):
     session = dms.DigiMSession(session_id)
     chat_history_dict = session.get_history()
@@ -64,7 +64,7 @@ def remember_history(service_info, user_info, session_id, session_name, agent_fi
     for seq in chat_history_dict.keys():
         session.chg_seq_history(seq, "Y")
 
-    response = "会話履歴を全て思い出しました"
+    response = "All conversation history has been restored."
     export_contents = []
 
     response_service_info = service_info
@@ -72,7 +72,7 @@ def remember_history(service_info, user_info, session_id, session_name, agent_fi
 
     return response_service_info, response_user_info, response, export_contents
 
-# テキストから日付の抽出
+# Extract a date from text
 def extract_date(service_info, user_info, session_id, session_name, agent_file, input, import_contents=[], add_info={}):
     if not agent_file:
         agent_file = "agent_55ExtractDate.json"
@@ -90,7 +90,7 @@ def extract_date(service_info, user_info, session_id, session_name, agent_file, 
     if "QueryVecs" in add_info:
         query_vecs = add_info["QueryVecs"]
 
-    # エージェントファイルのDEFAULTに設定しているPRACTICEの1つ目からプロンプトテンプレートを取得する
+    # Read the prompt template from the first PRACTICE entry defined as the agent's DEFAULT
     practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
     practice = dmu.read_json_file(str(Path(practice_folder_path) / practice_file))
     if practice["CHAINS"][0]["TYPE"] == "LLM":
@@ -99,14 +99,14 @@ def extract_date(service_info, user_info, session_id, session_name, agent_file, 
         prompt_temp_cd = "Extract Date"
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
 
-    # RAG実行
+    # Execute RAG
     user_query = input
     knowledge_context, knowledge_selected = agent.set_knowledge_context(user_query, query_vecs)
 
-    # プロンプトの設定
+    # Build the prompt
     prompt = f'{knowledge_context}{prompt_template}{user_query}{situation_prompt}'
 
-    # LLMの実行
+    # Execute the LLM
     response = ""
     for prompt, response_chunk, completion in agent.generate_response(model_type, prompt, memories_selected, stream_mode=False):
         if response_chunk:
@@ -120,7 +120,7 @@ def extract_date(service_info, user_info, session_id, session_name, agent_file, 
 
     return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
-# ページインデックス検索: LLMでクエリに関連するページIDを選択する
+# PageIndex search: have the LLM select page IDs relevant to the query
 def page_index_search(exec_info, agent_file, query, pages, max_pages=5):
     import json as _json
     if not agent_file:
@@ -129,13 +129,13 @@ def page_index_search(exec_info, agent_file, query, pages, max_pages=5):
 
     model_type = "LLM"
 
-    # ページ一覧を整形
+    # Format the page list
     page_list_text = ""
     for p in pages:
         tags = ", ".join(p.get("tags", [])) if p.get("tags") else ""
         page_list_text += f"- {p['id']}: {p['title']} — {p.get('summary', '')} [{tags}]\n"
 
-    # プロンプトテンプレートを取得
+    # Fetch the prompt template
     practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
     practice = dmu.read_json_file(str(Path(practice_folder_path) / practice_file))
     if practice["CHAINS"][0]["TYPE"] == "LLM":
@@ -144,16 +144,16 @@ def page_index_search(exec_info, agent_file, query, pages, max_pages=5):
         prompt_temp_cd = "Page Index Search"
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
 
-    # プロンプト組み立て
-    prompt = f"{prompt_template}\n\n【ページ一覧】\n{page_list_text}\n最大選択数: {max_pages}件\n\n【ユーザーの質問】\n{query}"
+    # Assemble the prompt
+    prompt = f"{prompt_template}\n\n【Page list】\n{page_list_text}\nMax selections: {max_pages}\n\n【User question】\n{query}"
 
-    # LLM実行
+    # Run the LLM
     response = ""
     for _, response_chunk, _ in agent.generate_response(model_type, prompt, [], stream_mode=False):
         if response_chunk:
             response += response_chunk
 
-    # レスポンスからIDリストを抽出
+    # Extract the ID list from the response
     selected_ids = []
     try:
         import re
@@ -163,13 +163,13 @@ def page_index_search(exec_info, agent_file, query, pages, max_pages=5):
     except (_json.JSONDecodeError, AttributeError):
         pass
 
-    # 有効なIDのみフィルタ
+    # Filter to valid IDs only
     valid_ids = {p["id"] for p in pages}
     selected_ids = [pid for pid in selected_ids if pid in valid_ids][:max_pages]
 
     return selected_ids
 
-# Thinking Agent: ユーザーの質問を分析し実行パラメータをJSON形式で返す
+# Thinking Agent: analyze the user's question and return execution parameters as JSON
 def thinking_agent(service_info, user_info, session_id, session_name, agent_file, user_query, import_contents=[], add_info={}):
     if not agent_file:
         agent_file = "agent_70DigiMThinking.json"
@@ -184,7 +184,7 @@ def thinking_agent(service_info, user_info, session_id, session_name, agent_file
     habit_info = add_info.get("HabitInfo", "")
     book_info = add_info.get("BookInfo", "")
 
-    # エージェントファイルのDEFAULTに設定しているPRACTICEの1つ目からプロンプトテンプレートを取得する
+    # Read the prompt template from the first PRACTICE entry defined as the agent's DEFAULT
     practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
     practice = dmu.read_json_file(str(Path(practice_folder_path) / practice_file))
     if practice["CHAINS"][0]["TYPE"] == "LLM":
@@ -193,18 +193,18 @@ def thinking_agent(service_info, user_info, session_id, session_name, agent_file
         prompt_temp_cd = "Thinking"
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
 
-    # 追加情報をプロンプトに挿入
+    # Insert additional info into the prompt
     context = ""
     if habit_info:
-        context += f"\n【利用可能なHabit一覧】\n{habit_info}\n"
+        context += f"\n【Available habits】\n{habit_info}\n"
     if book_info:
-        context += f"\n【利用可能なBook一覧】\n{book_info}\n"
+        context += f"\n【Available books】\n{book_info}\n"
     if digest_text:
-        context += f"\n【会話のダイジェスト】\n{digest_text}\n"
+        context += f"\n【Conversation digest】\n{digest_text}\n"
 
     prompt = f'{context}{prompt_template}{user_query}{situation_prompt}'
 
-    # LLMの実行
+    # Execute the LLM
     response = ""
     for prompt, response_chunk, completion in agent.generate_response(model_type, prompt, [], stream_mode=False):
         if response_chunk:
@@ -215,7 +215,7 @@ def thinking_agent(service_info, user_info, session_id, session_name, agent_file
 
     return service_info, user_info, response, model_name, prompt_tokens, response_tokens
 
-# テキストからRAGクエリの生成
+# Generate the RAG query from text
 def RAG_query_generator(service_info, user_info, session_id, session_name, agent_file, user_query, import_contents=[], add_info={}):
     if not agent_file:
         agent_file = "agent_56RAGQueryGenerator.json"
@@ -233,7 +233,7 @@ def RAG_query_generator(service_info, user_info, session_id, session_name, agent
     if "QueryVecs" in add_info:
         query_vecs = add_info["QueryVecs"]
 
-    # エージェントファイルのDEFAULTに設定しているPRACTICEの1つ目からプロンプトテンプレートを取得する
+    # Read the prompt template from the first PRACTICE entry defined as the agent's DEFAULT
     practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
     practice = dmu.read_json_file(str(Path(practice_folder_path) / practice_file))
     if practice["CHAINS"][0]["TYPE"] == "LLM":
@@ -242,13 +242,13 @@ def RAG_query_generator(service_info, user_info, session_id, session_name, agent
         prompt_temp_cd = "RAG Query Generator"
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
 
-    # RAG実行
+    # Execute RAG
     knowledge_context, knowledge_selected = agent.set_knowledge_context(user_query, query_vecs)
 
-    # プロンプトの設定
+    # Build the prompt
     prompt = f'{knowledge_context}{prompt_template}{user_query}{situation_prompt}'
 
-    # LLMの実行
+    # Execute the LLM
     response = ""
     for prompt, response_chunk, completion in agent.generate_response(model_type, prompt, memories_selected, stream_mode=False):
         if response_chunk:
@@ -262,7 +262,7 @@ def RAG_query_generator(service_info, user_info, session_id, session_name, agent
 
     return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
-# 会話のダイジェスト生成
+# Generate the conversation digest
 def dialog_digest(service_info, user_info, session_id, session_name, agent_file, user_query, import_contents=[], add_info={}):
     if not agent_file:
         agent_file = "agent_51DialogDigest.json"
@@ -276,7 +276,7 @@ def dialog_digest(service_info, user_info, session_id, session_name, agent_file,
     if "Memories_Selected" in add_info:
         memories_selected = add_info["Memories_Selected"]
 
-    # エージェントファイルのDEFAULTに設定しているPRACTICEの1つ目からプロンプトテンプレートを取得する
+    # Read the prompt template from the first PRACTICE entry defined as the agent's DEFAULT
     practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
     practice = dmu.read_json_file(str(Path(practice_folder_path) / practice_file))
     if practice["CHAINS"][0]["TYPE"] == "LLM":
@@ -285,16 +285,16 @@ def dialog_digest(service_info, user_info, session_id, session_name, agent_file,
         prompt_temp_cd = "Dialog Digest"
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
 
-    # メモリをテキスト化
+    # Convert memory to text
     digest_memories_text = ", ".join(
         f'{{"role": "{item["role"]}", "content": "{item["text"]}"}}'
         for item in memories_selected
     )
 
-    # プロンプトの設定
+    # Build the prompt
     query = f'{prompt_template}{user_query}\n{digest_memories_text}'
 
-    # LLMの実行
+    # Execute the LLM
     response = ""
     for prompt, response_chunk, completion in agent.generate_response(model_type, query, stream_mode=False):
         if response_chunk:
@@ -303,17 +303,17 @@ def dialog_digest(service_info, user_info, session_id, session_name, agent_file,
     prompt_tokens = dmu.count_token(tokenizer, model_name, prompt)
     response_tokens = dmu.count_token(tokenizer, model_name, response)
 
-    # 出力形式
-    response = "【これまでの会話のダイジェスト】\n" + response
+    # Output format
+    response = "【Conversation digest so far】\n" + response
 
     response_service_info = service_info
     response_user_info = user_info
 
     return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
-# 複数ペルソナ応答の公平な統合・要約。
+# Fair integration / summary across multiple persona responses.
 # persona_responses: [{"persona_name": "...", "text": "..."}, ...]
-# summary_level: "light"/"medium"/"heavy" もしくは自由文字列（"300字程度"等）
+# summary_level: "light"/"medium"/"heavy" or a free-form string (e.g. "around 300 chars")
 def dialog_persona_merge(service_info, user_info, session_id, session_name, agent_file,
                           user_query, persona_responses, summary_level="medium"):
     if not agent_file:
@@ -324,15 +324,15 @@ def dialog_persona_merge(service_info, user_info, session_id, session_name, agen
     model_name = agent.agent["ENGINE"][model_type]["MODEL"]
     tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
 
-    # サマリーレベルのキーワード→説明文マッピング（自由文字列はそのまま）
+    # Mapping of summary-level keyword -> description (free-form strings are passed through)
     level_map = {
-        "light":  "簡潔（200字程度）",
-        "medium": "標準（500字程度）",
-        "heavy":  "詳細（1000字程度）",
+        "light":  "簡潔（200字程度）",  # concise, ~200 chars
+        "medium": "標準（500字程度）",  # standard, ~500 chars
+        "heavy":  "詳細（1000字程度）",  # detailed, ~1000 chars
     }
     summary_level_text = level_map.get(summary_level, summary_level)
 
-    # プロンプトテンプレート取得＆{summary_level}置換
+    # Fetch the prompt template and substitute {summary_level}
     practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
     practice = dmu.read_json_file(str(Path(practice_folder_path) / practice_file))
     if practice["CHAINS"][0]["TYPE"] == "LLM":
@@ -342,7 +342,7 @@ def dialog_persona_merge(service_info, user_info, session_id, session_name, agen
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
     prompt_template = prompt_template.replace("{summary_level}", summary_level_text)
 
-    # ペルソナ応答をテキスト化
+    # Convert persona responses to text
     responses_text = "\n\n".join(
         f"【{(r.get('persona_name') or '?')}】\n{r.get('text', '')}"
         for r in persona_responses
@@ -350,8 +350,8 @@ def dialog_persona_merge(service_info, user_info, session_id, session_name, agen
 
     query = (
         f"{prompt_template}\n\n"
-        f"【元の質問】\n{user_query}\n\n"
-        f"【各ペルソナの回答】\n{responses_text}"
+        f"【Original question】\n{user_query}\n\n"
+        f"【Each persona's response】\n{responses_text}"
     )
 
     response = ""
@@ -365,9 +365,9 @@ def dialog_persona_merge(service_info, user_info, session_id, session_name, agen
     return service_info, user_info, response, model_name, prompt_tokens, response_tokens
 
 
-# Phase 7: 質問内容から最適なペルソナを最大N人選定する
+# Phase 7: Select up to N optimal personas based on the question content
 # candidate_personas: [{"persona_id": "P0001", "name": "...", "act": "...", "character_text": "..."}, ...]
-# 戻り値: (selected_persona_ids, reasoning, model_name, prompt_tokens, response_tokens)
+# Returns: (selected_persona_ids, reasoning, model_name, prompt_tokens, response_tokens)
 def select_personas(service_info, user_info, session_id, session_name, agent_file,
                     user_query, candidate_personas, max_personas=3):
     if not candidate_personas:
@@ -380,7 +380,7 @@ def select_personas(service_info, user_info, session_id, session_name, agent_fil
     model_name = agent.agent["ENGINE"][model_type]["MODEL"]
     tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
 
-    # プロンプトテンプレート取得
+    # Fetch the prompt template
     practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
     practice = dmu.read_json_file(str(Path(practice_folder_path) / practice_file))
     if practice["CHAINS"][0]["TYPE"] == "LLM":
@@ -389,7 +389,7 @@ def select_personas(service_info, user_info, session_id, session_name, agent_fil
         prompt_temp_cd = "Persona Selector"
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
 
-    # 候補ペルソナをコンパクトにJSON化（id/name/act/character_text先頭抜粋）
+    # Compact-serialize candidate personas to JSON (id / name / act / leading excerpt of character_text)
     candidates_json = json.dumps([
         {
             "id": p.get("persona_id", ""),
@@ -400,14 +400,14 @@ def select_personas(service_info, user_info, session_id, session_name, agent_fil
         for p in candidate_personas
     ], ensure_ascii=False, indent=2)
 
-    # プレースホルダ置換
+    # Substitute placeholders
     prompt_template = (prompt_template
                        .replace("{max_personas}", str(max_personas))
                        .replace("{candidate_personas}", candidates_json))
 
     query = f'{prompt_template}{user_query}'
 
-    # LLMの実行（非ストリーミング）
+    # Execute the LLM (non-streaming)
     response = ""
     for prompt, response_chunk, completion in agent.generate_response(model_type, query, stream_mode=False):
         if response_chunk:
@@ -416,36 +416,36 @@ def select_personas(service_info, user_info, session_id, session_name, agent_fil
     prompt_tokens = dmu.count_token(tokenizer, model_name, prompt)
     response_tokens = dmu.count_token(tokenizer, model_name, response)
 
-    # JSON抽出
+    # Extract JSON
     selected_ids = []
     reasoning = ""
     try:
         json_str = response.strip()
-        # ```json ... ``` フェンスを除去
+        # Remove ```json ... ``` fences
         if json_str.startswith("```"):
             json_str = re.sub(r"^```(?:json)?\s*", "", json_str)
             json_str = re.sub(r"\s*```$", "", json_str)
-        # JSONブロックを抽出
+        # Extract the JSON block
         m = re.search(r"\{.*\}", json_str, re.DOTALL)
         if m:
             parsed = json.loads(m.group(0))
             ids_raw = parsed.get("personas") or []
             if isinstance(ids_raw, list):
-                # 候補プールに存在するIDのみ採用
+                # Keep only IDs that exist in the candidate pool
                 candidate_ids = {p.get("persona_id") for p in candidate_personas}
                 selected_ids = [str(pid) for pid in ids_raw if str(pid) in candidate_ids]
-                # 上限超過時は先頭にトリム
+                # Trim from the front when exceeding the cap
                 if max_personas and len(selected_ids) > max_personas:
                     selected_ids = selected_ids[:max_personas]
             reasoning = parsed.get("reasoning", "")
     except Exception as e:
         import logging
-        logging.getLogger(__name__).warning(f"persona selectorのJSONパース失敗: {e}, raw={response[:200]!r}")
+        logging.getLogger(__name__).warning(f"persona selector JSON parse failed: {e}, raw={response[:200]!r}")
 
     return selected_ids, reasoning, model_name, prompt_tokens, response_tokens
 
 
-# セッション名の生成
+# Generate the session name
 def gene_session_name(service_info, user_info, session_id, session_name, agent_file, user_query, import_contents=[], add_info={}):
     if not agent_file:
         agent_file = "agent_57SessionName.json"
@@ -459,7 +459,7 @@ def gene_session_name(service_info, user_info, session_id, session_name, agent_f
     if "Memories_Selected" in add_info:
         memories_selected = add_info["Memories_Selected"]
 
-    # エージェントファイルのDEFAULTに設定しているPRACTICEの1つ目からプロンプトテンプレートを取得する
+    # Read the prompt template from the first PRACTICE entry defined as the agent's DEFAULT
     practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
     practice = dmu.read_json_file(str(Path(practice_folder_path) / practice_file))
     if practice["CHAINS"][0]["TYPE"] == "LLM":
@@ -468,16 +468,16 @@ def gene_session_name(service_info, user_info, session_id, session_name, agent_f
         prompt_temp_cd = "Session Name"
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
 
-    # メモリをテキスト化
+    # Convert memory to text
     digest_memories_text = ", ".join(
         f'{{"role": "{item["role"]}", "content": "{item["text"]}"}}'
         for item in memories_selected
     )
 
-    # プロンプトの設定
+    # Build the prompt
     query = f'{prompt_template}\n{digest_memories_text}\n{user_query}'
 
-    # LLMの実行
+    # Execute the LLM
     response = ""
     for prompt, response_chunk, completion in agent.generate_response(model_type, query, stream_mode=False):
         if response_chunk:
@@ -491,7 +491,7 @@ def gene_session_name(service_info, user_info, session_id, session_name, agent_f
 
     return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
-# WEB検索(PerplexityAI)
+# Web search (Perplexity AI)
 def WebSearch_PerplexityAI(service_info, user_info, session_id, session_name, agent_file, input, import_contents=[], add_info={}):
     if os.path.exists("system.env"):
         load_dotenv("system.env")
@@ -536,7 +536,7 @@ def WebSearch_PerplexityAI(service_info, user_info, session_id, session_name, ag
 
     return response_service_info, response_user_info, response, export_contents
 
-# WEB検索(OpenAI Web Search)
+# Web search (OpenAI web_search)
 def WebSearch_OpenAI(service_info, user_info, session_id, session_name, agent_file, input, import_contents=[], add_info={}):
     from openai import OpenAI
     if os.path.exists("system.env"):
@@ -556,7 +556,7 @@ def WebSearch_OpenAI(service_info, user_info, session_id, session_name, agent_fi
         instructions=system_prompt,
     )
 
-    # レスポンスからテキストとURLを抽出
+    # Extract text and URLs from the response
     response_text = ""
     export_urls = []
     for item in response.output:
@@ -564,7 +564,7 @@ def WebSearch_OpenAI(service_info, user_info, session_id, session_name, agent_fi
             for content in item.content:
                 if hasattr(content, "text"):
                     response_text += content.text
-                    # アノテーションからURLを抽出
+                    # Extract URLs from annotations
                     if hasattr(content, "annotations"):
                         for ann in content.annotations:
                             if hasattr(ann, "url"):
@@ -572,7 +572,7 @@ def WebSearch_OpenAI(service_info, user_info, session_id, session_name, agent_fi
 
     return service_info, user_info, response_text, export_urls
 
-# WEB検索(Google Grounding Search)
+# Web search (Google Grounding Search)
 def WebSearch_Google(service_info, user_info, session_id, session_name, agent_file, input, import_contents=[], add_info={}):
     from google import genai
     from google.genai import types
@@ -593,7 +593,7 @@ def WebSearch_Google(service_info, user_info, session_id, session_name, agent_fi
         ),
     )
 
-    # レスポンスからテキストとURLを抽出
+    # Extract text and URLs from the response
     response_text = response.text if response.text else ""
     export_urls = []
     if response.candidates and response.candidates[0].grounding_metadata:
@@ -605,7 +605,7 @@ def WebSearch_Google(service_info, user_info, session_id, session_name, agent_fi
 
     return service_info, user_info, response_text, export_urls
 
-# WEB検索のディスパッチ（エンジン名に応じて関数を切り替え）
+# Dispatch web search (switch function by engine name)
 WEB_SEARCH_ENGINES = {
     "Perplexity": WebSearch_PerplexityAI,
     "OpenAI": WebSearch_OpenAI,
@@ -616,7 +616,7 @@ def WebSearch(service_info, user_info, session_id, session_name, agent_file, inp
     func = WEB_SEARCH_ENGINES.get(engine, WebSearch_PerplexityAI)
     return func(service_info, user_info, session_id, session_name, agent_file, input, import_contents, add_info)
 
-# 経営分析
+# Business analysis
 def management_analysis(service_info, user_info, session_id, session_name, agent_file, input, import_contents=[], add_info={}):
     try:
         client_name = re.search(r"Client:(.+)", input).group(1).strip()
@@ -629,7 +629,7 @@ def management_analysis(service_info, user_info, session_id, session_name, agent
         if remaining_lines:
             query = "\n".join(remaining_lines).strip()
     except AttributeError:
-        rule_text = "入力に以下を含めてください。\nClient:「会社名」\nBiz:「事業名」"
+        rule_text = "Include the following in your input.\nClient: <company name>\nBiz: <business name>"
         return service_info, user_info, rule_text, []
 
     test_folder_path = "test/"
@@ -637,7 +637,7 @@ def management_analysis(service_info, user_info, session_id, session_name, agent
     test_sheet_name = "Test"
     raw_name_Q = "Q"
 
-    #実行設定
+    # Execution settings
     situation = {}
     overwrite_items = {}
     add_knowledges = []
@@ -650,11 +650,11 @@ def management_analysis(service_info, user_info, session_id, session_name, agent
     execution["META_SEARCH"] = True
     execution["RAG_QUERY_GENE"] = True
 
-    #一度セッションをアンロック
+    # Unlock the session once
     session = dms.DigiMSession(session_id, session_name)
     session.save_status("UNLOCKED")
 
-    # テストファイルを読み込んでループ
+    # Load the test file and loop
     test_file_path = str(Path(test_folder_path) / test_file)
     test_sheet = pd.read_excel(test_file_path, sheet_name=test_sheet_name)
     Q_no = 0
@@ -680,7 +680,7 @@ def management_analysis(service_info, user_info, session_id, session_name, agent
 
     return response_service_info, response_user_info, response, export_contents
 
-# テキストの比較
+# Compare texts
 def compare_texts(service_info, user_info, head1, text1, head2, text2, query_compare=""):
     agent_file = "agent_53CompareTexts.json"
     agent = dma.DigiM_Agent(agent_file)
@@ -689,17 +689,17 @@ def compare_texts(service_info, user_info, head1, text1, head2, text2, query_com
     model_name = agent.agent["ENGINE"][model_type]["MODEL"]
     tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
 
-    # エージェントに設定されるプロンプトテンプレートを設定
+    # Resolve the prompt template assigned to the agent
     if query_compare == "":
         prompt_temp_cd = "Compare Texts"
         prompt_template = agent.set_prompt_template(prompt_temp_cd)
     else:
         prompt_template = query_compare
 
-    # プロンプトの設定
+    # Build the prompt
     prompt = f'{prompt_template}\n\n[{head1}]\n{text1}\n\n[{head2}]\n{text2}'
 
-    # LLMの実行
+    # Execute the LLM
     response = ""
     for prompt, response_chunk, completion in agent.generate_response(model_type, prompt):
         if response_chunk:
@@ -713,7 +713,7 @@ def compare_texts(service_info, user_info, head1, text1, head2, text2, query_com
 
     return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 
-# 画像データへの批評の生成
+# Generate critique on image data
 def art_critics(service_info, user_info, memories_selected=[], image_paths=[], agent_file="agent_52ArtCritic.json"):
     agent = dma.DigiM_Agent(agent_file)
 
@@ -721,7 +721,7 @@ def art_critics(service_info, user_info, memories_selected=[], image_paths=[], a
     model_name = agent.agent["ENGINE"][model_type]["MODEL"]
     tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
 
-    # エージェントファイルのDEFAULTに設定しているPRACTICEの1つ目からプロンプトテンプレートを取得する
+    # Read the prompt template from the first PRACTICE entry defined as the agent's DEFAULT
     practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
     practice = dmu.read_json_file(str(Path(practice_folder_path) / practice_file))
     if practice["CHAINS"][0]["TYPE"] == "LLM":
@@ -730,10 +730,10 @@ def art_critics(service_info, user_info, memories_selected=[], image_paths=[], a
         prompt_temp_cd = "Art Critic"
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
 
-    # プロンプトの設定
+    # Build the prompt
     prompt = f'{prompt_template}'
 
-    # LLMの実行
+    # Execute the LLM
     response = ""
     for prompt, response_chunk, completion in agent.generate_response(model_type, prompt, memories_selected, image_paths):
         if response_chunk:

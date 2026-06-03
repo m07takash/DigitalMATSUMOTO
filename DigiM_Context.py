@@ -22,14 +22,14 @@ logger = logging.getLogger(__name__)
 import DigiM_Tool as dmt
 import DigiM_Notion as dmn
 
-# setting.yamlからフォルダパスなどを設定
+# Load folder paths and other settings from setting.yaml
 system_setting_dict = dmu.read_yaml_file("setting.yaml")
 mst_folder_path = system_setting_dict["MST_FOLDER"]
 temp_folder_path = system_setting_dict["TEMP_FOLDER"]
 rag_folder_db_path = system_setting_dict["RAG_FOLDER_DB"]
 rag_folder_pages_path = system_setting_dict.get("RAG_FOLDER_PAGES", "user/common/rag/pages/")
 
-# system.envファイルをロードして環境変数を設定
+# Load system.env and set environment variables
 if os.path.exists("system.env"):
     load_dotenv("system.env")
 prompt_template_mst_file = os.getenv("PROMPT_TEMPLATE_MST_FILE")
@@ -37,7 +37,7 @@ prompt_temp_mst_path = str(Path(mst_folder_path) / prompt_template_mst_file)
 rag_mst_file = os.getenv("RAG_MST_FILE")
 notion_db_mst_file = os.getenv("NOTION_MST_FILE")
 
-# B-1: ChromaDB クライアントのシングルトン（スレッドセーフ）
+# B-1: Singleton ChromaDB client (thread-safe)
 _chroma_client = None
 _chroma_client_lock = threading.Lock()
 
@@ -45,11 +45,11 @@ def get_chroma_client():
     global _chroma_client
     if _chroma_client is None:
         with _chroma_client_lock:
-            if _chroma_client is None:  # ダブルチェックロッキング
+            if _chroma_client is None:  # double-checked locking
                 _chroma_client = chromadb.PersistentClient(path=rag_folder_db_path)
     return _chroma_client
 
-# 添付したコンテンツからコンテキストを取得
+# Build context from attached content
 def create_contents_context(agent_data, contents, seq=0, sub_seq=0):
     contents_context = ""
     contents_records = []
@@ -69,12 +69,12 @@ def create_contents_context(agent_data, contents, seq=0, sub_seq=0):
 
     return contents_context, contents_records, image_files
 
-# アップロードしたファイルからコンテンツテキストを取得
+# Extract content text from an uploaded file
 def get_text_content(agent_data, content, seq, sub_seq, file_seq):
     content_context = ""
     image_file = ""
 
-    # コンテンツに関わる情報を設定
+    # Set up content-related info
     if os.path.basename(content).startswith("[IN]") or os.path.basename(content).startswith("[OUT]"):
         file_name = os.path.basename(content)
     else:
@@ -82,14 +82,14 @@ def get_text_content(agent_data, content, seq, sub_seq, file_seq):
     file_size = os.path.getsize(content)
     file_type, encoding = mimetypes.guess_type(content)
 
-    # サポートエージェントの設定
+    # Configure the support agent
     support_agent = agent_data["SUPPORT_AGENT"]
 
-    # ファイル拡張子を取得
+    # Read the file extension
     file_ext = os.path.splitext(content)[1].lower()
-    _header = f"<br>---------<br>ファイル名: {file_name}<br><br>"
+    _header = f"<br>---------<br>File name: {file_name}<br><br>"
 
-    # ファイル形式毎にコンテキストを取得
+    # Build context per file type
     if file_ext in [".docx"]:
         text, extracted_images = dmu.read_docx_file(content, temp_folder_path)
         content_context = _header + text
@@ -120,12 +120,12 @@ def get_text_content(agent_data, content, seq, sub_seq, file_seq):
     elif file_type and "audio" in file_type:
         content_context = _header + dmu.mp3_to_text(content)
 
-    # コンテンツの記録
+    # Record the content
     content_records = {"from": content, "to":{"file_name": file_name, "file_type": file_type, "file_size": file_size, "context": content_context}}
 
     return content_context, content_records, image_file
 
-# プロンプトテンプレートの取得
+# Fetch the prompt template
 def set_prompt_template(prompt_temp_cd):
     prompt_temp_mst_path = str(Path(mst_folder_path) / prompt_template_mst_file)
     prompt_temps_json = dmu.read_json_file(prompt_temp_mst_path)
@@ -135,9 +135,9 @@ def set_prompt_template(prompt_temp_cd):
         prompt_template = prompt_template + prompt_temp +"\n"
     return prompt_template
 
-# RAGデータ一覧の取得（rags.jsonの並び順）
+# Get the RAG data list (in rags.json order)
 def get_rag_list():
-    # rags.jsonのbucket順を基準にする
+    # Use the rags.json bucket order as the basis
     rag_mst = dmu.read_json_file(rag_mst_file, mst_folder_path)
     ordered = []
     for rag_id, setting in rag_mst.items():
@@ -145,20 +145,20 @@ def get_rag_list():
         if bucket not in ordered:
             ordered.append(bucket)
 
-    # ChromaDBに実在するコレクション一覧
+    # Collections that actually exist in ChromaDB
     db_client = get_chroma_client()
     collections = db_client.list_collections()
     existing = {col.name for col in collections}
 
-    # rags.json順で並べ、存在するもののみ。残りはアルファベット順で末尾に追加
+    # Sort by rags.json order, keeping only those present. Append the rest alphabetically at the end.
     result = [name for name in ordered if name in existing]
     rest = sorted(existing - set(result))
     return result + rest
 
-# RAGコレクションのメタデータ一覧を取得（Knowledge Explorer用）
+# Fetch the metadata list for a RAG collection (used by Knowledge Explorer)
 def get_rag_collection_data(collection_name, where=None):
-    """ChromaDBコレクションの全メタデータをリスト[dict]で返す。
-    where（ChromaDBのメタデータ条件dict）を渡すと、そのチャンクのみに絞り込む。"""
+    """Return all metadata in a ChromaDB collection as a list of dicts.
+    Pass `where` (a ChromaDB metadata-filter dict) to restrict to matching chunks only."""
     db_client = get_chroma_client()
     try:
         collection = db_client.get_collection(collection_name)
@@ -177,9 +177,9 @@ def get_rag_collection_data(collection_name, where=None):
         data.append(row)
     return data
 
-# PageIndexのメタデータ一覧を取得（Knowledge Explorer用）
+# Fetch the PageIndex metadata list (used by Knowledge Explorer)
 def get_page_index_list():
-    """pages/ 配下の全PageIndexデータセットを返す"""
+    """Return every PageIndex dataset under pages/."""
     result = {}
     if not os.path.exists(rag_folder_pages_path):
         return result
@@ -190,17 +190,17 @@ def get_page_index_list():
             result[folder_name] = index_data.get("PAGES", [])
     return result
 
-# RAGデータの取得
+# Fetch RAG data
 def select_rag_vector(rag_data_list, rag={}):
     buffer = 100
     rag_all = []
     rag_selected = []
     rag_context = ""
 
-    # 現在日付
+    # Current date
     current_date = datetime.now()
 
-    # RAGテキストの選択
+    # Select RAG text
     for rag_data in rag_data_list:
         rag_data["rag_name"] = rag["RAG_NAME"]
         if rag["TIMESTAMP"]=="CREATE_DATE":
@@ -213,13 +213,13 @@ def select_rag_vector(rag_data_list, rag={}):
         else:
             timestamp = datetime.strptime(dmu.convert_to_ymd(rag["TIMESTAMP"], "%Y-%m-%d"), "%Y-%m-%d")
 
-        # 埋め込み用の日付設定
+        # Embed-side date setting
         timestamp_str = timestamp.strftime(rag["TIMESTAMP_STYLE"])
         days_difference = (current_date - timestamp).days
         rag_data["timestamp"] = timestamp_str
         rag_data["days_difference"] = days_difference
 
-        # チャンクテンプレートでコンテキスト化
+        # Format chunks into context via the template
         chunk_item_list = re.findall(r"\{(.*?)\}", rag["CHUNK_TEMPLATE"])
         chunk_items = {}
         for item in chunk_item_list:
@@ -229,10 +229,10 @@ def select_rag_vector(rag_data_list, rag={}):
 
         rag_all.append(rag_data)
 
-    # 類似度でソート
+    # Sort by similarity
     rag_all_sorted = sorted(rag_all, key=lambda x: x["similarity_prompt"])
 
-    # RAGテキストを選択（テキスト上限値まで取得）
+    # Select RAG text (up to the text cap)
     rag_context += rag["HEADER_TEMPLATE"]
     total_char = len(rag["HEADER_TEMPLATE"])
     for rag_data in rag_all_sorted:
@@ -245,7 +245,7 @@ def select_rag_vector(rag_data_list, rag={}):
 
     return rag_context, rag_selected
 
-# C-2: FILTERから where_limitation を構築（query_vec に依存しないため事前計算）
+# C-2: Build where_limitation from FILTER (precomputed since it does not depend on query_vec)
 def _build_where_limitation(rag_data, exec_info, define_code={}):
     where_limitation = []
     if "FILTER" not in rag_data:
@@ -266,7 +266,7 @@ def _build_where_limitation(rag_data, exec_info, define_code={}):
             {"$and" if cond["USER_INFO"]["PATTERN"] == "and" else "$or": items})
 
     if "DEFINE_CODE" in cond:
-        # define_code[k] は文字列または文字列リスト。リストなら $in、文字列なら従来通り $eq
+        # define_code[k] is a string or list of strings. $in for a list; $eq for a single string
         items = []
         for k, v in cond["DEFINE_CODE"]["CODES"].items():
             code_val = define_code.get(k)
@@ -289,11 +289,11 @@ def _build_where_limitation(rag_data, exec_info, define_code={}):
     return where_limitation
 
 
-# C-2: 1つの query_vec に対する ChromaDB クエリ（並列実行単位）
+# C-2: Single-query_vec ChromaDB query (the parallel-execution unit)
 def _query_collection_single(collection, query_vec, result_limit, where_limitation, rag_data, meta_searches, query_seq):
     results = []
 
-    # META_SEARCH クエリ（日付条件+類似度ボーナス）
+    # META_SEARCH query (date condition + similarity bonus)
     if "META_SEARCH" in rag_data:
         query_conditions_add = []
         for meta_search in meta_searches:
@@ -332,7 +332,7 @@ def _query_collection_single(collection, query_vec, result_limit, where_limitati
                     v["query_mode"] = "(META_SEARCH:" + str(rag_data["META_SEARCH"]["BONUS"]) + ")"
                     results.append(v)
 
-    # 通常クエリ
+    # Standard query
     if where_limitation:
         where_clause = where_limitation[0] if len(where_limitation) == 1 else {"$and": where_limitation}
         rag_data_db = collection.query(
@@ -356,14 +356,14 @@ def _query_collection_single(collection, query_vec, result_limit, where_limitati
     return results
 
 
-# C-2拡張: 1コレクション分の全query_vecsクエリをまとめて実行するヘルパー
+# C-2 extension: helper that runs every query_vec query for one collection together
 def _process_rag_data(rag_data, query_vecs, exec_info, define_code, meta_searches, private_mode=False):
     results = []
     try:
         collection = get_chroma_client().get_collection(rag_data["DATA_NAME"])
         result_limit = min(50, collection.count())
         where_limitation = _build_where_limitation(rag_data, exec_info, define_code)
-        # Private Modeの場合、private=Trueのデータを除外
+        # In Private Mode, exclude rows where private=True
         if private_mode:
             where_limitation.append({"private": {"$ne": True}})
         with ThreadPoolExecutor(max_workers=len(query_vecs)) as executor:
@@ -377,24 +377,24 @@ def _process_rag_data(rag_data, query_vecs, exec_info, define_code, meta_searche
             for future in futures:
                 results.extend(future.result())
     except NotFoundError:
-        logger.warning(f"{rag_data['DATA_NAME']} は存在しないためスキップしました。")
+        logger.warning(f"{rag_data['DATA_NAME']} does not exist; skipping.")
     return results
 
-# RAGからのコンテキスト取得
+# Build context from RAG
 def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searches=[], define_code={}, private_mode=False):
     rag_final_context = ""
     rag_final_selected = []
 
-    # RAGデータセットごとに処理
+    # Process per RAG dataset
     for rag in rags:
-        # PageIndex型はベクトル検索をスキップして専用処理へ
+        # PageIndex type: skip vector search and go to its dedicated path
         if rag.get("RETRIEVER") == "PageIndex":
             rag_context, rag_selected = select_rag_page_index(query, rag, exec_info)
             rag_final_context += rag_context
             rag_final_selected += rag_selected
             continue
 
-        # DBタイプのrag_dataを並列処理（C-2拡張: コレクション単位でも並列化）
+        # Parallel processing for DB-type rag_data (C-2 extension: also parallelizes per collection)
         db_rag_data_list = [rd for rd in rag["DATA"] if rd.get("DATA_TYPE") == "DB"]
         rag_data_list = []
         if db_rag_data_list:
@@ -406,7 +406,7 @@ def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searche
                 for future in futures:
                     rag_data_list.extend(future.result())
 
-        # rag_data_listでidが重複するものは「質問との類似度」が近いものに重複削除
+        # In rag_data_list, dedupe by id keeping the one with the closest "query similarity"
         filtered_data = {}
         for rag_data in rag_data_list:
             rag_data_id = rag_data["id"]
@@ -416,50 +416,50 @@ def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searche
                 filtered_data[rag_data_id] = rag_data
         rag_data_list = list(filtered_data.values())
 
-        # RAGデータの選択
+        # Select the RAG data
         if rag.get("RETRIEVER") == "Vector":
             rag_context, rag_selected = select_rag_vector(rag_data_list, rag)
             rag_final_context += rag_context
             rag_final_selected += rag_selected
 
     if rag_final_context:
-        rag_final_context += "----\nこれらの情報を踏まえて、次の質問に日本語で回答してください。\n----\n"
+        rag_final_context += "----\nこれらの情報を踏まえて、次の質問に日本語で回答してください。\n----\n"  # Final RAG prompt suffix (kept JP: sent to the LLM)
 
     return rag_final_context, rag_final_selected
 
-# レスポンスとRAGの類似度評価
+# Evaluate similarity between the response and the RAG chunks
 def get_knowledge_reference(response_vec, rag_selected, logic="Cosine"):
     rag_ref = []
 
-    # 各チャンクと類似度評価
+    # Evaluate similarity per chunk
     for rag_data in rag_selected:
-        # PageIndex由来の文字列エントリはそのままログに追加してスキップ
+        # PageIndex-derived string entries are appended to the log as-is and skipped
         if isinstance(rag_data, str):
             rag_ref.append(rag_data)
             continue
-        rag_data["value_text_short"] = rag_data["value_text"][:50] #50文字に絞る
+        rag_data["value_text_short"] = rag_data["value_text"][:50]  # truncate to 50 chars
         similarity_response = dmu.calculate_similarity_vec(response_vec, rag_data["vector_data_value_text"], logic)
         rag_data["similarity_response"] = round(similarity_response,3)
 
-        # メタ検索の補正値を反映
+        # Apply the meta-search correction
         if rag_data["query_mode"] != "NORMAL":
             key, value = rag_data["query_mode"].strip("()").split(":")
             if key == "META_SEARCH":
                 rag_data["similarity_prompt"] = round(rag_data["similarity_prompt"]/float(value),3)
 #                rag_data["similarity_response"] = round(similarity_response*float(value),3)
 
-        # 画面表示用のログ形式
+        # Log format for the UI
         chunk_item_list = re.findall(r"\{(.*?)\}", rag_data["log_format"])
         chunk_items = {}
         for item in chunk_item_list:
             chunk_items[item] = rag_data[item]
         rag_data["log"] = rag_data["log_format"].format(**chunk_items)
 
-        # 記録用のデータセット
+        # Dataset kept for the record
         rag_ref.append(rag_data["log"])
     return rag_ref
 
-# 会話メモリの参照情報
+# Conversation-memory reference info
 def get_memory_reference(memory_selected, memory_similarity=False, response_vec=[], logic="Cosine"):
     memory_ref = []
 
@@ -470,14 +470,14 @@ def get_memory_reference(memory_selected, memory_similarity=False, response_vec=
         timestamp = memory_data["timestamp"]
         text = memory_data["text"]
 
-        # 画面表示用のログ形式
-        memory_ref_log = f"{timestamp}の会話履歴：{seq}_{sub_seq}_{type}「{text[:50]}」<br>"
+        # Log format for the UI
+        memory_ref_log = f"Chat history at {timestamp}: {seq}_{sub_seq}_{type} \"{text[:50]}\"<br>"
         if memory_similarity and response_vec:
             similarity_prompt = round(memory_data["similarity_prompt"],3)
             similarity_response = round(dmu.calculate_similarity_vec(response_vec, memory_data["vec_text"], logic),3)
-            memory_ref_log = f"{timestamp}の会話履歴：{seq}_{sub_seq}_{type}[質問との類似度：{round(similarity_prompt,3)}、回答との類似度：{round(similarity_response,3)}]{text[:50]}<br>"
+            memory_ref_log = f"Chat history at {timestamp}: {seq}_{sub_seq}_{type} [query similarity: {round(similarity_prompt,3)}, response similarity: {round(similarity_response,3)}] {text[:50]}<br>"
 
-        # 記録用のデータセット
+        # Dataset kept for the record
         memory_ref.append(
             {
                 "log": memory_ref_log
@@ -485,13 +485,13 @@ def get_memory_reference(memory_selected, memory_similarity=False, response_vec=
         )
     return memory_ref
 
-# RAGのチャンクデータをCSV(utf-8)から生成
+# Build RAG chunk data from CSV (utf-8)
 def get_chunk_csv(bucket, file_path, file_name, field_items, title_items, key_text_items, value_text_items, category_items=[]):
     rag_data = []
 
     csv_path = Path(file_path) / file_name
     if not csv_path.exists():
-        logger.warning(f"CSVファイルがありません: {file_name}")
+        logger.warning(f"CSV file is missing: {file_name}")
         return rag_data
 
     with open(csv_path, 'r', encoding='utf-8') as csvfile:
@@ -501,7 +501,7 @@ def get_chunk_csv(bucket, file_path, file_name, field_items, title_items, key_te
         for i, row in enumerate(reader):
             data_matched = True
 
-            # フィルタ処理
+            # Filtering
             if category_items:
                 for cond in category_items:
                     for key, values in cond.items():
@@ -510,7 +510,7 @@ def get_chunk_csv(bucket, file_path, file_name, field_items, title_items, key_te
                         if cell_value not in target_values:
                             data_matched = False
 
-            # 条件に合致したらチャンクを作成
+            # Create a chunk when the conditions match
             if data_matched:
                 rag_chunk = {}
                 rag_chunk["id"] = bucket+"-"+str(i+1)
@@ -555,19 +555,19 @@ def get_chunk_csv(bucket, file_path, file_name, field_items, title_items, key_te
                 rag_data.append(rag_chunk)
     return rag_data
 
-# RAGのチャンクデータをNotionデータベースから生成
+# Build RAG chunk data from a Notion database
 def get_chunk_notion(bucket, db_name, item_dict, chk_dict=None, date_dict=None, category_dict=None):
     rag_data = []
     
-    # Notion_DBのIDを取得
+    # Resolve the Notion DB ID
     notion_db_mst_file_path = str(Path(mst_folder_path) / notion_db_mst_file)
     notion_db_mst = dmu.read_json_file(notion_db_mst_file_path)
     db_id = notion_db_mst[db_name]
 
-    # RAG対象のページを取得
+    # Fetch RAG-target pages
     pages = dmn.get_pages_done(db_id, chk_dict, date_dict, category_dict)
 
-    # RAGデータの形式に変換
+    # Convert to RAG-data form
     page_ids = [page['id'] for page in pages]
     for page_id in page_ids:
         if item_dict is not None:
@@ -580,7 +580,7 @@ def get_chunk_notion(bucket, db_name, item_dict, chk_dict=None, date_dict=None, 
                     for k, v in value.items():
                         item_val = dmn.get_notion_item_by_id(pages, page_id, k, v)
                         if item_val is None:
-                            logger.warning(f"[SKIP] Notionページ {page_id} のプロパティ「{k}」({v}型) が未設定のためスキップします")
+                            logger.warning(f"[SKIP] Notion page {page_id}: property \"{k}\" ({v}) is unset; skipping")
                             skip_page = True
                             break
                         page_items[key] = item_val
@@ -610,16 +610,16 @@ def get_chunk_notion(bucket, db_name, item_dict, chk_dict=None, date_dict=None, 
             rag_data.append(page_items)
     return rag_data
 
-# ページインデックス用: Notionデータベースからチャンクを生成（ボディ付き）
+# PageIndex: build chunks from a Notion database (with body content)
 def get_chunk_notion_pageindex(bucket, db_name, item_dict, chk_dict=None, date_dict=None, category_dict=None):
     rag_data = []
 
-    # Notion_DBのIDを取得
+    # Resolve the Notion DB ID
     notion_db_mst_file_path = str(Path(mst_folder_path) / notion_db_mst_file)
     notion_db_mst = dmu.read_json_file(notion_db_mst_file_path)
     db_id = notion_db_mst[db_name]
 
-    # RAG対象のページを取得
+    # Fetch RAG-target pages
     pages = dmn.get_pages_done(db_id, chk_dict, date_dict, category_dict)
 
     for page in pages:
@@ -634,7 +634,7 @@ def get_chunk_notion_pageindex(bucket, db_name, item_dict, chk_dict=None, date_d
                 for k, v in value.items():
                     item_val = dmn.get_notion_item_by_id(pages, notion_page_id, k, v)
                     if item_val is None:
-                        logger.warning(f"[SKIP] Notionページ {notion_page_id} のプロパティ「{k}」({v}型) が未設定のためスキップします")
+                        logger.warning(f"[SKIP] Notion page {notion_page_id}: property \"{k}\" ({v}) is unset; skipping")
                         skip_page = True
                         break
                     page_items[key] = item_val
@@ -654,11 +654,11 @@ def get_chunk_notion_pageindex(bucket, db_name, item_dict, chk_dict=None, date_d
         if skip_page:
             continue
 
-        # ページ本文を取得してbodyに格納
+        # Fetch the page body and store as `body`
         try:
             page_items["body"] = dmn.get_page_body_text(notion_page_id)
         except Exception as e:
-            logger.warning(f"Notionページ本文の取得に失敗 (page={notion_page_id}): {e}")
+            logger.warning(f"Failed to fetch Notion page body (page={notion_page_id}): {e}")
             page_items["body"] = ""
 
         if "create_date" not in page_items:
@@ -671,8 +671,9 @@ def get_chunk_notion_pageindex(bucket, db_name, item_dict, chk_dict=None, date_d
 _PAGEINDEX_BODY_EXTS = {".txt", ".md"}
 
 
-# bodyセル値がsource_dir配下の.txt/.mdファイル名ならその中身を返す。違えば値をそのまま返す。
-# パストラバーサル対策のためファイル名のみを許可する（区切り文字や..を含む場合はインライン扱い）。
+# If the body cell value is a .txt/.md filename under source_dir, return that file's contents.
+# Otherwise return the cell value verbatim.
+# To mitigate path traversal, only bare filenames are allowed (anything containing a separator or '..' is treated as inline).
 def _resolve_pageindex_body(source_dir, value):
     if not isinstance(value, str):
         return ""
@@ -689,26 +690,26 @@ def _resolve_pageindex_body(source_dir, value):
     try:
         return file_path.read_text(encoding="utf-8")
     except Exception as e:
-        logger.warning(f"本文ファイル読込失敗 ({file_path}): {e}")
+        logger.warning(f"Failed to read body file ({file_path}): {e}")
         return value
 
 
-# Excelシート（1行=1ページ）からページインデックス用チャンクを生成
+# Build PageIndex chunks from an Excel sheet (one row = one page)
 def get_chunk_excel_pageindex(bucket, source_dir, source_file, sheet, item_dict):
     rag_data = []
     src_path = Path(source_dir) / source_file
     if not src_path.exists():
-        logger.warning(f"Excelソースが見つかりません: {src_path}")
+        logger.warning(f"Excel source not found: {src_path}")
         return rag_data
 
     try:
         df = pd.read_excel(str(src_path), sheet_name=sheet, dtype=str).fillna("")
     except Exception as e:
-        logger.error(f"Excel読込失敗 ({src_path}, sheet={sheet}): {e}")
+        logger.error(f"Excel load failed ({src_path}, sheet={sheet}): {e}")
         return rag_data
 
     if not isinstance(item_dict, dict):
-        logger.warning(f"item_dictが不正です: {item_dict}")
+        logger.warning(f"Invalid item_dict: {item_dict}")
         return rag_data
 
     for _, row in df.iterrows():
@@ -722,7 +723,7 @@ def get_chunk_excel_pageindex(bucket, source_dir, source_file, sheet, item_dict)
 
         page_id = str(page_items.get("id", "")).strip()
         if not page_id:
-            logger.warning(f"[SKIP] Excel行: ID列「{item_dict.get('id')}」が空のためスキップ")
+            logger.warning(f"[SKIP] Excel row: ID column \"{item_dict.get('id')}\" is empty; skipping")
             continue
         page_items["id"] = page_id
 
@@ -739,7 +740,7 @@ def get_chunk_excel_pageindex(bucket, source_dir, source_file, sheet, item_dict)
     return rag_data
 
 
-# idから動的にsort_orderを算出（"1-0"→100, "1-2"→102, "1-2-3"→10203）
+# Dynamically compute sort_order from the id ("1-0" -> 100, "1-2" -> 102, "1-2-3" -> 10203)
 def _derive_sort_order(page_id):
     parts = str(page_id).split("-")
     sort_order = 0
@@ -753,7 +754,7 @@ def _derive_sort_order(page_id):
     return sort_order
 
 
-# ページインデックスRAGデータの保存（Notion由来、id重複は上書き）
+# Save PageIndex RAG data (from Notion; duplicates by id overwrite)
 def save_rag_pageindex(bucket, rag_data):
     pages_dir = str(Path(rag_folder_pages_path) / bucket)
     os.makedirs(pages_dir, exist_ok=True)
@@ -768,7 +769,7 @@ def save_rag_pageindex(bucket, rag_data):
     for chunk in rag_data:
         page_id = str(chunk.get("id", "")).strip()
         if not page_id:
-            logger.warning(f"[SKIP] idが未設定のためページインデックスに保存できません (notion={chunk.get('notion_page_id')})")
+            logger.warning(f"[SKIP] cannot save to PageIndex because id is unset (notion={chunk.get('notion_page_id')})")
             continue
 
         if book_title is None and chunk.get("book"):
@@ -796,23 +797,23 @@ def save_rag_pageindex(bucket, rag_data):
         pages_map[page_id] = entry
         processed.append({"id": page_id, "notion_page_id": chunk.get("notion_page_id")})
 
-    # BOOK情報の設定（最初に見つかったbook値 or 既存維持 or bucket名）
+    # Set BOOK info (first matching book value, or keep existing, or fall back to bucket)
     if book_title:
         index_data["BOOK"] = {"title": book_title}
     elif "BOOK" not in index_data:
         index_data["BOOK"] = {"title": bucket}
 
-    # sort_orderで並び替えて格納
+    # Sort by sort_order before storing
     sorted_pages = sorted(pages_map.values(), key=lambda x: x.get("sort_order", 0))
     index_data["PAGES"] = sorted_pages
 
     dmu.save_json_file(index_data, index_path)
-    logger.info(f"{bucket}: {len(processed)}件のページを保存しました → {pages_dir}")
+    logger.info(f"{bucket}: saved {len(processed)} pages -> {pages_dir}")
     return processed
 
 
-# ページインデックスRAGをExcel + 個別.mdファイルのZIPバンドルとして書き出し（bytesで返す）。
-# 出力Excelの書式は input='excel' のpageindexインポートと互換（body列にファイル名を格納）。
+# Export PageIndex RAG as a ZIP bundle of Excel + individual .md files (returns bytes).
+# The output Excel format is compatible with the input='excel' pageindex importer (body column stores the file name).
 def export_pageindex_as_excel_bundle(bucket):
     import io
     import zipfile
@@ -832,7 +833,7 @@ def export_pageindex_as_excel_bundle(bucket):
     wb = Workbook()
     ws = wb.active
     ws.title = "pages"
-    headers = ["ブック名", "ID", "タイトル", "サマリー", "タグ", "カテゴリ", "本文"]
+    headers = ["ブック名", "ID", "タイトル", "サマリー", "タグ", "カテゴリ", "本文"]  # Excel column headers (kept JP: match the importer schema)
     ws.append(headers)
     header_font = Font(bold=True, color="FFFFFF")
     header_fill = PatternFill("solid", fgColor="4472C4")
@@ -874,7 +875,7 @@ def export_pageindex_as_excel_bundle(bucket):
     return zip_buf.getvalue()
 
 
-# RAGチャンクデータの編集(ChromaDB)
+# Edit RAG chunk data (ChromaDB)
 def save_rag_chunk_db(rag_id, rag_data):
     db_client = get_chroma_client()
     collection = db_client.get_or_create_collection(name=rag_id, metadata={"hnsw:space": "cosine"})
@@ -886,13 +887,13 @@ def save_rag_chunk_db(rag_id, rag_data):
     cnt_add = 0
     cnt_extent = 0
 
-    # RAGデータをcreate_dateで降順に並び替え
+    # Sort RAG data by create_date descending
     if rag_data and "create_date" in rag_data[0]:
         rag_data = sorted(rag_data, key=lambda x: x["create_date"], reverse=True)
 
-    # 変更内容でチャンクを仕分け
-    chunks_need_embed = []  # 新規 or title/key_text/value_text 変更 → ベクトル化必要
-    chunks_meta_only  = []  # その他フィールドのみ変更 → メタデータ上書きのみ
+    # Bucket chunks by what changed
+    chunks_need_embed = []  # New, or title/key_text/value_text changed -> needs embedding
+    chunks_meta_only  = []  # Only other fields changed -> metadata-only overwrite
 
     skip_keys_for_compare = {"id", "title", "key_text", "value_text", "vector_data_value_text"}
 
@@ -924,10 +925,10 @@ def save_rag_chunk_db(rag_id, rag_data):
                 if meta_changed:
                     chunks_meta_only.append(rag_chunk)
                 else:
-                    logger.info(f"{rag_chunk['title']}は知識情報DBに存在しています（変更なし）。")
+                    logger.info(f"{rag_chunk['title']} already exists in the knowledge DB (no changes).")
                     cnt_extent += 1
 
-    # ベクトル化が必要なチャンクを一括APIコールで処理（key_text + value_text をまとめて送信）
+    # Process chunks needing embedding in a single API call (send key_text + value_text together)
     if chunks_need_embed:
         key_texts = [c["key_text"].replace("\n", "") for c in chunks_need_embed]
         val_texts = [c["value_text"].replace("\n", "") for c in chunks_need_embed]
@@ -942,24 +943,24 @@ def save_rag_chunk_db(rag_id, rag_data):
             rag_chunk["vector_data_value_text"] = str(val_vecs[i])
             if chunk_id in existing_map:
                 collection.delete(ids=[chunk_id])
-                logger.info(f"{rag_chunk['title']}を知識情報DBで更新しました。")
+                logger.info(f"Updated {rag_chunk['title']} in the knowledge DB.")
             else:
-                logger.info(f"{rag_chunk['title']}を知識情報DBに追加しました。")
+                logger.info(f"Added {rag_chunk['title']} to the knowledge DB.")
             collection.add(ids=[chunk_id], embeddings=[key_vecs[i]], metadatas=rag_chunk)
             cnt_add += 1
 
-    # メタデータのみ変更のチャンクをベクトル化なしで上書き
+    # Overwrite metadata-only chunks without re-embedding
     for rag_chunk in chunks_meta_only:
         chunk_id = rag_chunk["id"]
         del rag_chunk["id"]
         rag_chunk["vector_data_value_text"] = existing_map[chunk_id].get("vector_data_value_text", "")
         collection.update(ids=[chunk_id], metadatas=rag_chunk)
-        logger.info(f"{rag_chunk['title']}のメタデータを知識情報DBで更新しました（ベクトル化なし）。")
+        logger.info(f"Updated metadata for {rag_chunk['title']} in the knowledge DB (no re-embedding).")
         cnt_add += 1
 
     return cnt_add, cnt_extent
 
-# 既存RAGデータにprivateフラグを一括付与（マイグレーション用）
+# Migration helper: bulk-add the private flag to existing RAG data
 def migrate_add_private_flag():
     db_client = get_chroma_client()
     collections = db_client.list_collections()
@@ -981,12 +982,12 @@ def migrate_add_private_flag():
         if ids_to_update:
             collection.update(ids=ids_to_update, metadatas=metas_to_update)
             total += len(ids_to_update)
-            logger.info(f"{col_name}: {len(ids_to_update)}件にprivate=Falseを付与")
-    logger.info(f"マイグレーション完了: 合計{total}件")
+            logger.info(f"{col_name}: applied private=False to {len(ids_to_update)} rows")
+    logger.info(f"Migration done: {total} rows total")
     return total
 
 
-# ページインデックスRAGデータの保存（.md + _index.json）
+# Save PageIndex RAG data (.md + _index.json)
 def save_rag_pages(rag_id, rag_data):
     pages_dir = str(Path(rag_folder_pages_path) / rag_id)
     os.makedirs(pages_dir, exist_ok=True)
@@ -998,14 +999,14 @@ def save_rag_pages(rag_id, rag_data):
         if not page_id:
             continue
 
-        # ページ本文を .md として保存
+        # Save the page body as .md
         body = chunk.get("body", chunk.get("value_text", ""))
         title = chunk.get("title", page_id)
         md_content = f"# {title}\n\n{body}"
         md_path = str(Path(pages_dir) / f"{page_id}.md")
         dmu.save_text_file(md_content, md_path)
 
-        # インデックスエントリを作成
+        # Create the index entry
         tags_raw = chunk.get("tags", "")
         tags = [t.strip() for t in tags_raw.split(",") if t.strip()] if isinstance(tags_raw, str) else tags_raw
         index_entry = {
@@ -1021,25 +1022,25 @@ def save_rag_pages(rag_id, rag_data):
         index_pages.append(index_entry)
         cnt += 1
 
-    # sort_orderがあればソート
+    # Sort by sort_order if present
     if index_pages and "sort_order" in index_pages[0]:
         index_pages.sort(key=lambda x: x.get("sort_order", 0))
 
-    # _index.json を保存
+    # Save _index.json
     index_data = {"PAGES": index_pages}
     index_path = str(Path(pages_dir) / "_index.json")
     dmu.save_json_file(index_data, index_path)
 
-    logger.info(f"{rag_id}: {cnt}件のページを保存しました → {pages_dir}")
+    logger.info(f"{rag_id}: saved {cnt} pages -> {pages_dir}")
     return cnt, len(index_pages)
 
 
-# ページインデックスRAGのコンテキスト取得
+# Build context from a PageIndex RAG
 def select_rag_page_index(query, rag, exec_info):
     rag_context = ""
     rag_selected = []
 
-    # DATA_NAMEからページフォルダを特定
+    # Resolve the page folder from DATA_NAME
     for rd in rag.get("DATA", []):
         if rd.get("DATA_TYPE") != "PAGE_INDEX":
             continue
@@ -1048,25 +1049,25 @@ def select_rag_page_index(query, rag, exec_info):
         index_path = str(Path(pages_dir) / "_index.json")
 
         if not os.path.exists(index_path):
-            logger.warning(f"ページインデックスが見つかりません: {index_path}")
+            logger.warning(f"Page index not found: {index_path}")
             continue
 
-        # インデックスを読み込み
+        # Load the index
         index_data = dmu.read_json_file(index_path)
         pages = index_data.get("PAGES", [])
         if not pages:
             continue
 
-        # ページIDからメタ情報を引くためのマップ
+        # Map for looking up meta by page id
         pages_map = {p["id"]: p for p in pages}
 
-        # LLMでページIDを選択
+        # Let the LLM choose page IDs
         max_pages = rag.get("MAX_PAGES", 5)
         support_agent = rd.get("SUPPORT_AGENT", "agent_59PageIndexSearch.json")
         selected_ids = dmt.page_index_search(
             exec_info, support_agent, query, pages, max_pages)
 
-        # 選択されたページの本文を読み込み、ログ用データを構築
+        # Load the selected page bodies and assemble log data
         log_template = rag.get("LOG_TEMPLATE", "'rag':'{rag_name}', 'page_id':'{page_id}', 'title':'{title}', 'category':'{category}', 'summary':'{summary}'")
         for page_id in selected_ids:
             md_path = str(Path(pages_dir) / f"{page_id}.md")
@@ -1074,7 +1075,7 @@ def select_rag_page_index(query, rag, exec_info):
                 page_content = dmu.read_text_file(md_path)
                 rag_context += page_content + "\n\n"
 
-                # ログエントリをLOG_TEMPLATEで整形
+                # Format the log entry via LOG_TEMPLATE
                 page_meta = pages_map.get(page_id, {})
                 log_data = {
                     "rag_name": rag.get("RAG_NAME", ""),
@@ -1089,28 +1090,28 @@ def select_rag_page_index(query, rag, exec_info):
                     log_entry = str(log_data)
                 rag_selected.append(log_entry)
 
-    # ヘッダーテンプレートを先頭に付与
+    # Prepend the header template
     if rag_context:
         header = rag.get("HEADER_TEMPLATE", "")
         rag_context = header + rag_context
 
-        # テキスト上限でカット
+        # Truncate at the text cap
         text_limits = rag.get("TEXT_LIMITS", 6000)
         if len(rag_context) > text_limits:
             rag_context = rag_context[:text_limits]
 
     return rag_context, rag_selected
 
-# RAGデータ生成
+# Generate RAG data
 def generate_rag():
-    # RAGマスターの読込
+    # Load the RAG master
     rag_mst_dict = dmu.read_json_file(rag_mst_file, mst_folder_path)
 
-    # 各RAGデータを生成
+    # Generate each RAG data
     cnt_add = 0
     cnt_extent = 0
 
-    # チャンクデータの取得
+    # Fetch chunk data
     rag_data = []
     for rag_id, rag_setting in rag_mst_dict.items():
         if rag_setting["active"] == "Y":
@@ -1135,21 +1136,21 @@ def generate_rag():
                         rag_setting["item_dict"],
                     )
                 else:
-                    logger.warning("excel入力は現状pageindexのみ対応しています")
+                    logger.warning("Excel input currently supports only pageindex")
             else:
-                logger.warning("正しいモードが設定されていません。")
+                logger.warning("No valid mode configured.")
 
             if rag_data:
-                # ページIDを保持（save_rag_chunk_dbでidが削除される前にコピー）
+                # Keep the page IDs (copy before save_rag_chunk_db removes id)
                 page_ids_map = {chunk["id"]: chunk["id"] for chunk in rag_data if "id" in chunk}
 
-                # ChromaDBでの保存
+                # Save into ChromaDB
                 if rag_setting["data_type"] == "chromadb":
                     cnt_add, cnt_extent = save_rag_chunk_db(rag_id, rag_data)
                     cnt_total = cnt_add + cnt_extent
-                    logger.info(f"{rag_id}のDB書き込みが完了しました。追加件数:{cnt_add}, トータル件数:{cnt_total}")
+                    logger.info(f"{rag_id} DB write done. added: {cnt_add}, total: {cnt_total}")
 
-                    # RAG登録完了フラグをNotionに反映（取得対象=fin_flg未設定ページなので全件更新）
+                    # Reflect the RAG-registration complete flag back to Notion (targets pages without fin_flg, so update all)
                     fin_flg = rag_setting.get("fin_flg", {})
                     if fin_flg and rag_setting["input"] == "notion":
                         fin_cnt = 0
@@ -1159,18 +1160,18 @@ def generate_rag():
                                     if isinstance(prop_value, bool):
                                         dmn.update_notion_chk(page_id, prop_name, prop_value)
                                     else:
-                                        logger.warning(f"fin_flg: 未対応の型 {prop_name}={prop_value}")
+                                        logger.warning(f"fin_flg: unsupported type {prop_name}={prop_value}")
                                     fin_cnt += 1
                                 except Exception as e:
-                                    logger.warning(f"fin_flg更新失敗 (page={page_id}, {prop_name}): {e}")
-                        logger.info(f"{rag_id}: fin_flgを{fin_cnt}件のNotionページに反映しました")
+                                    logger.warning(f"fin_flg update failed (page={page_id}, {prop_name}): {e}")
+                        logger.info(f"{rag_id}: fin_flg reflected to {fin_cnt} Notion pages")
 
-                # ページインデックスでの保存（Notion由来）
+                # Save into PageIndex (Notion-derived)
                 elif rag_setting["data_type"] == "pageindex":
                     processed = save_rag_pageindex(rag_setting["bucket"], rag_data)
-                    logger.info(f"{rag_id}のページインデックス書き込みが完了しました。件数:{len(processed)}")
+                    logger.info(f"{rag_id} PageIndex write done. count: {len(processed)}")
 
-                    # RAG登録完了フラグをNotionに反映（Notion入力時のみ）
+                    # Reflect the RAG-registration complete flag back to Notion (Notion input only)
                     fin_flg = rag_setting.get("fin_flg", {})
                     if fin_flg and rag_setting["input"] == "notion":
                         fin_cnt = 0
@@ -1183,18 +1184,18 @@ def generate_rag():
                                     if isinstance(prop_value, bool):
                                         dmn.update_notion_chk(notion_pid, prop_name, prop_value)
                                     else:
-                                        logger.warning(f"fin_flg: 未対応の型 {prop_name}={prop_value}")
+                                        logger.warning(f"fin_flg: unsupported type {prop_name}={prop_value}")
                                     fin_cnt += 1
                                 except Exception as e:
-                                    logger.warning(f"fin_flg更新失敗 (page={notion_pid}, {prop_name}): {e}")
-                        logger.info(f"{rag_id}: fin_flgを{fin_cnt}件のNotionページに反映しました")
+                                    logger.warning(f"fin_flg update failed (page={notion_pid}, {prop_name}): {e}")
+                        logger.info(f"{rag_id}: fin_flg reflected to {fin_cnt} Notion pages")
 
-                # 旧ページインデックス（CSV等のpage_id付きチャンク）
+                # Legacy PageIndex (CSV-style chunks with page_id)
                 elif rag_setting["data_type"] == "page_index":
                     cnt_add, cnt_total = save_rag_pages(rag_id, rag_data)
-                    logger.info(f"{rag_id}のページ書き込みが完了しました。ページ数:{cnt_total}")
+                    logger.info(f"{rag_id} page write done. pages: {cnt_total}")
 
-                    # RAG登録完了フラグをNotionに反映
+                    # Reflect the RAG-registration complete flag back to Notion
                     fin_flg = rag_setting.get("fin_flg", {})
                     if fin_flg and rag_setting["input"] == "notion":
                         fin_cnt = 0
@@ -1204,21 +1205,21 @@ def generate_rag():
                                     if isinstance(prop_value, bool):
                                         dmn.update_notion_chk(page_id, prop_name, prop_value)
                                     else:
-                                        logger.warning(f"fin_flg: 未対応の型 {prop_name}={prop_value}")
+                                        logger.warning(f"fin_flg: unsupported type {prop_name}={prop_value}")
                                     fin_cnt += 1
                                 except Exception as e:
-                                    logger.warning(f"fin_flg更新失敗 (page={page_id}, {prop_name}): {e}")
-                        logger.info(f"{rag_id}: fin_flgを{fin_cnt}件のNotionページに反映しました")
+                                    logger.warning(f"fin_flg update failed (page={page_id}, {prop_name}): {e}")
+                        logger.info(f"{rag_id}: fin_flg reflected to {fin_cnt} Notion pages")
 
-# RAGデータベース（Collection）の削除
+# Delete a RAG database (Collection)
 def del_rag_db(ragdb_selected=[]):
     db_client = get_chroma_client()
 
-    #SQLite3に接続
+    # Connect to SQLite3
     conn = sqlite3.connect(rag_folder_db_path+'chroma.sqlite3')
 
     if ragdb_selected:
-        # 削除対象のデータフレームを取得
+        # Fetch the dataframe of rows to delete
         placeholders = ','.join(['?'] * len(ragdb_selected))  # '?,?,?'
         query = f"SELECT id AS collection_id, name FROM collections WHERE name IN ({placeholders})"
         collections_df = pd.read_sql_query(query, conn, params=ragdb_selected)
@@ -1235,9 +1236,9 @@ def del_rag_db(ragdb_selected=[]):
                     logger.info(f"Deleted: {seg_path}")
                 else:
                     logger.warning(f"Not found: {seg_path}")
-            logger.info(f"{collection_name}を削除しました。")
+            logger.info(f"Deleted {collection_name}.")
     else:
-        # 削除対象のデータフレームを取得
+        # Fetch the dataframe of rows to delete
         query = "SELECT id AS collection_id, name FROM collections"
         collections_df = pd.read_sql_query(query, conn, params=ragdb_selected)
         segments_df = pd.read_sql_query("SELECT id AS segment_id, collection AS collection_id , type, scope FROM segments WHERE scope = 'VECTOR'", conn)
@@ -1255,12 +1256,12 @@ def del_rag_db(ragdb_selected=[]):
                     logger.info(f"Deleted: {seg_path}")
                 else:
                     logger.warning(f"Not found: {seg_path}")
-            logger.info(f"{collection_name}を削除しました。")
+            logger.info(f"Deleted {collection_name}.")
 
-    #SQLite3の物理容量を解放
+    # Release SQLite3 physical space
     conn.execute("VACUUM;")
     conn.close()
 
-    # シングルトンをリセット（削除後は再接続が必要）
+    # Reset the singleton (re-connect required after deletion)
     global _chroma_client
     _chroma_client = None

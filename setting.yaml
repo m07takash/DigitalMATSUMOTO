@@ -16,12 +16,14 @@ RAG_DATA_CSV_FOLDER: "user/common/csv/"
 USER_MEMORY_FOLDER: "user/common/user_memory/"
 TEMP_FOLDER: "user/common/temp/"
 TEST_FOLDER: "test/"
-# ※ スケジュール設定は user/common/mst/scheduled_jobs.json に移管。WebUIの Scheduler メニューから編集してください。
-# エージェントペルソナの並列実行上限（複数ペルソナ同時送信時のThreadPoolExecutor max_workers）
+# NOTE: scheduled-job settings have been migrated to user/common/mst/scheduled_jobs.json.
+# Edit them from the Scheduler menu in the WebUI.
+# Maximum number of agent personas to run in parallel (ThreadPoolExecutor max_workers
+# when sending to multiple personas simultaneously)
 MAX_PARALLEL_PERSONAS: 4
-# Thinking Modeでpersonaを自動選定する際の最大人数（WebUI Max Personas入力の既定値）
+# Maximum number of personas auto-selected in Thinking Mode (default for the WebUI "Max Personas" input)
 MAX_PERSONAS: 3
-# Web検索の既定のエージェント（OpenAI, Perplexity, Googleから選択）
+# Default web-search engine (choose one of OpenAI, Perplexity, Google)
 WEB_SEARCH_DEFAULT: "OpenAI"
 PERPLEXITY_URL: "https://api.perplexity.ai/chat/completions"
 PERPLEXITY_MODEL: "sonar"
@@ -40,16 +42,16 @@ URL_FETCH:
   MAX_SUBPAGES: 5
   MAX_DEPTH: 1
   USER_AGENT: "DigiMatsuAgent/1.0 (+URL fetch)"
-  # 追加で拒否したいドメイン（サブドメインも再帰的に拒否）
+  # Extra domains to deny (subdomains are denied recursively)
   BLOCKED_DOMAINS: []
-  # 非空の場合はホワイトリストモード（列挙ドメインのみ許可）
+  # When non-empty, switches to whitelist mode (only listed domains are allowed)
   ALLOWED_DOMAINS: []
-  # hosts形式 (`0.0.0.0 example.com`) または 1行1ドメインの外部ブロックリストへのパス
-  # 推奨公開リスト:
-  #   - StevenBlack/hosts (adult+gambling+malware等): https://github.com/StevenBlack/hosts
-  #   - UT1 blacklists (カテゴリ別: adult / malware / phishing / warez 等): https://dsi.ut-capitole.fr/blacklists/
+  # Path to an external blocklist in hosts format (`0.0.0.0 example.com`) or one-domain-per-line
+  # Recommended public lists:
+  #   - StevenBlack/hosts (adult + gambling + malware etc.): https://github.com/StevenBlack/hosts
+  #   - UT1 blacklists (by category: adult / malware / phishing / warez, etc.): https://dsi.ut-capitole.fr/blacklists/
   #   - Hagezi DNS blocklists: https://github.com/hagezi/dns-blocklists
-  # 例: BLOCKLIST_FILE: "user/common/mst/blocklist_hosts.txt"
+  # Example: BLOCKLIST_FILE: "user/common/mst/blocklist_hosts.txt"
   BLOCKLIST_FILE: ""
   BLOCKED_EXTENSIONS:
     - ".exe"

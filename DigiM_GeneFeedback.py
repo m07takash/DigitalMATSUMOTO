@@ -12,18 +12,19 @@ import DigiM_Notion as dmn
 
 logger = logging.getLogger(__name__)
 
-# setting.yamlからフォルダパスなどを設定
+# Load folder paths and other settings from setting.yaml
 system_setting_dict = dmu.read_yaml_file("setting.yaml")
 mst_folder_path = system_setting_dict["MST_FOLDER"]
 rag_data_csv_path = system_setting_dict["RAG_DATA_CSV_FOLDER"]
 
-# system.envファイルをロードして環境変数を設定
+# Load the system.env file and set environment variables
 if os.path.exists("system.env"):
     load_dotenv("system.env")
 notion_db_mst_file = os.getenv("NOTION_MST_FILE")
 
-# デフォルトのFIELD_MAP（後方互換用）
-# name: CSV列名, notion_name: Notionプロパティ名（省略時はnameを使用）
+# Default FIELD_MAP (kept for backward compatibility)
+# name: CSV column name, notion_name: Notion property name (uses `name` if omitted).
+# Note: the notion_name values must match existing Notion DB property names; do not translate.
 DEFAULT_FIELD_MAP = [
     {"key": "title",        "name": "title",        "notion_name": "title",         "type": "title"},
     {"key": "RAG_Category", "name": "RAG_Category", "notion_name": "RAGカテゴリ",   "type": "category"},
@@ -39,7 +40,7 @@ DEFAULT_FIELD_MAP = [
     {"key": "response",     "name": "response",      "notion_name": "レスポンス",    "type": "text"},
 ]
 
-# フィードバックデータの定義
+# Feedback data definition
 def get_feedback_data(fb_k, memo, category, k1, k2, v2, service_id, user_id):
     fb_data = {}
     fb_data["title"] = v2["setting"]["session_name"][:20]+"-"+memo[:20]
@@ -59,12 +60,12 @@ def get_feedback_data(fb_k, memo, category, k1, k2, v2, service_id, user_id):
     fb_data["memo"] = memo
     return fb_data
 
-# CSVファイルへの保存
+# Save to a CSV file
 def save_feedback_csv(fb_data, save_db, field_map):
     fieldnames = [f["name"] for f in field_map]
     date_keys = {f["key"] for f in field_map if f["type"] == "date"}
 
-    # 内部キー → 出力列名のマッピングで行データを構築
+    # Build the row using the internal key -> output column name mapping
     row_data = {}
     for f in field_map:
         val = fb_data.get(f["key"], f.get("default", ""))
@@ -75,20 +76,20 @@ def save_feedback_csv(fb_data, save_db, field_map):
                 pass
         row_data[f["name"]] = str(val).replace('\r\n', '').replace('\r', '').replace('\n', '')
 
-    # ファイル名を設定
+    # Resolve the output file name
     file_path = rag_data_csv_path + save_db + ".csv"
 
-    # 現在のデータを読み込み
+    # Load the current data
     records = []
     if os.path.exists(file_path):
         with open(file_path, mode="r", encoding="utf-8-sig") as csvfile:
             reader = csv.DictReader(csvfile)
             records = list(reader)
 
-    # title列名を取得（FIELD_MAPでtype="title"の列名）
+    # Resolve the title column (the FIELD_MAP entry with type="title")
     title_col = next((f["name"] for f in field_map if f["type"] == "title"), fieldnames[0])
 
-    # Titleが一致する行があれば上書き、なければ追加
+    # Overwrite the row whose Title matches; append a new row otherwise
     updated = False
     for i, row in enumerate(records):
         if row.get(title_col) == row_data.get(title_col):
@@ -99,28 +100,28 @@ def save_feedback_csv(fb_data, save_db, field_map):
     if not updated:
         records.append(row_data)
 
-    # 全体を書き戻し（上書き保存）
+    # Write the whole file back (overwrite)
     with open(file_path, mode="w", newline="", encoding="utf-8-sig") as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(records)
 
-# Notionデータベースへの保存
+# Save to a Notion database
 def save_feedback_notion(fb_data, save_db, field_map):
     notion_db_mst_file_path = str(Path(mst_folder_path) / notion_db_mst_file)
     notion_db_mst = dmu.read_json_file(notion_db_mst_file_path)
     if save_db not in notion_db_mst:
-        logger.error(f"Notionマスターに '{save_db}' が見つかりません。登録済みキー: {list(notion_db_mst.keys())}")
+        logger.error(f"'{save_db}' not found in the Notion master. Registered keys: {list(notion_db_mst.keys())}")
         return
     db_id = notion_db_mst[save_db]
 
-    # titleフィールドを取得してNotionページを作成
+    # Create the Notion page using the title field
     title_field = next((f for f in field_map if f["type"] == "title"), None)
     title_val = fb_data.get(title_field["key"], "") if title_field else fb_data.get("title", "")
     response = dmn.create_page(db_id, title_val)
     page_id = response["id"]
 
-    # FIELD_MAPに基づいて型別にNotionプロパティを更新
+    # Update Notion properties by type, based on FIELD_MAP
     for f in field_map:
         if f["type"] == "title":
             continue
@@ -139,7 +140,7 @@ def save_feedback_notion(fb_data, save_db, field_map):
         elif field_type == "checkbox":
             dmn.update_notion_chk(page_id, prop_name, bool(val))
 
-# フィードバックデータの保存
+# Save feedback data
 def create_feedback_data(session_id, agent_file):
     session = dms.DigiMSession(session_id)
     agent = dma.DigiM_Agent(agent_file)

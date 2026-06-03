@@ -6,26 +6,26 @@ import DigiM_Util as dmu
 import DigiM_FoundationModel as dmfm
 import DigiM_Context as dmc
 
-# setting.yamlからフォルダパスなどを設定
+# Load folder paths and other settings from setting.yaml
 system_setting_dict = dmu.read_yaml_file("setting.yaml")
 character_folder_path = system_setting_dict["CHARACTER_FOLDER"]
 mst_folder_path = system_setting_dict["MST_FOLDER"]
 agent_folder_path = system_setting_dict["AGENT_FOLDER"]
 
-# system.envファイルをロードして環境変数を設定
+# Load system.env and set environment variables
 if os.path.exists("system.env"):
     load_dotenv("system.env")
 prompt_template_mst_file = os.getenv("PROMPT_TEMPLATE_MST_FILE")
 prompt_temp_mst_path = str(Path(mst_folder_path) / prompt_template_mst_file)
 
-# エージェントJSONのキャッシュ（ファイルパス→データ）
+# Agent JSON cache (file path -> data)
 _agent_cache = {}
 
 def _read_agent_json(agent_file):
-    """エージェントJSONをキャッシュ付きで読み込む（deep copyで返却し、呼び出し側の変更がキャッシュを汚染しないようにする）"""
+    """Load the agent JSON with caching (return a deep copy so caller mutations do not pollute the cache)."""
     path = str(Path(agent_folder_path) / agent_file)
     if not os.path.exists(path):
-        raise FileNotFoundError(f"エージェントファイルが見つかりません: {path}")
+        raise FileNotFoundError(f"Agent file not found: {path}")
     mtime = os.path.getmtime(path)
     cached = _agent_cache.get(agent_file)
     if cached and cached[0] == mtime:
@@ -34,7 +34,7 @@ def _read_agent_json(agent_file):
     _agent_cache[agent_file] = (mtime, data)
     return copy.deepcopy(data)
 
-# エージェント一覧の取得
+# Get the list of all agents
 def get_all_agents():
     agent_files = dmu.get_files(agent_folder_path, ".json")
     agents = []
@@ -43,8 +43,8 @@ def get_all_agents():
         agents.append({"AGENT": agent_data["NAME"], "FILE": agent_file})
     return agents
 
-# 選択可能なエージェント一覧の取得
-# group_cd は文字列1つ または 文字列のリスト。リストの場合はOR条件でエージェントを抽出する。
+# Get the list of agents the user can select.
+# group_cd is one string or a list of strings; when a list, agents are matched by OR.
 def get_display_agents(group_cd="All"):
     if isinstance(group_cd, str):
         user_groups = [group_cd] if group_cd else []
@@ -64,26 +64,26 @@ def get_display_agents(group_cd="All"):
         if has_all_or_admin:
             agents.append({"AGENT": agent_data["DISPLAY_NAME"], "FILE": agent_file})
             continue
-        # OR一致: ユーザーのいずれかのグループがエージェントのGROUPに含まれていれば選択可
+        # OR match: any of the user's groups being in the agent's GROUP makes it selectable
         if any(g in agent_data["GROUP"] for g in user_groups):
             agents.append({"AGENT": agent_data["DISPLAY_NAME"], "FILE": agent_file})
     return agents
 
-# エージェントが持つエンジン一覧を取得（LLM配下のモデル名リスト、rawなJSONデータを渡す）
+# Get the list of engines an agent has (model names under LLM; takes raw JSON data)
 def get_engine_list(agent_data, model_type="LLM"):
     engine_config = agent_data.get("ENGINE", {}).get(model_type, {})
     return [k for k in engine_config if k != "DEFAULT" and isinstance(engine_config.get(k), dict)]
 
-# LLMエージェントのプロパティを設定
+# Set the properties of the LLM agent
 def get_agent_item(agent_file, item):
     agent_data = _read_agent_json(agent_file)
     return agent_data[item]
 
-# LLMエージェントのプロパティを設定
+# Set the properties of the LLM agent
 def set_normal_agent(agent):
     overwrite_items = {}
-    overwrite_items["NAME"] = "ノーマルLLM"
-    overwrite_items["ACT"] = "通常のチャットアシスタント"
+    overwrite_items["NAME"] = "AI"
+    overwrite_items["ACT"] = "Chat with User"
     overwrite_items["PERSONALITY"] = ""
     overwrite_items["HABIT"] = ""
     overwrite_items["KNOWLEDGE"] = []
@@ -96,7 +96,7 @@ def set_normal_agent(agent):
     dmu.update_dict(agent.agent, overwrite_items)
     agent.set_property(agent.agent)
 
-# 通常LLMの実行
+# Execute the vanilla LLM
 def generate_pureLLM(base_agent, query, memories_selected=[], prompt_temp_cd="No Template"):
     agent = base_agent
 
@@ -104,16 +104,16 @@ def generate_pureLLM(base_agent, query, memories_selected=[], prompt_temp_cd="No
     model_name = agent.agent["ENGINE"][model_type]["MODEL"]
     tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
 
-    # 通常LLMに設定
+    # Apply normal-LLM configuration
     set_normal_agent(agent)
 
-    # エージェントに設定されるプロンプトテンプレートを設定
+    # Resolve the prompt template assigned to the agent
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
 
-    # プロンプトの設定
+    # Set up the prompt
     prompt = f'{prompt_template}{query}'
 
-    # LLMの実行
+    # Execute the LLM
     response = ""
     for prompt, response_chunk, completion in agent.generate_response(model_type, prompt, memories_selected):
         if response_chunk:
@@ -124,15 +124,15 @@ def generate_pureLLM(base_agent, query, memories_selected=[], prompt_temp_cd="No
 
     return response, model_name, prompt_tokens, response_tokens
 
-# 通常LLMの実行(外部呼出)
+# Execute the vanilla LLM (external call)
 def ext_generate_pureLLM(agent_file, query, memories_selected=[], prompt_temp_cd="No Template"):
     base_agent = DigiM_Agent(agent_file)
     response, model_name, prompt_tokens, response_tokens = generate_pureLLM(base_agent, query, memories_selected=[], prompt_temp_cd=prompt_temp_cd)
     return response, model_name, prompt_tokens, response_tokens
 
-# persona dict（DigiM_AgentPersona.load_personasの戻り）からエージェントデータを上書き。
-# 上書き対象: NAME / ACT / PERSONALITY（character_text/character_fileを含む） / HABIT（フィルタ） / KNOWLEDGE（フィルタ） / DEFINE_CODE
-# 不変:       ENGINE / SUPPORT_AGENT / BOOK / SKILL / FEEDBACK / GROUP / ORG / PERSONA_FILES
+# Override agent data from a persona dict (returned by DigiM_AgentPersona.load_personas).
+# Overridden: NAME / ACT / PERSONALITY (including character_text/character_file) / HABIT (filter) / KNOWLEDGE (filter) / DEFINE_CODE
+# Immutable:  ENGINE / SUPPORT_AGENT / BOOK / SKILL / FEEDBACK / GROUP / ORG / PERSONA_FILES
 def _apply_persona(agent_data, persona):
     if not persona:
         return agent_data
@@ -142,7 +142,7 @@ def _apply_persona(agent_data, persona):
     if persona.get("act"):
         agent_data["ACT"] = persona["act"]
 
-    # PERSONALITY: persona.personalityで全置換し、CHARACTERは character_file > character_text > personality内CHARACTER の優先順
+    # PERSONALITY: replace entirely with persona.personality. CHARACTER priority is character_file > character_text > CHARACTER inside personality
     if persona.get("personality"):
         new_personality = dict(persona["personality"])
     else:
@@ -153,20 +153,20 @@ def _apply_persona(agent_data, persona):
         new_personality["CHARACTER"] = persona["character_text"]
     agent_data["PERSONALITY"] = new_personality
 
-    # HABIT: ["ALL"]ならスルー、リストならホワイトリスト
+    # HABIT: pass through when ["ALL"]; otherwise treat as a whitelist
     habits_filter = persona.get("habits") or ["ALL"]
     if "ALL" not in habits_filter:
         habit_dict = agent_data.get("HABIT") or {}
         agent_data["HABIT"] = {k: v for k, v in habit_dict.items() if k in habits_filter}
 
-    # KNOWLEDGE: ["ALL"]ならスルー、リストならRAG_NAMEでフィルタ
+    # KNOWLEDGE: pass through when ["ALL"]; otherwise filter by RAG_NAME
     knowledge_filter = persona.get("knowledge") or ["ALL"]
     if "ALL" not in knowledge_filter:
         knowledge_list = agent_data.get("KNOWLEDGE") or []
         agent_data["KNOWLEDGE"] = [k for k in knowledge_list
                                     if k.get("RAG_NAME") in knowledge_filter]
 
-    # DEFINE_CODE: 全置換（persona側で明示的に空dictも許容）
+    # DEFINE_CODE: full replacement (an explicit empty dict on the persona side is allowed)
     if persona.get("define_code") is not None:
         agent_data["DEFINE_CODE"] = persona["define_code"]
 
@@ -186,23 +186,23 @@ class DigiM_Agent:
             self.persona_name = ""
         self.set_property(agent_data)
 
-    # エージェントのプロパティの設定
+    # Configure the agent properties
     def set_property(self, agent_data):
         self.agent = agent_data
-        # ENGINEのネスト構造を解決: ENGINE.LLM.DEFAULT="GPT" → ENGINE.LLM = GPTのフラット設定（クリーン）
-        # 名前付きモデル設定はself._engine_named_configsに別持ち（chat_memory.jsonを汚染しない）
+        # Resolve the nested ENGINE structure: ENGINE.LLM.DEFAULT="GPT" -> ENGINE.LLM = the flat GPT config (clean)
+        # Named model configs are kept separately in self._engine_named_configs (so chat_memory.json stays clean)
         self._engine_named_configs = {}
         for model_type in list(self.agent.get("ENGINE", {}).keys()):
             config = self.agent["ENGINE"][model_type]
             if not isinstance(config, dict):
                 continue
-            # FUNC_NAMEが直接ある場合はすでにフラット設定済み（二重解決を防ぐ）
+            # If FUNC_NAME is present directly, the config is already flat (avoid double resolution)
             if "FUNC_NAME" in config:
                 continue
             named_configs = {k: v for k, v in config.items() if k != "DEFAULT" and isinstance(v, dict)}
             if not named_configs:
                 continue
-            # DEFAULT指定があればそのモデル、なければ先頭モデルをデフォルトに
+            # Use the DEFAULT-specified model if provided; otherwise pick the first one
             default_name = config.get("DEFAULT") if isinstance(config.get("DEFAULT"), str) else next(iter(named_configs))
             if default_name in named_configs:
                 self.agent["ENGINE"][model_type] = dict(named_configs[default_name])
@@ -219,7 +219,7 @@ class DigiM_Agent:
         self.book = self.agent["BOOK"] if "BOOK" in self.agent else []
         self.system_prompt = self.set_system_prompt()
 
-    # システムプロンプトの設定
+    # Build the system prompt
     def set_system_prompt(self):
         system_prompt = ""
         if self.name:
@@ -227,7 +227,7 @@ class DigiM_Agent:
         if self.act:
             system_prompt += f"{self.act}として振る舞ってください。"
 
-        # パーソナリティ
+        # Personality
         if self.personality:
             if 'SEX' in self.personality:
                 system_prompt += f"\n性別:{self.personality['SEX']}" if self.personality['SEX'] else ""
@@ -241,7 +241,7 @@ class DigiM_Agent:
                 if self.personality['BIG5']:
                     system_prompt += f"\nビックファイブ:[Openness:{self.personality['BIG5']['Openness']*100:.2f}%, Conscientiousness:{self.personality['BIG5']['Conscientiousness']*100:.2f}%, Extraversion:{self.personality['BIG5']['Extraversion']*100:.2f}%, Agreeableness:{self.personality['BIG5']['Agreeableness']*100:.2f}%, Neuroticism:{self.personality['BIG5']['Neuroticism']*100:.2f}%]"
 
-            # 口調
+            # Speaking style
             if 'LANGUAGE' in self.personality:
                 system_prompt += f"\n使用する言語: {self.personality['LANGUAGE']}" if self.personality['LANGUAGE'] else ""
             if 'SPEAKING_STYLE' in self.personality:
@@ -250,7 +250,7 @@ class DigiM_Agent:
                     speaking_style = prompt_temps_json['SPEAKING_STYLE'][self.personality['SPEAKING_STYLE']]
                     system_prompt += f"\n口調:{speaking_style}"
 
-            # キャラクター設定
+            # Character profile
             if 'CHARACTER' in self.personality:
                 character = self.personality["CHARACTER"]
                 if character:
@@ -261,32 +261,32 @@ class DigiM_Agent:
 
         return system_prompt
 
-    # コンテンツコンテキストの生成
+    # Build the contents context
     def set_contents_context(self, seq, sub_seq, contents):
         context, records, image_files = dmc.create_contents_context(self.agent, contents, seq, sub_seq)
         return context, records, image_files
 
-    # プロンプトテンプレートの取得
+    # Fetch the prompt template
     def set_prompt_template(self, prompt_temp_cd):
         prompt_template = dmc.set_prompt_template(prompt_temp_cd)
         return prompt_template
 
-    # ナレッジコンテキスト(RAG)の生成
+    # Build the knowledge (RAG) context
     def set_knowledge_context(self, query, query_vecs=[], exec_info={}, meta_searches=[], private_mode=False):
         knowledge_context, knowledge_selected = dmc.create_rag_context(query, query_vecs=query_vecs, rags=self.knowledge, exec_info=exec_info, meta_searches=meta_searches, define_code=self.define_code, private_mode=private_mode)
         return knowledge_context, knowledge_selected
 
-    # LLMの実行
+    # Execute the LLM
     def generate_response(self, model_type, query, memories=[], image_paths={}, stream_mode=True):
         for prompt, response, completion in dmfm.call_function_by_name(self.agent["ENGINE"][model_type]["FUNC_NAME"], query, self.system_prompt, self.agent["ENGINE"][model_type], memories, image_paths, self.skill, stream_mode):
             yield prompt, response, completion
 
-    # 通常LLMの実行(ペルソナなし)
+    # Execute the vanilla LLM (no persona)
     def generate_pureLLM(self, query, memories=[], prompt_temp_cd="No Template"):
         response, model_name, prompt_tokens, response_tokens = generate_pureLLM(self.agent, query, memories, prompt_temp_cd)
         return response, model_name, prompt_tokens, response_tokens
 
-    # クエリに含まれているコマンド(MAGIC_WORD)でエージェントモードを変更【マジックワードはタスクに移行】
+    # Switch the agent's mode based on commands (MAGIC_WORD) in the query [magic words are migrating to tasks]
     def set_practice_by_command(self, query):
         habit = "DEFAULT"
         for k, v in self.agent["HABIT"].items():

@@ -1,11 +1,11 @@
-"""ユーザーメモリ層を「対話相手についての情報」コンテキストとして合成する。
+"""Compose the user-memory layers into the "About the dialogue partner" context.
 
-呼び出しフロー:
+Usage flow:
     context_text, used_ids, meta = build_context_text(service_id, user_id, active_layers, query_text=...)
     full_query = context_text + knowledge_context + prompt_template + user_query + ...
 
-context_text はプロンプト先頭(Knowledgeの直前)に挿入される。
-History層は MeCab × タグ × タイムスタンプのハイブリッドで関連レコードを選定する。
+context_text is inserted at the head of the prompt (right before the Knowledge block).
+The History layer picks relevant records via a hybrid of MeCab tokens, tag match, and timestamp.
 """
 import logging
 import math
@@ -25,15 +25,15 @@ if os.path.exists("system.env"):
     load_dotenv("system.env")
 
 PERSONA_TOKEN_LIMIT = int(os.getenv("USER_MEMORY_PERSONA_TOKEN_LIMIT") or "3000")
-# History層: 合計文字数の上限(コンテキストに入る分量)
+# History layer: total character cap (the amount included in the context)
 HISTORY_MAX_CHARS = int(os.getenv("USER_MEMORY_HISTORY_MAX_CHARS") or "800")
-# History層: スコア配分(タグマッチ率と時間スコアの重み)
+# History layer: score weighting (tag-match ratio vs. time score)
 HISTORY_RECENCY_WEIGHT = float(os.getenv("USER_MEMORY_HISTORY_RECENCY_WEIGHT") or "0.3")
-# History層: 時間スコアのハーフライフ(日数)。これくらい古いと時間スコアが半分になる目安
+# History layer: half-life (days) for the time score. Roughly the age at which the time score halves.
 HISTORY_RECENCY_HALF_LIFE_DAYS = float(os.getenv("USER_MEMORY_HISTORY_RECENCY_HALF_LIFE_DAYS") or "30")
 
 
-# ---------- 感情語彙 (Plutchik) と表示用日本語 ----------
+# ---------- Plutchik emotion vocabulary with Japanese display labels ----------
 _PLUTCHIK_JA = {
     "joy": "喜び", "trust": "信頼", "fear": "恐れ", "surprise": "驚き",
     "sadness": "悲しみ", "disgust": "嫌悪", "anger": "怒り", "anticipation": "期待",
@@ -54,7 +54,7 @@ def _emotions_to_text(emotions) -> str:
     if not isinstance(emotions, list) or not emotions:
         return ""
     labels = [_emotion_label(e) for e in emotions]
-    # 重複除外（順序保持）
+    # Dedupe while preserving order
     seen, out = set(), []
     for l in labels:
         if l and l not in seen:
@@ -68,7 +68,7 @@ def _now_ts() -> str:
 
 
 def _approx_tokens(text: str) -> int:
-    """日本語混じりの粗い近似（1文字≒1トークン）。"""
+    """Rough approximation for mixed Japanese text (~1 token per character)."""
     return len(text or "")
 
 
@@ -83,7 +83,7 @@ def _format_persona(rec: dict) -> str:
     def _items_to_text(label, items):
         if not isinstance(items, list):
             return None
-        # approved/edited は確定、pending は「(暫定)」付きで含める。deletedのみ除外。
+        # approved/edited are kept verbatim; pending items are suffixed with "(暗定)" (tentative). Only `deleted` is excluded.
         kept = []
         for it in items:
             if not isinstance(it, dict):
@@ -114,7 +114,7 @@ def _format_persona(rec: dict) -> str:
         if line:
             parts.append(line)
 
-    # Big5: approved/edited は確定、pending は「(暫定)」付きで含める。deletedのみ除外。
+    # Big5: approved/edited are kept verbatim; pending items are suffixed with "(暗定)" (tentative). Only `deleted` is excluded.
     big5 = rec.get("big5") or {}
     if isinstance(big5, dict) and big5:
         big5_parts = []
@@ -163,7 +163,7 @@ def _format_nowaday(rec: dict) -> str:
         if isinstance(v, list) and v:
             parts.append(f"・{label}: " + "、".join(str(x) for x in v))
 
-    # 感情傾向(Plutchik): 強度0.2以上の基本感情のみ。降順で表示。
+    # Emotional tendency (Plutchik): only basic emotions with intensity >= 0.2, sorted descending.
     basic = rec.get("basic_emotions") or {}
     if isinstance(basic, dict) and basic:
         items = []
@@ -188,7 +188,7 @@ def _format_nowaday(rec: dict) -> str:
 
 
 def _extract_record_tags(rec: dict) -> list:
-    """axis_tags + emotions(Plutchik英語キー＋日本語) から平坦化したタグ語リストを返す。"""
+    """Return a flattened list of tag terms from axis_tags + emotions (English Plutchik keys + Japanese labels)."""
     tags = rec.get("axis_tags") or {}
     out = []
     if isinstance(tags, dict):
@@ -212,7 +212,7 @@ def _extract_record_tags(rec: dict) -> list:
     return out
 
 
-# クエリテキストから Plutchik 感情を拾うための日本語キーワード辞書（部分一致）
+# Japanese keyword dictionary used to detect Plutchik emotions in the query text (partial match)
 _JA_EMOTION_LOOKUP = {
     "joy": ["喜び", "うれし", "嬉し", "楽し", "ハッピー"],
     "trust": ["信頼", "安心", "頼れ"],
@@ -234,7 +234,7 @@ _JA_EMOTION_LOOKUP = {
 
 
 def _detect_query_emotions(query_text: str) -> set:
-    """クエリ文に含まれる感情キーワードから Plutchik 感情キーを推定。"""
+    """Estimate Plutchik emotion keys from emotion keywords found in the query text."""
     if not query_text:
         return set()
     text = query_text
@@ -255,13 +255,13 @@ def _get_mecab():
             import MeCab
             _mecab_tagger = MeCab.Tagger()
         except Exception as e:
-            logger.warning(f"[user_memory.builder] MeCab初期化失敗: {e}")
+            logger.warning(f"[user_memory.builder] MeCab init failed: {e}")
             _mecab_tagger = False
     return _mecab_tagger if _mecab_tagger else None
 
 
 def _tokenize_nouns(text: str) -> set:
-    """テキストから2文字以上の名詞を抽出。MeCab失敗時は空集合。"""
+    """Extract nouns of length >= 2 from text. Returns an empty set when MeCab fails."""
     if not text:
         return set()
     tagger = _get_mecab()
@@ -278,17 +278,17 @@ def _tokenize_nouns(text: str) -> set:
                 continue
             word = parts[0]
             feat = parts[1] if len(parts) > 1 else ""
-            if "名詞" in feat and len(word) >= 2:
+            if "名詞" in feat and len(word) >= 2:  # MeCab tag for "noun" -- keep in Japanese
                 nouns.add(word.lower())
     except Exception as e:
-        logger.warning(f"[user_memory.builder] MeCab解析失敗: {e}")
+        logger.warning(f"[user_memory.builder] MeCab parsing failed: {e}")
     return nouns
 
 
 def _select_histories_by_tags_and_recency(records: list, query_text: str, max_chars: int) -> tuple:
-    """axis_tagsの語彙を使ったタグマッチ × タイムスタンプ減衰で並べ替え、文字数で打ち切り。
+    """Sort by axis_tags-based tag match x timestamp decay, then truncate by total characters.
 
-    query_text が空の場合は recency-only にフォールバック。
+    Falls back to recency-only when query_text is empty.
     Returns: (selected_records: list, query_keywords: list)
     """
     if not records:
@@ -296,10 +296,10 @@ def _select_histories_by_tags_and_recency(records: list, query_text: str, max_ch
     now = datetime.now()
     half_life = max(HISTORY_RECENCY_HALF_LIFE_DAYS, 1.0)
 
-    # 1. ユーザー入力から名詞を抽出(MeCab) + 感情キーワード検出。タグ側は分解せず原文マッチ。
+    # 1. Extract nouns from the user input (MeCab) + detect emotion keywords. Match against full tags without splitting.
     query_nouns = _tokenize_nouns(query_text) if query_text else set()
     query_emotions = _detect_query_emotions(query_text) if query_text else set()
-    # 感情キー(英)と日本語訳の両方を検索語に混ぜる
+    # Mix both the English emotion key and its Japanese translation into the search terms
     query_emotion_words = set()
     for k in query_emotions:
         query_emotion_words.add(k)
@@ -310,11 +310,11 @@ def _select_histories_by_tags_and_recency(records: list, query_text: str, max_ch
     has_query = bool(query_terms)
     query_keywords = sorted(query_terms)
 
-    # 2. スコアリング: タグマッチ群と非マッチ群に分ける
+    # 2. Scoring: split records into a matched group and an unmatched group
     matched_group = []
     unmatched_group = []
     for r in records:
-        # 時間減衰スコア
+        # Time-decay score
         try:
             ts = datetime.fromisoformat(str(r.get("create_date", "")).replace("Z", "").split(".")[0])
             days_old = max(0.0, (now - ts).total_seconds() / 86400.0)
@@ -326,7 +326,7 @@ def _select_histories_by_tags_and_recency(records: list, query_text: str, max_ch
         match_count = 0
         match_ratio = 0.0
         if has_query and record_tags:
-            # タグ単位でマッチ判定: クエリ語(名詞 + 感情語)がタグ全文に含まれていれば「マッチタグ」
+            # Per-tag match: a tag containing any query term (noun + emotion word) counts as a "matched tag"
             matched_tag_count = 0
             for t in record_tags:
                 t_lower = t.lower()
@@ -336,19 +336,19 @@ def _select_histories_by_tags_and_recency(records: list, query_text: str, max_ch
             match_ratio = match_count / len(record_tags)
 
         if match_count > 0:
-            # マッチ群: マッチ率をベースに、時間スコアで微調整
+            # Matched group: base on match ratio, refined by the time score
             combined = (1 - HISTORY_RECENCY_WEIGHT) * match_ratio + HISTORY_RECENCY_WEIGHT * recency_score
             matched_group.append((combined, r))
         else:
-            # 非マッチ群: 時間スコアのみ
+            # Unmatched group: time score only
             unmatched_group.append((recency_score, r))
 
     matched_group.sort(key=lambda x: -x[0])
     unmatched_group.sort(key=lambda x: -x[0])
-    # マッチ群を優先、余りを非マッチ群で埋める
+    # Prefer the matched group, then fill the remainder from the unmatched group
     ordered = [r for _, r in matched_group] + [r for _, r in unmatched_group]
 
-    # 4. 文字数で詰める
+    # 4. Pack until the character cap is reached
     selected = []
     total_chars = 0
     for r in ordered:
@@ -385,16 +385,16 @@ def _format_history(records: list, query_text: str = "", max_chars: int = None) 
 
 def build_context_text(service_id: str, user_id: str, active_layers: list = None,
                        query_text: str = "") -> tuple:
-    """active_layers に沿って「対話相手についての情報」コンテキスト文字列を返す。
+    """Return the "About the dialogue partner" context string based on active_layers.
 
     Args:
-        query_text: ユーザーの現在の入力。History層のタグマッチ検索に使用。
-                    空ならHistory層は recency-only にフォールバック。
+        query_text: The user's current input. Used by the History layer's tag-match search.
+                    If empty, the History layer falls back to recency-only.
 
     Returns: (context_text: str, used_ids: list, meta: dict)
-      context_text: プロンプト先頭(Knowledgeより前)に挿入する文字列。空なら ""。
-      used_ids:    効果ログ用の参照ID一覧。
-      meta:        補助情報。例: {"history_keywords": [...]}（History検索に使ったクエリ名詞）
+      context_text: Text inserted at the head of the prompt (before Knowledge). "" if none.
+      used_ids:    Reference IDs for impact logging.
+      meta:        Auxiliary info. Example: {"history_keywords": [...]} (query nouns used by the History search).
     """
     if active_layers is None:
         active_layers = dmus.resolve_active_layers(user_id)
@@ -413,7 +413,7 @@ def build_context_text(service_id: str, user_id: str, active_layers: list = None
                     parts.append(text)
                     used_ids.append(f"persona:{user_id}")
         except Exception as e:
-            logger.warning(f"[user_memory.builder] persona失敗: {e}")
+            logger.warning(f"[user_memory.builder] persona failed: {e}")
 
     if "nowaday" in active_layers:
         try:
@@ -427,7 +427,7 @@ def build_context_text(service_id: str, user_id: str, active_layers: list = None
                     parts.append(text)
                     used_ids.append(f"nowaday:{nowaday_rec.get('id')}")
         except Exception as e:
-            logger.warning(f"[user_memory.builder] nowaday失敗: {e}")
+            logger.warning(f"[user_memory.builder] nowaday failed: {e}")
 
     if "history" in active_layers:
         try:
@@ -440,7 +440,7 @@ def build_context_text(service_id: str, user_id: str, active_layers: list = None
                 used_count = max(0, text.count("\n") - 0)
                 used_ids.append(f"history:{user_id}:n={used_count}")
         except Exception as e:
-            logger.warning(f"[user_memory.builder] history失敗: {e}")
+            logger.warning(f"[user_memory.builder] history failed: {e}")
 
     if not parts:
         return "", used_ids, meta

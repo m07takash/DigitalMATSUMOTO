@@ -1,11 +1,11 @@
-"""ユーザー認証マスタの読み書き（JSON / RDB両対応）。
+"""Read/write the user authentication master (both JSON and RDB).
 
-system.env の LOGIN_AUTH_METHOD で切替:
-  - "JSON"（既定）: USER_MST_FILE で指定したJSONを使用
-  - "RDB": PostgreSQL の digim_users テーブルを使用
+Toggled by LOGIN_AUTH_METHOD in system.env:
+  - "JSON" (default): use the JSON file specified by USER_MST_FILE
+  - "RDB": use the PostgreSQL `digim_users` table
 
-LOGIN_AUTH_METHOD="RDB" のとき、PostgreSQL接続情報（POSTGRES_HOST 等）が
-未設定／接続不可なら例外を伝播する（呼び出し側でハンドリング）。
+When LOGIN_AUTH_METHOD="RDB", if PostgreSQL connection info (POSTGRES_HOST etc.)
+is missing or unreachable, the exception is propagated (the caller handles it).
 """
 import json
 import logging
@@ -78,7 +78,7 @@ def _rdb_config():
 
 
 def _rdb_connect():
-    import psycopg2  # 遅延import: JSONモードのみで使う場合にimport不要
+    import psycopg2  # Lazy import: not needed when running in JSON-only mode
     return psycopg2.connect(**_rdb_config())
 
 
@@ -97,7 +97,7 @@ def _load_users_rdb():
             rows = cur.fetchall()
         users = {}
         for user_id, name, pw, group_cd, agent, allowed in rows:
-            # group_cd は JSONB（配列）または旧仕様の文字列にも一応対応
+            # group_cd is JSONB (array). Also tolerate the legacy string form.
             if isinstance(group_cd, list):
                 groups = group_cd
             elif isinstance(group_cd, str) and group_cd:
@@ -117,14 +117,14 @@ def _load_users_rdb():
 
 
 def _save_users_rdb(users):
-    """全ユーザーをUPSERT。ユーザー追加・パスワード変更等のユースケース向け。
-    引数に含まれないユーザーは削除しない（誤削除防止）。"""
+    """UPSERT all users. Intended for use cases such as adding users or changing passwords.
+    Users not present in the argument are NOT deleted (to prevent accidental removal)."""
     conn = _rdb_connect()
     try:
         _ensure_user_table(conn)
         with conn.cursor() as cur:
             for user_id, info in users.items():
-                # Groupは文字列・リストの両方を受け付け、JSONBには配列で保存
+                # Group accepts both string and list; stored as an array in JSONB
                 raw_group = info.get("Group", "")
                 if isinstance(raw_group, list):
                     groups = [g for g in raw_group if g]
