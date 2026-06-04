@@ -1096,7 +1096,25 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
         )
 
     except Exception as e:
-        session.save_status("UNLOCKED")
+        # Persist a detailed error log (traceback + context) into the session folder
+        # and into the global backend error log.
+        _ctx = {
+            "where": "DigiMatsuExecute_Practice",
+            "session_id": session_id,
+            "agent_file": in_agent_file,
+            "persona_id": (in_persona or {}).get("persona_id") if isinstance(in_persona, dict) else "",
+            "persona_name": (in_persona or {}).get("name") if isinstance(in_persona, dict) else "",
+            "user_query_head": (user_query or "")[:200],
+        }
+        try:
+            session.save_error_log(e, context=_ctx)
+        except Exception:
+            pass
+        try:
+            dms.save_global_error_log(e, context=_ctx)
+        except Exception:
+            pass
+        session.save_status("UNLOCKED", error=str(e))
         raise e
 
     finally:
@@ -1212,6 +1230,22 @@ def DigiMatsuExecute_MultiPersona(service_info, user_info, session_id, session_n
                     if _oref:
                         last_oref = _oref
         except Exception as e:
+            _ctx = {
+                "where": "DigiMatsuExecute_MultiPersona._run_one",
+                "session_id": session_id,
+                "agent_file": in_agent_file,
+                "persona_id": persona.get("persona_id", ""),
+                "persona_name": persona.get("name", ""),
+                "user_query_head": (user_query or "")[:200],
+            }
+            try:
+                session.save_error_log(e, context=_ctx)
+            except Exception:
+                pass
+            try:
+                dms.save_global_error_log(e, context=_ctx)
+            except Exception:
+                pass
             return persona, str(e), last_oref
         return persona, None, last_oref
 

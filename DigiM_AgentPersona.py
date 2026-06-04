@@ -84,23 +84,53 @@ def _row_to_persona(row):
     return persona
 
 
-# ---------- Excel backend ----------
+# ---------- File backend (Excel + CSV) ----------
+_FILE_EXTS = (".xlsx", ".csv")
+
+
+def _read_persona_dataframe(path: Path):
+    """Read one persona file (.xlsx or .csv) into a DataFrame of strings.
+    Schema is the same as the Excel sheet `personas` (same column names).
+    For CSV, the file itself is one persona table (no sheet concept).
+    """
+    suffix = path.suffix.lower()
+    if suffix == ".xlsx":
+        return pd.read_excel(str(path), sheet_name="personas", dtype=str).fillna("")
+    if suffix == ".csv":
+        # utf-8-sig handles a UTF-8 BOM if present; falls back to CP932 for legacy Excel-exported CSVs.
+        for enc in ("utf-8-sig", "cp932", "utf-8"):
+            try:
+                return pd.read_csv(str(path), dtype=str, encoding=enc).fillna("")
+            except UnicodeDecodeError:
+                continue
+        raise UnicodeDecodeError("utf-8/cp932", b"", 0, 1, f"could not decode {path}")
+    raise ValueError(f"unsupported persona file extension: {suffix}")
+
+
 def _load_personas_excel(persona_files=None):
+    """Load personas from xlsx and csv files under PERSONA_DATA_FOLDER.
+
+    Function name is kept for backward compatibility; despite the name it now
+    also handles CSV files with the same column schema.
+    """
     folder = Path(PERSONA_DATA_FOLDER)
     if not folder.exists():
         return []
     if persona_files:
         targets = [folder / f for f in persona_files]
     else:
-        targets = sorted(folder.glob("*.xlsx"))
+        targets = sorted(p for ext in _FILE_EXTS for p in folder.glob(f"*{ext}"))
 
     personas = []
     for path in targets:
         if not path.exists():
             logger.warning(f"persona file does not exist: {path}")
             continue
+        if path.suffix.lower() not in _FILE_EXTS:
+            logger.warning(f"unsupported persona file extension (skipping): {path}")
+            continue
         try:
-            df = pd.read_excel(str(path), sheet_name="personas", dtype=str).fillna("")
+            df = _read_persona_dataframe(path)
         except Exception as e:
             logger.warning(f"failed to read persona file {path}: {e}")
             continue
@@ -288,11 +318,11 @@ def find_personas_by_org(agent_org, template_agent=None, persona_files=None, sou
     return matched
 
 
-def upsert_personas_from_excel(file_path):
-    """UPSERT every persona from the Excel file into the RDB. Rows with active='N'
+def upsert_personas_from_file(file_path):
+    """UPSERT every persona from a file (.xlsx or .csv) into the RDB. Rows with active='N'
     are also recorded as logical deletes (kept as-is).
     Returns: counts (upsert, skip)."""
-    df = pd.read_excel(file_path, sheet_name="personas", dtype=str).fillna("")
+    df = _read_persona_dataframe(Path(file_path))
     cnt_upsert, cnt_skip = 0, 0
     for _, row in df.iterrows():
         persona = _row_to_persona(row)
@@ -302,3 +332,7 @@ def upsert_personas_from_excel(file_path):
         _upsert_persona_rdb(persona)
         cnt_upsert += 1
     return cnt_upsert, cnt_skip
+
+
+# Legacy alias (kept so existing callers using the Excel-only name keep working)
+upsert_personas_from_excel = upsert_personas_from_file

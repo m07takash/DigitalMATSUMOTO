@@ -370,6 +370,82 @@ def set_new_session_id():
 
     return new_session_id
 
+
+# Centralized error log for backend errors (background jobs, dispatchers, etc.)
+# that are not necessarily tied to a single session. File: <USER_FOLDER>_bg_errors.log.
+#
+# Size-bounded rotation:
+#   - When the active file exceeds BG_ERRORS_MAX_BYTES (default 2 MB), it is
+#     rotated to _bg_errors.log.YYYYMMDDHHMMSS and a fresh file is started.
+#   - At most BG_ERRORS_BACKUPS rotated files are kept (default 5).
+#   - Both knobs are overridable via system.env:
+#       BG_ERRORS_MAX_BYTES=<int bytes>
+#       BG_ERRORS_BACKUPS=<int>
+def _bg_errors_rotate_if_needed(log_path):
+    try:
+        max_bytes = int(os.getenv("BG_ERRORS_MAX_BYTES") or 2_000_000)
+    except (TypeError, ValueError):
+        max_bytes = 2_000_000
+    try:
+        backups = int(os.getenv("BG_ERRORS_BACKUPS") or 5)
+    except (TypeError, ValueError):
+        backups = 5
+    try:
+        if os.path.getsize(log_path) < max_bytes:
+            return
+    except OSError:
+        return
+    # Use microsecond precision so multiple rotations within the same second
+    # do not overwrite each other.
+    rotated = log_path + "." + datetime.now().strftime("%Y%m%d%H%M%S%f")
+    try:
+        os.replace(log_path, rotated)
+    except OSError:
+        return
+    # Trim oldest rotated backups beyond the retention count.
+    try:
+        prefix = os.path.basename(log_path) + "."
+        dir_ = os.path.dirname(log_path) or "."
+        olds = sorted(
+            [os.path.join(dir_, n) for n in os.listdir(dir_) if n.startswith(prefix)],
+            key=lambda p: os.path.getmtime(p),
+        )
+        # Keep the newest `backups`; remove the rest.
+        for p in olds[: max(0, len(olds) - backups)]:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
+def save_global_error_log(exc, context=None):
+    import traceback as _tb
+    os.makedirs(user_folder_path, exist_ok=True)
+    log_path = str(Path(user_folder_path) / "_bg_errors.log")
+    # Rotate before append so a single large traceback can't push us far past the cap.
+    _bg_errors_rotate_if_needed(log_path)
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+    lines = ["=" * 72, f"[{ts}] (global)"]
+    if isinstance(context, dict) and context:
+        for k, v in context.items():
+            lines.append(f"  {k}: {v}")
+    if isinstance(exc, BaseException):
+        lines.append(f"  exception: {type(exc).__name__}: {exc}")
+        tb_text = "".join(_tb.format_exception(type(exc), exc, exc.__traceback__))
+        lines.append(tb_text.rstrip())
+    else:
+        lines.append(f"  error: {exc}")
+    body = "\n".join(lines) + "\n"
+    try:
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(body)
+    except Exception:
+        pass
+    return log_path
+
+
 # Session class
 class DigiMSession:
     def __init__(self, session_id="", session_name="", base_path=""):
@@ -690,6 +766,44 @@ class DigiMSession:
             os.makedirs(self.session_folder_path, exist_ok=True)
         status_dict = {"status": status, "message": "", "response": "", "error": error}
         dmu.save_yaml_file(status_dict, self.session_status_path)
+        # Mirror to errors.log under the session folder when an error is set,
+        # so users can find the full context next to the session data.
+        if error:
+            try:
+                self.save_error_log(error)
+            except Exception:
+                pass
+
+    # Centralized error log for backend errors not tied to a specific session
+    # (background tasks, job queue dispatch errors, etc.).
+    # File: <USER_FOLDER>_bg_errors.log (append). Same row format as the per-session errors.log.
+
+    # Append a backend error entry to <session>/errors.log with timestamp + context.
+    # `exc` may be a string message or an exception object. When it's an exception,
+    # the full traceback (when available) is captured.
+    def save_error_log(self, exc, context=None):
+        import traceback as _tb
+        if not os.path.exists(self.session_folder_path):
+            os.makedirs(self.session_folder_path, exist_ok=True)
+        log_path = str(Path(self.session_folder_path) / "errors.log")
+        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+        lines = [
+            "=" * 72,
+            f"[{ts}] session_id={self.session_id} session_name={self.session_name}",
+        ]
+        if isinstance(context, dict) and context:
+            for k, v in context.items():
+                lines.append(f"  {k}: {v}")
+        if isinstance(exc, BaseException):
+            lines.append(f"  exception: {type(exc).__name__}: {exc}")
+            tb_text = "".join(_tb.format_exception(type(exc), exc, exc.__traceback__))
+            lines.append(tb_text.rstrip())
+        else:
+            lines.append(f"  error: {exc}")
+        body = "\n".join(lines) + "\n"
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(body)
+        return log_path
 
     def get_status_error(self):
         status_dict = dmu.read_yaml_file(self.session_status_path)

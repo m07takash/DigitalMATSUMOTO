@@ -444,6 +444,16 @@ def _run_bg_task(task_type, message, func, *args, **kwargs):
 
     _user_id = st.session_state.get("user_id")
     _job_id = djr.new_job_id()
+    # Capture the current session_id (if any) from the Streamlit thread BEFORE spawning the worker,
+    # because session_state is not safe to read from a background thread. This lets us mirror
+    # errors that originate from job-queue dispatch into the active session's errors.log.
+    _curr_session_id = ""
+    try:
+        _curr_session = st.session_state.get("session")
+        if _curr_session is not None and hasattr(_curr_session, "session_id"):
+            _curr_session_id = _curr_session.session_id or ""
+    except Exception:
+        _curr_session_id = ""
 
     def _worker():
         import logging as _logging
@@ -459,6 +469,25 @@ def _run_bg_task(task_type, message, func, *args, **kwargs):
         except Exception as e:
             _log.error(f"[BG_TASK] error: {task_type} - {e}", exc_info=True)
             _write_bg_task_status_to(_task_file, {"status": "done", "message": message, "error": str(e)})
+            # Always persist a full traceback to the global backend error log.
+            try:
+                _ctx = {
+                    "where": "WebDigiMatsuAgent._run_bg_task",
+                    "task_type": task_type,
+                    "message": message,
+                    "user_id": _user_id,
+                    "job_id": _job_id,
+                    "session_id": _curr_session_id,
+                }
+                dms.save_global_error_log(e, context=_ctx)
+                # If a session was active at dispatch time, also mirror into its errors.log
+                if _curr_session_id:
+                    try:
+                        dms.DigiMSession(_curr_session_id).save_error_log(e, context=_ctx)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
         finally:
             djr.unregister_job(_job_id)
 
@@ -5804,6 +5833,26 @@ def main():
                         pass  # Drain chunks (results are saved to chat_memory.json)
                 except Exception as e:
                     _exec_error = str(e)
+                    # Persist full traceback + context to <session>/errors.log AND the global log
+                    _ctx = {
+                        "where": "WebDigiMatsuAgent._run_bg",
+                        "session_id": params.get("session_id"),
+                        "agent_file": params.get("agent_file"),
+                        "user_input_head": (params.get("user_input") or "")[:200],
+                        "personas": [
+                            p.get("persona_id") for p in (params.get("personas") or [])
+                            if isinstance(p, dict)
+                        ],
+                        "org": params.get("org"),
+                    }
+                    try:
+                        dms.save_global_error_log(e, context=_ctx)
+                    except Exception:
+                        pass
+                    try:
+                        dms.DigiMSession(params["session_id"]).save_error_log(e, context=_ctx)
+                    except Exception:
+                        pass
                 # Auto-generate the session name (don't skip on error either)
                 try:
                     _session = dms.DigiMSession(params["session_id"], params["session_name"])
