@@ -4825,9 +4825,18 @@ def main():
                         _tgt_users = list(_um_target_users) if _um_target_users else None
                         _svc = st.session_state.service_id
                         def _um_pipeline():
-                            _dmgum_admin.update_user_memory_pipeline(
+                            _r = _dmgum_admin.update_user_memory_pipeline(
                                 target_user_ids=_tgt_users, period=_per, service_id=_svc,
                             )
+                            # Surface per-user errors to the bg-task layer so they end up
+                            # in user/_bg_errors.log with a stack-traceable summary.
+                            _errs = (_r or {}).get("errors") or []
+                            _hist_errs = ((_r or {}).get("history") or {}).get("errors") or []
+                            if _errs or _hist_errs:
+                                raise RuntimeError(
+                                    f"User Memory pipeline finished with errors: "
+                                    f"history_errors={_hist_errs} step_errors={_errs}"
+                                )
                         _label = f"Updating User Memory (users={'all' if not _tgt_users else len(_tgt_users)} period={_per})"
                         _run_bg_task("um_pipeline", _label, _um_pipeline)
                         st.rerun()

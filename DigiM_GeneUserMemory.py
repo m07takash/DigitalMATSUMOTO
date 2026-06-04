@@ -664,7 +664,9 @@ def update_persona_item_status(service_id: str, user_id: str, field: str, label:
 def save_history_for_unsaved_sessions(service_id: str = "", user_id: str = "") -> dict:
     """Process sessions whose user_dialog is UNSAVED; delete those marked DISCARD."""
     sessions = dms.get_session_list()
+    total_in_filter = 0
     saved, discarded, errors = [], [], []
+    error_details = []  # (sid, exc) so we can surface them centrally
     for s in sessions:
         sid = s.get("id")
         if not sid:
@@ -674,6 +676,7 @@ def save_history_for_unsaved_sessions(service_id: str = "", user_id: str = "") -
             continue
         if user_id and s.get("user_id") != user_id:
             continue
+        total_in_filter += 1
         try:
             status = dms.get_user_dialog_session(sid)
         except Exception:
@@ -687,9 +690,27 @@ def save_history_for_unsaved_sessions(service_id: str = "", user_id: str = "") -
                 dmum.delete("history", {"session_id": sid})
                 discarded.append(sid)
         except Exception as e:
-            logger.error(f"[user_memory.history] failed for {sid}: {e}")
+            # Full traceback to the logger AND to the centralized backend error log,
+            # so the failure does not disappear when stderr points at /dev/null.
+            logger.exception(f"[user_memory.history] failed for {sid}: {e}")
+            try:
+                dms.save_global_error_log(e, context={
+                    "where": "save_history_for_unsaved_sessions",
+                    "session_id": sid,
+                    "service_id": s.get("service_id", ""),
+                    "user_id": s.get("user_id", ""),
+                })
+            except Exception:
+                pass
             errors.append(sid)
-    return {"saved": saved, "discarded": discarded, "errors": errors}
+            error_details.append((sid, str(e)))
+    logger.info(
+        f"[user_memory.history] processed sessions: total_matched={total_in_filter} "
+        f"saved={len(saved)} discarded={len(discarded)} errors={len(errors)} "
+        f"filter(service_id={service_id!r}, user_id={user_id!r})"
+    )
+    return {"saved": saved, "discarded": discarded, "errors": errors, "error_details": error_details,
+            "total_matched": total_in_filter}
 
 
 # ---------- Combined pipeline ----------
@@ -733,7 +754,14 @@ def update_user_memory_pipeline(target_user_ids=None, period: str = "all", servi
             if nowaday_rec:
                 result["nowaday"].append((sid, uid))
         except Exception as e:
-            logger.error(f"[user_memory.pipeline] nowaday failed {uid}: {e}")
+            logger.exception(f"[user_memory.pipeline] nowaday failed {uid}: {e}")
+            try:
+                dms.save_global_error_log(e, context={
+                    "where": "update_user_memory_pipeline.nowaday",
+                    "service_id": sid, "user_id": uid, "period": period,
+                })
+            except Exception:
+                pass
             result["errors"].append(("nowaday", uid, str(e)))
             continue
         try:
@@ -741,9 +769,25 @@ def update_user_memory_pipeline(target_user_ids=None, period: str = "all", servi
             if persona_rec:
                 result["persona"].append((sid, uid))
         except Exception as e:
-            logger.error(f"[user_memory.pipeline] persona failed {uid}: {e}")
+            logger.exception(f"[user_memory.pipeline] persona failed {uid}: {e}")
+            try:
+                dms.save_global_error_log(e, context={
+                    "where": "update_user_memory_pipeline.persona",
+                    "service_id": sid, "user_id": uid,
+                })
+            except Exception:
+                pass
             result["errors"].append(("persona", uid, str(e)))
 
+    # Summary log line so ops can see at a glance what the run did,
+    # even without trawling the per-step logger.
+    logger.info(
+        f"[user_memory.pipeline] done: "
+        f"users={len(users)} "
+        f"history={result['history'] if isinstance(result['history'], dict) else 'n/a'} "
+        f"nowaday_saved={len(result['nowaday'])} persona_saved={len(result['persona'])} "
+        f"errors={len(result['errors'])}"
+    )
     return result
 
 
