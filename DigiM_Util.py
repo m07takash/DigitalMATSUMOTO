@@ -432,22 +432,72 @@ def read_pptx_file(file_path, temp_folder):
 
     return "\n".join(text_parts), image_files
 
-# Read a JSON file
+# Read a JSON file.
+# Concurrent writers (e.g., parallel persona threads writing chat_memory.json) write atomically
+# via temp + rename, but to be safe against pathological races on non-POSIX filesystems we
+# retry once on JSONDecodeError after a short sleep.
 def read_json_file(file_name, folder_path=""):
+    import time as _time
     data = {}
     file_path = folder_path + file_name
-    if os.path.exists(file_path):
-        with open(file_path, 'r') as file:
-            data = json.load(file)
-    return data
+    if not os.path.exists(file_path):
+        return data
+    for _attempt in range(2):
+        try:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                data = json.load(file)
+            return data
+        except json.JSONDecodeError:
+            if _attempt == 0:
+                _time.sleep(0.05)
+                continue
+            raise
+
+
+# Atomic JSON write: write to a temp sibling, fsync, then rename.
+# On POSIX (Linux/Mac), rename swaps the inode atomically, so concurrent readers either
+# see the previous file in full or the new file in full -- never a partial one.
+def save_json_file(data, file_path, indent=2):
+    import tempfile
+    folder = os.path.dirname(file_path) or "."
+    os.makedirs(folder, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(prefix=".tmp_", suffix=".json", dir=folder)
+    try:
+        with os.fdopen(fd, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=indent)
+            f.flush()
+            try:
+                os.fsync(f.fileno())
+            except OSError:
+                pass
+        os.replace(tmp_path, file_path)
+    except Exception:
+        # Clean up the temp file on any failure so we don't litter the folder.
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
 
 # Read a YAML file
 def read_yaml_file(file_name, folder_path=""):
+    # See `read_json_file` for why the retry is here: although writers go through
+    # temp + rename, very rare partial reads can still occur on edge-case filesystems.
+    import time as _time
     data = {}
     file_path = folder_path + file_name
-    if os.path.exists(file_path):
-        with open(file_path, 'r', encoding="utf-8") as file:
-            data = yaml.safe_load(file)
+    if not os.path.exists(file_path):
+        return data
+    for _attempt in range(2):
+        try:
+            with open(file_path, 'r', encoding="utf-8") as file:
+                data = yaml.safe_load(file)
+            break
+        except yaml.YAMLError:
+            if _attempt == 0:
+                _time.sleep(0.05)
+                continue
+            raise
     if data is None:
         data = {}
     return data
@@ -457,17 +507,48 @@ def save_text_file(data, file_path):
     with open(file_path, 'w', encoding="utf-8") as f:
         f.write(data)
 
-def save_json_file(data, file_path):
-    with open(file_path, 'w', encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+# Atomic + lock-protected YAML write.
+# This file path is read-modify-write (existing keys are preserved; new keys are merged in),
+# so we MUST hold the per-path lock during the whole read-merge-write cycle, otherwise
+# concurrent writers race and lose updates from one another.
+# The actual write itself goes via temp + rename so concurrent readers never see a partial file.
+_yaml_file_locks = {}
+_yaml_file_locks_meta = __import__("threading").Lock()
+
+
+def _get_yaml_file_lock(file_path):
+    import threading as _th
+    with _yaml_file_locks_meta:
+        if file_path not in _yaml_file_locks:
+            _yaml_file_locks[file_path] = _th.Lock()
+        return _yaml_file_locks[file_path]
+
 
 def save_yaml_file(data, file_name, folder_path=""):
-    current_data = read_yaml_file(file_name, folder_path)
-    current_data.update(data)
+    import tempfile
     file_path = folder_path + file_name
-    with open(file_path, 'w', encoding="utf-8") as f:
-#        yaml.dump(data, file, allow_unicode=True)
-        yaml.dump(current_data, f, allow_unicode=True)
+    folder = os.path.dirname(file_path) or "."
+    os.makedirs(folder, exist_ok=True)
+    with _get_yaml_file_lock(file_path):
+        # Re-read under the lock so we don't drop concurrent updates.
+        current_data = read_yaml_file(file_name, folder_path)
+        current_data.update(data)
+        fd, tmp_path = tempfile.mkstemp(prefix=".tmp_", suffix=".yaml", dir=folder)
+        try:
+            with os.fdopen(fd, 'w', encoding='utf-8') as f:
+                yaml.dump(current_data, f, allow_unicode=True)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except OSError:
+                    pass
+            os.replace(tmp_path, file_path)
+        except Exception:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+            raise
 
 # Convert an MP3 file to text (switch between OpenAI / Azure via TRANSCRIBE_PROVIDER)
 def mp3_to_text(file_name, folder_path=""):

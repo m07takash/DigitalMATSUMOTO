@@ -872,8 +872,7 @@ class DigiMSession:
                         chat_history_dict[seq][sub_seq] = {}
                     for key, data in entries.items():
                         chat_history_dict[seq][sub_seq][key] = data
-            with open(self.session_file_path, 'w', encoding='utf-8') as f:
-                json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
+            dmu.save_json_file(chat_history_dict, self.session_file_path, indent=4)
             # Reset DB Export to UNDO when new conversation is saved
             export_status, last_exported_seq = self.get_db_export_info()
             if export_status == DB_EXPORT_DONE:
@@ -881,43 +880,44 @@ class DigiMSession:
 
     # Save chat history
     def save_history(self, seq, chat_dict_key, chat_dict, level="SEQ", sub_seq="1"):
-        chat_history_dict = {}
-
-        # Create the session folder if missing
+        # Create the session folder if missing (mkdir is idempotent; OK outside the lock)
         if not os.path.exists(self.session_folder_path):
             os.makedirs(self.session_folder_path, exist_ok=True)
 
-        # Read the saved chat history
-        if os.path.exists(self.session_file_path):
-            chat_history_dict = dmu.read_json_file(self.session_file_path)
+        with _get_file_lock(self.session_file_path):
+            chat_history_dict = {}
+            # Read the saved chat history
+            if os.path.exists(self.session_file_path):
+                chat_history_dict = dmu.read_json_file(self.session_file_path)
 
-        # If the seq is missing, set it together with FLG
-        if seq not in chat_history_dict:
-            chat_history_dict[seq] = {}
-            chat_history_dict[seq]["SETTING"] = {}
-            chat_history_dict[seq]["SETTING"]["FLG"] = "Y"
+            # If the seq is missing, set it together with FLG
+            if seq not in chat_history_dict:
+                chat_history_dict[seq] = {}
+                chat_history_dict[seq]["SETTING"] = {}
+                chat_history_dict[seq]["SETTING"]["FLG"] = "Y"
 
-        # Append data to chat history
-        if level == "SEQ":
-            chat_history_dict[seq]["SETTING"][chat_dict_key] = chat_dict
-        elif level == "SUB_SEQ":
-            if sub_seq not in chat_history_dict[seq]:
-                chat_history_dict[seq][sub_seq] = {}
-            chat_history_dict[seq][sub_seq][chat_dict_key] = chat_dict
+            # Append data to chat history
+            if level == "SEQ":
+                chat_history_dict[seq]["SETTING"][chat_dict_key] = chat_dict
+            elif level == "SUB_SEQ":
+                if sub_seq not in chat_history_dict[seq]:
+                    chat_history_dict[seq][sub_seq] = {}
+                chat_history_dict[seq][sub_seq][chat_dict_key] = chat_dict
 
-        # Save chat history
-        with open(self.session_file_path, 'w', encoding='utf-8') as f:
-            json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
-        # Reset DB Export to UNDO when new conversation is saved
-        export_status, last_exported_seq = self.get_db_export_info()
-        if export_status == DB_EXPORT_DONE:
-            self.save_db_export_undo(last_exported_seq)
+            # Save chat history
+            dmu.save_json_file(chat_history_dict, self.session_file_path, indent=4)
+            # Reset DB Export to UNDO when new conversation is saved
+            export_status, last_exported_seq = self.get_db_export_info()
+            if export_status == DB_EXPORT_DONE:
+                self.save_db_export_undo(last_exported_seq)
 
     # Change the session name
     def chg_session_name(self, new_session_name):
         self.session_name = new_session_name
         self.save_session_name()
-        if os.path.exists(self.session_file_path):
+        with _get_file_lock(self.session_file_path):
+            if not os.path.exists(self.session_file_path):
+                return
             session_file_dict = dmu.read_json_file(self.session_file_path)
             for seq_key, seq_val in session_file_dict.items():
                 if not isinstance(seq_val, dict):
@@ -927,8 +927,7 @@ class DigiMSession:
                         continue
                     if "setting" in sub_val and isinstance(sub_val["setting"], dict):
                         sub_val["setting"]["session_name"] = new_session_name
-            with open(self.session_file_path, 'w', encoding='utf-8') as f:
-                json.dump(session_file_dict, f, ensure_ascii=False, indent=4)
+            dmu.save_json_file(session_file_dict, self.session_file_path, indent=4)
 
     # Get a sequence of chat history
     def get_seq_history(self):
@@ -941,21 +940,23 @@ class DigiMSession:
 
     # Change the status of a chat-history sequence
     def chg_seq_history(self, seq, value="N"):
-        if os.path.exists(self.session_file_path):
+        with _get_file_lock(self.session_file_path):
+            if not os.path.exists(self.session_file_path):
+                return
             chat_history_dict = dmu.read_json_file(session_file_name, self.session_folder_path)
             chat_history_dict[seq]["SETTING"]["FLG"] = value
-        with open(self.session_file_path, 'w', encoding='utf-8') as f:
-            json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
+            dmu.save_json_file(chat_history_dict, self.session_file_path, indent=4)
 
     # Change the memory-reference flag of a chat-history sequence
     # MEMORY_FLG="N": display remains but excluded from memory references (LLM context)
     def chg_seq_memory_flg(self, seq, value="Y"):
-        if os.path.exists(self.session_file_path):
+        with _get_file_lock(self.session_file_path):
+            if not os.path.exists(self.session_file_path):
+                return
             chat_history_dict = dmu.read_json_file(session_file_name, self.session_folder_path)
             if seq in chat_history_dict and "SETTING" in chat_history_dict[seq]:
                 chat_history_dict[seq]["SETTING"]["MEMORY_FLG"] = value
-                with open(self.session_file_path, 'w', encoding='utf-8') as f:
-                    json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
+                dmu.save_json_file(chat_history_dict, self.session_file_path, indent=4)
 
     # Change the per-sub_seq memory-reference flag (Phase 6: for chain.PERSONAS)
     # sub_seq with setting.memory_flg = "N" still displays but is excluded from memory references
@@ -968,8 +969,7 @@ class DigiMSession:
                 if "setting" not in chat_history_dict[seq][sub_seq]:
                     chat_history_dict[seq][sub_seq]["setting"] = {}
                 chat_history_dict[seq][sub_seq]["setting"]["memory_flg"] = value
-                with open(self.session_file_path, 'w', encoding='utf-8') as f:
-                    json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
+                dmu.save_json_file(chat_history_dict, self.session_file_path, indent=4)
 
     # Add a key/value to the per-sub_seq setting (Phase 6: for assigning chain_index / chain_role etc.)
     def update_subseq_setting(self, seq, sub_seq, updates):
@@ -983,29 +983,29 @@ class DigiMSession:
                 if "setting" not in chat_history_dict[seq][sub_seq]:
                     chat_history_dict[seq][sub_seq]["setting"] = {}
                 chat_history_dict[seq][sub_seq]["setting"].update(updates)
-                with open(self.session_file_path, 'w', encoding='utf-8') as f:
-                    json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
+                dmu.save_json_file(chat_history_dict, self.session_file_path, indent=4)
 
     # Save feedback into chat history
     def set_feedback_history(self, seq, sub_seq, feedbacks={}):
-        if os.path.exists(self.session_file_path):
+        with _get_file_lock(self.session_file_path):
+            if not os.path.exists(self.session_file_path):
+                return
             chat_history_dict = dmu.read_json_file(session_file_name, self.session_folder_path)
             chat_history_dict[seq][sub_seq]["feedback"] = feedbacks
-        with open(self.session_file_path, 'w', encoding='utf-8') as f:
-            json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
+            dmu.save_json_file(chat_history_dict, self.session_file_path, indent=4)
 
     # Save analytics result into chat history
     def set_analytics_history(self, seq, sub_seq, analytics={}):
         import logging
         _logger = logging.getLogger(__name__)
-        if os.path.exists(self.session_file_path):
+        with _get_file_lock(self.session_file_path):
+            if not os.path.exists(self.session_file_path):
+                _logger.warning(f"set_analytics_history: file not found {self.session_file_path}")
+                return
             chat_history_dict = dmu.read_json_file(session_file_name, self.session_folder_path)
             chat_history_dict[seq][sub_seq]["analytics"] = analytics
-            with open(self.session_file_path, 'w', encoding='utf-8') as f:
-                json.dump(chat_history_dict, f, ensure_ascii=False, indent=4)
+            dmu.save_json_file(chat_history_dict, self.session_file_path, indent=4)
             _logger.info(f"set_analytics_history: seq={seq}, sub_seq={sub_seq} written to {self.session_file_path}")
-        else:
-            _logger.warning(f"set_analytics_history: file not found {self.session_file_path}")
 
     # Get detailed info from chat history
     def get_detail_info(self, seq, sub_seq="1"):
