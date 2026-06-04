@@ -140,6 +140,21 @@ def _normalize_record(layer: str, rec: dict) -> dict:
 
 
 # ---------- EXCEL backend ----------
+# Per-file locks (a single Streamlit process can have multiple background threads
+# concurrently calling upsert on the same layer; without locking, df.to_excel can
+# race against itself and leave a corrupt or zero-byte file).
+import threading as _um_threading
+_excel_file_locks = {}
+_excel_file_locks_meta = _um_threading.Lock()
+
+
+def _get_excel_lock(file_path: str):
+    with _excel_file_locks_meta:
+        if file_path not in _excel_file_locks:
+            _excel_file_locks[file_path] = _um_threading.Lock()
+        return _excel_file_locks[file_path]
+
+
 def _excel_path(layer: str) -> str:
     Path(_user_memory_folder).mkdir(parents=True, exist_ok=True)
     return str(Path(_user_memory_folder) / f"{layer}.xlsx")
@@ -150,11 +165,28 @@ def _excel_load_all(layer: str) -> list:
     path = _excel_path(layer)
     if not os.path.exists(path):
         return []
-    try:
-        df = pd.read_excel(path, sheet_name=layer, dtype=str).fillna("")
-    except Exception as e:
-        logger.warning(f"[user_memory] Excel load failed layer={layer}: {e}")
-        return []
+    # Hold the lock so we don't read while another thread is replacing the file.
+    with _get_excel_lock(path):
+        # Lenient sheet resolution: prefer the canonical sheet name, but if the user
+        # edited the file and renamed the sheet (e.g. "history" -> "history (1)"),
+        # fall back to the first sheet so we don't silently return [].
+        try:
+            df = pd.read_excel(path, sheet_name=layer, dtype=str).fillna("")
+        except ValueError as ve:
+            try:
+                df = pd.read_excel(path, sheet_name=0, dtype=str).fillna("")
+                logger.warning(
+                    f"[user_memory] Excel sheet '{layer}' not found in {path}; "
+                    f"falling back to the first sheet ({ve})"
+                )
+            except Exception as e:
+                logger.warning(f"[user_memory] Excel load failed layer={layer} path={path}: {e}")
+                _excel_quarantine_corrupt_file(path, reason=str(e))
+                return []
+        except Exception as e:
+            logger.warning(f"[user_memory] Excel load failed layer={layer} path={path}: {e}")
+            _excel_quarantine_corrupt_file(path, reason=str(e))
+            return []
     records = []
     for _, row in df.iterrows():
         rec = {col: row[col] if col in row.index else "" for col in _FIELDS[layer]}
@@ -162,8 +194,42 @@ def _excel_load_all(layer: str) -> list:
     return records
 
 
+def _excel_quarantine_corrupt_file(path: str, reason: str = ""):
+    """When the xlsx can't be parsed (zero-byte, half-written, foreign format),
+    move it aside as <path>.corrupt.<ts> so subsequent writes can recreate a fresh
+    file instead of crashing again. Keeps a copy for post-mortem."""
+    try:
+        if not os.path.exists(path):
+            return
+        # Don't quarantine readable files (defensive double-check).
+        try:
+            import pandas as pd
+            pd.read_excel(path, sheet_name=0, dtype=str)
+            return
+        except Exception:
+            pass
+        ts = datetime.now().strftime("%Y%m%d%H%M%S%f")
+        bad_path = f"{path}.corrupt.{ts}"
+        os.replace(path, bad_path)
+        logger.error(f"[user_memory] quarantined corrupt Excel: {path} -> {bad_path} (reason: {reason})")
+    except Exception as e:
+        logger.warning(f"[user_memory] failed to quarantine {path}: {e}")
+
+
 def _excel_save_all(layer: str, records: list):
+    """Atomic + lock-protected Excel write.
+
+    Strategy:
+      1. Take the per-file lock.
+      2. Serialize the DataFrame to a temp file in the same folder.
+      3. fsync, then atomic os.replace() into the canonical path.
+      4. If anything fails, the original (valid) file is untouched.
+
+    Errors are logged and re-raised so the caller (and the centralized bg-error log)
+    can record what was attempted.
+    """
     import pandas as pd
+    import tempfile
     path = _excel_path(layer)
     rows = []
     for rec in records:
@@ -178,7 +244,33 @@ def _excel_save_all(layer: str, records: list):
             out[col] = v
         rows.append(out)
     df = pd.DataFrame(rows, columns=_FIELDS[layer])
-    df.to_excel(path, sheet_name=layer, index=False)
+
+    folder = os.path.dirname(path) or "."
+    with _get_excel_lock(path):
+        fd, tmp_path = tempfile.mkstemp(prefix=f".tmp_{layer}_", suffix=".xlsx", dir=folder)
+        os.close(fd)  # pandas/openpyxl opens by path; we just needed a unique reserved name.
+        try:
+            df.to_excel(tmp_path, sheet_name=layer, index=False)
+            # Flush the new file to disk so the rename swap actually carries the content.
+            try:
+                with open(tmp_path, "rb") as _f:
+                    os.fsync(_f.fileno())
+            except OSError:
+                pass
+            os.replace(tmp_path, path)
+            logger.info(f"[user_memory] saved layer={layer} rows={len(rows)} path={path}")
+        except Exception as e:
+            # Clean up the temp file on any failure so we don't litter the folder.
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except OSError:
+                pass
+            logger.exception(
+                f"[user_memory] Excel save FAILED layer={layer} path={path} "
+                f"rows={len(rows)}: {type(e).__name__}: {e}"
+            )
+            raise
 
 
 # ---------- RDB backend ----------
