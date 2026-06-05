@@ -1254,7 +1254,9 @@ def _knowledge_explorer():
                 _detail = _session.get_detail_info("1", "1")
                 if _detail:
                     import re as _re
-                    _blocks = _re.split(r'\n(?=【)', _detail)
+                    # get_detail_info now uses "[Section]" markers (legacy data may still use "【...】"),
+                    # so split on either form to keep the per-section grouping working.
+                    _blocks = _re.split(r'\n(?=\[[^\]\n]+\]|【)', _detail)
                     for _block in _blocks:
                         _block = _block.strip()
                         if _block:
@@ -5234,9 +5236,10 @@ def main():
                                 chat_expander = st.expander("Detail Information")
                                 with chat_expander:
                                     _detail_info = st.session_state.session.get_detail_info(k, k2)
-                                    # Split into 【】 blocks and attach a copy button to each
+                                    # Split into per-section blocks and attach a Copy button to each.
+                                    # Current marker is "[Section]"; older sessions saved with "【...】" still split correctly.
                                     import re as _re
-                                    _blocks = _re.split(r'\n(?=【)', _detail_info)
+                                    _blocks = _re.split(r'\n(?=\[[^\]\n]+\]|【)', _detail_info)
                                     for _bi, _block in enumerate(_blocks):
                                         _block_stripped = _block.strip()
                                         if _block_stripped:
