@@ -125,14 +125,28 @@ def get_text_content(agent_data, content, seq, sub_seq, file_seq):
 
     return content_context, content_records, image_file
 
-# Fetch the prompt template
+# Fetch the prompt template.
+# Raises a descriptive KeyError when the requested template is missing so that
+# operators can immediately see *which* template name was looked up in *which*
+# master file -- instead of just `KeyError: 'User Memory History'`.
+# An empty/whitespace template body is treated as "template not present" so we
+# also surface that case rather than returning an empty prompt silently.
 def set_prompt_template(prompt_temp_cd):
     prompt_temp_mst_path = str(Path(mst_folder_path) / prompt_template_mst_file)
     prompt_temps_json = dmu.read_json_file(prompt_temp_mst_path)
-    prompt_temp = prompt_temps_json["PROMPT_TEMPLATE"][prompt_temp_cd]
+    section = prompt_temps_json.get("PROMPT_TEMPLATE") or {}
+    if prompt_temp_cd not in section:
+        available = sorted(section.keys())
+        raise KeyError(
+            f"Prompt template '{prompt_temp_cd}' is missing in "
+            f"{prompt_temp_mst_path} -> 'PROMPT_TEMPLATE'. "
+            f"Add the template under that key (see sample_prompt_templates.json for "
+            f"a reference body). Available keys ({len(available)}): {available}"
+        )
+    prompt_temp = section[prompt_temp_cd]
     prompt_template = ""
-    if prompt_temp:
-        prompt_template = prompt_template + prompt_temp +"\n"
+    if prompt_temp and str(prompt_temp).strip():
+        prompt_template = prompt_template + prompt_temp + "\n"
     return prompt_template
 
 # Get the RAG data list (in rags.json order)
