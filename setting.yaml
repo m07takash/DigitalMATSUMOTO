@@ -9,6 +9,7 @@ ARCHIVE_DAYS: 30
 AGENT_FOLDER: "user/common/agent/"
 CHARACTER_FOLDER: "user/common/agent/character/"
 PRACTICE_FOLDER: "user/common/practice/"
+TOOL_FOLDER: "user/common/tool/"
 MST_FOLDER: "user/common/mst/"
 RAG_FOLDER_DB: "user/common/rag/chromadb/"
 RAG_FOLDER_PAGES: "user/common/rag/pages/"
@@ -36,6 +37,10 @@ OPENAI_SEARCH_SYSTEM_PROMPT: "Be precise and concise."
 OPENAI_SEARCH_USER_PROMPT: "以下の入力に基づいて、関連する情報を提供してください。"
 GOOGLE_SEARCH_MODEL: "gemini-2.5-flash-preview-05-20"
 GOOGLE_SEARCH_USER_PROMPT: "以下の入力に基づいて、関連する情報を提供してください。"
+CLAUDE_SEARCH_MODEL: "claude-sonnet-4-6"
+CLAUDE_SEARCH_SYSTEM_PROMPT: "Be precise and concise."
+CLAUDE_SEARCH_USER_PROMPT: "以下の入力に基づいて、関連する情報を提供してください。"
+CLAUDE_SEARCH_MAX_TOKENS: 4096
 URL_FETCH:
   TIMEOUT: 10
   MAX_BYTES: 2097152
