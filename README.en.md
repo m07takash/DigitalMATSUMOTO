@@ -89,6 +89,7 @@ DigitalMATSUMOTO/
 │   │   ├── agent/                # Agent configuration JSON
 │   │   ├── agent/persona_data/   # Agent persona xlsx (for multi-persona parallel execution)
 │   │   ├── practice/             # Practice configuration JSON
+│   │   ├── tool/                 # Tool plugins (.py, auto-loaded) — drop a .py file here to add a new tool/SKILL
 │   │   ├── mst/                  # Master data (users, RAG, prompts, etc.)
 │   │   ├── rag/chromadb/         # Vector DB (ChromaDB)
 │   │   ├── rag/pages/            # PageIndex RAG (.md + _index.json)
@@ -1001,7 +1002,8 @@ Specifies Support Agents that assist the main dialogue. Each Support Agent is de
   "ART_CRITICS": "agent_52ArtCritic.json",
   "EXTRACT_DATE": "agent_55ExtractDate.json",
   "RAG_QUERY_GENERATOR": "agent_56RAGQueryGenerator.json",
-  "THINKING": "agent_59Thinking.json"
+  "THINKING": "agent_59Thinking.json",
+  "KNOWLEDGE_INTERPRET": "agent_78DigiMKnowledgeInterpret.json"
 }
 ```
 
@@ -1012,6 +1014,7 @@ Specifies Support Agents that assist the main dialogue. Each Support Agent is de
 | `EXTRACT_DATE` | Extracts date information from user input (used for RAG metadata search) |
 | `RAG_QUERY_GENERATOR` | Generates auxiliary queries for RAG search from user input |
 | `THINKING` | Analyzes the user's question and dynamically decides on Habit selection / Web search / RAG query generation / Book addition (when Thinking Mode is enabled) |
+| `KNOWLEDGE_INTERPRET` | Invoked by the "Interpret with LLM" buttons under Analytics Results - Knowledge Utility. Reads the inventory CSV / similarity rank (+ optional scatter / bar images) and returns three sections: overall composition vs. this-query selection, contribution analysis using delta = response_sim − question_sim, and notable / improvement points. Back-data centric; images are optional for vision-capable models. |
 
 #### BOOK (reference information)
 
@@ -1239,13 +1242,14 @@ Enabling Web search lets you supplement the input to the LLM with the latest inf
 | **Perplexity** | `PERPLEXITY_API_KEY` | A model specialized for Web search. Responses include source URLs |
 | **OpenAI** | `OPENAI_API_KEY` | Searches via GPT's `web_search_preview` tool. High accuracy |
 | **Google** | `GEMINI_API_KEY` | Gemini's Google Search Grounding. Google search based |
+| **Claude** | `ANTHROPIC_API_KEY` | Anthropic's `web_search_20260209` server-side tool. Dynamic Filtering returns results efficiently |
 
 #### setting.yaml settings
 
 Set the default engine and parameters of each engine in `setting.yaml`.
 
 ```yaml
-# Default search engine (Perplexity / OpenAI / Google)
+# Default search engine (Perplexity / OpenAI / Google / Claude)
 WEB_SEARCH_DEFAULT: "OpenAI"
 
 # Perplexity
@@ -1264,6 +1268,12 @@ OPENAI_SEARCH_USER_PROMPT: "Based on the following input, provide related inform
 # Google Grounding Search
 GOOGLE_SEARCH_MODEL: "gemini-2.5-flash-preview-05-20"
 GOOGLE_SEARCH_USER_PROMPT: "Based on the following input, provide related information."
+
+# Claude Web Search (web_search_20260209)
+CLAUDE_SEARCH_MODEL: "claude-sonnet-4-6"
+CLAUDE_SEARCH_SYSTEM_PROMPT: "Be precise and concise."
+CLAUDE_SEARCH_USER_PROMPT: "Based on the following input, provide related information."
+CLAUDE_SEARCH_MAX_TOKENS: 4096
 ```
 
 #### system.env settings
@@ -1274,7 +1284,119 @@ Set the API key for the engine you use.
 PERPLEXITY_API_KEY=Perplexity API key
 OPENAI_API_KEY=OpenAI API key (shared with LLM)
 GEMINI_API_KEY=Google Gemini API key (shared with LLM)
+ANTHROPIC_API_KEY=Anthropic API key (shared with LLM)
 ```
+
+### Tool Plugin System (SKILL / Tool / Slash Command)
+
+All non-LLM agent capabilities (history operations, web search, analysis, etc.) flow through an **engine-agnostic tool registry**. The same tools work on GPT / Gemini / Claude / Grok with no vendor-specific changes.
+
+#### Architecture overview
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│  user/common/tool/<name>.py  ← drop a .py file to add a tool       │
+│      └─ dmtr.register_tool("name", description, schema, func)      │
+│                              │                                  │
+│                              ▼                                  │
+│  DigiM_ToolRegistry.TOOL_REGISTRY ← name → {func, schema, ...}     │
+│                              │                                  │
+│       ┌──────────────────────┼──────────────────────┐           │
+│       ▼                      ▼                      ▼           │
+│  call_function_by_name   pick_tools()           __getattr__     │
+│   (Practice TOOL chains)  (Thinking/SKILL)    (dmt.X back-compat)│
+└────────────────────────────────────────────────────────────────┘
+```
+
+- **`DigiM_ToolRegistry.py`** — Single source of truth: `{name: {description, schema, func}}`.
+- **`user/common/tool/`** — Streamlit auto-loads every `*.py` on startup (filenames starting with `_` are skipped, useful for private helpers). Each plugin self-registers by calling `dmtr.register_tool(...)` at module level.
+- **`DigiM_Tool.call_function_by_name(svc, usr, name, ...)`** — Single dispatch point. Practice `TYPE:TOOL` chains, the fixed pipeline in `DigiM_Execute`, the WebUI slash command, and TOOL_PICK chains all go through here.
+- **`DigiM_Tool.pick_tools(agent, query, allowed=...)`** — Engine-agnostic tool picker. `render_tools_for_prompt` advertises the tools as a JSON-Schema block in the system prompt; the LLM replies with `{"tool_calls":[{"name":..., "args":...}]}` which `parse_tool_calls` decodes. **No vendor-specific `tools=[]` parameter is used, so the exact same code works on Claude / Gemini / GPT / Grok.**
+- **`__getattr__` shim** — PEP 562 fallback at the bottom of `DigiM_Tool`. Resolution order: registry → plugin module namespaces. Legacy callers like `dmt.fixed_message(...)` keep working after their functions move into plugin files.
+
+#### Bundled tools (21 — all plugins)
+
+| Category | Plugin file | Tools |
+|---|---|---|
+| History control | `history.py` | `fixed_message`, `forget_history`, `remember_history` |
+| Dialog / summary | `dialog.py` | `dialog_digest`, `gene_session_name`, `dialog_persona_merge` |
+| Thinking | `thinking.py` | `thinking_agent`, `RAG_query_generator`, `page_index_search` |
+| Analysis | `analysis.py` | `extract_date`, `management_analysis`, `compare_texts` |
+| Persona | `persona.py` | `select_personas` |
+| Image critique | `art_critic.py` | `art_critics` |
+| Web search | `web_search.py` | `WebSearch` (dispatcher), `WebSearch_PerplexityAI`, `WebSearch_OpenAI`, `WebSearch_Google`, `WebSearch_Claude` |
+| Knowledge Utility | `knowledge_interpret.py` | `knowledge_utility_interpret` |
+| Utility | `current_time.py` | `current_time` |
+
+#### Adding a new tool
+
+```python
+# user/common/tool/my_skill.py
+import DigiM_ToolRegistry as dmtr
+
+def my_skill(service_info, user_info, session_id, session_name, agent_file,
+             input, import_contents=[], add_info={}):
+    # ...do work...
+    return service_info, user_info, "result text", []
+
+dmtr.register_tool(
+    "my_skill",
+    description="Used by the LLM (Thinking-mode pick) and the user (/my_skill) to decide when to call it",
+    schema={"type":"object","properties":{"input":{"type":"string"}},"required":["input"]},
+    func=my_skill,
+)
+```
+
+Drop the file and restart Streamlit — the tool is available immediately.
+
+#### Agent JSON `SKILL` block (tools the agent is allowed to use from the WebUI / Thinking)
+
+```json
+"SKILL": {
+  "TOOL_LIST": ["forget_history", "remember_history", "management_analysis", "fixed_message"],
+  "CHOICE": "auto"
+}
+```
+
+- `TOOL_LIST` — Allow-list of tool names. Used both for the WebUI slash command (`/skills`) and for the Thinking-mode auto-picker.
+- `CHOICE` — `"auto"` (LLM picks) / `"manual"` (user must specify), etc. (reserved for future expansion).
+
+#### Running a SKILL explicitly from the WebUI (slash command)
+
+Typing `/<skill_name> <input>` in the chat box executes the tool directly. **The execution is persisted to the session as a normal user/assistant turn**, so the digest pipeline, next-turn memory, and Detail Information all see it (**session continuity is preserved**).
+
+| Input | Behavior |
+|---|---|
+| `/skills` or `/help` | Show the list of skills available on this agent |
+| `/<skill_name> <text>` | Run the skill if it's in SKILL.TOOL_LIST; otherwise show an error |
+| `/<unknown_skill>` | Show "Skill is not registered" in chat |
+| Plain text | Existing LLM flow (unchanged) |
+
+Sample agent: `agent_02DigitalMATSUMOTO_ToolUser.json` is configured with `fixed_message / forget_history / remember_history / management_analysis` in `SKILL.TOOL_LIST` for hands-on testing.
+
+#### Calling tools from a Practice chain
+
+Two chain TYPEs are available:
+
+| TYPE | Behavior |
+|---|---|
+| `TOOL` | Run the tool named by `setting.FUNC_NAME` (existing — for Practice authors that hard-wire the tool) |
+| `TOOL_PICK` | Engine-agnostic: send the agent's `SKILL.TOOL_LIST` to the agent's LLM, let it pick, then run the picked tool. No vendor function-calling required. |
+
+```json
+{
+  "TYPE": "TOOL_PICK",
+  "SETTING": {
+    "AGENT_FILE": "USER",
+    "USER_INPUT": "USER",
+    "TOOL_LIST": ["WebSearch", "extract_date"]
+  }
+}
+```
+
+#### Fixed pipeline tools called from DigiM_Execute (formerly direct `dmt.X` calls)
+
+The 7 pipeline calls `RAG_query_generator` / `extract_date` / `thinking_agent` / `dialog_digest` / `WebSearch` / `dialog_persona_merge` / `select_personas` **now all go through `call_function_by_name`**. This collapses logging and error capture into one place: failures (e.g. a `SUPPORT_AGENT` pointing at a non-existent agent file) are now captured with full tracebacks in `user/_bg_errors.log` and the per-session `user/<session>/errors.log`.
 
 ### Auto URL fetching (as attachments)
 

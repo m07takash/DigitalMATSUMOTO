@@ -13,6 +13,7 @@ import DigiM_Agent as dma
 import DigiM_Context as dmc
 import DigiM_Session as dms
 import DigiM_Tool as dmt
+import DigiM_ToolRegistry as dmtr
 import DigiM_JobRegistry as djr
 import DigiM_UserMemoryBuilder as dmumb
 import DigiM_UserMemorySetting as dmus
@@ -97,8 +98,9 @@ def _build_intent_queries(service_info, user_info, session_id, session_name, sup
         _query = _query + "\n\n" + user_memory_context.strip()
     add_info = {"Memories_Selected": memories_selected, "Situation": situation_prompt, "QueryVecs": [query_vec]}
     agent_file = support_agent["RAG_QUERY_GENERATOR"]
-    _, _, response, model_name, prompt_tokens, response_tokens = dmt.RAG_query_generator(
-        service_info, user_info, session_id, session_name, agent_file, _query, [], add_info)
+    _, _, response, model_name, prompt_tokens, response_tokens = dmt.call_function_by_name(
+        service_info, user_info, "RAG_query_generator",
+        session_id, session_name, agent_file, _query, [], add_info)
     vec = dmu.embed_text(response.replace("\n", ""))
     duration = round((datetime.now() - t_start).total_seconds(), 2)
     log = {"agent_file": agent_file, "model": model_name, "llm_response": response,
@@ -115,8 +117,9 @@ def _build_meta_searches(service_info, user_info, session_id, session_name, supp
     t_start = datetime.now()
     add_info = {"Memories_Selected": memories_selected, "Situation": situation_prompt, "QueryVecs": [query_vec]}
     agent_file = support_agent["EXTRACT_DATE"]
-    _, _, response, model_name, prompt_tokens, response_tokens = dmt.extract_date(
-        service_info, user_info, session_id, session_name, agent_file, user_query, [], add_info)
+    _, _, response, model_name, prompt_tokens, response_tokens = dmt.call_function_by_name(
+        service_info, user_info, "extract_date",
+        session_id, session_name, agent_file, user_query, [], add_info)
     date_list = dmu.merge_periods(dmu.extract_list_pattern(response))
     duration = round((datetime.now() - t_start).total_seconds(), 2)
     log = {"date": {"agent_file": agent_file, "model": model_name, "condition_list": date_list,
@@ -151,8 +154,9 @@ def _run_thinking_agent(service_info, user_info, session_id, session_name,
         "BookInfo": book_info,
     }
     agent_file = support_agent["THINKING"]
-    _, _, response, model_name, prompt_tokens, response_tokens = dmt.thinking_agent(
-        service_info, user_info, session_id, session_name, agent_file, user_query, [], add_info)
+    _, _, response, model_name, prompt_tokens, response_tokens = dmt.call_function_by_name(
+        service_info, user_info, "thinking_agent",
+        session_id, session_name, agent_file, user_query, [], add_info)
 
     # Extract JSON from the response
     result = {}
@@ -241,8 +245,9 @@ def _apply_persona_merge(merge_method, persona_responses, user_query, merge_leve
     if method == "summary":
         merge_agent = (support_agent or {}).get("PERSONA_MERGE", "agent_50PersonaMerge.json")
         try:
-            _, _, merged, _, _, _ = dmt.dialog_persona_merge(
-                service_info, user_info, session_id, session_name,
+            _, _, merged, _, _, _ = dmt.call_function_by_name(
+                service_info, user_info, "dialog_persona_merge",
+                session_id, session_name,
                 merge_agent, user_query, persona_responses, summary_level=merge_level,
             )
             return merged
@@ -265,8 +270,9 @@ def _run_digest_background(session, service_info, user_info, session_id, session
         add_info = {}
         add_info["Memories_Selected"] = memories_selected
         timestamp_digest_start = str(datetime.now())
-        _, _, digest_response, digest_model_name, _, digest_response_tokens = dmt.dialog_digest(
-            service_info, user_info, session_id, session_name, dialog_digest_agent_file, "", [], add_info)
+        _, _, digest_response, digest_model_name, _, digest_response_tokens = dmt.call_function_by_name(
+            service_info, user_info, "dialog_digest",
+            session_id, session_name, dialog_digest_agent_file, "", [], add_info)
         timestamp_digest = str(datetime.now())
         digest_vec_file = ""
         if cfg["memory_similarity"]:
@@ -282,7 +288,20 @@ def _run_digest_background(session, service_info, user_info, session_id, session
         session.save_history_batch(str(seq), {str(sub_seq): {"digest": digest_chat_dict}})
     except Exception as e:
         import logging
-        logging.getLogger(__name__).error(f"Background digest generation failed: {e}")
+        # Full traceback so the actual cause (e.g. missing SUPPORT_AGENT file) is visible.
+        logging.getLogger(__name__).exception(f"Background digest generation failed: {e}")
+        # Mirror to per-session + global rotated error logs so this isn't swallowed silently.
+        _ctx = {"phase": "digest_background", "session_id": session_id,
+                "session_name": session_name, "seq": seq, "sub_seq": sub_seq,
+                "dialog_digest_agent_file": (support_agent or {}).get("DIALOG_DIGEST", "")}
+        try:
+            dms.save_global_error_log(e, context=_ctx)
+        except Exception:
+            pass
+        try:
+            session.save_error_log(e, context=_ctx)
+        except Exception:
+            pass
     finally:
         if unlock_on_complete:
             session.save_status("UNLOCKED")
@@ -392,8 +411,9 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         }
         web_model = _web_model_map.get(web_engine, "")
         t_web_start = datetime.now()
-        _, _, web_result_text, export_urls = dmt.WebSearch(
-            service_info, user_info, session_id, session_name, agent_file, search_text, [], {}, engine=web_engine)
+        _, _, web_result_text, export_urls = dmt.call_function_by_name(
+            service_info, user_info, "WebSearch",
+            session_id, session_name, agent_file, search_text, [], {}, engine=web_engine)
         web_duration = round((datetime.now() - t_web_start).total_seconds(), 2)
         web_context = "[参考]関連するWEBの検索結果:\n" + web_result_text
         web_search_log = {"engine": web_engine, "model": web_model, "duration_sec": web_duration, "search_text": search_text, "urls": export_urls, "web_context": web_context}
@@ -811,8 +831,9 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
             session.save_status_message(f"Selecting personas (up to {_max_p})")
             yield service_info, user_info, f"[STATUS]Selecting personas (up to {_max_p}, candidates: {len(_candidates)})", {}
             try:
-                _selected_ids, _select_reason, _, _, _ = dmt.select_personas(
-                    service_info, user_info, session_id, session_name,
+                _selected_ids, _select_reason, _, _, _ = dmt.call_function_by_name(
+                    service_info, user_info, "select_personas",
+                    session_id, session_name,
                     agent.agent.get("SUPPORT_AGENT", {}).get("PERSONA_SELECTOR", "agent_54PersonaSelector.json"),
                     user_query, _candidates, max_personas=_max_p,
                 )
@@ -1042,6 +1063,92 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                             "agent_file": in_agent_file,
                             "name": practice["NAME"],
                             "tool": setting["FUNC_NAME"]
+                        },
+                        "prompt": {
+                            "role": "neither",
+                            "timestamp": timestamp_begin,
+                            "text": input,
+                            "query": {"token": 0, "input": input, "text": input,
+                                      "contents": import_contents, "situation": {}}
+                        },
+                        "response": {
+                            "role": "neither",
+                            "timestamp": timestamp_end,
+                            "token": 0,
+                            "text": output,
+                            "export_contents": export_contents
+                        }
+                    }
+                })
+
+            elif model_type == "TOOL_PICK":
+                # Engine-agnostic SKILL dispatch: ask the agent's LLM which tool(s) to call
+                # via a JSON reply, then run each picked tool through call_function_by_name.
+                # Works on any provider — no provider-native function-calling required.
+                seq = session.get_seq_history() + 1 if sub_seq == 1 else session.get_seq_history()
+                setting = chain["SETTING"]
+
+                user_input = _resolve_user_input(
+                    setting["USER_INPUT"], user_query, results) if "USER_INPUT" in setting else user_query
+                input = user_input
+
+                import_contents = _resolve_contents(
+                    setting["CONTENTS"], in_contents, results) if "CONTENTS" in setting else []
+
+                agent_file = setting["AGENT_FILE"] if "AGENT_FILE" in setting and setting["AGENT_FILE"] != "USER" else in_agent_file
+                add_info_base = setting.get("ADD_INFO", {})
+                # SETTING.TOOL_LIST overrides the agent's SKILL.TOOL_LIST when present.
+                allowed_names = setting.get("TOOL_LIST")
+
+                timestamp_begin = str(datetime.now())
+                pick_agent = dma.DigiM_Agent(agent_file)
+                tool_calls, raw_response, _model_name, _pt, _rt = dmt.pick_tools(
+                    pick_agent, user_input,
+                    allowed_names=allowed_names,
+                    situation_prompt=str(in_situation) if in_situation else "",
+                )
+
+                output_parts = []
+                export_contents = []
+                for call in tool_calls:
+                    call_name = call.get("name", "")
+                    call_input, call_add_info = dmtr.split_args_to_uniform_signature(call.get("args", {}))
+                    merged_add_info = {**add_info_base, **call_add_info}
+                    tool_result = dmt.call_function_by_name(
+                        service_info, user_info, call_name,
+                        session_id, session_name, agent_file,
+                        call_input or input, import_contents, merged_add_info)
+                    if inspect.isgenerator(tool_result):
+                        _out = ""
+                        for resp_svc, resp_usr, chunk, exp in tool_result:
+                            _out += dmu.sanitize_text(str(chunk)) if chunk else ""
+                            if exp is not None:
+                                export_contents = exp
+                        response_service_info, response_user_info = resp_svc, resp_usr
+                        output_parts.append(f"[{call_name}] {_out}")
+                    else:
+                        response_service_info, response_user_info, _out, _exp = tool_result
+                        if _exp:
+                            export_contents = _exp
+                        output_parts.append(f"[{call_name}] {_out}")
+
+                output = "\n\n".join(output_parts) if output_parts else raw_response
+                if not last_only or i == last_idx:
+                    yield service_info, user_info, output, {}
+                timestamp_end = str(datetime.now())
+
+                session.save_history_batch(str(seq), {
+                    str(sub_seq): {
+                        "setting": {
+                            "response_service_info": service_info,
+                            "response_user_info": user_info,
+                            "session_name": session.session_name,
+                            "situation": in_situation,
+                            "type": model_type,
+                            "agent_file": agent_file,
+                            "name": practice["NAME"],
+                            "tool_calls": tool_calls,
+                            "raw_response": raw_response,
                         },
                         "prompt": {
                             "role": "neither",

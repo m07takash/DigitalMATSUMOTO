@@ -5441,6 +5441,17 @@ def main():
                                                 similarity_utility_dict = analytics_dict["knowledge_utility"]["similarity_utility"]
                                                 st.markdown("**knowledge Utility:**")
                                                 st.markdown(", ".join(f"{k}: {v}" for k, v in similarity_utility_dict.items()))
+                                                # Resolve KNOWLEDGE_INTERPRET support agent for this entry's parent agent
+                                                _ki_parent_agent = v2.get("setting", {}).get("agent_file", "")
+                                                _ki_parent_data = dmu.read_json_file(_ki_parent_agent, agent_folder_path) if _ki_parent_agent else {}
+                                                _ki_agent_file = (
+                                                    (_ki_parent_data.get("SUPPORT_AGENT", {}) or {}).get("KNOWLEDGE_INTERPRET")
+                                                    or "agent_78DigiMKnowledgeInterpret.json"
+                                                )
+                                                _ki_user_query = (v2.get("prompt", {}).get("query", {}) or {}).get("input", "") or ""
+                                                _ki_ai_response = (v2.get("response", {}) or {}).get("text", "") or ""
+                                                _ki_interp = analytics_dict["knowledge_utility"].setdefault("llm_interpretation", {})
+
                                                 if "image_files" in analytics_dict["knowledge_utility"]:
                                                     image_files = analytics_dict["knowledge_utility"]["image_files"]
                                                     ext_for = lambda k: "csv" if "csv" in k else "png"
@@ -5451,7 +5462,64 @@ def main():
                                                         #for rag in sorted({os.path.splitext(f)[0].rsplit("_", 1)[-1] for v in image_files.values() for f in v})
                                                         for rag in rag_categories
                                                     }
+
+                                                    # Helper closures bound to this (k, k2, analytics_dict, session) context
+                                                    _ki_base = st.session_state.session.session_analytics_folder_path
+                                                    def _ki_build_section(_rag, _files):
+                                                        return {
+                                                            "RAGName": _rag,
+                                                            "SimilarityUtility": {_rag: similarity_utility_dict.get(_rag)},
+                                                            "InventoryCsvPath": (_ki_base + _files["scatter_plot_file_csv"]) if _files.get("scatter_plot_file_csv") else None,
+                                                            "SelectedDocs": analytics_dict["knowledge_utility"]["similarity_rank"].get(_rag, []) or [],
+                                                            "ImagePaths": [
+                                                                _ki_base + _files[_lk]
+                                                                for _lk in ("scatter_plot_file_ref", "scatter_plot_file_category", "similarity_plot_file")
+                                                                if _files.get(_lk)
+                                                            ],
+                                                        }
+                                                    def _ki_run_interpret(_target_rag_key, _sections):
+                                                        # Background-safe values
+                                                        _bg_svc = dict(st.session_state.web_service)
+                                                        _bg_usr = dict(st.session_state.web_user)
+                                                        _bg_sid = st.session_state.session.session_id
+                                                        _bg_sname = st.session_state.session.session_name
+                                                        _bg_k, _bg_k2 = k, k2
+                                                        _bg_analytics = analytics_dict
+                                                        _bg_session = st.session_state.session
+                                                        _bg_agent_file = _ki_agent_file
+                                                        _bg_query, _bg_resp = _ki_user_query, _ki_ai_response
+                                                        def _bg_fn():
+                                                            _, _, _interp_text, _model, _, _ = dmt.call_function_by_name(
+                                                                _bg_svc, _bg_usr, "knowledge_utility_interpret",
+                                                                _bg_sid, _bg_sname, _bg_agent_file, "", [],
+                                                                {"UserQuery": _bg_query, "AIResponse": _bg_resp,
+                                                                 "Sections": _sections, "UseImages": True})
+                                                            _bg_analytics["knowledge_utility"].setdefault("llm_interpretation", {})[_target_rag_key] = {
+                                                                "text": _interp_text,
+                                                                "model": _model,
+                                                                "timestamp": str(datetime.now()),
+                                                                "agent_file": _bg_agent_file,
+                                                            }
+                                                            _bg_session.set_analytics_history(_bg_k, _bg_k2, _bg_analytics)
+                                                        _run_bg_task("knowledge_interpret",
+                                                                     f"Interpreting Knowledge Utility ({_target_rag_key})",
+                                                                     _bg_fn)
+                                                        st.rerun()
+
+                                                    # "Interpret All DBs" — top-level button
+                                                    _ki_all_col1, _ki_all_col2 = st.columns([1, 3])
+                                                    if _ki_all_col1.button("Interpret All DBs with LLM",
+                                                                            key=f"ki_all_btn_{k}_{k2}",
+                                                                            disabled=bool(st.session_state._bg_task)):
+                                                        _all_sections = [_ki_build_section(_r, _f) for _r, _f in rag_to_files.items()]
+                                                        _ki_run_interpret("_all", _all_sections)
+                                                    if "_all" in _ki_interp:
+                                                        with st.expander(f"LLM Interpretation (All DBs) — model: {_ki_interp['_all'].get('model','')}", expanded=True):
+                                                            st.markdown(_ki_interp["_all"].get("text", ""))
+                                                            st.caption(f"generated: {_ki_interp['_all'].get('timestamp','')}")
+
                                                     for rag_category, files in rag_to_files.items():
+                                                        st.markdown(f"### {rag_category}")
                                                         st_scatter01, st_scatter02 = st.columns(2)
                                                         if files.get("scatter_plot_file_ref"):
                                                             st_scatter01.image(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_ref"])
@@ -5471,6 +5539,17 @@ def main():
                                                             st.image(st.session_state.session.session_analytics_folder_path + files["similarity_plot_file"])
                                                         for ak_dict in analytics_dict["knowledge_utility"]["similarity_rank"][rag_category]:
                                                             st.markdown(ak_line(ak_dict))
+                                                        # Per-DB "Interpret with LLM" button + existing result
+                                                        _ki_col1, _ki_col2 = st.columns([1, 3])
+                                                        if _ki_col1.button(f"Interpret '{rag_category}' with LLM",
+                                                                            key=f"ki_btn_{rag_category}_{k}_{k2}",
+                                                                            disabled=bool(st.session_state._bg_task)):
+                                                            _section = _ki_build_section(rag_category, files)
+                                                            _ki_run_interpret(rag_category, [_section])
+                                                        if rag_category in _ki_interp:
+                                                            with st.expander(f"LLM Interpretation ({rag_category}) — model: {_ki_interp[rag_category].get('model','')}", expanded=True):
+                                                                st.markdown(_ki_interp[rag_category].get("text", ""))
+                                                                st.caption(f"generated: {_ki_interp[rag_category].get('timestamp','')}")
 
             # Chat-history logical-delete setting
             if st.checkbox(f"Delete(seq:{k})", key="del_chat_seq"+k):
@@ -5671,14 +5750,190 @@ def main():
                 st.error(f"Error during execution: {_bg_error}")
 
         _chat_disabled = is_locked or st.session_state.is_processing
+        # ---- Slash-command (SKILL) helpers -----------------------------------
+        # Pattern matches `/<skill_name>` optionally followed by whitespace +
+        # arbitrary text (multiline allowed). The captured "rest" is passed
+        # verbatim as the tool's `input` arg.
+        import re as _re_slash
+        _SLASH_RE = _re_slash.compile(r"^/([A-Za-z_][A-Za-z0-9_]*)\s*(.*)$", _re_slash.DOTALL)
+
+        def _parse_slash_command(text):
+            """Return (skill_name, skill_input) or None if not a slash command.
+            Special meta-command '/skills' (or '/help') -> ('_LIST_SKILLS', '')."""
+            if not text:
+                return None
+            m = _SLASH_RE.match(text.strip())
+            if not m:
+                return None
+            name, rest = m.group(1), (m.group(2) or "").strip()
+            if name in ("skills", "help"):
+                return ("_LIST_SKILLS", "")
+            return (name, rest)
+
+        def _execute_skill_command(svc, usr, session, agent_file, agent_data,
+                                    raw_text, skill_name, skill_input):
+            """Execute a SKILL tool, persist as a chat turn, and refresh history.
+
+            * Validates skill_name against the agent's SKILL.TOOL_LIST.
+            * Calls dmt.call_function_by_name and normalises the return shape.
+            * Saves a TOOL-type entry into chat_memory.json so the session sees
+              it (digest pipeline, next-turn memory loading, Detail Info).
+            """
+            import inspect as _inspect
+            ts_begin = str(datetime.now())
+            tool_list = (agent_data or {}).get("SKILL", {}).get("TOOL_LIST") or []
+
+            # Meta: list available skills for this agent
+            if skill_name == "_LIST_SKILLS":
+                if tool_list:
+                    response_text = "[Available skills for this agent]\n" + "\n".join(
+                        f"- /{n}  <input>" for n in tool_list
+                    ) + "\n\nType `/<skill_name> <text>` to run."
+                else:
+                    response_text = (
+                        "This agent has no SKILL.TOOL_LIST configured. "
+                        "Add tools to SKILL.TOOL_LIST in the agent JSON to expose them here."
+                    )
+                _save_skill_turn(session, svc, usr, agent_file,
+                                 raw_text, response_text, ts_begin, tool_name="_LIST_SKILLS",
+                                 export_contents=[], is_error=False)
+                return
+
+            # Validate skill is allowed for this agent
+            if skill_name not in tool_list:
+                response_text = (
+                    f"Skill `{skill_name}` is not registered in this agent's SKILL.TOOL_LIST. "
+                    f"Available: {', '.join(tool_list) if tool_list else '(none)'}.\n"
+                    f"Type `/skills` to list."
+                )
+                _save_skill_turn(session, svc, usr, agent_file,
+                                 raw_text, response_text, ts_begin, tool_name=skill_name,
+                                 export_contents=[], is_error=True)
+                return
+
+            # Dispatch via the registry
+            session.save_status("LOCKED")
+            try:
+                result = dmt.call_function_by_name(
+                    svc, usr, skill_name,
+                    session.session_id, session.session_name, agent_file,
+                    skill_input, [], {})
+            except Exception as e:
+                _ctx = {"where": "skill_slash", "skill": skill_name,
+                        "session_id": session.session_id, "agent_file": agent_file}
+                try:
+                    dms.save_global_error_log(e, context=_ctx)
+                except Exception:
+                    pass
+                try:
+                    session.save_error_log(e, context=_ctx)
+                except Exception:
+                    pass
+                _save_skill_turn(session, svc, usr, agent_file, raw_text,
+                                 f"[Skill error] {type(e).__name__}: {e}", ts_begin,
+                                 tool_name=skill_name, export_contents=[], is_error=True)
+                session.save_status("UNLOCKED")
+                return
+
+            # Normalise the return shape (generator | 4-tuple | 6-tuple)
+            output = ""
+            export_contents = []
+            if _inspect.isgenerator(result):
+                _last_svc, _last_usr = svc, usr
+                for chunk_pack in result:
+                    if not isinstance(chunk_pack, (tuple, list)) or len(chunk_pack) < 3:
+                        continue
+                    _last_svc, _last_usr, chunk = chunk_pack[0], chunk_pack[1], chunk_pack[2]
+                    if chunk:
+                        output += str(chunk)
+                    if len(chunk_pack) >= 4 and chunk_pack[3] is not None:
+                        export_contents = chunk_pack[3]
+            else:
+                # 4-tuple: (svc, usr, response, export_contents/urls)
+                # 6-tuple: (svc, usr, response, model_name, prompt_tokens, response_tokens)
+                output = result[2] if len(result) > 2 else ""
+                if len(result) == 4 and isinstance(result[3], list):
+                    export_contents = result[3]
+            _save_skill_turn(session, svc, usr, agent_file, raw_text, output, ts_begin,
+                             tool_name=skill_name, export_contents=export_contents, is_error=False)
+            session.save_status("UNLOCKED")
+
+        def _save_skill_turn(session, svc, usr, agent_file, prompt_text, response_text,
+                              ts_begin, tool_name, export_contents=None, is_error=False):
+            """Persist a slash-skill execution as a normal user/assistant turn.
+            Mirrors the TOOL chain shape from DigiMatsuExecute_Practice so the
+            entry shows up in the chat thread + digest pipeline."""
+            seq = session.get_seq_history() + 1
+            ts_end = str(datetime.now())
+            session.save_history_batch(
+                str(seq),
+                sub_seq_data={"1": {
+                    "setting": {
+                        "response_service_info": svc,
+                        "response_user_info": usr,
+                        "session_name": session.session_name,
+                        "situation": {},
+                        "type": "TOOL",
+                        "agent_file": agent_file,
+                        "name": "Skill (slash command)",
+                        "tool": tool_name,
+                        "is_error": bool(is_error),
+                    },
+                    "prompt": {
+                        "role": "user",
+                        "timestamp": ts_begin,
+                        "text": prompt_text,
+                        "query": {"token": 0, "input": prompt_text, "text": prompt_text,
+                                  "contents": [], "situation": {}},
+                    },
+                    "response": {
+                        "role": "assistant",
+                        "timestamp": ts_end,
+                        "token": 0,
+                        "text": response_text,
+                        "export_contents": export_contents or [],
+                    },
+                }},
+                seq_setting_data={
+                    "service_info": svc,
+                    "user_info": usr,
+                    "practice": {"NAME": "Skill (slash command)"},
+                },
+            )
+        # ----------------------------------------------------------------------
+
         if raw_input := st.chat_input("Your Message", disabled=_chat_disabled):
             st.session_state.pending_input = raw_input
             st.session_state.is_processing = True
+            # Detect skill slash command up-front so the processing branch can route.
+            _slash = _parse_slash_command(raw_input)
+            if _slash is not None:
+                st.session_state.pending_skill = _slash
             st.rerun()
 
         if st.session_state.is_processing and st.session_state.pending_input:
             user_input = st.session_state.pending_input
             st.session_state.pending_input = ""
+
+            # Slash-command path: run the skill against the current session and skip
+            # the LLM chain entirely. Session continuity is preserved because the
+            # execution is saved into chat_memory.json as a normal user/assistant turn.
+            if st.session_state.get("pending_skill"):
+                _skill = st.session_state.pending_skill
+                st.session_state.pending_skill = None
+                with st.spinner(f"Running skill: /{_skill[0]} ..."):
+                    _execute_skill_command(
+                        svc=dict(st.session_state.web_service),
+                        usr=dict(st.session_state.web_user),
+                        session=st.session_state.session,
+                        agent_file=st.session_state.agent_file,
+                        agent_data=st.session_state.agent_data,
+                        raw_text=user_input,
+                        skill_name=_skill[0],
+                        skill_input=_skill[1],
+                    )
+                st.session_state.is_processing = False
+                st.rerun()
             # Attachment settings
             uploaded_contents = []
             if st.session_state.uploaded_files:
