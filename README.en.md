@@ -1003,7 +1003,8 @@ Specifies Support Agents that assist the main dialogue. Each Support Agent is de
   "EXTRACT_DATE": "agent_55ExtractDate.json",
   "RAG_QUERY_GENERATOR": "agent_56RAGQueryGenerator.json",
   "THINKING": "agent_59Thinking.json",
-  "KNOWLEDGE_INTERPRET": "agent_78DigiMKnowledgeInterpret.json"
+  "KNOWLEDGE_INTERPRET": "agent_78DigiMKnowledgeInterpret.json",
+  "CITATION_INJECT": "agent_79DigiMCitationInject.json"
 }
 ```
 
@@ -1015,6 +1016,7 @@ Specifies Support Agents that assist the main dialogue. Each Support Agent is de
 | `RAG_QUERY_GENERATOR` | Generates auxiliary queries for RAG search from user input |
 | `THINKING` | Analyzes the user's question and dynamically decides on Habit selection / Web search / RAG query generation / Book addition (when Thinking Mode is enabled) |
 | `KNOWLEDGE_INTERPRET` | Invoked by the "Interpret with LLM" buttons under Analytics Results - Knowledge Utility. Reads the inventory CSV / similarity rank (+ optional scatter / bar images) and returns three sections: overall composition vs. this-query selection, contribution analysis using delta = response_sim − question_sim, and notable / improvement points. Back-data centric; images are optional for vision-capable models. |
+| `CITATION_INJECT` | After the main response is generated, this agent inserts `[N]` markers at sentences grounded in web URLs or BOOK chunks and appends a `## References` section. Fires automatically whenever a web URL or a BOOK chunk was used (KNOWLEDGE entries are not cited — they are treated as the agent's internalised knowledge). Defaults to a lightweight model (Claude-Haiku-4.5 / Gemini Flash Lite / GPT-5-mini). On LLM failure, falls back to leaving the body untouched and appending only the References list. |
 
 #### BOOK (reference information)
 
@@ -1326,6 +1328,7 @@ All non-LLM agent capabilities (history operations, web search, analysis, etc.) 
 | Image critique | `art_critic.py` | `art_critics` |
 | Web search | `web_search.py` | `WebSearch` (dispatcher), `WebSearch_PerplexityAI`, `WebSearch_OpenAI`, `WebSearch_Google`, `WebSearch_Claude` |
 | Knowledge Utility | `knowledge_interpret.py` | `knowledge_utility_interpret` |
+| Citation injection | `citation_inject.py` | `inject_citations` |
 | Utility | `current_time.py` | `current_time` |
 
 #### Adding a new tool
@@ -1397,6 +1400,80 @@ Two chain TYPEs are available:
 #### Fixed pipeline tools called from DigiM_Execute (formerly direct `dmt.X` calls)
 
 The 7 pipeline calls `RAG_query_generator` / `extract_date` / `thinking_agent` / `dialog_digest` / `WebSearch` / `dialog_persona_merge` / `select_personas` **now all go through `call_function_by_name`**. This collapses logging and error capture into one place: failures (e.g. a `SUPPORT_AGENT` pointing at a non-existent agent file) are now captured with full tracebacks in `user/_bg_errors.log` and the per-session `user/<session>/errors.log`.
+
+### Citation injection
+
+After the main LLM generates its response, a lightweight LLM runs an **additional pass** that extracts citation sources from web URLs and BOOK chunks, inserts `[N]` markers at the end of relevant sentences, and appends a `## References` section. **Body wording is not rewritten.**
+
+#### Pipeline
+
+```
+[User input] → WebSearch → Main LLM (response generation) ──┐
+                                                            │ If 1+ Web URL or
+                                                            │ BOOK chunk was used
+                                                            ▼
+                          Citation Injector (Claude-Haiku-4.5 etc.)
+                                                            │ Inserts [N] at end-of-sentence
+                                                            │ Appends ## References block
+                                                            ▼
+                          Overwrites response.text in chat_memory.json
+                                                            ▼
+                          Visible in chat / digest pipeline / next-turn memory
+```
+
+#### What is and isn't cited
+
+| Kind | Meaning | Cited? |
+|------|---------|----|
+| **KNOWLEDGE** | The agent's **internalised intellectual essence** | Not cited |
+| **BOOK (Vector search)** | **Reference information** with explicit attribution | Yes ✓ |
+| **BOOK (PageIndex)** | **Reference information** with explicit attribution | Yes ✓ (LOG_TEMPLATE strings are parsed via regex) |
+| **Web search** | **Reference information** with explicit attribution | Yes ✓ |
+
+BOOK is distinguished from KNOWLEDGE by filtering on `agent.agent["BOOK"]` `RAG_NAME`s.
+
+#### Default and control knobs
+
+- **Default ON**: `_parse_execution_settings.insert_citations` defaults to `True`. There is no WebUI toggle — the injector fires automatically whenever there is at least one citation source (a Web URL or a BOOK chunk).
+- **Explicit OFF** (API etc.): pass `execution["INSERT_CITATIONS"] = false` to disable.
+- **Engine override**: `SUPPORT_AGENT.CITATION_INJECT` selects the agent_file. Default is `agent_79DigiMCitationInject.json` (Claude-Haiku-4.5 family).
+
+#### Graceful fallback
+
+| Failure mode | Behaviour |
+|---|---|
+| 0 citation candidates | Skip (body unchanged) |
+| Support agent load failure | Tool-internal fallback → body + auto-generated `## References` |
+| LLM call exception | Same → body + auto-generated `## References` |
+| LLM output extremely short vs. original | Same → body unchanged |
+| Unexpected exception on the Execute side | Body unchanged; traceback recorded in `_bg_errors.log` / `<session>/errors.log` |
+
+#### Output example
+
+```markdown
+... The new generator is released under Apache 2.0[1]. The core
+technology is based on a 2024 paper[2]. As the saying goes,
+"true creation is born from constraint"[3], so ...
+
+## References
+[1] (web) https://example.com/news/release - Press release
+[2] (web) https://arxiv.org/abs/2401.xxxxx - Original paper
+[3] (book: Quote) "true creation is born from constraint" — Unattributed quote collection ...
+```
+
+#### Diagnostic logs
+
+The injector logs the following on every run — useful when citations don't appear:
+
+```
+[citation_inject] starting: web=2, book=1, book_rag_names=['Quote'],
+                  book_titles=['"true creation is born ..."'], agent_file='agent_79...', body_len=842
+[citation_inject] applied: new body_len=950, contains '[1]': True, contains '## References': True
+```
+
+- Empty `book_rag_names` → the agent has no `BOOK` config at all
+- Has candidates but `book=0` → BOOK declared but chunks not retrieved (missing data / PageIndex `_index.json` absent / `page_index_search` returned 0 results)
+- `book>0` but body has no `[N]` → LLM didn't follow instructions (switch to a smaller / different model)
 
 ### Auto URL fetching (as attachments)
 

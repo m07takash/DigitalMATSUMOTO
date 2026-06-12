@@ -29,6 +29,7 @@ import DigiM_Agent as dma
 import DigiM_Context as dmc
 import DigiM_Util as dmu
 import DigiM_Tool as dmt
+import DigiM_ToolRegistry as dmtr
 import DigiM_GeneFeedback as dmgf
 import DigiM_GeneUserDialog as dmgu
 import DigiM_VAnalytics as dmva
@@ -5589,6 +5590,10 @@ def main():
             else:
                 st.session_state.web_search = False
 
+        # Citation injection is always ON when there are citable sources
+        # (Web URLs or Book chunks). The Execute-side gate handles the actual
+        # firing condition; no UI toggle needed.
+
         # URL fetch: http(s) links in the input are auto-fetched and treated as attachments.
         # Crawling subpages is optional (default OFF).
         st.session_state.url_fetch_subpages = st.checkbox(
@@ -5902,6 +5907,44 @@ def main():
             )
         # ----------------------------------------------------------------------
 
+        # Skills discovery panel: surfaces the current agent's SKILL.TOOL_LIST
+        # as slash-command form right above the chat input so users don't have
+        # to remember `/skills`. Auto-updates whenever the agent switches.
+        _agent_skill_list = (st.session_state.get("agent_data", {}) or {}).get("SKILL", {}).get("TOOL_LIST") or []
+        if _agent_skill_list:
+            _skill_count = len(_agent_skill_list)
+            _skill_expander_label = f"Skills available on this agent ({_skill_count}) — slash commands"
+        else:
+            _skill_expander_label = "Skills available on this agent (0) — none configured for this agent"
+        with st.expander(_skill_expander_label, expanded=False):
+            if _agent_skill_list:
+                _registry_entries = {e["name"]: e for e in dmtr.list_tools(_agent_skill_list)}
+                for _sname in _agent_skill_list:
+                    _entry = _registry_entries.get(_sname)
+                    if _entry is None:
+                        # Listed in SKILL but not registered (typo / plugin not loaded)
+                        st.markdown(f"- `/{_sname}` *(not registered in tool registry)*")
+                        continue
+                    _desc = (_entry.get("description") or "").strip()
+                    # Build the exact slash-command syntax for this skill. If the
+                    # schema declares required args, surface them as <placeholders>;
+                    # otherwise the command takes no input and is shown bare.
+                    _required = (_entry.get("schema") or {}).get("required") or []
+                    if _required:
+                        _syntax = f"/{_sname} " + " ".join(f"<{a}>" for a in _required)
+                    else:
+                        _syntax = f"/{_sname}"
+                    st.markdown(f"- `{_syntax}`\n  &nbsp;&nbsp;&nbsp;&nbsp;{_desc}", unsafe_allow_html=True)
+                st.caption("Type `/skills` (or `/help`) in chat to re-list this anywhere. "
+                           "If a skill is unknown to this agent the chat will reply with an error.")
+            else:
+                st.markdown(
+                    "This agent has no `SKILL.TOOL_LIST` configured. "
+                    "Add tool names to the agent JSON's `SKILL.TOOL_LIST` to "
+                    "expose them as `/<name>` chat commands. "
+                    "See agent_02DigitalMATSUMOTO_ToolUser.json for an example."
+                )
+
         if raw_input := st.chat_input("Your Message", disabled=_chat_disabled):
             st.session_state.pending_input = raw_input
             st.session_state.is_processing = True
@@ -6000,6 +6043,9 @@ def main():
             execution["RAG_QUERY_GENE"] = st.session_state.RAG_query_gene
             execution["WEB_SEARCH"] = st.session_state.web_search
             execution["WEB_SEARCH_ENGINE"] = st.session_state.get("web_search_engine", "")
+            # INSERT_CITATIONS not set explicitly — defaults to True in
+            # DigiM_Execute._parse_execution_settings, so the citation injector
+            # fires automatically whenever there are citable sources.
             execution["PRIVATE_MODE"] = st.session_state.private_mode
             execution["THINKING_MODE"] = st.session_state.thinking_mode
             # User Memory: current checkbox state takes top priority (reflected immediately regardless of Save)

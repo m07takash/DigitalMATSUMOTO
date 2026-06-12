@@ -48,6 +48,10 @@ def _parse_execution_settings(execution):
         "RAG_query_gene":    execution.get("RAG_QUERY_GENE", True),
         "web_search":        execution.get("WEB_SEARCH", False),
         "web_search_engine": execution.get("WEB_SEARCH_ENGINE", ""),
+        # Default ON: citations are automatically inserted whenever there are
+        # citable sources (web URLs or Book chunks). API callers can opt out
+        # explicitly via execution["INSERT_CITATIONS"] = False.
+        "insert_citations":  execution.get("INSERT_CITATIONS", True),
         "private_mode":      execution.get("PRIVATE_MODE", False),
         "thinking_mode":     execution.get("THINKING_MODE", False),
     }
@@ -632,6 +636,107 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                           "user_memory": user_memory_used}
         }
 
+        # Insert citation markers into the response synchronously when the
+        # user enabled the toggle AND Web search actually returned URLs.
+        # The citation tool has its own internal fallback (append plain
+        # `## References` to the original body) if the LLM step fails, so
+        # the worst-case here is that the body is untouched.
+        # Build the citation candidate list:
+        #  - Web search URLs (always citable when present)
+        #  - BOOK chunks (filtered by agent.BOOK RAG_NAMEs — KNOWLEDGE entries
+        #    are the agent's internalised knowledge and are intentionally NOT
+        #    cited per project policy). Two BOOK retriever types coexist:
+        #    Vector → chunks land in knowledge_selected as dicts;
+        #    PageIndex → chunks land as pre-formatted LOG_TEMPLATE strings.
+        #    We extract from both.
+        _ci_sources = []
+        for _u in (web_search_log.get("urls") or []):
+            if isinstance(_u, dict) and _u.get("url"):
+                _ci_sources.append({"type": "web", "url": _u.get("url"),
+                                     "title": _u.get("title", "")})
+        _book_rag_names = {(_b or {}).get("RAG_NAME")
+                            for _b in (agent.agent.get("BOOK") or [])
+                            if isinstance(_b, dict) and _b.get("RAG_NAME")}
+        if _book_rag_names and isinstance(knowledge_selected, list):
+            import re as _re_ci
+            _kv_re = _re_ci.compile(r"'([^']+)'\s*:\s*'((?:[^'\\]|\\.)*)'")
+            _vector_chunks = []
+            _pageindex_entries = []
+            for _c in knowledge_selected:
+                if isinstance(_c, dict):
+                    if _c.get("rag") in _book_rag_names:
+                        _vector_chunks.append(_c)
+                elif isinstance(_c, str):
+                    # Parse LOG_TEMPLATE 'key':'value' pairs (used for PageIndex BOOK)
+                    _kv = dict(_kv_re.findall(_c))
+                    if _kv.get("rag") in _book_rag_names:
+                        _pageindex_entries.append(_kv)
+            # Vector BOOK chunks: take top-K by similarity_response
+            _vector_chunks.sort(key=lambda c: c.get("similarity_response", 0) or 0, reverse=True)
+            for _c in _vector_chunks[:10]:
+                _ci_sources.append({
+                    "type": "book",
+                    "rag_name": _c.get("rag", ""),
+                    "title": _c.get("title", "") or _c.get("ID", ""),
+                    "snippet": (_c.get("value_text_short") or _c.get("value_text") or "")[:80],
+                })
+            # PageIndex BOOK entries: LLM already filtered (max_pages),
+            # take all (typically ≤5) since they were explicitly selected.
+            for _kv in _pageindex_entries[:10]:
+                _ci_sources.append({
+                    "type": "book",
+                    "rag_name": _kv.get("rag", ""),
+                    "title": _kv.get("title", "") or _kv.get("page_id", ""),
+                    "snippet": (_kv.get("summary") or "")[:80],
+                })
+
+        if cfg["insert_citations"] and _ci_sources:
+            citation_agent_file = (agent.agent.get("SUPPORT_AGENT") or {}).get("CITATION_INJECT", "")
+            import logging as _lg_ci
+            _ci_counts = {"web": sum(1 for s in _ci_sources if s.get("type") == "web"),
+                          "book": sum(1 for s in _ci_sources if s.get("type") == "book")}
+            _ci_book_titles = [s.get("title", "")[:40] for s in _ci_sources if s.get("type") == "book"]
+            _lg_ci.getLogger(__name__).info(
+                f"[citation_inject] starting: web={_ci_counts['web']}, book={_ci_counts['book']}, "
+                f"book_rag_names={sorted(_book_rag_names)}, "
+                f"book_titles={_ci_book_titles}, "
+                f"agent_file={citation_agent_file!r}, body_len={len(response)}"
+            )
+            try:
+                session.save_status_message("Inserting citations", response=response)
+                _, _, _cited, _, _, _ = dmt.call_function_by_name(
+                    service_info, user_info, "inject_citations",
+                    session_id, session_name, citation_agent_file,
+                    response, [], {"Sources": _ci_sources}
+                )
+                if _cited and len(_cited) >= max(0.5 * len(response), 50):
+                    response = _cited
+                    response_chat_dict["text"] = response
+                    _lg_ci.getLogger(__name__).info(
+                        f"[citation_inject] applied: new body_len={len(response)}, "
+                        f"contains '[1]': {'[1]' in response}, "
+                        f"contains '## References': {'## References' in response}"
+                    )
+                else:
+                    _lg_ci.getLogger(__name__).warning(
+                        f"[citation_inject] kept original (length sanity failed): "
+                        f"cited_len={len(_cited) if _cited else 0}, body_len={len(response)}"
+                    )
+            except Exception as _ce:
+                import logging as _lg
+                _lg.getLogger(__name__).exception(f"Citation injection failed: {_ce}")
+                _ctx = {"phase": "citation_inject", "session_id": session_id,
+                        "session_name": session_name, "seq": seq, "sub_seq": sub_seq,
+                        "citation_agent_file": citation_agent_file}
+                try:
+                    dms.save_global_error_log(_ce, context=_ctx)
+                except Exception:
+                    pass
+                try:
+                    session.save_error_log(_ce, context=_ctx)
+                except Exception:
+                    pass
+
         # Image log (IMAGEGEN)
         img_dict = {}
         if model_type == "IMAGEGEN":
@@ -913,6 +1018,8 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                     "META_SEARCH":       cfg["meta_search"] and setting.get("META_SEARCH", True),
                     "RAG_QUERY_GENE":    cfg["RAG_query_gene"] and setting.get("RAG_QUERY_GENE", True),
                     "WEB_SEARCH":        setting.get("WEB_SEARCH", cfg["web_search"]),
+                    "WEB_SEARCH_ENGINE": cfg["web_search_engine"],
+                    "INSERT_CITATIONS":  cfg["insert_citations"],
                     "PRIVATE_MODE":      cfg["private_mode"],
                     "THINKING_MODE":     cfg["thinking_mode"],
                     "_THINKING_LOG":     in_execution.get("_THINKING_LOG", {}),

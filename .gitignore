@@ -172,13 +172,13 @@ user/common/agent/*.json
 !user/common/agent/agent_6*.json
 user/common/agent/character/*.txt
 user/common/agent/character/*.md
-!user/common/agent/character/TheRound/*
+!user/common/agent/character/Sample/*
 !user/common/agent/character/Sample.txt
 !user/common/agent/character/DialogDigest.txt
 !user/common/agent/character/ArtCritic.txt
 !user/common/agent/character/Sample.md
 user/common/agent/persona_data/*
-!user/common/agent/persona_data/TheRound_personas.xlsx
+!user/common/agent/persona_data/Sample_personas.xlsx
 
 # DigiM Folder(mst)
 user/common/mst/*
@@ -212,8 +212,6 @@ user/common/csv/pageindex/*
 !user/common/csv/pageindex/Sample*/*
 !user/common/csv/pageindex/DigiMPGSystemGuide*/
 !user/common/csv/pageindex/DigiMPGSystemGuide*/*
-!user/common/csv/pageindex/TheRound*/
-!user/common/csv/pageindex/TheRound*/*
 
 # DigiM Folder
 user/session*/
