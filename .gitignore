@@ -170,14 +170,18 @@ user/common/agent/*.json
 !user/common/agent/agent_2*.json
 !user/common/agent/agent_5*.json
 !user/common/agent/agent_6*.json
+user/common/agent/character/*
 user/common/agent/character/*.txt
 user/common/agent/character/*.md
+!user/common/agent/character/characterファイル(txt)を格納
 !user/common/agent/character/Sample/*
 !user/common/agent/character/Sample.txt
+!user/common/agent/character/DataAnalyst.txt
 !user/common/agent/character/DialogDigest.txt
 !user/common/agent/character/ArtCritic.txt
 !user/common/agent/character/Sample.md
 user/common/agent/persona_data/*
+!user/common/agent/persona_data/personaファイル(xlsx)を格納
 !user/common/agent/persona_data/Sample_personas.xlsx
 
 # DigiM Folder(mst)
@@ -204,8 +208,6 @@ user/common/rag/pages/*
 user/common/csv/*
 !user/common/csv/Sample*.csv
 !user/common/csv/Format*.csv
-!user/common/csv/TheRound/
-!user/common/csv/TheRound/*.csv
 !user/common/csv/pageindex/
 user/common/csv/pageindex/*
 !user/common/csv/pageindex/Sample*/
