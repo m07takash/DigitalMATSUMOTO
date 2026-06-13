@@ -6043,8 +6043,9 @@ def main():
                 raise ValueError("Excel must contain a 'Question' column")
             if "Answer" not in df.columns:
                 df["Answer"] = ""
-            if "Compare" not in df.columns:
-                df["Compare"] = ""
+            for _col in ("Verdict", "Score", "Match", "Seq Ratio", "Token F1", "Eval"):
+                if _col not in df.columns:
+                    df[_col] = ""
             has_gt = "Ground Truth" in df.columns
             exec_agent_name = dma.get_agent_item(ag_file, "DISPLAY_NAME") or "Agent"
             n_total = len(df)
@@ -6117,12 +6118,17 @@ def main():
                     gt = str(df.at[idx, "Ground Truth"]).strip()
                     if gt and gt.lower() != "nan":
                         try:
-                            _, _, cmp_text, _, _, _ = dmt.compare_texts(
-                                svc, usr, exec_agent_name, last_resp, "Ground Truth", gt
+                            _, _, _ev, _, _, _ = dmt.eval_answer_vs_groundtruth(
+                                svc, usr, q, last_resp, gt
                             )
-                            df.at[idx, "Compare"] = cmp_text
+                            df.at[idx, "Verdict"]   = _ev.get("verdict", "")
+                            df.at[idx, "Score"]     = _ev.get("score", "")
+                            df.at[idx, "Match"]     = "Y" if _ev.get("exact_match") else "N"
+                            df.at[idx, "Seq Ratio"] = _ev.get("seq_ratio", "")
+                            df.at[idx, "Token F1"]  = _ev.get("token_f1", "")
+                            df.at[idx, "Eval"]      = _ev.get("summary", "")
                         except Exception as e:
-                            df.at[idx, "Compare"] = f"[Compare error] {type(e).__name__}: {e}"
+                            df.at[idx, "Eval"] = f"[Eval error] {type(e).__name__}: {e}"
 
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             sess = dms.DigiMSession(sid, sname)
@@ -6135,8 +6141,11 @@ def main():
                 "`Ground Truth` column. Each row is run as one chat turn on the "
                 "**current session** using the **current chat settings** (Web Search, "
                 "Memory, Thinking, Books, etc.). If `Ground Truth` is set, the answer "
-                "is automatically diffed against it via `compare_texts`. The completed "
-                "Excel (with `Answer` and `Compare` columns filled) is saved to the "
+                "is evaluated against it via `eval_answer_vs_groundtruth`, which "
+                "produces a deterministic match (exact / SequenceMatcher / token-F1) "
+                "plus an LLM-judged verdict (○ / △ / ✕) and a 0–100 score. The "
+                "completed Excel (with `Answer`, `Verdict`, `Score`, `Match`, "
+                "`Seq Ratio`, `Token F1`, `Eval` columns filled) is saved to the "
                 "session folder and downloadable below.\n\n"
                 "**Benchmark tip** — turn `Memory Use` off in the chat header to "
                 "score each row in isolation: prior turns are not loaded into the "

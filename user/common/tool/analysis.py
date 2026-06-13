@@ -205,3 +205,122 @@ dmtr.register_tool(
     schema={"type": "object", "properties": {}, "required": []},
     func=compare_texts,
 )
+
+
+# Answer vs Ground-Truth evaluation
+# Used by BatchTest to score each row with a mix of deterministic metrics
+# (exact-match / SequenceMatcher / token-F1) and an LLM-judged verdict.
+# Non-uniform signature: (svc, usr, question, answer, ground_truth, agent_file="agent_53CompareTexts.json").
+def eval_answer_vs_groundtruth(service_info, user_info, question, answer, ground_truth,
+                                agent_file="agent_53CompareTexts.json"):
+    import json as _json
+    from collections import Counter as _Counter
+    from difflib import SequenceMatcher as _SM
+
+    ans = str(answer or "")
+    gt = str(ground_truth or "")
+    q = str(question or "")
+
+    # ---- deterministic lexical metrics --------------------------------------
+    def _norm(s):
+        return _re.sub(r"\s+", "", s).lower()
+    def _tokens(s):
+        # word runs + single punctuation; CJK char split for languages w/o spaces
+        out = []
+        for chunk in _re.findall(r"[A-Za-z0-9_]+|[^\sA-Za-z0-9_]", s.lower()):
+            if _re.fullmatch(r"[A-Za-z0-9_]+", chunk):
+                out.append(chunk)
+            else:
+                # split per CJK char so 日本/日本人 share '日本' tokens
+                out.extend(list(chunk))
+        return [t for t in out if t.strip()]
+
+    n_ans, n_gt = _norm(ans), _norm(gt)
+    exact = bool(n_ans) and n_ans == n_gt
+    seq_ratio = _SM(None, n_ans, n_gt).ratio() if (n_ans or n_gt) else 0.0
+
+    a_tok, g_tok = _tokens(ans), _tokens(gt)
+    common = _Counter(a_tok) & _Counter(g_tok)
+    overlap = sum(common.values())
+    prec = overlap / len(a_tok) if a_tok else 0.0
+    rec = overlap / len(g_tok) if g_tok else 0.0
+    f1 = (2 * prec * rec) / (prec + rec) if (prec + rec) else 0.0
+
+    # ---- LLM-judged verdict --------------------------------------------------
+    agent = dma.DigiM_Agent(agent_file)
+    model_type = "LLM"
+    model_name = agent.agent["ENGINE"][model_type]["MODEL"]
+    tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
+
+    judge_prompt = (
+        "あなたは Q&A の評価AIです。Question に対する Answer が、Ground Truth と "
+        "どれくらい一致しているかを評価してください。\n\n"
+        f"[Question]\n{q}\n\n[Answer]\n{ans}\n\n[Ground Truth]\n{gt}\n\n"
+        "次のJSONオブジェクト1つだけを、説明や前置きなしで出力してください。\n"
+        "{\n"
+        '  "verdict": "○" (一致) | "△" (部分一致) | "✕" (不一致),\n'
+        '  "score": 0〜100の整数 (100=完全一致, 0=完全不一致),\n'
+        '  "category": "完全一致" | "意味一致" | "部分一致" | "不一致",\n'
+        '  "summary": "1行で日本語の評価コメント（どこが一致／不一致か）"\n'
+        "}\n"
+        "・Answer が Ground Truth と意味的に同じことを述べていれば ○ とする。\n"
+        "・主旨は合うが細部が抜けている／追加されているなら △。\n"
+        "・意味が異なる、または無回答／エラーなら ✕。"
+    )
+
+    response = ""
+    try:
+        for _p, chunk, _comp in agent.generate_response(model_type, judge_prompt):
+            if chunk:
+                response += chunk
+    except Exception as e:
+        response = f'{{"verdict":"","score":{int(round(seq_ratio*100))},"category":"","summary":"[Judge error] {type(e).__name__}: {e}"}}'
+
+    # Parse defensively — strip ``` fences, grab the first {...} block.
+    raw = response.strip()
+    if raw.startswith("```"):
+        raw = _re.sub(r"^```[a-zA-Z]*\s*", "", raw)
+        raw = _re.sub(r"\s*```$", "", raw)
+    m = _re.search(r"\{[\s\S]*\}", raw)
+    data = {}
+    if m:
+        try:
+            data = _json.loads(m.group(0))
+        except Exception:
+            data = {}
+
+    verdict = str(data.get("verdict") or ("○" if exact else "")).strip()
+    try:
+        score = int(data.get("score"))
+    except Exception:
+        score = int(round(seq_ratio * 100))
+    category = str(data.get("category") or "").strip()
+    summary = str(data.get("summary") or "").strip()
+
+    result = {
+        "verdict": verdict,
+        "score": max(0, min(100, score)),
+        "category": category,
+        "summary": summary,
+        "exact_match": exact,
+        "seq_ratio": round(seq_ratio, 3),
+        "token_f1": round(f1, 3),
+    }
+
+    prompt_tokens = dmu.count_token(tokenizer, model_name, judge_prompt)
+    response_tokens = dmu.count_token(tokenizer, model_name, response)
+    return service_info, user_info, result, model_name, prompt_tokens, response_tokens
+
+
+dmtr.register_tool(
+    "eval_answer_vs_groundtruth",
+    description=(
+        "Internal orchestration helper — evaluate how well an Answer matches a "
+        "Ground Truth for a given Question. Returns dict with verdict (○/△/✕), "
+        "score (0-100), category, summary, plus deterministic metrics "
+        "(exact_match, seq_ratio, token_f1). Non-uniform signature; NOT safe "
+        "for SKILL/Thinking dispatch."
+    ),
+    schema={"type": "object", "properties": {}, "required": []},
+    func=eval_answer_vs_groundtruth,
+)
