@@ -243,3 +243,10 @@ nohup.out
 
 # Claude
 .claude
+
+# Custom (site-local) tool plugins under user/common/tool/local/
+# are user-authored and intentionally excluded from the repo.
+# The .gitkeep keeps the directory itself trackable so the loader's
+# auto-mkdir is just a fallback.
+user/common/tool/local/*
+!user/common/tool/local/.gitkeep

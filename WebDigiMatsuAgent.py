@@ -6,6 +6,7 @@ import hmac
 import hashlib
 import datetime
 from datetime import datetime, timedelta
+from pathlib import Path
 import pytz
 from dotenv import load_dotenv
 
@@ -4617,21 +4618,32 @@ def main():
             if not _running_jobs:
                 st.caption("No jobs in flight")
             else:
-                _job_labels = []
-                _label_to_id = {}
+                # Render one checkbox per job (stable per-job_id key) instead
+                # of a multiselect whose options dict changes every 2s on the
+                # sidebar auto-refresh — that was eating the user's selection.
+                st.caption("Running Jobs")
+                _selected_job_ids = []
                 for j in _running_jobs:
+                    _jid = j["job_id"]
                     _elapsed = (datetime.now() - j["start_time"]).total_seconds()
                     _sid = f" [{j['session_id']}]" if j.get("session_id") else ""
-                    _label = f"{j['type']}{_sid} | {j['message']} ({int(_elapsed)}s){' [cancelling]' if j['cancel_requested'] else ''}"
-                    _job_labels.append(_label)
-                    _label_to_id[_label] = j["job_id"]
-                _selected_job_labels = st.multiselect("Running Jobs", _job_labels, key="running_jobs_selected")
+                    _label = (
+                        f"{j['type']}{_sid} | {j['message']} ({int(_elapsed)}s)"
+                        f"{' [cancelling]' if j['cancel_requested'] else ''}"
+                    )
+                    _ck_key = f"bg_job_sel__{_jid}"
+                    if st.checkbox(_label, key=_ck_key):
+                        _selected_job_ids.append(_jid)
                 if st.button("Cancel Selected Jobs", key="cancel_bg_jobs"):
                     _cancelled = 0
-                    for _lbl in _selected_job_labels:
-                        _jid = _label_to_id.get(_lbl)
-                        if _jid and djr.cancel_job(_jid):
+                    for _jid in _selected_job_ids:
+                        if djr.cancel_job(_jid):
                             _cancelled += 1
+                    # Clear the per-job checkbox state so the next render
+                    # doesn't show stale ticks for jobs that have just been
+                    # cancelled and swept from the registry.
+                    for _jid in _selected_job_ids:
+                        st.session_state.pop(f"bg_job_sel__{_jid}", None)
                     st.session_state.sidebar_message = f"Requested cancellation for {_cancelled} background job(s)"
                     st.rerun()
             st.markdown("---")
@@ -4920,7 +4932,61 @@ def main():
         if st.session_state.get("main_view", "Chat") == "Chat":
             st.markdown("----")
             # Session-name search filter
-            _session_filter = st.text_input("Session Name:", value="", placeholder="Search (wildcard * supported)", label_visibility="collapsed")
+            _session_filter = st.text_input(
+                "Session Name:", value="",
+                placeholder="Search name + history (wildcard * supported)",
+                label_visibility="collapsed",
+            )
+
+            # Deep history search — concatenates the human-meaningful content
+            # of every turn (user prompt + AI response + digest) into a single
+            # lowercased haystack, cached on (file_path, mtime). We skip
+            # `prompt.text` because that's the assembled LLM prompt including
+            # system context, RAG chunks, and memory — bulky and noisy for
+            # search purposes. The simple substring case (`*foo*`, the common
+            # form when the user types `foo`) is handled by `in` for speed;
+            # only patterns with internal `*` fall back to fnmatch.
+            @st.cache_data(show_spinner=False, max_entries=512)
+            def _session_haystack(_path: str, _mtime: float) -> str:
+                try:
+                    _data = json.loads(Path(_path).read_text(encoding="utf-8"))
+                except Exception:
+                    return ""
+                _parts = []
+                for _seq_key in sorted(
+                    (k for k in _data.keys() if isinstance(k, str) and k.isdigit()),
+                    key=int,
+                ):
+                    _seq_block = _data.get(_seq_key) or {}
+                    if not isinstance(_seq_block, dict):
+                        continue
+                    for _sk in sorted(
+                        (k for k in _seq_block.keys() if isinstance(k, str) and k.isdigit()),
+                        key=int,
+                    ):
+                        _sub = _seq_block.get(_sk) or {}
+                        if not isinstance(_sub, dict):
+                            continue
+                        _q = (_sub.get("prompt") or {}).get("query") or {}
+                        for _field in (
+                            _q.get("input"),
+                            (_sub.get("response") or {}).get("text"),
+                            ((_sub.get("digest") or {}) or {}).get("text"),
+                        ):
+                            if isinstance(_field, str) and _field:
+                                _parts.append(_field)
+                return ("\n".join(_parts)).lower()
+
+            def _history_matches(_path: str, _mtime: float, _pattern_lower: str) -> bool:
+                _hay = _session_haystack(_path, _mtime)
+                if not _hay:
+                    return False
+                # Fast path: pattern is `*foo*` with no internal wildcards.
+                if (_pattern_lower.startswith("*") and _pattern_lower.endswith("*")
+                        and "*" not in _pattern_lower[1:-1]):
+                    return _pattern_lower[1:-1] in _hay
+                import fnmatch
+                return fnmatch.fnmatch(_hay, _pattern_lower)
 
             # Render the session list
             num_sessions = 0
@@ -4933,12 +4999,23 @@ def main():
                         session_name_list = session_list.session_name
                         session_active_flg = session_list.get_active_session()
                         if session_active_flg != "N":
-                            # Session-name filter (wildcard * supported)
+                            # Two-stage filter:
+                            #   1) Name match (cheap) — fnmatch wildcard
+                            #   2) Fallback: scan the latest digest (or the
+                            #      newest prompt/response if no digest yet)
                             if _session_filter:
                                 import fnmatch
                                 _pattern = _session_filter if "*" in _session_filter else f"*{_session_filter}*"
-                                if not fnmatch.fnmatch(session_name_list.lower(), _pattern.lower()):
-                                    continue
+                                _pat_lower = _pattern.lower()
+                                _name_hit = fnmatch.fnmatch(session_name_list.lower(), _pat_lower)
+                                if not _name_hit:
+                                    _sf = session_list.session_file_path
+                                    try:
+                                        _mtime = Path(_sf).stat().st_mtime if Path(_sf).exists() else 0.0
+                                    except Exception:
+                                        _mtime = 0.0
+                                    if not _history_matches(_sf, _mtime, _pat_lower):
+                                        continue
                             if bool(re.fullmatch(r"[+-]?\d+(\.\d+)?", session_id_list)):
                                 session_name_btn = session_id_list +"_"+ session_name_list
                             else:
@@ -5787,6 +5864,7 @@ def main():
             import inspect as _inspect
             ts_begin = str(datetime.now())
             tool_list = (agent_data or {}).get("SKILL", {}).get("TOOL_LIST") or []
+            _agent_name = (agent_data or {}).get("NAME") or (agent_data or {}).get("DISPLAY_NAME") or ""
 
             # Meta: list available skills for this agent
             if skill_name == "_LIST_SKILLS":
@@ -5801,7 +5879,7 @@ def main():
                     )
                 _save_skill_turn(session, svc, usr, agent_file,
                                  raw_text, response_text, ts_begin, tool_name="_LIST_SKILLS",
-                                 export_contents=[], is_error=False)
+                                 export_contents=[], is_error=False, agent_name=_agent_name)
                 return
 
             # Validate skill is allowed for this agent
@@ -5813,7 +5891,7 @@ def main():
                 )
                 _save_skill_turn(session, svc, usr, agent_file,
                                  raw_text, response_text, ts_begin, tool_name=skill_name,
-                                 export_contents=[], is_error=True)
+                                 export_contents=[], is_error=True, agent_name=_agent_name)
                 return
 
             # Dispatch via the registry
@@ -5836,7 +5914,7 @@ def main():
                     pass
                 _save_skill_turn(session, svc, usr, agent_file, raw_text,
                                  f"[Skill error] {type(e).__name__}: {e}", ts_begin,
-                                 tool_name=skill_name, export_contents=[], is_error=True)
+                                 tool_name=skill_name, export_contents=[], is_error=True, agent_name=_agent_name)
                 session.save_status("UNLOCKED")
                 return
 
@@ -5859,12 +5937,31 @@ def main():
                 output = result[2] if len(result) > 2 else ""
                 if len(result) == 4 and isinstance(result[3], list):
                     export_contents = result[3]
+            # Append a `## References` block when the skill returned URL-shaped
+            # export_contents (e.g. WebSearch). Perplexity/Claude already bake
+            # [N] markers into the body, but no source list — surface it here.
+            if output and "## References" not in output:
+                _seen_urls = set()
+                _ref_labels = []
+                for _e in export_contents or []:
+                    if not isinstance(_e, dict):
+                        continue
+                    _u = (_e.get("url") or "").strip()
+                    if not _u or _u in _seen_urls:
+                        continue
+                    _seen_urls.add(_u)
+                    _t = (_e.get("title") or "").strip()
+                    _ref_labels.append(f"(web) {_u}" + (f" - {_t}" if _t else ""))
+                if _ref_labels:
+                    _refs_block = "\n".join(f"[{_i}] {_lbl}" for _i, _lbl in enumerate(_ref_labels, 1))
+                    output = f"{output.rstrip()}\n\n## References\n{_refs_block}"
             _save_skill_turn(session, svc, usr, agent_file, raw_text, output, ts_begin,
-                             tool_name=skill_name, export_contents=export_contents, is_error=False)
+                             tool_name=skill_name, export_contents=export_contents, is_error=False, agent_name=_agent_name)
             session.save_status("UNLOCKED")
 
         def _save_skill_turn(session, svc, usr, agent_file, prompt_text, response_text,
-                              ts_begin, tool_name, export_contents=None, is_error=False):
+                              ts_begin, tool_name, export_contents=None, is_error=False,
+                              agent_name=""):
             """Persist a slash-skill execution as a normal user/assistant turn.
             Mirrors the TOOL chain shape from DigiMatsuExecute_Practice so the
             entry shows up in the chat thread + digest pipeline."""
@@ -5880,7 +5977,7 @@ def main():
                         "situation": {},
                         "type": "TOOL",
                         "agent_file": agent_file,
-                        "name": "Skill (slash command)",
+                        "name": agent_name or "Skill (slash command)",
                         "tool": tool_name,
                         "is_error": bool(is_error),
                     },
@@ -5907,6 +6004,210 @@ def main():
             )
         # ----------------------------------------------------------------------
 
+        # Batch Test panel: upload an Excel (with `Question` column and optional
+        # `Ground Truth` column) → each row is run as one chat turn on the
+        # CURRENT session with the CURRENT chat settings → completed Excel with
+        # filled `Answer` (and `Compare` when Ground Truth is present) is saved
+        # to the session folder and downloadable from this panel.
+        def _run_batch_bg(params):
+            """Background runner for batch Q&A. Reads xlsx → runs each Question
+            as a chat turn → captures the response from the generator stream →
+            optionally diffs against `Ground Truth` via `compare_texts` →
+            writes the completed xlsx to the session folder.
+
+            Settings are taken verbatim from the WebUI execution dict — including
+            MEMORY_USE / MEMORY_SAVE / SAVE_DIGEST. Turning `Memory Use` off in
+            the WebUI only suppresses prior-history loading into the LLM context;
+            the row is still persisted to chat_memory and the digest is still
+            generated if those toggles are on. Between rows the runner waits for
+            any background digest from the previous turn to release the session
+            lock before kicking off the next one.
+            """
+            import time as _time
+            xlsx_path = params["xlsx_path"]
+            svc = params["service_info"]
+            usr = params["user_info"]
+            sid = params["session_id"]
+            sname = params["session_name"]
+            ag_file = params["agent_file"]
+            execution = dict(params["execution"])
+
+            # Resolve sheet (prefer "Test", fall back to first sheet)
+            try:
+                df = pd.read_excel(xlsx_path, sheet_name="Test")
+                sheet_used = "Test"
+            except Exception:
+                df = pd.read_excel(xlsx_path)
+                sheet_used = "Sheet1"
+            if "Question" not in df.columns:
+                raise ValueError("Excel must contain a 'Question' column")
+            if "Answer" not in df.columns:
+                df["Answer"] = ""
+            if "Compare" not in df.columns:
+                df["Compare"] = ""
+            has_gt = "Ground Truth" in df.columns
+            exec_agent_name = dma.get_agent_item(ag_file, "DISPLAY_NAME") or "Agent"
+            n_total = len(df)
+
+            def _wait_for_unlock(_sess, timeout_sec=120):
+                """Poll until the session is UNLOCKED. Returns True if unlocked,
+                False on timeout. Background digest threads from a prior turn
+                normally release the lock within a few seconds."""
+                _t0 = _time.time()
+                while _time.time() - _t0 < timeout_sec:
+                    try:
+                        if _sess.get_status() != "LOCKED":
+                            return True
+                    except Exception:
+                        return True
+                    _time.sleep(0.5)
+                return False
+
+            for idx in df.index:
+                q = str(df.at[idx, "Question"]).strip()
+                if not q or q.lower() == "nan":
+                    continue
+
+                sess = dms.DigiMSession(sid, sname)
+                sess.save_status_message(f"Batch Q&A ({idx + 1}/{n_total})")
+
+                # Wait for any background digest from the prior row to release
+                # the session lock. Force-unlock as a last resort so the batch
+                # never stalls indefinitely on a stuck digest thread.
+                if not _wait_for_unlock(sess):
+                    try:
+                        sess.save_status("UNLOCKED")
+                    except Exception:
+                        pass
+
+                last_resp = ""
+                try:
+                    # Capture the response from the generator stream first —
+                    # this works whether or not the turn is persisted.
+                    _captured = []
+                    for _y in dme.DigiMatsuExecute_MultiPersona(
+                        svc, usr, sid, sname, ag_file, q,
+                        [], {"TIME": "", "SITUATION": ""}, {}, [],
+                        execution, [], in_rag_query_text="", in_org=None,
+                    ):
+                        if isinstance(_y, tuple) and len(_y) >= 3:
+                            _chunk = _y[2]
+                            if _chunk and not str(_chunk).startswith("[STATUS]"):
+                                _captured.append(str(_chunk))
+                    last_resp = "".join(_captured).strip()
+
+                    # Fallback to chat_memory.json when the stream produced
+                    # nothing (e.g. non-streaming model paths that only write
+                    # the final response into history).
+                    if not last_resp:
+                        sess = dms.DigiMSession(sid, sname)
+                        hist = sess.get_history()
+                        seq_keys = sorted([k for k in hist if k.isdigit()], key=int)
+                        if seq_keys:
+                            last_seq = seq_keys[-1]
+                            sub_keys = sorted([k for k in hist[last_seq] if k.isdigit()], key=int)
+                            if sub_keys:
+                                last_resp = (hist[last_seq][sub_keys[-1]].get("response") or {}).get("text", "") or ""
+                except Exception as e:
+                    last_resp = f"[Error] {type(e).__name__}: {e}"
+
+                df.at[idx, "Answer"] = last_resp
+
+                if has_gt:
+                    gt = str(df.at[idx, "Ground Truth"]).strip()
+                    if gt and gt.lower() != "nan":
+                        try:
+                            _, _, cmp_text, _, _, _ = dmt.compare_texts(
+                                svc, usr, exec_agent_name, last_resp, "Ground Truth", gt
+                            )
+                            df.at[idx, "Compare"] = cmp_text
+                        except Exception as e:
+                            df.at[idx, "Compare"] = f"[Compare error] {type(e).__name__}: {e}"
+
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            sess = dms.DigiMSession(sid, sname)
+            out_path = Path(sess.session_folder_path) / f"batch_results_{ts}.xlsx"
+            df.to_excel(out_path, sheet_name=sheet_used, index=False)
+
+        with st.expander("Batch Test (upload Q&A xlsx)", expanded=False):
+            st.markdown(
+                "Upload an Excel with a `Question` column (required) and an optional "
+                "`Ground Truth` column. Each row is run as one chat turn on the "
+                "**current session** using the **current chat settings** (Web Search, "
+                "Memory, Thinking, Books, etc.). If `Ground Truth` is set, the answer "
+                "is automatically diffed against it via `compare_texts`. The completed "
+                "Excel (with `Answer` and `Compare` columns filled) is saved to the "
+                "session folder and downloadable below.\n\n"
+                "**Benchmark tip** — turn `Memory Use` off in the chat header to "
+                "score each row in isolation: prior turns are not loaded into the "
+                "LLM context, but the row is still saved to chat history (and a "
+                "digest is still generated if `Save Digest` is on)."
+            )
+            _batch_uploader_key = f"batch_test_uploader_{st.session_state.get('batch_test_uploader_counter', 0)}"
+            _batch_file = st.file_uploader(
+                "Upload Q&A Excel (.xlsx)",
+                type=["xlsx"],
+                key=_batch_uploader_key,
+                label_visibility="collapsed",
+            )
+            _bc1, _bc2 = st.columns([1, 2])
+            _can_run_batch = bool(_batch_file) and not bool(st.session_state._bg_task)
+            if _bc1.button("Run Batch Test", key="batch_test_run", disabled=not _can_run_batch):
+                _ts_in = datetime.now().strftime("%Y%m%d_%H%M%S")
+                _saved_path = Path(temp_folder_path) / f"batch_input_{_ts_in}_{_batch_file.name}"
+                _saved_path.write_bytes(_batch_file.getbuffer())
+
+                _bt_execution = {
+                    "MEMORY_USE":        st.session_state.memory_use,
+                    "MEMORY_SAVE":       st.session_state.memory_save,
+                    "MEMORY_SIMILARITY": st.session_state.memory_similarity,
+                    "MAGIC_WORD_USE":    st.session_state.magic_word_use,
+                    "STREAM_MODE":       False,
+                    "SAVE_DIGEST":       st.session_state.save_digest,
+                    "META_SEARCH":       st.session_state.meta_search,
+                    "RAG_QUERY_GENE":    st.session_state.RAG_query_gene,
+                    "WEB_SEARCH":        st.session_state.web_search,
+                    "WEB_SEARCH_ENGINE": st.session_state.get("web_search_engine", ""),
+                    "PRIVATE_MODE":      st.session_state.private_mode,
+                    "THINKING_MODE":     st.session_state.thinking_mode,
+                }
+                if "user_memory_layers_now" in st.session_state:
+                    _bt_execution["USER_MEMORY_LAYERS"] = list(st.session_state.user_memory_layers_now or [])
+
+                _bt_params = {
+                    "xlsx_path": str(_saved_path),
+                    "service_info": dict(st.session_state.web_service),
+                    "user_info": dict(st.session_state.web_user),
+                    "session_id": st.session_state.session.session_id,
+                    "session_name": st.session_state.session.session_name,
+                    "agent_file": st.session_state.agent_file,
+                    "execution": _bt_execution,
+                }
+                st.session_state["batch_test_uploader_counter"] = (
+                    st.session_state.get("batch_test_uploader_counter", 0) + 1
+                )
+                _run_bg_task("batch_test", "Running batch Q&A...", _run_batch_bg, _bt_params)
+                st.rerun()
+
+            try:
+                _batch_results = sorted(
+                    Path(st.session_state.session.session_folder_path).glob("batch_results_*.xlsx")
+                )
+            except Exception:
+                _batch_results = []
+            if _batch_results:
+                _latest = _batch_results[-1]
+                try:
+                    _bc2.download_button(
+                        f"Download latest result ({_latest.name})",
+                        data=_latest.read_bytes(),
+                        file_name=_latest.name,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key=f"batch_test_dl_{_latest.name}",
+                    )
+                except Exception:
+                    pass
+
         # Skills discovery panel: surfaces the current agent's SKILL.TOOL_LIST
         # as slash-command form right above the chat input so users don't have
         # to remember `/skills`. Auto-updates whenever the agent switches.
@@ -5926,15 +6227,28 @@ def main():
                         st.markdown(f"- `/{_sname}` *(not registered in tool registry)*")
                         continue
                     _desc = (_entry.get("description") or "").strip()
-                    # Build the exact slash-command syntax for this skill. If the
-                    # schema declares required args, surface them as <placeholders>;
-                    # otherwise the command takes no input and is shown bare.
-                    _required = (_entry.get("schema") or {}).get("required") or []
-                    if _required:
-                        _syntax = f"/{_sname} " + " ".join(f"<{a}>" for a in _required)
+                    # Prefer the tool's concrete usage example (set via
+                    # register_tool(..., example="..."))  — it's the slash
+                    # command verbatim, much friendlier than the generic
+                    # "<input>" placeholder. Fall back to the schema-derived
+                    # syntax only when the tool didn't provide an example.
+                    _example = (_entry.get("example") or "").strip()
+                    if _example:
+                        if "\n" in _example:
+                            st.markdown(f"- **/{_sname}**")
+                            st.code(_example, language=None)
+                            st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;{_desc}", unsafe_allow_html=True)
+                        else:
+                            st.markdown(f"- `{_example}`\n  &nbsp;&nbsp;&nbsp;&nbsp;{_desc}",
+                                         unsafe_allow_html=True)
                     else:
-                        _syntax = f"/{_sname}"
-                    st.markdown(f"- `{_syntax}`\n  &nbsp;&nbsp;&nbsp;&nbsp;{_desc}", unsafe_allow_html=True)
+                        _required = (_entry.get("schema") or {}).get("required") or []
+                        if _required:
+                            _syntax = f"/{_sname} " + " ".join(f"<{a}>" for a in _required)
+                        else:
+                            _syntax = f"/{_sname}"
+                        st.markdown(f"- `{_syntax}`\n  &nbsp;&nbsp;&nbsp;&nbsp;{_desc}",
+                                     unsafe_allow_html=True)
                 st.caption("Type `/skills` (or `/help`) in chat to re-list this anywhere. "
                            "If a skill is unknown to this agent the chat will reply with an error.")
             else:

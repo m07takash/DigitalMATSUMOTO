@@ -223,6 +223,7 @@ dmtr.register_tool(
         "required": ["input"],
     },
     func=_websearch_dispatch,
+    example="/WebSearch 2026 Super Bowl の優勝チーム",
 )
 
 dmtr.register_tool(
@@ -230,6 +231,7 @@ dmtr.register_tool(
     description="Web search via Perplexity AI. Prefer the generic 'WebSearch' tool unless a specific engine is required.",
     schema={"type": "object", "properties": {"input": _INPUT_TEXT}, "required": ["input"]},
     func=WebSearch_PerplexityAI,
+    example="/WebSearch_PerplexityAI 最新のRAG論文まとめ",
 )
 
 dmtr.register_tool(
@@ -237,6 +239,7 @@ dmtr.register_tool(
     description="Web search via the OpenAI web_search tool. Prefer the generic 'WebSearch' tool unless a specific engine is required.",
     schema={"type": "object", "properties": {"input": _INPUT_TEXT}, "required": ["input"]},
     func=WebSearch_OpenAI,
+    example="/WebSearch_OpenAI OpenAI GPTシリーズの最新動向",
 )
 
 dmtr.register_tool(
@@ -244,6 +247,7 @@ dmtr.register_tool(
     description="Web search via Google Grounding Search (Gemini). Prefer the generic 'WebSearch' tool unless a specific engine is required.",
     schema={"type": "object", "properties": {"input": _INPUT_TEXT}, "required": ["input"]},
     func=WebSearch_Google,
+    example="/WebSearch_Google site:arxiv.org RAG citation",
 )
 
 dmtr.register_tool(
@@ -251,4 +255,5 @@ dmtr.register_tool(
     description="Web search via the Anthropic Claude server-side web_search tool. Prefer the generic 'WebSearch' tool unless a specific engine is required.",
     schema={"type": "object", "properties": {"input": _INPUT_TEXT}, "required": ["input"]},
     func=WebSearch_Claude,
+    example="/WebSearch_Claude AI政策の最新動向",
 )

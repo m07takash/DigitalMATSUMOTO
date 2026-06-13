@@ -55,4 +55,5 @@ dmtr.register_tool(
         "required": [],
     },
     func=current_time,
+    example="/current_time",
 )

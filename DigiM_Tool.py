@@ -1061,16 +1061,29 @@ def pick_tools(agent, user_query, allowed_names=None, situation_prompt="", memor
 # share private helper modules without exposing them as tools.
 
 def _load_tool_plugins(folder_path=None):
-    """Discover and load tool plugin .py files from `folder_path`.
+    """Discover and load tool plugin .py files from `folder_path` and its
+    `local/` subfolder.
+
+    Two scan locations:
+      1. `<folder>/*.py`        — the standard plugins shipped with the repo
+                                  (tracked in git)
+      2. `<folder>/local/*.py`  — user-authored / site-local plugins
+                                  (ignored by git via .gitignore so they are
+                                  never accidentally pushed). Loaded AFTER the
+                                  standard plugins, so a local plugin can
+                                  override a same-named standard tool simply
+                                  by registering it again — the registry
+                                  treats re-registration as an update.
 
     Returns a list of (filename, status, error?) tuples — status is
-    'loaded' on success or 'failed' on error. The folder is created if
-    it doesn't exist so a fresh checkout works on first run.
+    'loaded' on success or 'failed' on error. The folders are created if
+    they don't exist so a fresh checkout works on first run.
 
     Plugins are also registered in sys.modules under
-    'digim_tool_plugin__<stem>' so the __getattr__ shim below can resolve
-    module-level names (e.g. WEB_SEARCH_ENGINES) that legacy callers
-    reference via `dmt.<name>`.
+    'digim_tool_plugin__<stem>' (or 'digim_tool_plugin__local__<stem>' for
+    local plugins) so the __getattr__ shim below can resolve module-level
+    names (e.g. WEB_SEARCH_ENGINES) that legacy callers reference via
+    `dmt.<name>`.
     """
     import importlib.util
     import logging
@@ -1080,23 +1093,33 @@ def _load_tool_plugins(folder_path=None):
     log = logging.getLogger(__name__)
     folder = Path(folder_path or tool_folder_path)
     folder.mkdir(parents=True, exist_ok=True)
+    local_folder = folder / "local"
+    local_folder.mkdir(parents=True, exist_ok=True)
 
-    results = []
-    for py_file in sorted(folder.glob("*.py")):
-        if py_file.name.startswith("_"):
-            continue
-        mod_name = f"digim_tool_plugin__{py_file.stem}"
+    def _load_one(py_file, mod_name):
         try:
             spec = importlib.util.spec_from_file_location(mod_name, py_file)
             module = importlib.util.module_from_spec(spec)
             sys.modules[mod_name] = module  # register before exec so the plugin can import itself
             spec.loader.exec_module(module)
-            results.append((py_file.name, "loaded", None))
             log.info(f"Loaded tool plugin: {py_file.name}")
+            return (py_file.name, "loaded", None)
         except Exception as e:
             sys.modules.pop(mod_name, None)  # clean up the partially-initialised module
-            results.append((py_file.name, "failed", str(e)))
             log.exception(f"Failed to load tool plugin {py_file.name}: {e}")
+            return (py_file.name, "failed", str(e))
+
+    results = []
+    # 1) Standard plugins (top-level files only; subfolders handled below).
+    for py_file in sorted(folder.glob("*.py")):
+        if py_file.name.startswith("_"):
+            continue
+        results.append(_load_one(py_file, f"digim_tool_plugin__{py_file.stem}"))
+    # 2) Local plugins — loaded LAST so they win on registry name collision.
+    for py_file in sorted(local_folder.glob("*.py")):
+        if py_file.name.startswith("_"):
+            continue
+        results.append(_load_one(py_file, f"digim_tool_plugin__local__{py_file.stem}"))
     return results
 
 
