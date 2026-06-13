@@ -5,6 +5,22 @@
 
 cd /app/DigitalMATSUMOTO
 
+# --- Auto-start toggle --------------------------------------------------------
+# Set DIGIM_AUTOSTART=false to keep the container alive WITHOUT launching any
+# service. Useful when bootstrapping a new environment or debugging: exec into
+# the container and start things manually.
+#   e.g.) docker run ... -e DIGIM_AUTOSTART=false digimatsumoto:offline
+#         docker exec -it digimatsumoto bash
+#         ./startup.sh            # re-evaluates this check; starts if true
+# Unset (default) preserves the original behavior of auto-starting all services.
+if [ "${DIGIM_AUTOSTART:-true}" = "false" ]; then
+    echo "[startup.sh] DIGIM_AUTOSTART=false: idling without starting services."
+    echo "[startup.sh] To start manually: docker exec -it <container> bash"
+    # Keep a foreground process so the container does not exit (and no Rerun loop)
+    exec tail -f /dev/null
+fi
+# -----------------------------------------------------------------------------
+
 # Start FastAPI on port 8899
 nohup gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8899 DigiM_API:app --timeout 600 --graceful-timeout 600 --keep-alive 5 --capture-output --log-level debug >> /var/log/digim_api.log 2>&1 &
 

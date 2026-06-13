@@ -61,6 +61,7 @@ dmtr.register_tool(
     ),
     schema={"type": "object", "properties": {"input": _INPUT_TEXT}, "required": ["input"]},
     func=fixed_message,
+    example="/fixed_message Hello, this is a canned message.",
 )
 
 dmtr.register_tool(
@@ -72,6 +73,7 @@ dmtr.register_tool(
     ),
     schema={"type": "object", "properties": {}, "required": []},
     func=forget_history,
+    example="/forget_history",
 )
 
 dmtr.register_tool(
@@ -82,4 +84,5 @@ dmtr.register_tool(
     ),
     schema={"type": "object", "properties": {}, "required": []},
     func=remember_history,
+    example="/remember_history",
 )

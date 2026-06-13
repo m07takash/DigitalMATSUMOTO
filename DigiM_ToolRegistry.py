@@ -27,14 +27,32 @@ def register_tool(
     description: str,
     schema: Optional[dict] = None,
     func: Optional[Callable] = None,
+    example: Optional[str] = None,
 ) -> None:
-    """Register or replace a tool. `schema` is a JSON Schema for the LLM-visible args."""
+    """Register or replace a tool.
+
+    Args:
+        name: Tool identifier (also the slash-command name).
+        description: Free-text describing what the tool does. Surfaces to the
+            LLM (via Thinking-mode picker) and to the user (Skills panel).
+        schema: JSON Schema describing the LLM-visible args. Used by
+            Thinking-mode dispatch.
+        func: The callable. Must match the uniform tool signature
+            (svc, usr, sid, sname, agent_file, input, import_contents, add_info)
+            unless the tool is internal-only.
+        example: Optional one-line concrete usage example for the SKILL panel
+            (e.g. "/WebSearch 2026 Super Bowl winner"). When set, the WebUI
+            Skills panel shows this verbatim instead of the generic
+            "/<name> <input>" syntax. Use multi-line strings (with literal
+            "\\n") for tools that expect structured input.
+    """
     entry = TOOL_REGISTRY.get(name, {})
     entry.update({
         "name": name,
         "description": description,
         "schema": schema or {"type": "object", "properties": {}, "required": []},
         "func": func or entry.get("func"),
+        "example": example if example is not None else entry.get("example"),
     })
     TOOL_REGISTRY[name] = entry
 

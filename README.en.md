@@ -2,6 +2,55 @@
 
 # Digital MATSUMOTO
 
+<details>
+<summary><strong>📑 Table of Contents (click to expand)</strong></summary>
+
+- [Introduction](#introduction)
+- [Design principles of this program](#design-principles-of-this-program)
+- [Reference documents](#reference-documents)
+- [Architecture overview](#architecture-overview)
+- [Main modules](#main-modules)
+- [Directory structure](#directory-structure)
+- [Environment setup / installation](#environment-setup--installation)
+  - [Prerequisites](#prerequisites)
+  - [1. Clone the repository](#1-clone-the-repository)
+  - [2. Build the Docker image](#2-build-the-docker-image)
+  - [3. Start the container](#3-start-the-container)
+  - [4. Configure environment variables](#4-configure-environment-variables)
+  - [5. Launching the application (executed inside the container)](#5-launching-the-application-executed-inside-the-container)
+  - [6. Verify operation](#6-verify-operation)
+  - [7. Configuring Nginx reverse proxy (for production)](#7-configuring-nginx-reverse-proxy-for-production)
+  - [8. Deploying to a closed network (Azure)](#8-deploying-to-a-closed-network-azure)
+- [Setup guide](#setup-guide)
+  - [Master data configuration](#master-data-configuration)
+  - [RAG data configuration](#rag-data-configuration)
+  - [Agent configuration](#agent-configuration)
+  - [Practice configuration](#practice-configuration)
+  - [Web search configuration](#web-search-configuration)
+  - [Tool Plugin System (SKILL / Tool / Slash Command)](#tool-plugin-system-skill--tool--slash-command)
+  - [Citation injection](#citation-injection)
+  - [Auto URL fetching (as attachments)](#auto-url-fetching-as-attachments)
+  - [User Memory (Hierarchical User Understanding)](#user-memory-hierarchical-user-understanding)
+  - [Background job management](#background-job-management)
+  - [How to launch](#how-to-launch)
+- [Knowledge Explorer](#knowledge-explorer)
+  - [Selecting a data source](#selecting-a-data-source)
+  - [1. Overall](#1-overall)
+  - [2. Trend (formerly Time-Series Analysis)](#2-trend-formerly-time-series-analysis)
+  - [3. Topic (formerly Sensitivity Analysis)](#3-topic-formerly-sensitivity-analysis)
+  - [4. Ask Agent](#4-ask-agent)
+  - [PageIndex](#pageindex)
+  - [Export / Report](#export--report)
+  - [Session management](#session-management)
+- [User Memory Explorer](#user-memory-explorer)
+- [API Reference](#api-reference)
+  - [Endpoint list](#endpoint-list)
+  - [POST /run — Send a message](#post-run--send-a-message)
+  - [Execution examples](#execution-examples)
+  - [LINE integration usage example](#line-integration-usage-example)
+
+</details>
+
 ## Introduction
 
 This program is published under the Apache 2.0 License and commercial use is permitted.
@@ -278,6 +327,17 @@ cp startup.sh_sample startup.sh
 docker exec -it digimatsumoto bash startup.sh
 ```
 
+> **Suppressing auto-start (when bootstrapping a new environment or debugging):** The Dockerfile's default `CMD` is `startup.sh`, which auto-starts all services. If you run the container without overriding the CMD (e.g. running a pre-built image with `docker run` directly) and want it to idle first, pass `DIGIM_AUTOSTART=false`. `startup.sh` then idles with `tail -f /dev/null` instead of starting services, so the container stays up and no Streamlit Rerun loop occurs. After verifying, run `./startup.sh` manually to start normally.
+>
+> ```bash
+> # Start in an idle state (auto-start OFF), then exec in to debug manually
+> docker run -d --name digimatsumoto -p 8501:8501 -p 8899:8899 \
+>   -e DIGIM_AUTOSTART=false --env-file ./system.env digimatsumoto
+> docker exec -it digimatsumoto bash
+> ```
+>
+> Without `DIGIM_AUTOSTART`, all services auto-start as before.
+
 ### 6. Verify operation
 
 Access `http://localhost:8501` in your browser; if the WebUI is displayed, you are done.
@@ -366,6 +426,10 @@ sudo systemctl reload nginx
 > **About WebSocket support:** Streamlit communicates over WebSocket, so the `proxy_http_version 1.1` setting and the `Upgrade` / `Connection` headers are required. Without them the WebUI does not function correctly.
 
 > **About timeouts:** LLM execution can take tens of seconds to a few minutes, so set `proxy_read_timeout` / `proxy_send_timeout` to a sufficiently large value (300s or more).
+
+### 8. Deploying to a closed network (Azure)
+
+To deploy into a closed (air-gapped) Azure environment where pip / Git / apt are unavailable, carry a pre-built Docker image over in its entirety from an internet-connected environment. For the full procedure — saving and splitting the image as a tar, transferring and loading it, and switching to Azure OpenAI (changing `FUNC_NAME` in the agent definitions) — see [SETUP_OFFLINE_DOCKER.en.md](SETUP_OFFLINE_DOCKER.en.md).
 
 ---
 
@@ -1002,7 +1066,7 @@ Specifies Support Agents that assist the main dialogue. Each Support Agent is de
   "ART_CRITICS": "agent_52ArtCritic.json",
   "EXTRACT_DATE": "agent_55ExtractDate.json",
   "RAG_QUERY_GENERATOR": "agent_56RAGQueryGenerator.json",
-  "THINKING": "agent_59Thinking.json",
+  "THINKING": "agent_58Thinking.json",
   "KNOWLEDGE_INTERPRET": "agent_78DigiMKnowledgeInterpret.json",
   "CITATION_INJECT": "agent_79DigiMCitationInject.json"
 }
@@ -1351,6 +1415,26 @@ dmtr.register_tool(
 ```
 
 Drop the file and restart Streamlit — the tool is available immediately.
+
+**Standard vs. site-local plugins**
+
+| Location | Purpose | Git tracking |
+|---|---|---|
+| `user/common/tool/*.py` | Standard plugins shipped with the repo (the 10 listed in this README) | **tracked** |
+| `user/common/tool/local/*.py` | Site-local / user-authored plugins | **excluded by `.gitignore`** (will never be accidentally pushed) |
+
+The loader scans both locations, with `local/` loaded **after** the standard
+plugins. So:
+
+- New custom tools go in `user/common/tool/local/<name>.py` — automatically excluded from pushes
+- To **locally override** a standard tool, drop a same-named file under `local/` and call `register_tool(...)` with the same name — the registry treats re-registration as an update, and `local/` wins by load order
+
+`.gitignore` rule:
+
+```
+user/common/tool/local/*          # exclude everything under local/
+!user/common/tool/local/.gitkeep  # …except the .gitkeep so the directory stays
+```
 
 #### Agent JSON `SKILL` block (tools the agent is allowed to use from the WebUI / Thinking)
 

@@ -15,7 +15,7 @@
     "Name": "Normal Man",
     "PW": "password",
     "Group": "User",
-    "Agent": "agent_11DefaultGPT.json",
+    "Agent": "agent_20Default.json",
     "Allowed": {
       "Session Archive": true,
       "RAG Management": true,
@@ -35,30 +35,6 @@
       "User Memory": true,
       "User Memory Explorer": true,
       "User Memory Layers": ["persona", "nowaday", "history"]
-    }
-  },
-  "USER0003": {
-    "Name": "Senryu Seito",
-    "PW": "password",
-    "Group": "User",
-    "Agent": "agent_22SenryuSensei.json",
-    "Allowed": {
-      "Session Archive": false,
-      "RAG Management": false,
-      "Exec Setting": false,
-      "RAG Setting": false,
-      "Feedback": false,
-      "Details": false,
-      "Analytics Knowledge": false,
-      "Analytics Compare": false,
-      "WEB Search": false,
-      "Book": false,
-      "Download Md": false,
-      "Web API": false,
-      "Support Eval": false,
-      "Scheduler": false,
-      "User Memory": false,
-      "User Memory Explorer": false
     }
   }
 }

@@ -88,7 +88,7 @@ def _resolve_contents(contents_setting, in_contents, results):
 # B-4: RAG search-query generation phase (parallelization hook in C-1)
 def _build_intent_queries(service_info, user_info, session_id, session_name, support_agent,
                           user_query, memories_selected, situation_prompt, query_vec, RAG_query_gene,
-                          rag_query_hint="", user_memory_context=""):
+                          rag_query_hint="", user_memory_context="", memory_use=True):
     """Generate the RAG search query (intent) and return extra queries, vectors, and logs."""
     if not (RAG_query_gene and "RAG_QUERY_GENERATOR" in support_agent):
         return [], [], {}
@@ -100,7 +100,10 @@ def _build_intent_queries(service_info, user_info, session_id, session_name, sup
     # If user memory is enabled, also include the partner's profile in the query-generation context
     if user_memory_context:
         _query = _query + "\n\n" + user_memory_context.strip()
-    add_info = {"Memories_Selected": memories_selected, "Situation": situation_prompt, "QueryVecs": [query_vec]}
+    # Propagate memory_use so the tool can drop the "use dialog history" prompt
+    # instruction when the WebUI Memory Use toggle is off (benchmark mode).
+    add_info = {"Memories_Selected": memories_selected, "Situation": situation_prompt,
+                "QueryVecs": [query_vec], "MemoryUse": bool(memory_use)}
     agent_file = support_agent["RAG_QUERY_GENERATOR"]
     _, _, response, model_name, prompt_tokens, response_tokens = dmt.call_function_by_name(
         service_info, user_info, "RAG_query_generator",
@@ -493,7 +496,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         future_intent = executor.submit(
             _build_intent_queries, service_info, user_info, session_id, session_name,
             support_agent, _rag_input_text, [], situation_prompt, query_vec, cfg["RAG_query_gene"],
-            _rag_query_hint, user_memory_context)
+            _rag_query_hint, user_memory_context, cfg["memory_use"])
         # Kick off meta search in parallel
         future_meta = executor.submit(
             _build_meta_searches, service_info, user_info, session_id, session_name,

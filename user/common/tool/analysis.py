@@ -184,11 +184,12 @@ dmtr.register_tool(
     "management_analysis",
     description=(
         "Run a management / strategy analysis pass over the input text (e.g. "
-        "SWOT-style framing, KPI breakdown). Use for business-oriented requests "
-        "that benefit from a structured analytical lens."
+        "SWOT-style framing, KPI breakdown). Input must include `Client:` and "
+        "`Biz:` lines; an optional free-form question can follow."
     ),
     schema={"type": "object", "properties": {"input": _INPUT_TEXT}, "required": ["input"]},
     func=management_analysis,
+    example="/management_analysis Client: ABC Inc.\nBiz: SaaS business\n成長戦略を教えて",
 )
 
 # Internal orchestration tool — non-uniform signature. Registered so

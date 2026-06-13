@@ -31,8 +31,8 @@ if os.path.exists("system.env"):
 _setting = dmu.read_yaml_file("setting.yaml")
 _practice_folder = _setting["PRACTICE_FOLDER"]
 
-HISTORY_AGENT_FILE = "agent_58UserMemoryHistory.json"
-NOWADAY_AGENT_FILE = "agent_59UserMemoryNowaday.json"
+HISTORY_AGENT_FILE = "agent_62UserMemoryHistory.json"
+NOWADAY_AGENT_FILE = "agent_61UserMemoryNowaday.json"
 PERSONA_AGENT_FILE = "agent_60UserMemoryPersona.json"
 
 

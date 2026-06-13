@@ -92,6 +92,16 @@ def RAG_query_generator(service_info, user_info, session_id, session_name, agent
         prompt_temp_cd = "RAG Query Generator"
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
 
+    # When the caller's Memory Use is OFF (benchmark mode), drop the prompt
+    # instruction asking the LLM to consider prior dialog history so the RAG
+    # query reflects only the current question.
+    if add_info.get("MemoryUse") is False:
+        prompt_template = _re.sub(
+            r"必要であれば、これまでの会話履歴も踏まえてください。\n?",
+            "",
+            prompt_template,
+        )
+
     knowledge_context, knowledge_selected = agent.set_knowledge_context(user_query, query_vecs)
 
     prompt = f'{knowledge_context}{prompt_template}{user_query}{situation_prompt}'
