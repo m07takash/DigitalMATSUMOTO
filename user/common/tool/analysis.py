@@ -324,3 +324,56 @@ dmtr.register_tool(
     schema={"type": "object", "properties": {}, "required": []},
     func=eval_answer_vs_groundtruth,
 )
+
+
+# Critique an entire BatchTest run. Given aggregated metrics + low-score rows,
+# produce a Japanese Markdown critique with failure-pattern classification and
+# improvement suggestions. Used by the BatchTest Result Analysis panel.
+# Non-uniform signature; NOT safe for SKILL.
+def critique_batch_results(service_info, user_info, summary_json, worst_rows_json,
+                            agent_file="agent_53CompareTexts.json"):
+    agent = dma.DigiM_Agent(agent_file)
+    model_type = "LLM"
+    model_name = agent.agent["ENGINE"][model_type]["MODEL"]
+    tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
+
+    prompt = (
+        "あなたは Q&A テスト結果を講評するAIです。以下のサマリ(JSON)と "
+        "低スコア行(JSON)を読み、日本語のMarkdownで講評してください。"
+        "前置きや末尾の挨拶は不要です。次のフォーマットで出力してください。\n\n"
+        "### 全体評価\n"
+        "(2〜3行で総評。シート横断の傾向を含める)\n\n"
+        "### 失敗パターン\n"
+        "- **パターン名**: 該当する低スコア行のQuestion要約 — 推定原因\n"
+        "(2〜4項目)\n\n"
+        "### 改善提案\n"
+        "- 具体的なアクション (Agent JSON / KNOWLEDGE / BOOK / プロンプト等への反映)\n"
+        "(3〜5項目、優先度順)\n\n"
+        f"## サマリ\n```json\n{summary_json}\n```\n\n"
+        f"## 低スコア行\n```json\n{worst_rows_json}\n```\n"
+    )
+
+    response = ""
+    try:
+        for _p, chunk, _comp in agent.generate_response(model_type, prompt):
+            if chunk:
+                response += chunk
+    except Exception as e:
+        response = f"[Critique error] {type(e).__name__}: {e}"
+
+    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt)
+    response_tokens = dmu.count_token(tokenizer, model_name, response)
+    return service_info, user_info, response, model_name, prompt_tokens, response_tokens
+
+
+dmtr.register_tool(
+    "critique_batch_results",
+    description=(
+        "Internal orchestration helper — produce a Japanese Markdown critique "
+        "of a BatchTest run, given JSON-stringified per-sheet summary and a "
+        "list of low-score rows. Returns text. Non-uniform signature; NOT safe "
+        "for SKILL/Thinking dispatch."
+    ),
+    schema={"type": "object", "properties": {}, "required": []},
+    func=critique_batch_results,
+)
