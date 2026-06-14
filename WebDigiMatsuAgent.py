@@ -6025,30 +6025,51 @@ def main():
             """
             import time as _time
             xlsx_path = params["xlsx_path"]
+            target_sheet = params.get("target_sheet") or "__ALL__"
             svc = params["service_info"]
             usr = params["user_info"]
             sid = params["session_id"]
             sname = params["session_name"]
             ag_file = params["agent_file"]
             execution = dict(params["execution"])
+            bg_status_path = params.get("bg_status_path")
 
-            # Resolve sheet (prefer "Test", fall back to first sheet)
-            try:
-                df = pd.read_excel(xlsx_path, sheet_name="Test")
-                sheet_used = "Test"
-            except Exception:
-                df = pd.read_excel(xlsx_path)
-                sheet_used = "Sheet1"
-            if "Question" not in df.columns:
-                raise ValueError("Excel must contain a 'Question' column")
-            if "Answer" not in df.columns:
-                df["Answer"] = ""
-            for _col in ("Verdict", "Score", "Match", "Seq Ratio", "Token F1", "Eval"):
-                if _col not in df.columns:
-                    df[_col] = ""
-            has_gt = "Ground Truth" in df.columns
+            def _bump_status(_done, _total):
+                """Update the bg-task status file the sidebar monitor polls."""
+                if not bg_status_path:
+                    return
+                try:
+                    _write_bg_task_status_to(bg_status_path, {
+                        "status": "running",
+                        "message": f"({_done}/{_total}) Running batch Q&A...",
+                        "error": "",
+                    })
+                except Exception:
+                    pass
+
+            # Discover all sheets with a `Question` column. Multi-sheet xlsx
+            # is fine — each sheet is processed independently and written back
+            # to a same-named sheet in the result xlsx.
+            xls = pd.ExcelFile(xlsx_path)
+            sheets_to_run = []
+            for _sn in xls.sheet_names:
+                try:
+                    _head = pd.read_excel(xlsx_path, sheet_name=_sn, nrows=0)
+                    if "Question" in _head.columns:
+                        sheets_to_run.append(_sn)
+                except Exception:
+                    continue
+            if not sheets_to_run:
+                raise ValueError("No sheet with a 'Question' column found in the uploaded xlsx")
+            if target_sheet != "__ALL__":
+                if target_sheet not in sheets_to_run:
+                    raise ValueError(
+                        f"Sheet '{target_sheet}' has no 'Question' column "
+                        f"(candidates: {', '.join(sheets_to_run)})"
+                    )
+                sheets_to_run = [target_sheet]
+
             exec_agent_name = dma.get_agent_item(ag_file, "DISPLAY_NAME") or "Agent"
-            n_total = len(df)
 
             def _wait_for_unlock(_sess, timeout_sec=120):
                 """Poll until the session is UNLOCKED. Returns True if unlocked,
@@ -6064,81 +6085,119 @@ def main():
                     _time.sleep(0.5)
                 return False
 
-            for idx in df.index:
-                q = str(df.at[idx, "Question"]).strip()
-                if not q or q.lower() == "nan":
-                    continue
+            # Pre-read every sheet once so we can compute the total processable
+            # rows (Question is non-empty / non-"nan") and tick the bg-task
+            # status from `(0/total)` to `(total/total)` as work completes.
+            sheet_dfs = {}
+            total_processable = 0
+            for _sn in sheets_to_run:
+                _pre_df = pd.read_excel(xlsx_path, sheet_name=_sn)
+                sheet_dfs[_sn] = _pre_df
+                for _pi in _pre_df.index:
+                    _pq = str(_pre_df.at[_pi, "Question"]).strip()
+                    if _pq and _pq.lower() != "nan":
+                        total_processable += 1
+            _bump_status(0, total_processable)
 
-                sess = dms.DigiMSession(sid, sname)
-                sess.save_status_message(f"Batch Q&A ({idx + 1}/{n_total})")
+            result_dfs = {}
+            _done = 0
+            for sheet_name, df in sheet_dfs.items():
+                if "Answer" not in df.columns:
+                    df["Answer"] = ""
+                for _col in ("Verdict", "Score", "Match", "Seq Ratio", "Token F1", "Eval"):
+                    if _col not in df.columns:
+                        df[_col] = ""
+                has_gt = "Ground Truth" in df.columns
+                n_total = len(df)
 
-                # Wait for any background digest from the prior row to release
-                # the session lock. Force-unlock as a last resort so the batch
-                # never stalls indefinitely on a stuck digest thread.
-                if not _wait_for_unlock(sess):
-                    try:
-                        sess.save_status("UNLOCKED")
-                    except Exception:
-                        pass
+                for idx in df.index:
+                    q = str(df.at[idx, "Question"]).strip()
+                    if not q or q.lower() == "nan":
+                        continue
 
-                last_resp = ""
-                try:
-                    # Capture the response from the generator stream first —
-                    # this works whether or not the turn is persisted.
-                    _captured = []
-                    for _y in dme.DigiMatsuExecute_MultiPersona(
-                        svc, usr, sid, sname, ag_file, q,
-                        [], {"TIME": "", "SITUATION": ""}, {}, [],
-                        execution, [], in_rag_query_text="", in_org=None,
-                    ):
-                        if isinstance(_y, tuple) and len(_y) >= 3:
-                            _chunk = _y[2]
-                            if _chunk and not str(_chunk).startswith("[STATUS]"):
-                                _captured.append(str(_chunk))
-                    last_resp = "".join(_captured).strip()
+                    sess = dms.DigiMSession(sid, sname)
+                    sess.save_status_message(
+                        f"Batch Q&A [{sheet_name}] ({idx + 1}/{n_total})"
+                    )
 
-                    # Fallback to chat_memory.json when the stream produced
-                    # nothing (e.g. non-streaming model paths that only write
-                    # the final response into history).
-                    if not last_resp:
-                        sess = dms.DigiMSession(sid, sname)
-                        hist = sess.get_history()
-                        seq_keys = sorted([k for k in hist if k.isdigit()], key=int)
-                        if seq_keys:
-                            last_seq = seq_keys[-1]
-                            sub_keys = sorted([k for k in hist[last_seq] if k.isdigit()], key=int)
-                            if sub_keys:
-                                last_resp = (hist[last_seq][sub_keys[-1]].get("response") or {}).get("text", "") or ""
-                except Exception as e:
-                    last_resp = f"[Error] {type(e).__name__}: {e}"
-
-                df.at[idx, "Answer"] = last_resp
-
-                if has_gt:
-                    gt = str(df.at[idx, "Ground Truth"]).strip()
-                    if gt and gt.lower() != "nan":
+                    # Wait for any background digest from the prior row to release
+                    # the session lock. Force-unlock as a last resort so the batch
+                    # never stalls indefinitely on a stuck digest thread.
+                    if not _wait_for_unlock(sess):
                         try:
-                            _, _, _ev, _, _, _ = dmt.eval_answer_vs_groundtruth(
-                                svc, usr, q, last_resp, gt
-                            )
-                            df.at[idx, "Verdict"]   = _ev.get("verdict", "")
-                            df.at[idx, "Score"]     = _ev.get("score", "")
-                            df.at[idx, "Match"]     = "Y" if _ev.get("exact_match") else "N"
-                            df.at[idx, "Seq Ratio"] = _ev.get("seq_ratio", "")
-                            df.at[idx, "Token F1"]  = _ev.get("token_f1", "")
-                            df.at[idx, "Eval"]      = _ev.get("summary", "")
-                        except Exception as e:
-                            df.at[idx, "Eval"] = f"[Eval error] {type(e).__name__}: {e}"
+                            sess.save_status("UNLOCKED")
+                        except Exception:
+                            pass
 
+                    last_resp = ""
+                    try:
+                        # Capture the response from the generator stream first —
+                        # this works whether or not the turn is persisted.
+                        _captured = []
+                        for _y in dme.DigiMatsuExecute_MultiPersona(
+                            svc, usr, sid, sname, ag_file, q,
+                            [], {"TIME": "", "SITUATION": ""}, {}, [],
+                            execution, [], in_rag_query_text="", in_org=None,
+                        ):
+                            if isinstance(_y, tuple) and len(_y) >= 3:
+                                _chunk = _y[2]
+                                if _chunk and not str(_chunk).startswith("[STATUS]"):
+                                    _captured.append(str(_chunk))
+                        last_resp = "".join(_captured).strip()
+
+                        # Fallback to chat_memory.json when the stream produced
+                        # nothing (e.g. non-streaming model paths that only write
+                        # the final response into history).
+                        if not last_resp:
+                            sess = dms.DigiMSession(sid, sname)
+                            hist = sess.get_history()
+                            seq_keys = sorted([k for k in hist if k.isdigit()], key=int)
+                            if seq_keys:
+                                last_seq = seq_keys[-1]
+                                sub_keys = sorted([k for k in hist[last_seq] if k.isdigit()], key=int)
+                                if sub_keys:
+                                    last_resp = (hist[last_seq][sub_keys[-1]].get("response") or {}).get("text", "") or ""
+                    except Exception as e:
+                        last_resp = f"[Error] {type(e).__name__}: {e}"
+
+                    df.at[idx, "Answer"] = last_resp
+
+                    if has_gt:
+                        gt = str(df.at[idx, "Ground Truth"]).strip()
+                        if gt and gt.lower() != "nan":
+                            try:
+                                _, _, _ev, _, _, _ = dmt.eval_answer_vs_groundtruth(
+                                    svc, usr, q, last_resp, gt
+                                )
+                                df.at[idx, "Verdict"]   = _ev.get("verdict", "")
+                                df.at[idx, "Score"]     = _ev.get("score", "")
+                                df.at[idx, "Match"]     = "Y" if _ev.get("exact_match") else "N"
+                                df.at[idx, "Seq Ratio"] = _ev.get("seq_ratio", "")
+                                df.at[idx, "Token F1"]  = _ev.get("token_f1", "")
+                                df.at[idx, "Eval"]      = _ev.get("summary", "")
+                            except Exception as e:
+                                df.at[idx, "Eval"] = f"[Eval error] {type(e).__name__}: {e}"
+
+                    _done += 1
+                    _bump_status(_done, total_processable)
+
+                result_dfs[sheet_name] = df
+
+            # Save completed xlsx into the session folder. One sheet per input
+            # sheet, preserving the original sheet name.
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             sess = dms.DigiMSession(sid, sname)
             out_path = Path(sess.session_folder_path) / f"batch_results_{ts}.xlsx"
-            df.to_excel(out_path, sheet_name=sheet_used, index=False)
+            with pd.ExcelWriter(out_path) as _writer:
+                for _sn, _df in result_dfs.items():
+                    _df.to_excel(_writer, sheet_name=_sn, index=False)
 
         with st.expander("Batch Test (upload Q&A xlsx)", expanded=False):
             st.markdown(
                 "Upload an Excel with a `Question` column (required) and an optional "
-                "`Ground Truth` column. Each row is run as one chat turn on the "
+                "`Ground Truth` column. **Multi-sheet xlsx** is supported — every "
+                "sheet with a `Question` column is auto-detected; the dropdown "
+                "lets you target a specific sheet or run them all. Each row is run as one chat turn on the "
                 "**current session** using the **current chat settings** (Web Search, "
                 "Memory, Thinking, Books, etc.). If `Ground Truth` is set, the answer "
                 "is evaluated against it via `eval_answer_vs_groundtruth`, which "
@@ -6159,8 +6218,44 @@ def main():
                 key=_batch_uploader_key,
                 label_visibility="collapsed",
             )
+
+            # Sheet picker: when a file is uploaded, list every sheet that has
+            # a `Question` column. Default = `(全シート)` (run all of them).
+            _target_sheet = "__ALL__"
+            _q_sheets = []
+            if _batch_file is not None:
+                try:
+                    import io as _io
+                    _bytes = _batch_file.getvalue()
+                    _xls = pd.ExcelFile(_io.BytesIO(_bytes))
+                    for _sn in _xls.sheet_names:
+                        try:
+                            _head = pd.read_excel(
+                                _io.BytesIO(_bytes), sheet_name=_sn, nrows=0
+                            )
+                            if "Question" in _head.columns:
+                                _q_sheets.append(_sn)
+                        except Exception:
+                            continue
+                except Exception as _e:
+                    st.warning(f"シート一覧の読み込みに失敗しました: {_e}")
+                if _q_sheets:
+                    _opts = ["(全シート)"] + _q_sheets
+                    _picked = st.selectbox(
+                        f"対象シート (Question列のあるシート: {len(_q_sheets)})",
+                        options=_opts,
+                        key=f"batch_sheet_pick_{_batch_uploader_key}",
+                    )
+                    _target_sheet = "__ALL__" if _picked == "(全シート)" else _picked
+                else:
+                    st.warning(
+                        "`Question` 列のあるシートが見つかりませんでした。"
+                    )
             _bc1, _bc2 = st.columns([1, 2])
-            _can_run_batch = bool(_batch_file) and not bool(st.session_state._bg_task)
+            _can_run_batch = (
+                bool(_batch_file) and bool(_q_sheets)
+                and not bool(st.session_state._bg_task)
+            )
             if _bc1.button("Run Batch Test", key="batch_test_run", disabled=not _can_run_batch):
                 _ts_in = datetime.now().strftime("%Y%m%d_%H%M%S")
                 _saved_path = Path(temp_folder_path) / f"batch_input_{_ts_in}_{_batch_file.name}"
@@ -6185,6 +6280,8 @@ def main():
 
                 _bt_params = {
                     "xlsx_path": str(_saved_path),
+                    "target_sheet": _target_sheet,
+                    "bg_status_path": _bg_task_path(),
                     "service_info": dict(st.session_state.web_service),
                     "user_info": dict(st.session_state.web_user),
                     "session_id": st.session_state.session.session_id,
@@ -6198,6 +6295,9 @@ def main():
                 _run_bg_task("batch_test", "Running batch Q&A...", _run_batch_bg, _bt_params)
                 st.rerun()
 
+            # Results — pick a past run from the session folder (default = newest),
+            # download the xlsx, and view summary metrics / charts. The LLM
+            # critique is on-demand and cached to a sibling `.critique.md`.
             try:
                 _batch_results = sorted(
                     Path(st.session_state.session.session_folder_path).glob("batch_results_*.xlsx")
@@ -6205,17 +6305,169 @@ def main():
             except Exception:
                 _batch_results = []
             if _batch_results:
-                _latest = _batch_results[-1]
+                import json as _ra_json
+                st.markdown("---")
+                st.markdown("### Results")
+                _result_options = [_p.name for _p in reversed(_batch_results)]  # newest first
+                _rc1, _rc2 = st.columns([3, 1])
+                _picked_name = _rc1.selectbox(
+                    f"Result file ({len(_batch_results)} 件 / 最新がデフォルト)",
+                    options=_result_options,
+                    index=0,
+                    key="batch_result_pick",
+                )
+                _selected = next(_p for _p in _batch_results if _p.name == _picked_name)
                 try:
-                    _bc2.download_button(
-                        f"Download latest result ({_latest.name})",
-                        data=_latest.read_bytes(),
-                        file_name=_latest.name,
+                    _rc2.markdown(" ")  # spacer to align with the selectbox label
+                    _rc2.download_button(
+                        "Download",
+                        data=_selected.read_bytes(),
+                        file_name=_selected.name,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                        key=f"batch_test_dl_{_latest.name}",
+                        key=f"batch_test_dl_{_selected.name}",
                     )
                 except Exception:
                     pass
+
+                try:
+                    _ra_sheets = pd.read_excel(_selected, sheet_name=None)
+                except Exception as _ra_e:
+                    st.warning(f"結果Excelの読み込みに失敗しました: {_ra_e}")
+                    _ra_sheets = {}
+
+                # Cross-sheet summary
+                _ra_agg_rows = []
+                for _ra_sn, _ra_df in _ra_sheets.items():
+                    if "Score" not in _ra_df.columns:
+                        continue
+                    _ra_scores = pd.to_numeric(_ra_df["Score"], errors="coerce").dropna()
+                    _ra_verdicts = _ra_df.get("Verdict", pd.Series(dtype=str)).fillna("").astype(str)
+                    _ra_matches = _ra_df.get("Match", pd.Series(dtype=str)).fillna("").astype(str)
+                    _ra_agg_rows.append({
+                        "Sheet": _ra_sn,
+                        "Rows": int(len(_ra_df)),
+                        "Evaluated": int(len(_ra_scores)),
+                        "Score Avg": round(float(_ra_scores.mean()), 1) if len(_ra_scores) else None,
+                        "Score Median": round(float(_ra_scores.median()), 1) if len(_ra_scores) else None,
+                        "○": int((_ra_verdicts == "○").sum()),
+                        "△": int((_ra_verdicts == "△").sum()),
+                        "✕": int((_ra_verdicts == "✕").sum()),
+                        "Exact Match": int((_ra_matches == "Y").sum()),
+                    })
+                _ra_agg_df = pd.DataFrame(_ra_agg_rows)
+
+                if _ra_agg_df.empty:
+                    st.info(
+                        "`Score` 列のあるシートがありません。Ground Truth 付きで再実行すると "
+                        "ここに集計が表示されます。"
+                    )
+                else:
+                    st.markdown("**シート横断サマリ**")
+                    st.dataframe(_ra_agg_df, hide_index=True, use_container_width=True)
+
+                    for _ra_sn, _ra_df in _ra_sheets.items():
+                        if "Score" not in _ra_df.columns:
+                            continue
+                        _ra_scores = pd.to_numeric(_ra_df["Score"], errors="coerce").dropna()
+                        _ra_verdicts = _ra_df.get("Verdict", pd.Series(dtype=str)).fillna("").astype(str)
+                        _ra_matches = _ra_df.get("Match", pd.Series(dtype=str)).fillna("").astype(str)
+
+                        st.markdown(f"#### {_ra_sn}")
+                        _ra_c1, _ra_c2, _ra_c3, _ra_c4 = st.columns(4)
+                        _ra_c1.metric("件数", int(len(_ra_df)))
+                        _ra_c2.metric(
+                            "Score 平均",
+                            f"{_ra_scores.mean():.1f}" if len(_ra_scores) else "—",
+                        )
+                        if len(_ra_verdicts):
+                            _ra_c3.metric("○率", f"{(_ra_verdicts == '○').mean() * 100:.0f}%")
+                        else:
+                            _ra_c3.metric("○率", "—")
+                        _ra_c4.metric(
+                            "Exact Match",
+                            f"{int((_ra_matches == 'Y').sum())}/{int(len(_ra_df))}",
+                        )
+
+                        _ra_cc1, _ra_cc2 = st.columns(2)
+                        _ra_vc = (
+                            _ra_verdicts.value_counts()
+                            .reindex(["○", "△", "✕"], fill_value=0)
+                            .rename("count")
+                        )
+                        _ra_cc1.markdown("Verdict")
+                        _ra_cc1.bar_chart(_ra_vc)
+                        if len(_ra_scores):
+                            _ra_bins = pd.cut(
+                                _ra_scores,
+                                bins=list(range(0, 110, 10)),
+                                include_lowest=True,
+                                right=True,
+                            )
+                            _ra_hist = _ra_bins.value_counts().sort_index()
+                            _ra_hist.index = [str(_i) for _i in _ra_hist.index]
+                            _ra_cc2.markdown("Score 分布")
+                            _ra_cc2.bar_chart(_ra_hist)
+
+                        _ra_show = _ra_df.copy()
+                        _ra_show["__s"] = pd.to_numeric(_ra_show.get("Score"), errors="coerce")
+                        _ra_show = _ra_show.dropna(subset=["__s"]).sort_values("__s").head(5)
+                        if not _ra_show.empty:
+                            _ra_cols = [
+                                _c for _c in ("Question", "Answer", "Ground Truth",
+                                              "Verdict", "Score", "Eval")
+                                if _c in _ra_show.columns
+                            ]
+                            st.markdown(f"**低スコア {len(_ra_show)}件**")
+                            st.dataframe(
+                                _ra_show[_ra_cols], hide_index=True, use_container_width=True,
+                            )
+
+                    # LLM critique — on-demand, cached next to the selected xlsx
+                    _ra_crit_path = _selected.with_suffix(".critique.md")
+                    _ra_b1, _ra_b2 = st.columns([1, 2])
+                    _ra_busy = bool(st.session_state._bg_task)
+                    if _ra_b1.button(
+                        "LLM評価を生成", key=f"batch_critique_btn_{_selected.name}",
+                        disabled=_ra_busy,
+                    ):
+                        _ra_worst = []
+                        for _ra_sn, _ra_df in _ra_sheets.items():
+                            if "Score" not in _ra_df.columns:
+                                continue
+                            _ra_w = _ra_df.copy()
+                            _ra_w["__s"] = pd.to_numeric(_ra_w.get("Score"), errors="coerce")
+                            _ra_w = _ra_w.dropna(subset=["__s"]).sort_values("__s").head(5)
+                            for _, _ra_r in _ra_w.iterrows():
+                                _ra_worst.append({
+                                    "sheet": _ra_sn,
+                                    "question": str(_ra_r.get("Question", ""))[:300],
+                                    "answer": str(_ra_r.get("Answer", ""))[:500],
+                                    "ground_truth": str(_ra_r.get("Ground Truth", ""))[:300],
+                                    "verdict": str(_ra_r.get("Verdict", "")),
+                                    "score": float(_ra_r["__s"]),
+                                    "eval": str(_ra_r.get("Eval", ""))[:300],
+                                })
+                        try:
+                            _, _, _ra_crit, _, _, _ = dmt.critique_batch_results(
+                                dict(st.session_state.web_service),
+                                dict(st.session_state.web_user),
+                                _ra_json.dumps(
+                                    _ra_agg_df.to_dict(orient="records"),
+                                    ensure_ascii=False, indent=2,
+                                ),
+                                _ra_json.dumps(_ra_worst, ensure_ascii=False, indent=2),
+                            )
+                            _ra_crit_path.write_text(_ra_crit or "", encoding="utf-8")
+                            st.rerun()
+                        except Exception as _ra_ee:
+                            st.error(f"LLM評価エラー: {type(_ra_ee).__name__}: {_ra_ee}")
+                    if _ra_crit_path.exists():
+                        _ra_b2.markdown(f"_保存済み: `{_ra_crit_path.name}`_")
+                        try:
+                            st.markdown("---")
+                            st.markdown(_ra_crit_path.read_text(encoding="utf-8"))
+                        except Exception:
+                            pass
 
         # Skills discovery panel: surfaces the current agent's SKILL.TOOL_LIST
         # as slash-command form right above the chat input so users don't have
