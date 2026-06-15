@@ -2663,6 +2663,10 @@ def _user_memory_explorer():
         for _k in _UME_STATE_KEYS:
             if _k in st.session_state:
                 _state[_k] = st.session_state[_k]
+        # Per-user twin chat histories — keys carry the user id suffix.
+        for _k in list(st.session_state.keys()):
+            if str(_k).startswith("_ume_deep_hist__"):
+                _state[_k] = st.session_state[_k]
         try:
             with open(os.path.join(_folder, "state.pkl"), "wb") as f:
                 pickle.dump(_state, f)
@@ -2686,6 +2690,9 @@ def _user_memory_explorer():
         _meta = dmu.read_json_file(_meta_path)
         for _k in _UME_STATE_KEYS:
             if _k in st.session_state:
+                del st.session_state[_k]
+        for _k in list(st.session_state.keys()):
+            if str(_k).startswith("_ume_deep_hist__"):
                 del st.session_state[_k]
         _pkl_path = os.path.join(folder_path, "state.pkl")
         if os.path.exists(_pkl_path):
@@ -2869,8 +2876,9 @@ def _user_memory_explorer():
                             _eng["FUNC_NAME"], _q, _sys, _eng, [], [], {}, False):
                         if _r:
                             _resp += _r
-                    st.session_state.setdefault(f"_{key_prefix}_hist", [])
-                    st.session_state[f"_{key_prefix}_hist"].append({
+                    _hist_key = f"_{key_prefix}_hist__{user_id}"
+                    st.session_state.setdefault(_hist_key, [])
+                    st.session_state[_hist_key].append({
                         "agent": f"{user_id} (User Twin / {_eng_name})",
                         "query": _q, "response": _resp,
                         "context": _ctx or "",
@@ -2878,7 +2886,7 @@ def _user_memory_explorer():
                     })
                 except Exception as e:
                     st.error(f"Execution error: {type(e).__name__}: {e}")
-        _hist = st.session_state.get(f"_{key_prefix}_hist", [])
+        _hist = st.session_state.get(f"_{key_prefix}_hist__{user_id}", [])
         if _hist and _hist[-1].get("context"):
             with st.expander("Context (User Twin)"):
                 st.text(_hist[-1]["context"][:4000])
@@ -3145,7 +3153,11 @@ def _user_memory_explorer():
         st.markdown("#### Nowaday (recent trends)")
         if _b["nowaday"]:
             # Select the snapshot (sorted by generated_at descending; first is latest)
-            _nws_d = _b["nowaday"]
+            _nws_d = sorted(
+                _b["nowaday"],
+                key=lambda m: m.get("generated_at") or "",
+                reverse=True,
+            )
             _nw_opts_d = {f"{m.get('period','')} @ {m.get('generated_at','')}": m for m in _nws_d}
             _osel_d = st.selectbox("Snapshot (period @ generated_at; top is latest)",
                                     list(_nw_opts_d.keys()),
@@ -4154,7 +4166,11 @@ def _user_memory_explorer():
                         except Exception as e:
                             st.error(f"Generation error: {type(e).__name__}: {e}")
                 st.markdown("---")
-                _nws = _mb["nowaday"]
+                _nws = sorted(
+                    _mb["nowaday"],
+                    key=lambda m: m.get("generated_at") or "",
+                    reverse=True,
+                )
                 if not _nws:
                     st.caption("Nowaday has not been generated yet")
                 else:
@@ -4299,7 +4315,7 @@ def _user_memory_explorer():
                 _r.append(f"### History emotion trajectory ({_s or 'all'} - {_e or 'now'}, {len(_tj)} / total {len(_traj_all)})")
                 if _ct:
                     _r.append("- **Aggregate:** " + ", ".join(f"{k}={v}" for k, v in _ct.most_common()))
-            _dh = st.session_state.get("_ume_deep_hist") or []
+            _dh = st.session_state.get(f"_ume_deep_hist__{_ud}") or []
             if _dh:
                 _r.append("")
                 _r.append("### Chat with this User Twin")
@@ -4307,75 +4323,140 @@ def _user_memory_explorer():
                     _r.append(f"- **[{_h.get('timestamp','')}] {_h.get('agent','')}**")
                     _r.append(f"  - Q: {_h.get('query','')}")
                     _r.append(f"  - A: {_h.get('response','')}")
-            _r.append("")
 
-        # ---- Group understanding ----
-        _ch = st.session_state.get("ume_cross_users") or []
-        if _ch:
-            _r.append("## Group understanding")
-            _r.append(f"- **Target users ({len(_ch)}):** " + ", ".join(_ch))
-            _b5s = ux.cohort_big5_stats(_ch, "")
-            _r.append("")
-            _r.append("### Persona — Big5 (max/mean/min)")
-            _r.append("| Trait | Max | Mean | Min |")
-            _r.append("|---|---|---|---|")
-            for _t in ux.BIG5_TRAITS:
-                _r.append(f"| {ux.BIG5_JA.get(_t,_t)} | {_b5s[_t]['max']:.2f} | {_b5s[_t]['mean']:.2f} | {_b5s[_t]['min']:.2f} |")
-            _es = ux.cohort_basic_emotion_stats(_ch, "")
-            _r.append("")
-            _r.append("### Nowaday - basic emotions (max/mean/min)")
-            _r.append("| Emotion | Max | Mean | Min |")
-            _r.append("|---|---|---|---|")
-            for _e in ux.PLUTCHIK_PRIMARY:
-                _r.append(f"| {ux.PLUTCHIK_JA.get(_e,_e)} | {_es[_e]['max']:.2f} | {_es[_e]['mean']:.2f} | {_es[_e]['min']:.2f} |")
-            _sec = ux.agg_secondary_emotions(_ch, "")
-            if _sec:
+            # Relationship with Agent — emitted only when a "Run analysis" cache
+            # exists for (current user, currently-picked agent in the panel).
+            _ua_ag_x = st.session_state.get("ume_deep_ua_agent")
+            _ua_af_x = None
+            if _ua_ag_x:
+                _ua_af_x = next(
+                    (a["FILE"] for a in st.session_state.agents
+                     if a["AGENT"] == _ua_ag_x),
+                    None,
+                )
+            _ua_cache = st.session_state.get(
+                f"_ume_deep_ua_cache_{_ud}_{_ua_af_x}"
+            ) if _ua_af_x else None
+            if _ua_cache and _ua_cache.get("seqs"):
+                from collections import Counter as _C_ua
+                from datetime import datetime as _dt_ua_ex
                 _r.append("")
-                _r.append("### Secondary-emotion ranking")
-                _r.append("- " + "、".join(f"{ux.PLUTCHIK_JA.get(k,k)}({c})" for k, c in _sec.most_common()))
-            _pc = st.session_state.get("_ume_pcluster") or {}
-            if _pc.get("df") is not None:
+                _r.append(f"### Relationship with Agent — {_ua_ag_x}")
+                _seqs_x = _ua_cache["seqs"]
+                _pf_x = _ua_cache.get("period_from")
+                _pt_x = _ua_cache.get("period_to")
+                _r.append(f"- **Agent:** {_ua_ag_x}")
+                _r.append(f"- **Period:** {_pf_x} - {_pt_x}")
+                _sess_x = sorted(set(s["session_id"] for s in _seqs_x))
+                _r.append(f"- **Sessions:** {len(_sess_x)}")
+                _r.append(f"- **Turns:** {len(_seqs_x)}")
+                _tot_chars = sum(len(s["query"]) + len(s["response"]) for s in _seqs_x)
+                _r.append(f"- **Total chars:** {_tot_chars:,}")
+                _avg_t = round(len(_seqs_x) / max(len(_sess_x), 1), 1)
+                _r.append(f"- **Avg turns/session:** {_avg_t}")
+                _last_ts_x = max((s["timestamp"] for s in _seqs_x if s["timestamp"]), default="")
+                if _last_ts_x:
+                    _r.append(f"- **Last contact:** {_last_ts_x[:10]}")
+
+                # --- Compatibility score (recomputed from cache, mirrors UI) ---
+                _all_ts_x = sorted([s["timestamp"] for s in _seqs_x if s["timestamp"]])
+                _span_m = 0
+                if len(_all_ts_x) >= 2:
+                    try:
+                        _t0_x = _dt_ua_ex.fromisoformat(_all_ts_x[0][:10])
+                        _t1_x = _dt_ua_ex.fromisoformat(_all_ts_x[-1][:10])
+                        _span_m = max(0, (_t1_x.year - _t0_x.year) * 12
+                                      + (_t1_x.month - _t0_x.month))
+                    except Exception:
+                        _span_m = 0
+                _continuity = min(_span_m / 12.0, 1.0)
+                _active_m = len(set(s["timestamp"][:7]
+                                    for s in _seqs_x if s["timestamp"])) or 1
+                _frequency = min((len(_seqs_x) / _active_m) / 20.0, 1.0)
+                _hist_by_sid_x = {h.get("session_id"): h
+                                   for h in (_bd.get("history") or [])}
+                _ax_int_x = _C_ua()
+                for _sx in _sess_x:
+                    _hx = _hist_by_sid_x.get(_sx)
+                    if _hx:
+                        for _ix in ((_hx.get("axis_tags") or {}).get("interests") or []):
+                            _ax_int_x[_ix] += 1
+                _all_in_x = sum(_ax_int_x.values())
+                _top_share_x = (_ax_int_x.most_common(1)[0][1] / _all_in_x)                     if (_all_in_x and _ax_int_x) else 0.0
+                _focus_x = min(_top_share_x * 2.0, 1.0)
+                _avgq_x = sum(len(s["query"]) for s in _seqs_x) / max(len(_seqs_x), 1)
+                _avgr_x = sum(len(s["response"]) for s in _seqs_x) / max(len(_seqs_x), 1)
+                _richness_x = min(_avgr_x / 500.0, 1.0)
+                _engagement_x = min(_avgq_x / 200.0, 1.0)
+                _kn_pt_x = sum(len(s.get("knowledge_rag", []) or [])
+                               for s in _seqs_x) / max(len(_seqs_x), 1)
+                _knowuse_x = min(_kn_pt_x / 5.0, 1.0)
                 _r.append("")
-                _r.append(f"### Persona clustering ({_pc.get('info','')})")
-                _r.append(_pc["df"].to_markdown(index=False))
-                if st.session_state.get("_ume_pexp"):
+                _r.append("#### Compatibility score")
+                _r.append("| Axis | Score (0-1) |")
+                _r.append("|---|---|")
+                for _lbl_x, _v_x in [
+                    ("Continuity", _continuity), ("Frequency", _frequency),
+                    ("Focus", _focus_x), ("Richness", _richness_x),
+                    ("Engagement", _engagement_x), ("Knowledge use", _knowuse_x),
+                ]:
+                    _r.append(f"| {_lbl_x} | {_v_x:.2f} |")
+                _verdict_x = []
+                _verdict_x.append("Long-term" if _continuity >= 0.5
+                                  else ("Ongoing" if _continuity >= 0.2 else "Short-term"))
+                _verdict_x.append("High-frequency" if _frequency >= 0.5
+                                  else ("Medium-frequency" if _frequency >= 0.2 else "Low-frequency"))
+                _verdict_x.append("Focused" if _focus_x >= 0.5 else "Multi-theme")
+                _verdict_x.append("Verbose-response" if _richness_x >= 0.5 else "Concise-response")
+                _verdict_x.append("High-knowledge-use" if _knowuse_x >= 0.5
+                                  else ("Medium-knowledge-use" if _knowuse_x >= 0.2 else "Low-knowledge-use"))
+                _r.append(f"- **Relationship label:** {' / '.join(_verdict_x)}")
+
+                # --- Theme overlap (top 10 per axis from history.axis_tags) ---
+                _ax_c_x = {"interests": _C_ua(), "values": _C_ua(), "constraints": _C_ua()}
+                for _sx in _sess_x:
+                    _hx = _hist_by_sid_x.get(_sx)
+                    if _hx:
+                        _atx = _hx.get("axis_tags") or {}
+                        for _ck_x in _ax_c_x:
+                            for _ix in (_atx.get(_ck_x) or []):
+                                _ax_c_x[_ck_x][_ix] += 1
+                if any(_ax_c_x[_k].most_common(1) for _k in _ax_c_x):
                     _r.append("")
-                    _r.append("#### Cluster explanation")
-                    _r.append(str(st.session_state["_ume_pexp"]))
-            _nc = st.session_state.get("_ume_ncluster") or {}
-            if _nc.get("df") is not None:
-                _r.append("")
-                _r.append(f"### Nowaday clustering ({_nc.get('info','')})")
-                _r.append(_nc["df"].to_markdown(index=False))
-                if st.session_state.get("_ume_nexp"):
+                    _r.append("#### Theme overlap (top 10)")
+                    for _lbl_x, _ck_x in [
+                        ("Interests", "interests"),
+                        ("Values", "values"),
+                        ("Constraints", "constraints"),
+                    ]:
+                        _items_x = _ax_c_x[_ck_x].most_common(10)
+                        if _items_x:
+                            _r.append(
+                                f"- **{_lbl_x}:** "
+                                + "、".join(f"{k}({c})" for k, c in _items_x)
+                            )
+
+                # --- KMeans conversation clusters (if Run clustering was hit) ---
+                _cl_key_x = f"_ume_deep_ua_kmeans_{_ud}_{_ua_af_x}"
+                _clc_x = st.session_state.get(_cl_key_x)
+                if _clc_x and _clc_x.get("items"):
+                    _names_x = st.session_state.get(f"{_cl_key_x}_names") or {}
+                    _by_cl_x = _C_ua()
+                    for _it in _clc_x["items"]:
+                        _by_cl_x[_it.get("Cluster")] += 1
                     _r.append("")
-                    _r.append("#### Cluster explanation")
-                    _r.append(str(st.session_state["_ume_nexp"]))
-            _ht = ux.cohort_history_emotion_totals(_ch, "")
-            if _ht:
-                _r.append("")
-                _r.append("### History emotion trajectory (total)")
-                _r.append("- " + "、".join(f"{ux.PLUTCHIK_JA.get(k,k)}={v}" for k, v in _ht.items()))
-            _gsys = st.session_state.get("_ume_cross_gtwin_sys")
-            if _gsys:
-                _r.append("")
-                _r.append("### Group Twin System Prompt")
-                _r.append("```\n" + _gsys + "\n```")
-            _gh = st.session_state.get("_ume_cross_g_hist") or []
-            if _gh:
-                _r.append("")
-                _r.append("### Chat with this Group Twin")
-                for _h in _gh:
-                    _r.append(f"- **[{_h.get('timestamp','')}] {_h.get('agent','')}**")
-                    _r.append(f"  - Q: {_h.get('query','')}")
-                    _r.append(f"  - A: {_h.get('response','')}")
+                    _r.append("#### Conversation pattern (KMeans)")
+                    _r.append(f"- **k:** {_clc_x.get('k')}")
+                    for _cl_x, _n_x in sorted(_by_cl_x.items()):
+                        _label_x = _names_x.get(str(_cl_x), f"Cluster {_cl_x}")
+                        _r.append(f"  - {_label_x}: {_n_x} turns")
             _r.append("")
 
         _r.append(f"\n---\nGenerated: {_now}")
         _report_text = "\n".join(_r)
         st.session_state._ume_report = _report_text
         try:
-            _label = (_ud or "") + (f"+{len(_ch)}users" if _ch else "")
+            _label = _ud or ""
             _saved = _ume_save_session(_label or "session")
             st.success(f"Generated report and saved the session: {_saved}")
         except Exception as e:
@@ -4822,7 +4903,7 @@ def main():
                     )
 
                     # Period: start date (calendar). Off = all periods
-                    _um_period_use = st.checkbox("Filter by start date", value=False, key="um_admin_period_use")
+                    _um_period_use = st.checkbox("Filter by start date", value=True, key="um_admin_period_use")
                     _um_period_value = "all"
                     if _um_period_use:
                         _um_default_start = (now_time - timedelta(days=30)).date()
