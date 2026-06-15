@@ -6206,10 +6206,11 @@ def main():
                 "completed Excel (with `Answer`, `Verdict`, `Score`, `Match`, "
                 "`Seq Ratio`, `Token F1`, `Eval` columns filled) is saved to the "
                 "session folder and downloadable below.\n\n"
-                "**Benchmark tip** — turn `Memory Use` off in the chat header to "
-                "score each row in isolation: prior turns are not loaded into the "
-                "LLM context, but the row is still saved to chat history (and a "
-                "digest is still generated if `Save Digest` is on)."
+                "**Benchmark tip** — the `Memory Use (BatchTest only)` toggle below scores "
+                "each row in isolation when OFF (prior turns are not loaded into "
+                "the LLM context); each row is still saved to chat history (and "
+                "a digest is still generated if `Save Digest` is on). This toggle "
+                "is independent from the chat header Memory Use."
             )
             _batch_uploader_key = f"batch_test_uploader_{st.session_state.get('batch_test_uploader_counter', 0)}"
             _batch_file = st.file_uploader(
@@ -6252,6 +6253,16 @@ def main():
                         "`Question` 列のあるシートが見つかりませんでした。"
                     )
             _bc1, _bc2 = st.columns([1, 2])
+            _bc2.checkbox(
+                "Memory Use (BatchTest only)",
+                value=False,
+                key="batch_memory_use",
+                help=(
+                    "バッチテストにのみ有効な独立トグル。OFF にすると各行を独立に評価 "
+                    "(過去ターンを LLM コンテキストに載せない)。Chat ヘッダーの "
+                    "Memory Use とは独立。"
+                ),
+            )
             _can_run_batch = (
                 bool(_batch_file) and bool(_q_sheets)
                 and not bool(st.session_state._bg_task)
@@ -6262,7 +6273,7 @@ def main():
                 _saved_path.write_bytes(_batch_file.getbuffer())
 
                 _bt_execution = {
-                    "MEMORY_USE":        st.session_state.memory_use,
+                    "MEMORY_USE":        st.session_state.batch_memory_use,
                     "MEMORY_SAVE":       st.session_state.memory_save,
                     "MEMORY_SIMILARITY": st.session_state.memory_similarity,
                     "MAGIC_WORD_USE":    st.session_state.magic_word_use,
