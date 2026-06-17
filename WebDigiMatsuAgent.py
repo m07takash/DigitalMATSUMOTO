@@ -420,6 +420,28 @@ def _bg_task_path():
     sid = st.session_state.get("user_id", "default")
     return _BG_TASK_FILE.format(sid)
 
+
+def _resolve_persona_for_analytics(agent_file: str, setting_dict: dict):
+    """Look up the persona dict matching `setting['persona_id']` for an
+    analyzed turn. Returns None when the turn was not a persona run, the
+    persona_id is missing, or the lookup fails (in which case Analytics
+    falls back to the agent's default define_code = full collection)."""
+    pid = (setting_dict or {}).get("persona_id") or ""
+    if not pid:
+        return None
+    try:
+        _agent_data = dmu.read_json_file(agent_file, agent_folder_path) or {}
+        _pfiles = _agent_data.get("PERSONA_FILES") or None
+        _psource = _agent_data.get("PERSONA_SOURCE")
+        _all = dap.load_personas(
+            template_agent=agent_file,
+            persona_files=_pfiles,
+            source=_psource,
+        )
+        return next((p for p in _all if p.get("persona_id") == pid), None)
+    except Exception:
+        return None
+
 def _read_bg_task_status():
     try:
         with open(_bg_task_path(), "r") as f:
@@ -1356,8 +1378,22 @@ def _knowledge_explorer():
                                     _ak_folder = os.path.join(_ANALYTICS_BASE, f"analytics{datetime.now().strftime('%Y%m%d_%H%M%S')}")
                                     st.session_state._rag_analytics_folder = _ak_folder
                                 os.makedirs(_ak_folder, exist_ok=True)
+                                # Resolve persona-scope so the "all chunks" background dots
+                                # reflect what THIS persona could have retrieved at chat time
+                                # (instead of the full collection).
+                                _ak_persona_resolved = _resolve_persona_for_analytics(
+                                    _agent_file, _v2.get("setting") or {})
+                                _ak_exec_info_resolved = {
+                                    "SERVICE_INFO": dict(st.session_state.web_service),
+                                    "USER_INFO":    dict(st.session_state.web_user),
+                                }
                                 def _run_ak():
-                                    _r = _dmva_ak.analytics_knowledge(_agent_file, _ref_ts, _ak_title, _ak_refs, _ak_folder, _ak_mode, _ak_dim)
+                                    _r = _dmva_ak.analytics_knowledge(
+                                        _agent_file, _ref_ts, _ak_title, _ak_refs,
+                                        _ak_folder, _ak_mode, _ak_dim,
+                                        persona=_ak_persona_resolved,
+                                        exec_info=_ak_exec_info_resolved,
+                                    )
                                     st.session_state[f"_{key_prefix}_ak_result"] = _r
                                 _run_bg_task("knowledge", "Analyzing knowledge utility (Knowledge Explorer)", _run_ak)
                                 st.rerun()
@@ -5503,8 +5539,19 @@ def main():
                                                 _ak_k, _ak_k2 = k, k2
                                                 _ak_analytics_dict = analytics_dict
                                                 _ak_session = st.session_state.session
+                                                _ak_persona_resolved = _resolve_persona_for_analytics(
+                                                    _ak_agent_file, v2.get("setting") or {})
+                                                _ak_exec_info_resolved = {
+                                                    "SERVICE_INFO": dict(st.session_state.web_service),
+                                                    "USER_INFO":    dict(st.session_state.web_user),
+                                                }
                                                 def _run_ak():
-                                                    result = dmva.analytics_knowledge(_ak_agent_file, ref_timestamp, _ak_title, _ak_refs, _ak_folder, _ak_mode, _ak_dim)
+                                                    result = dmva.analytics_knowledge(
+                                                        _ak_agent_file, ref_timestamp, _ak_title, _ak_refs,
+                                                        _ak_folder, _ak_mode, _ak_dim,
+                                                        persona=_ak_persona_resolved,
+                                                        exec_info=_ak_exec_info_resolved,
+                                                    )
                                                     _ak_analytics_dict["knowledge_utility"] = result
                                                     _ak_session.set_analytics_history(_ak_k, _ak_k2, _ak_analytics_dict)
                                                 _run_bg_task("knowledge", f"Analyzing knowledge utility ({_ak_k}_{_ak_k2})", _run_ak)
@@ -5551,8 +5598,19 @@ def main():
                                                             _cak_analytics_dict = analytics_dict
                                                             _cak_k, _cak_k2 = k, k2
                                                             _cak_session = st.session_state.session
+                                                            _cak_persona_resolved = _resolve_persona_for_analytics(
+                                                                _cak_agent_file, compare_agent_info or {})
+                                                            _cak_exec_info_resolved = {
+                                                                "SERVICE_INFO": dict(st.session_state.web_service),
+                                                                "USER_INFO":    dict(st.session_state.web_user),
+                                                            }
                                                             def _run_cak():
-                                                                result = dmva.analytics_knowledge(_cak_agent_file, _cak_timestamp, _cak_title, _cak_refs, _cak_folder, _cak_mode, _cak_dim)
+                                                                result = dmva.analytics_knowledge(
+                                                                    _cak_agent_file, _cak_timestamp, _cak_title, _cak_refs,
+                                                                    _cak_folder, _cak_mode, _cak_dim,
+                                                                    persona=_cak_persona_resolved,
+                                                                    exec_info=_cak_exec_info_resolved,
+                                                                )
                                                                 _cak_analytics_dict["compare_agents"][_cak_idx]["compare_agent"]["knowledge_utility"] = result
                                                                 _cak_session.set_analytics_history(_cak_k, _cak_k2, _cak_analytics_dict)
                                                             _run_bg_task("knowledge", f"Analyzing knowledge utility ({_cak_k}_{_cak_k2}_compare{_cak_idx})", _run_cak)
