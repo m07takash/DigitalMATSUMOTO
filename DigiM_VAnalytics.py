@@ -407,7 +407,9 @@ def temporal_analysis(df, period="month", top_n_keywords=10, text_col="value_tex
     return category_pivot, keyword_df, summary_text
 
 # Knowledge reference and utilization analysis
-def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_file_path, ak_mode="Default", dim_mode={"method":"PCA", "params":{}}):
+def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_file_path,
+                         ak_mode="Default", dim_mode={"method":"PCA", "params":{}},
+                         persona=None, exec_info=None):
 #    end_date_str = datetime.strptime(ref_timestamp, "%Y-%m-%d %H:%M:%S.%f").strftime("%Y-%m-%d")
     end_date_str = dmu.parse_date(ref_timestamp).strftime("%Y-%m-%d")
     df = pd.DataFrame(reference)
@@ -425,8 +427,13 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
     df['knowledge_utility'] = round(df['similarity_Q'] - df['similarity_A'], 3)
     file_title = dmu.sanitize_filename(title[:30])
 
-    # Get the agent's KNOWLEDGE -> BOOK declaration order
-    agent = dma.DigiM_Agent(agent_file)
+    # Get the agent's KNOWLEDGE -> BOOK declaration order. When a persona was
+    # the actor for this turn, load DigiM_Agent with that persona so the
+    # resulting `self.define_code` reflects the persona's overrides — the
+    # scatter-plot background will then be scoped to the persona-accessible
+    # subset of each DB collection (matching what the persona could actually
+    # have retrieved at chat time).
+    agent = dma.DigiM_Agent(agent_file, persona=persona)
     rag_order = [k.get("NAME", "") for k in agent.knowledge] + [b.get("RAG_NAME", "") for b in agent.book]
 
     # Compute similarity_Q statistics
@@ -543,26 +550,47 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
     ordered_groups = [(name, grouped[name]) for name in rag_order if name in grouped]
     ordered_groups += [(name, grp) for name, grp in grouped.items() if name not in rag_order]
 
-    # Pre-fetch required collection data in parallel
-    _collections_needed = {}
+    # Pre-fetch required collection data in parallel.
+    # Per-(rag_name, data_idx) cache so each DATA block honors its own FILTER:
+    # when a persona was the actor, `where_limitation` is built from the
+    # persona's `define_code` + the FILTER block, so the all-chunks fetch is
+    # scoped to the persona-accessible subset (instead of the full collection).
+    _exec_info_for_filter = exec_info or {
+        "SERVICE_INFO": {"SERVICE_ID": ""},
+        "USER_INFO":    {"USER_ID":    ""},
+    }
+    _data_caches = {}
+    _fetch_specs = []
     for rag_name, group in ordered_groups:
         knowledge = knowledge_map.get(rag_name)
-        if knowledge:
-            for rd in knowledge["DATA"]:
-                if rd["DATA_TYPE"] == "DB":
-                    _collections_needed[rd["DATA_NAME"]] = None
+        if not knowledge:
+            continue
+        for _ri, rd in enumerate(knowledge["DATA"]):
+            if rd.get("DATA_TYPE") != "DB":
+                continue
+            try:
+                _where_list = dmc._build_where_limitation(
+                    rd, _exec_info_for_filter, agent.define_code)
+                _where = _where_list[0] if _where_list else None
+            except Exception:
+                _where = None
+            _fetch_specs.append((rag_name, _ri, rd["DATA_NAME"], _where))
 
-    def _fetch_collection(col_name):
+    def _fetch_one(spec):
+        rag_name, _ri, col_name, where = spec
         try:
             col = db_client.get_collection(col_name)
-            return col_name, col.get(include=["metadatas", "embeddings"])
+            _kw = {"include": ["metadatas", "embeddings"]}
+            if where:
+                _kw["where"] = where
+            return (rag_name, _ri), col.get(**_kw)
         except Exception:
-            logger.warning(f"[SKIP] ChromaDB collection not found: {col_name}")
-            return col_name, None
+            logger.warning(f"[SKIP] ChromaDB collection not found / filter failed: {col_name}")
+            return (rag_name, _ri), None
 
-    with ThreadPoolExecutor(max_workers=min(4, len(_collections_needed) or 1)) as executor:
-        for col_name, col_data in executor.map(lambda n: _fetch_collection(n), _collections_needed.keys()):
-            _collections_needed[col_name] = col_data
+    with ThreadPoolExecutor(max_workers=min(4, len(_fetch_specs) or 1)) as executor:
+        for key, col_data in executor.map(_fetch_one, _fetch_specs):
+            _data_caches[key] = col_data
 
     for rag_name, group in ordered_groups:
         group["q_colors"] = [
@@ -575,10 +603,10 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
             id_color_map = dict(zip(group["ID"], group["q_colors"]))
 
             rag_data_list = []
-            for rag_data in knowledge["DATA"]:
+            for _ri, rag_data in enumerate(knowledge["DATA"]):
                 if rag_data["DATA_TYPE"] != "DB":
                     continue
-                rag_data_db = _collections_needed.get(rag_data["DATA_NAME"])
+                rag_data_db = _data_caches.get((rag_name, _ri))
                 if not rag_data_db:
                     continue
 
