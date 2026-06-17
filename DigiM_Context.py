@@ -28,6 +28,7 @@ mst_folder_path = system_setting_dict["MST_FOLDER"]
 temp_folder_path = system_setting_dict["TEMP_FOLDER"]
 rag_folder_db_path = system_setting_dict["RAG_FOLDER_DB"]
 rag_folder_pages_path = system_setting_dict.get("RAG_FOLDER_PAGES", "user/common/rag/pages/")
+agent_folder_path = system_setting_dict.get("AGENT_FOLDER", "user/common/agent/")
 
 # Load system.env and set environment variables
 if os.path.exists("system.env"):
@@ -404,6 +405,21 @@ def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searche
         # PageIndex type: skip vector search and go to its dedicated path
         if rag.get("RETRIEVER") == "PageIndex":
             rag_context, rag_selected = select_rag_page_index(query, rag, exec_info)
+            rag_final_context += rag_context
+            rag_final_selected += rag_selected
+            continue
+
+        # AgentSearch type: invoke another agent (incl. self), bounded by a
+        # shared recursion counter seeded by DigiMatsuExecute.
+        if rag.get("RETRIEVER") == "AgentSearch":
+            rag_context, rag_selected = select_rag_agent_search(query, rag, exec_info)
+            rag_final_context += rag_context
+            rag_final_selected += rag_selected
+            continue
+
+        # FunctionSearch type: invoke a registered tool function.
+        if rag.get("RETRIEVER") == "FunctionSearch":
+            rag_context, rag_selected = select_rag_function_search(query, rag, exec_info)
             rag_final_context += rag_context
             rag_final_selected += rag_selected
             continue
@@ -1049,6 +1065,396 @@ def save_rag_pages(rag_id, rag_data):
     return cnt, len(index_pages)
 
 
+# Augment a user-provided LOG_TEMPLATE so the resulting log string carries the
+# fields `analytics_knowledge` requires (similarity_Q, similarity_A, DB, ID,
+# QUERY_SEQ, QUERY_MODE). Only missing keys are appended — Vector templates
+# already include these, so this is a no-op for them. Used by the non-Vector
+# retrievers (PageIndex / AgentSearch / FunctionSearch) so their chunks show
+# up in Analytics Result - Knowledge Utility too.
+def _augment_log_template(template):
+    appendix = []
+    if "similarity_Q" not in template:
+        appendix.append("'similarity_Q': {similarity_prompt}")
+    if "similarity_A" not in template:
+        appendix.append("'similarity_A': {similarity_response}")
+    if "'DB'" not in template:
+        appendix.append("'DB': '{bucket}'")
+    if "'ID'" not in template:
+        appendix.append("'ID': '{id}'")
+    if "QUERY_SEQ" not in template:
+        appendix.append("'QUERY_SEQ': '{query_seq}'")
+    if "QUERY_MODE" not in template:
+        appendix.append("'QUERY_MODE': '{query_mode}'")
+    if "'title'" not in template:
+        appendix.append("'title': '{title}'")
+    if not appendix:
+        return template
+    sep = ", " if template.strip() else ""
+    return template + sep + ", ".join(appendix)
+
+
+# Build a "Title > Title > ..." breadcrumb from a dash-separated PageIndex id.
+# E.g. id="1-1-1" → look up pages_map for "1", "1-1", "1-1-1" and join their
+# titles. Missing ancestors (ids that aren't standalone pages) are skipped,
+# so for fully-flat indexes the breadcrumb degenerates to just the self title.
+def _build_page_breadcrumb(page_id, pages_map):
+    segs = str(page_id).split("-")
+    titles = []
+    for _i in range(1, len(segs) + 1):
+        _anc = "-".join(segs[:_i])
+        _meta = pages_map.get(_anc)
+        if _meta and _meta.get("title"):
+            titles.append(str(_meta["title"]).strip())
+    return " > ".join(titles)
+
+
+# Build context from an AgentSearch RAG.
+# Runs another DigiMatsu agent (incl. self) via DigiMatsuExecute_Practice and
+# feeds the response back as RAG context. Recursion is capped by a shared
+# `_AGENT_SEARCH_STATE` dict that DigiMatsuExecute seeds into exec_info, and
+# every nested call propagates the same dict via in_execution so the counter
+# is honored across the whole request.
+#
+# DATA[0] schema:
+#   AGENT_FILE       — required, target agent JSON
+#   MAX_CALLS        — per-block override of the agent root AGENT_SEARCH_MAX_CALLS
+#   EXECUTION        — Execute_Practice in_execution shape; safe defaults fill the rest
+#   OVERWRITE_ITEMS  — overrides for target agent (HABIT/PERSONALITY/...) — same shape as overwrite_items
+#   ADD_KNOWLEDGE    — extra RAG entries injected into the child's KNOWLEDGE (BOOK injection style)
+#   SITUATION        — TIME/SITUATION dict for the child
+def select_rag_agent_search(query, rag, exec_info):
+    import DigiM_Execute as _dme_as  # late import to dodge the import cycle
+    rag_context = ""
+    rag_selected = []
+
+    service_info = exec_info.get("SERVICE_INFO", {})
+    user_info = exec_info.get("USER_INFO", {})
+    session_id = exec_info.get("_SESSION_ID", "")
+    session_name = exec_info.get("_SESSION_NAME", "")
+
+    # Shared cap dict — DigiMatsuExecute seeds this from in_execution before
+    # calling create_rag_context. Default = 3 if a caller bypassed the seed.
+    state = exec_info.setdefault("_AGENT_SEARCH_STATE", {"calls": 0, "max": 3})
+
+    _SAFE_EXEC_DEFAULTS = {
+        "MEMORY_USE": False,
+        "MEMORY_SAVE": False,        # child input/output NOT persisted to chat_memory
+        "MEMORY_SIMILARITY": False,
+        "SAVE_DIGEST": False,
+        "STREAM_MODE": False,
+        "PRIVATE_MODE": True,
+        "MAGIC_WORD_USE": False,
+        "META_SEARCH": False,
+        "RAG_QUERY_GENE": False,
+        "WEB_SEARCH": False,
+        "WEB_SEARCH_ENGINE": "",
+        "THINKING_MODE": False,
+        "USER_MEMORY_LAYERS": [],
+        "INSERT_CITATIONS": True,
+    }
+
+    for rd in rag.get("DATA", []):
+        if rd.get("DATA_TYPE") != "AGENT_SEARCH":
+            continue
+        target_agent_file = rd.get("AGENT_FILE")
+        if not target_agent_file:
+            logger.warning(f"AgentSearch missing AGENT_FILE for RAG={rag.get('RAG_NAME')}")
+            continue
+
+        # Per-block MAX_CALLS upper-bounds (always raises the parent's cap, never lowers)
+        block_max = rd.get("MAX_CALLS")
+        if block_max is not None:
+            try:
+                state["max"] = max(int(state.get("max", 3)), int(block_max))
+            except (TypeError, ValueError):
+                pass
+
+        if state.get("calls", 0) >= state.get("max", 3):
+            logger.warning(
+                f"AgentSearch cap reached (max={state.get('max')}); "
+                f"skipping {rag.get('RAG_NAME')} → {target_agent_file}"
+            )
+            continue
+
+        state["calls"] = state.get("calls", 0) + 1
+        current_idx = state["calls"]
+
+        # Compose child execution
+        child_exec = dict(_SAFE_EXEC_DEFAULTS)
+        for _k, _v in (rd.get("EXECUTION") or {}).items():
+            child_exec[_k] = _v
+        # The shared counter dict is passed BY REFERENCE so the child's
+        # nested AgentSearches keep incrementing the same value.
+        child_exec["_AGENT_SEARCH_STATE"] = state
+        # Parent already owns the session lock; child must not try to reclaim it.
+        child_exec["_PRE_LOCKED"] = True
+
+        overwrite_items = rd.get("OVERWRITE_ITEMS") or {}
+        add_knowledge = rd.get("ADD_KNOWLEDGE") or []
+        situation = rd.get("SITUATION") or {"TIME": "", "SITUATION": ""}
+
+        # Run the child Practice and concat its streamed chunks
+        response_text = ""
+        ts_begin = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            for _y in _dme_as.DigiMatsuExecute_Practice(
+                service_info, user_info, session_id, session_name,
+                target_agent_file, query, [], situation,
+                overwrite_items, add_knowledge, child_exec,
+            ):
+                if isinstance(_y, tuple) and len(_y) >= 3:
+                    _chunk = _y[2]
+                    if _chunk and not str(_chunk).startswith("[STATUS]"):
+                        response_text += str(_chunk)
+        except Exception as e:
+            logger.warning(f"AgentSearch execution error ({target_agent_file}): {e}")
+            response_text = f"[AgentSearch error] {type(e).__name__}: {e}"
+
+        # Look up the target's display name for templates / logs
+        try:
+            target_agent_data = dmu.read_json_file(target_agent_file, agent_folder_path) or {}
+            agent_name = (target_agent_data.get("NAME")
+                          or target_agent_data.get("DISPLAY_NAME") or target_agent_file)
+        except Exception:
+            agent_name = target_agent_file
+
+        chunk_template = rag.get(
+            "CHUNK_TEMPLATE",
+            "[{rag_name} / {agent_name}]\nQ: {query}\nA: {response}\n\n",
+        )
+        try:
+            chunk_text = chunk_template.format(
+                rag_name=rag.get("RAG_NAME", ""),
+                agent_name=agent_name,
+                agent_file=target_agent_file,
+                query=query,
+                response=response_text,
+                response_tokens=len(response_text),
+            )
+        except (KeyError, IndexError):
+            chunk_text = (f"[{rag.get('RAG_NAME', '')} / {agent_name}]\n"
+                          f"Q: {query}\nA: {response_text}\n\n")
+        rag_context += chunk_text
+
+        log_template = rag.get(
+            "LOG_TEMPLATE",
+            "'rag':'{rag_name}', 'agent':'{agent_name}', 'tokens':'{response_tokens}'",
+        )
+        # Augment so Analytics Result - Knowledge Utility can score this chunk.
+        log_template = _augment_log_template(log_template)
+
+        # Embed the child response and the query for the similarity_Q signal.
+        # If embedding fails we degrade gracefully: emit a legacy string log
+        # entry (no analytics for this chunk) instead of crashing the turn.
+        chunk_vec, sim_Q = None, 0.0
+        try:
+            _qv = dmu.embed_text(query)
+            _cv = dmu.embed_text(response_text) if response_text else None
+            if _qv and _cv:
+                chunk_vec = _cv
+                sim_Q = round(dmu.calculate_similarity_vec(_qv, _cv, "Cosine"), 3)
+        except Exception as _e:
+            logger.warning(f"AgentSearch chunk embedding failed ({target_agent_file}): {_e}")
+
+        if chunk_vec is not None:
+            rag_selected.append({
+                "rag_name":  rag.get("RAG_NAME", ""),
+                "rag":       rag.get("RAG_NAME", ""),
+                "bucket":    "AgentSearch",
+                "DB":        "AgentSearch",
+                "id":        target_agent_file,
+                "ID":        target_agent_file,
+                "title":     agent_name,
+                "agent_name": agent_name,
+                "agent_file": target_agent_file,
+                "query":     query,
+                "response":  response_text,
+                "response_tokens": len(response_text),
+                "category":  agent_name,
+                "value_text": response_text,
+                "vector_data_value_text": chunk_vec,
+                "similarity_prompt": sim_Q,
+                "query_mode": "NORMAL",
+                "QUERY_MODE": "NORMAL",
+                "query_seq":  "0",
+                "QUERY_SEQ":  "0",
+                "log_format": log_template,
+            })
+        else:
+            # Fallback: render the template directly (no similarity → no analytics row)
+            try:
+                _legacy = rag.get("LOG_TEMPLATE",
+                    "'rag':'{rag_name}', 'agent':'{agent_name}', 'tokens':'{response_tokens}'").format(
+                        rag_name=rag.get("RAG_NAME", ""),
+                        agent_name=agent_name,
+                        agent_file=target_agent_file,
+                        response_tokens=len(response_text))
+            except (KeyError, IndexError):
+                _legacy = f"rag={rag.get('RAG_NAME', '')}, agent={agent_name}"
+            rag_selected.append(_legacy)
+
+        # Stash the full detail so the parent turn can persist it under
+        # `prompt.agent_search` (similar to thinking_log / web_search_log).
+        exec_info.setdefault("_AGENT_SEARCH_LOG", []).append({
+            "call_idx": current_idx,
+            "rag_name": rag.get("RAG_NAME", ""),
+            "agent_file": target_agent_file,
+            "agent_name": agent_name,
+            "query": query,
+            "response": response_text,
+            "response_tokens": len(response_text),
+            "timestamp": ts_begin,
+        })
+
+    if rag_context:
+        header = rag.get("HEADER_TEMPLATE", "")
+        rag_context = header + rag_context
+        text_limits = rag.get("TEXT_LIMITS", 6000)
+        if len(rag_context) > text_limits:
+            rag_context = rag_context[:text_limits]
+    return rag_context, rag_selected
+
+
+# Build context from a FunctionSearch RAG.
+# Invokes a registered tool function (see DigiM_ToolRegistry) and feeds its
+# return value back as RAG context.
+#
+# DATA[0] schema:
+#   FUNCTION_NAME    — required, name in the tool registry
+#   ARGS_TEMPLATE    — string template formatted against {query}. Default = "{query}".
+def select_rag_function_search(query, rag, exec_info):
+    import inspect as _inspect_fs
+    # `call_function_by_name` lives in DigiM_Tool (the dispatcher); the registry
+    # only owns the lookup table. Late import to dodge any cycle on first load.
+    import DigiM_Tool as _dmt_fs
+    rag_context = ""
+    rag_selected = []
+
+    service_info = exec_info.get("SERVICE_INFO", {})
+    user_info = exec_info.get("USER_INFO", {})
+    session_id = exec_info.get("_SESSION_ID", "")
+    session_name = exec_info.get("_SESSION_NAME", "")
+    parent_agent_file = exec_info.get("_AGENT_FILE", "")
+
+    for rd in rag.get("DATA", []):
+        if rd.get("DATA_TYPE") != "FUNCTION_SEARCH":
+            continue
+        func_name = rd.get("FUNCTION_NAME")
+        if not func_name:
+            logger.warning(f"FunctionSearch missing FUNCTION_NAME for RAG={rag.get('RAG_NAME')}")
+            continue
+        args_template = rd.get("ARGS_TEMPLATE", "{query}")
+        try:
+            input_str = args_template.format(query=query)
+        except (KeyError, IndexError):
+            input_str = query
+
+        response_text = ""
+        ts_begin = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            result = _dmt_fs.call_function_by_name(
+                service_info, user_info, func_name,
+                session_id, session_name, parent_agent_file,
+                input_str, [], {},
+            )
+            if _inspect_fs.isgenerator(result):
+                for chunk_pack in result:
+                    if isinstance(chunk_pack, (tuple, list)) and len(chunk_pack) >= 3:
+                        _chunk = chunk_pack[2]
+                        if _chunk and not str(_chunk).startswith("[STATUS]"):
+                            response_text += str(_chunk)
+            elif isinstance(result, (tuple, list)) and len(result) > 2:
+                response_text = str(result[2]) if result[2] is not None else ""
+            else:
+                response_text = str(result) if result is not None else ""
+        except Exception as e:
+            logger.warning(f"FunctionSearch execution error ({func_name}): {e}")
+            response_text = f"[FunctionSearch error] {type(e).__name__}: {e}"
+
+        chunk_template = rag.get(
+            "CHUNK_TEMPLATE",
+            "[{rag_name} / {function_name}]\n{response}\n\n",
+        )
+        try:
+            chunk_text = chunk_template.format(
+                rag_name=rag.get("RAG_NAME", ""),
+                function_name=func_name,
+                query=query,
+                args=input_str,
+                response=response_text,
+            )
+        except (KeyError, IndexError):
+            chunk_text = f"[{rag.get('RAG_NAME', '')} / {func_name}]\n{response_text}\n\n"
+        rag_context += chunk_text
+
+        log_template = rag.get(
+            "LOG_TEMPLATE",
+            "'rag':'{rag_name}', 'function':'{function_name}'",
+        )
+        # Augment so Analytics Result - Knowledge Utility can score this chunk.
+        log_template = _augment_log_template(log_template)
+
+        chunk_vec, sim_Q = None, 0.0
+        try:
+            _qv = dmu.embed_text(query)
+            _cv = dmu.embed_text(response_text) if response_text else None
+            if _qv and _cv:
+                chunk_vec = _cv
+                sim_Q = round(dmu.calculate_similarity_vec(_qv, _cv, "Cosine"), 3)
+        except Exception as _e:
+            logger.warning(f"FunctionSearch chunk embedding failed ({func_name}): {_e}")
+
+        if chunk_vec is not None:
+            rag_selected.append({
+                "rag_name":  rag.get("RAG_NAME", ""),
+                "rag":       rag.get("RAG_NAME", ""),
+                "bucket":    "FunctionSearch",
+                "DB":        "FunctionSearch",
+                "id":        func_name,
+                "ID":        func_name,
+                "title":     func_name,
+                "function_name": func_name,
+                "query":     query,
+                "args":      input_str,
+                "response":  response_text,
+                "category":  func_name,
+                "value_text": response_text,
+                "vector_data_value_text": chunk_vec,
+                "similarity_prompt": sim_Q,
+                "query_mode": "NORMAL",
+                "QUERY_MODE": "NORMAL",
+                "query_seq":  "0",
+                "QUERY_SEQ":  "0",
+                "log_format": log_template,
+            })
+        else:
+            try:
+                _legacy = rag.get("LOG_TEMPLATE",
+                    "'rag':'{rag_name}', 'function':'{function_name}'").format(
+                        rag_name=rag.get("RAG_NAME", ""),
+                        function_name=func_name)
+            except (KeyError, IndexError):
+                _legacy = f"rag={rag.get('RAG_NAME', '')}, function={func_name}"
+            rag_selected.append(_legacy)
+
+        exec_info.setdefault("_FUNCTION_SEARCH_LOG", []).append({
+            "rag_name": rag.get("RAG_NAME", ""),
+            "function_name": func_name,
+            "query": query,
+            "args": input_str,
+            "response": response_text,
+            "timestamp": ts_begin,
+        })
+
+    if rag_context:
+        header = rag.get("HEADER_TEMPLATE", "")
+        rag_context = header + rag_context
+        text_limits = rag.get("TEXT_LIMITS", 6000)
+        if len(rag_context) > text_limits:
+            rag_context = rag_context[:text_limits]
+    return rag_context, rag_selected
+
+
 # Build context from a PageIndex RAG
 def select_rag_page_index(query, rag, exec_info):
     rag_context = ""
@@ -1081,28 +1487,83 @@ def select_rag_page_index(query, rag, exec_info):
         selected_ids = dmt.page_index_search(
             exec_info, support_agent, query, pages, max_pages)
 
-        # Load the selected page bodies and assemble log data
-        log_template = rag.get("LOG_TEMPLATE", "'rag':'{rag_name}', 'page_id':'{page_id}', 'title':'{title}', 'category':'{category}', 'summary':'{summary}'")
+        # Load the selected page bodies and assemble dict entries that
+        # `get_knowledge_reference` can score (so each page gets a contribution
+        # metric in Analytics Result - Knowledge Utility).
+        log_template = rag.get("LOG_TEMPLATE",
+            "'rag':'{rag_name}', 'page_id':'{page_id}', 'title':'{title}', "
+            "'category':'{category}', 'summary':'{summary}'")
+        # Append analytics-required fields (similarity_Q/A/DB/ID/QUERY_*)
+        # to the user-defined template if missing.
+        log_template = _augment_log_template(log_template)
+        # Embed the user query once per call so per-page similarity is cheap.
+        try:
+            query_vec = dmu.embed_text(query)
+        except Exception as _e:
+            logger.warning(f"PageIndex query embedding failed: {_e}")
+            query_vec = None
         for page_id in selected_ids:
             md_path = str(Path(pages_dir) / f"{page_id}.md")
-            if os.path.exists(md_path):
-                page_content = dmu.read_text_file(md_path)
+            if not os.path.exists(md_path):
+                continue
+            page_content = dmu.read_text_file(md_path)
+            _crumb = _build_page_breadcrumb(page_id, pages_map)
+            if _crumb:
+                rag_context += f"[Path] {_crumb}\n\n{page_content}\n\n"
+            else:
                 rag_context += page_content + "\n\n"
+            page_meta = pages_map.get(page_id, {})
 
-                # Format the log entry via LOG_TEMPLATE
-                page_meta = pages_map.get(page_id, {})
-                log_data = {
-                    "rag_name": rag.get("RAG_NAME", ""),
-                    "page_id": page_id,
-                    "title": page_meta.get("title", ""),
-                    "category": page_meta.get("category", ""),
-                    "summary": page_meta.get("summary", ""),
-                }
+            # Compute similarity_prompt against the chunk text (page body).
+            chunk_vec, sim_Q = None, 0.0
+            try:
+                if query_vec:
+                    chunk_vec = dmu.embed_text(page_content)
+                    if chunk_vec:
+                        sim_Q = round(
+                            dmu.calculate_similarity_vec(query_vec, chunk_vec, "Cosine"), 3)
+            except Exception as _e:
+                logger.warning(f"PageIndex chunk embedding failed (id={page_id}): {_e}")
+                chunk_vec, sim_Q = None, 0.0
+
+            if chunk_vec is not None:
+                rag_selected.append({
+                    "rag_name":  rag.get("RAG_NAME", ""),
+                    "rag":       rag.get("RAG_NAME", ""),
+                    "bucket":    "PageIndex",
+                    "DB":        "PageIndex",
+                    "id":        str(page_id),
+                    "ID":        str(page_id),
+                    "page_id":   str(page_id),
+                    "title":     page_meta.get("title", ""),
+                    "category":  page_meta.get("category", ""),
+                    "summary":   page_meta.get("summary", ""),
+                    "value_text": page_content,
+                    "vector_data_value_text": chunk_vec,
+                    "similarity_prompt": sim_Q,
+                    "query_mode": "NORMAL",
+                    "QUERY_MODE": "NORMAL",
+                    "query_seq":  "0",
+                    "QUERY_SEQ":  "0",
+                    "log_format": log_template,
+                })
+            else:
+                # Embedding unavailable → fall back to a legacy string log entry
+                # (chunk is still in context, just absent from analytics).
+                _legacy_tpl = rag.get("LOG_TEMPLATE",
+                    "'rag':'{rag_name}', 'page_id':'{page_id}', 'title':'{title}', "
+                    "'category':'{category}', 'summary':'{summary}'")
                 try:
-                    log_entry = log_template.format(**log_data)
+                    _legacy = _legacy_tpl.format(
+                        rag_name=rag.get("RAG_NAME", ""),
+                        page_id=str(page_id),
+                        title=page_meta.get("title", ""),
+                        category=page_meta.get("category", ""),
+                        summary=page_meta.get("summary", ""))
                 except (KeyError, IndexError):
-                    log_entry = str(log_data)
-                rag_selected.append(log_entry)
+                    _legacy = (f"rag={rag.get('RAG_NAME', '')}, page_id={page_id}, "
+                               f"title={page_meta.get('title', '')}")
+                rag_selected.append(_legacy)
 
     # Prepend the header template
     if rag_context:

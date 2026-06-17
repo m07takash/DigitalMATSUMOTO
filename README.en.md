@@ -1137,6 +1137,91 @@ Rather than vector search, this method has the LLM select relevant pages from a 
 
 Page data is placed under `user/common/rag/pages/{DATA_NAME}/` with `_index.json` (page listing) and a `.md` file per page. When using Notion integration with `"data_type": "pageindex"` defined in `rags.json`, "Update RAG Data" auto-generates them (see "Page index RAG (pageindex type)" for details).
 
+**Auto breadcrumb**: Each PageIndex page selected for context gets a single line prepended to its body — `[Path] ParentTitle > ChildTitle > SelfTitle` — derived from the dash-separated id hierarchy (e.g. `id=1-1-1` → `[Path] System overview > Architecture > ChromaDB integration`). This lets the LLM understand the page's **position within the broader knowledge base**. Intermediate ids that aren't in `_index.json` are silently skipped.
+
+#### AgentSearch / FunctionSearch (dynamic retrieval, KNOWLEDGE / BOOK)
+
+Beyond vector search and PageIndex, two more retriever types can be placed in either `KNOWLEDGE` or `BOOK`: **AgentSearch** (invokes another agent) and **FunctionSearch** (invokes a registered tool function). Output is formatted via `CHUNK_TEMPLATE` and injected like any other RAG chunk.
+
+**AgentSearch (call another agent)**
+
+Runs a target agent (including self) through `DigiMatsuExecute_Practice` and pulls its response into the context. To prevent runaway recursion, the request-wide call counter is capped by `AGENT_SEARCH_MAX_CALLS` at the agent root (default 3); each block's `MAX_CALLS` can override.
+
+```json
+{
+  "RAG_NAME": "DigitalConsultantSecondOpinion",
+  "RETRIEVER": "AgentSearch",
+  "DATA": [{
+    "DATA_TYPE": "AGENT_SEARCH",
+    "AGENT_FILE": "agent_10Sample.json",
+    "MAX_CALLS": 2,
+    "EXECUTION": {
+      "MEMORY_USE": false,
+      "MEMORY_SAVE": false,
+      "SAVE_DIGEST": false,
+      "STREAM_MODE": false,
+      "PRIVATE_MODE": true,
+      "WEB_SEARCH": false,
+      "THINKING_MODE": false
+    },
+    "OVERWRITE_ITEMS": {},
+    "ADD_KNOWLEDGE": [],
+    "SITUATION": {"TIME": "", "SITUATION": ""}
+  }],
+  "HEADER_TEMPLATE": "[Second Opinion] The following is another consultant agent's view.\n",
+  "CHUNK_TEMPLATE": "## Second opinion by {agent_name}\nQ: {query}\nA: {response}\n\n",
+  "LOG_TEMPLATE": "'rag':'{rag_name}', 'agent':'{agent_name}', 'tokens':'{response_tokens}'",
+  "TEXT_LIMITS": 4000
+}
+```
+
+| Field | Description |
+|------|------|
+| `AGENT_FILE` | Target agent (self is allowed, bounded by the call cap) |
+| `MAX_CALLS` | Per-block override of the request-wide `AGENT_SEARCH_MAX_CALLS` |
+| `EXECUTION` | Same shape as `Execute_Practice`'s `in_execution`. **Omitted fields fall back to safe defaults** (memory off / history not persisted / no digest / PRIVATE_MODE=true → zero side effects) |
+| `OVERWRITE_ITEMS` | Overrides for the child agent's `HABIT` / `PERSONALITY` / ... |
+| `ADD_KNOWLEDGE` | Extra RAG blocks injected into the child's KNOWLEDGE |
+| `SITUATION` | `TIME` / `SITUATION` passed to the child |
+| `CHUNK_TEMPLATE` placeholders | `{rag_name} {agent_name} {agent_file} {query} {response} {response_tokens}` |
+
+**The child's input/output is NOT saved to chat history** (effect of `MEMORY_SAVE: false`). Instead, it's logged into the parent turn's `prompt.agent_search` field (alongside `thinking` / `web_search`) so you can trace it from the Detail Info panel.
+
+**FunctionSearch (invoke a tool function)**
+
+Calls any function registered in `DigiM_ToolRegistry` (standard tools and the user's custom tools under `user/common/tool/local/`) and pulls its return value into the context.
+
+```json
+{
+  "RAG_NAME": "CurrentTimeContext",
+  "RETRIEVER": "FunctionSearch",
+  "DATA": [{
+    "DATA_TYPE": "FUNCTION_SEARCH",
+    "FUNCTION_NAME": "current_time",
+    "ARGS_TEMPLATE": "{query}"
+  }],
+  "HEADER_TEMPLATE": "[Function result]\n",
+  "CHUNK_TEMPLATE": "[{rag_name} / {function_name}] {response}\n\n",
+  "LOG_TEMPLATE": "'rag':'{rag_name}', 'function':'{function_name}'",
+  "TEXT_LIMITS": 500
+}
+```
+
+| Field | Description |
+|------|------|
+| `FUNCTION_NAME` | A function name registered in `DigiM_ToolRegistry` (see `/skills`) |
+| `ARGS_TEMPLATE` | Input template (the user's query is available as `{query}`). Defaults to `"{query}"` |
+| `CHUNK_TEMPLATE` placeholders | `{rag_name} {function_name} {query} {args} {response}` |
+
+Return values can be generators / 4-tuples / 6-tuples — all are normalised. Each invocation is logged into the parent turn's `prompt.function_search` field.
+
+**KNOWLEDGE vs BOOK**
+
+- **In KNOWLEDGE**: retrieved every turn. Treated as the agent's internalised knowledge — excluded from citation_inject.
+- **In BOOK**: retrieved only when the Thinking step requests the block by name (or always, if you put it under KNOWLEDGE). Eligible for `citation_inject` as a citation source.
+
+**Sample**: `user/common/agent/agent_11Sample.json` ships a sample agent with Vector + AgentSearch + FunctionSearch coexisting in `KNOWLEDGE`.
+
 #### ORG / Persona (multi-persona parallel execution)
 
 For a single template agent, you can register **multiple personas** in PostgreSQL (`digim_agent_personas`) or Excel (`user/common/agent/persona_data/`), and switch between them via ORG to run them in parallel from the WebUI or a Practice.

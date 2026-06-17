@@ -1335,7 +1335,7 @@ def _knowledge_explorer():
                     # --- Knowledge Utility ---
                     if st.session_state.get("allowed_analytics_knowledge", True):
                         _know_refs = _v2.get("response", {}).get("reference", {}).get("knowledge_rag", [])
-                        _ak_refs = [dmu.parse_log_template(rd) for rd in _know_refs if "page_id" not in rd]
+                        _ak_refs = [_p for _p in (dmu.parse_log_template(rd) for rd in _know_refs) if "similarity_Q" in _p]
                         if _ak_refs:
                             st.markdown("---")
                             ak_col1, ak_col2, ak_col3 = st.columns(3)
@@ -4655,8 +4655,13 @@ def main():
                 st.rerun()
         elif st.session_state.get("main_view") == "User Memory Explorer":
             if side_col1.button("Clear Dialogue", key="ume_clear_dialogue"):
+                # Clear all analysis result state (Twin chats per-user, RWA
+                # caches, KMeans clusters, cluster explanations, generated
+                # report, etc.) — anything with the `_ume_` prefix. Selection
+                # state (no underscore prefix: ume_deep_user, ume_cross_users)
+                # is preserved so the user doesn't have to re-pick.
                 for _k in list(st.session_state.keys()):
-                    if _k.startswith("_ume_") and _k.endswith("_hist"):
+                    if str(_k).startswith("_ume_"):
                         del st.session_state[_k]
                 st.rerun()
         else:
@@ -5491,7 +5496,7 @@ def main():
                                             if ak_col1.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}", disabled=bool(st.session_state._bg_task)):
                                                 _ak_agent_file = v2["setting"]["agent_file"]
                                                 _ak_title = f"{k}-{k2}-{st.session_state.session.session_id}"
-                                                _ak_refs = [dmu.parse_log_template(rd) for rd in v2["response"]["reference"]["knowledge_rag"] if "page_id" not in rd]
+                                                _ak_refs = [_p for _p in (dmu.parse_log_template(rd) for rd in v2["response"]["reference"]["knowledge_rag"]) if "similarity_Q" in _p]
                                                 _ak_folder = st.session_state.session.session_analytics_folder_path
                                                 _ak_mode = st.session_state.analytics_knowledge_mode
                                                 _ak_dim = dict(st.session_state.analytics_dimension_mode)
@@ -5536,7 +5541,7 @@ def main():
                                                             st.session_state.analytics_dimension_mode_compare["params"]["perplexity"] = ak_compare_col3.number_input(label="t-SNE Perplexity:", value=40, step=1, format="%d", key=f"tsne_perplexity_compare_{k}_{k2}")
                                                         if ak_compare_col1.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}_compare{selected_compare_idx}", disabled=bool(st.session_state._bg_task)):
                                                             _cak_title = f"{k}-{k2}-{st.session_state.session.session_id}_compare{selected_compare_idx}"
-                                                            _cak_refs = [dmu.parse_log_template(rd) for rd in compare_agent_info["knowledge_rag"]["knowledge_ref"] if "page_id" not in rd]
+                                                            _cak_refs = [_p for _p in (dmu.parse_log_template(rd) for rd in compare_agent_info["knowledge_rag"]["knowledge_ref"]) if "similarity_Q" in _p]
                                                             _cak_agent_file = compare_agent_file
                                                             _cak_timestamp = compare_timestamp
                                                             _cak_folder = st.session_state.session.session_analytics_folder_path
@@ -6114,6 +6119,8 @@ def main():
             ag_file = params["agent_file"]
             execution = dict(params["execution"])
             bg_status_path = params.get("bg_status_path")
+            bt_personas = params.get("personas") or []
+            bt_org = params.get("org")
 
             def _bump_status(_done, _total):
                 """Update the bg-task status file the sidebar monitor polls."""
@@ -6169,6 +6176,10 @@ def main():
             # Pre-read every sheet once so we can compute the total processable
             # rows (Question is non-empty / non-"nan") and tick the bg-task
             # status from `(0/total)` to `(total/total)` as work completes.
+            # Each non-empty Question is expanded by N (number of selected
+            # personas) when in multi-persona mode, so the bg-task counter
+            # ticks once per persona-completion, not once per row.
+            n_personas_eff = max(1, len(bt_personas))
             sheet_dfs = {}
             total_processable = 0
             for _sn in sheets_to_run:
@@ -6177,22 +6188,34 @@ def main():
                 for _pi in _pre_df.index:
                     _pq = str(_pre_df.at[_pi, "Question"]).strip()
                     if _pq and _pq.lower() != "nan":
-                        total_processable += 1
+                        total_processable += n_personas_eff
             _bump_status(0, total_processable)
 
+            # Multi-persona (2+) only streams [STATUS] chunks; the real per-persona
+            # responses are saved into chat_memory under the latest seq, one
+            # sub_seq per persona. Force MEMORY_SAVE=True for that case so we
+            # can read them back, regardless of the user's BatchTest toggle.
+            if len(bt_personas) >= 2:
+                execution["MEMORY_SAVE"] = True
+
+            _eval_cols = ("Verdict", "Score", "Match", "Seq Ratio", "Token F1", "Eval")
             result_dfs = {}
             _done = 0
-            for sheet_name, df in sheet_dfs.items():
-                if "Answer" not in df.columns:
-                    df["Answer"] = ""
-                for _col in ("Verdict", "Score", "Match", "Seq Ratio", "Token F1", "Eval"):
-                    if _col not in df.columns:
-                        df[_col] = ""
-                has_gt = "Ground Truth" in df.columns
-                n_total = len(df)
+            for sheet_name, df_in in sheet_dfs.items():
+                input_cols = list(df_in.columns)
+                has_gt = "Ground Truth" in input_cols
+                n_total = len(df_in)
 
-                for idx in df.index:
-                    q = str(df.at[idx, "Question"]).strip()
+                # Final output column order — input cols first, then Persona/
+                # Answer/eval cols (each appended only if not already in input).
+                _out_cols = list(input_cols)
+                for _c in ("Persona", "Answer") + _eval_cols:
+                    if _c not in _out_cols:
+                        _out_cols.append(_c)
+                output_rows = []
+
+                for idx in df_in.index:
+                    q = str(df_in.at[idx, "Question"]).strip()
                     if not q or q.lower() == "nan":
                         continue
 
@@ -6202,67 +6225,123 @@ def main():
                     )
 
                     # Wait for any background digest from the prior row to release
-                    # the session lock. Force-unlock as a last resort so the batch
-                    # never stalls indefinitely on a stuck digest thread.
+                    # the session lock. Force-unlock as a last resort.
                     if not _wait_for_unlock(sess):
                         try:
                             sess.save_status("UNLOCKED")
                         except Exception:
                             pass
 
-                    last_resp = ""
+                    last_resp_stream = ""
                     try:
-                        # Capture the response from the generator stream first —
-                        # this works whether or not the turn is persisted.
                         _captured = []
                         for _y in dme.DigiMatsuExecute_MultiPersona(
                             svc, usr, sid, sname, ag_file, q,
                             [], {"TIME": "", "SITUATION": ""}, {}, [],
-                            execution, [], in_rag_query_text="", in_org=None,
+                            execution, bt_personas,
+                            in_rag_query_text="", in_org=bt_org,
                         ):
                             if isinstance(_y, tuple) and len(_y) >= 3:
                                 _chunk = _y[2]
                                 if _chunk and not str(_chunk).startswith("[STATUS]"):
                                     _captured.append(str(_chunk))
-                        last_resp = "".join(_captured).strip()
-
-                        # Fallback to chat_memory.json when the stream produced
-                        # nothing (e.g. non-streaming model paths that only write
-                        # the final response into history).
-                        if not last_resp:
-                            sess = dms.DigiMSession(sid, sname)
-                            hist = sess.get_history()
-                            seq_keys = sorted([k for k in hist if k.isdigit()], key=int)
-                            if seq_keys:
-                                last_seq = seq_keys[-1]
-                                sub_keys = sorted([k for k in hist[last_seq] if k.isdigit()], key=int)
-                                if sub_keys:
-                                    last_resp = (hist[last_seq][sub_keys[-1]].get("response") or {}).get("text", "") or ""
+                        last_resp_stream = "".join(_captured).strip()
                     except Exception as e:
-                        last_resp = f"[Error] {type(e).__name__}: {e}"
+                        last_resp_stream = f"[Error] {type(e).__name__}: {e}"
 
-                    df.at[idx, "Answer"] = last_resp
+                    # Build the list of (persona_name, response_text) for this row.
+                    persona_responses = []
+                    if len(bt_personas) >= 2:
+                        # Read all sub_seqs of the latest seq from chat_memory.
+                        try:
+                            sess2 = dms.DigiMSession(sid, sname)
+                            hist = sess2.get_history()
+                            seq_keys = sorted(
+                                [k for k in hist if k.isdigit()], key=int)
+                            if seq_keys:
+                                _last_seq = seq_keys[-1]
+                                for _ssk in sorted(
+                                    [k for k in hist[_last_seq] if k.isdigit()],
+                                    key=int,
+                                ):
+                                    _sub = hist[_last_seq][_ssk]
+                                    _pname = (
+                                        (_sub.get("setting") or {}).get("persona_name")
+                                        or (_sub.get("setting") or {}).get("name")
+                                        or f"persona{_ssk}"
+                                    )
+                                    _rtext = ((_sub.get("response") or {})
+                                              .get("text", "") or "")
+                                    persona_responses.append((_pname, _rtext))
+                        except Exception:
+                            persona_responses = []
+                        if not persona_responses:
+                            persona_responses = [(
+                                "", last_resp_stream or "[No response found]"
+                            )]
+                    elif len(bt_personas) == 1:
+                        _pname = (bt_personas[0].get("name")
+                                  or bt_personas[0].get("persona_id", ""))
+                        persona_responses = [(_pname, last_resp_stream or "")]
+                    else:
+                        persona_responses = [("", last_resp_stream or "")]
 
-                    if has_gt:
-                        gt = str(df.at[idx, "Ground Truth"]).strip()
-                        if gt and gt.lower() != "nan":
-                            try:
-                                _, _, _ev, _, _, _ = dmt.eval_answer_vs_groundtruth(
-                                    svc, usr, q, last_resp, gt
+                    # Fallback to chat_memory when stream + persona-loop both empty.
+                    if not any((r[1] or "").strip() for r in persona_responses):
+                        try:
+                            sess2 = dms.DigiMSession(sid, sname)
+                            hist = sess2.get_history()
+                            seq_keys = sorted(
+                                [k for k in hist if k.isdigit()], key=int)
+                            if seq_keys:
+                                _last_seq = seq_keys[-1]
+                                sub_keys = sorted(
+                                    [k for k in hist[_last_seq] if k.isdigit()],
+                                    key=int,
                                 )
-                                df.at[idx, "Verdict"]   = _ev.get("verdict", "")
-                                df.at[idx, "Score"]     = _ev.get("score", "")
-                                df.at[idx, "Match"]     = "Y" if _ev.get("exact_match") else "N"
-                                df.at[idx, "Seq Ratio"] = _ev.get("seq_ratio", "")
-                                df.at[idx, "Token F1"]  = _ev.get("token_f1", "")
-                                df.at[idx, "Eval"]      = _ev.get("summary", "")
-                            except Exception as e:
-                                df.at[idx, "Eval"] = f"[Eval error] {type(e).__name__}: {e}"
+                                if sub_keys:
+                                    _fb = ((hist[_last_seq][sub_keys[-1]]
+                                            .get("response") or {})
+                                           .get("text", "") or "")
+                                    persona_responses = [(persona_responses[0][0], _fb)]
+                        except Exception:
+                            pass
 
-                    _done += 1
-                    _bump_status(_done, total_processable)
+                    for _pname, _resp_text in persona_responses:
+                        row = {c: df_in.at[idx, c] for c in input_cols}
+                        row["Persona"] = _pname
+                        row["Answer"] = _resp_text
 
-                result_dfs[sheet_name] = df
+                        # Evaluation vs Ground Truth (per persona).
+                        verdict = score = match = seq_ratio = token_f1 = ""
+                        eval_summary = ""
+                        if has_gt:
+                            gt = str(df_in.at[idx, "Ground Truth"]).strip()
+                            if gt and gt.lower() != "nan":
+                                try:
+                                    _, _, _ev, _, _, _ = dmt.eval_answer_vs_groundtruth(
+                                        svc, usr, q, _resp_text, gt
+                                    )
+                                    verdict      = _ev.get("verdict", "")
+                                    score        = _ev.get("score", "")
+                                    match        = "Y" if _ev.get("exact_match") else "N"
+                                    seq_ratio    = _ev.get("seq_ratio", "")
+                                    token_f1     = _ev.get("token_f1", "")
+                                    eval_summary = _ev.get("summary", "")
+                                except Exception as e:
+                                    eval_summary = f"[Eval error] {type(e).__name__}: {e}"
+                        row["Verdict"]   = verdict
+                        row["Score"]     = score
+                        row["Match"]     = match
+                        row["Seq Ratio"] = seq_ratio
+                        row["Token F1"]  = token_f1
+                        row["Eval"]      = eval_summary
+
+                        output_rows.append(row)
+                        _done += 1
+                        _bump_status(_done, total_processable)
+
+                result_dfs[sheet_name] = pd.DataFrame(output_rows, columns=_out_cols)
 
             # Save completed xlsx into the session folder. One sheet per input
             # sheet, preserving the original sheet name.
@@ -6370,6 +6449,28 @@ def main():
                 if "user_memory_layers_now" in st.session_state:
                     _bt_execution["USER_MEMORY_LAYERS"] = list(st.session_state.user_memory_layers_now or [])
 
+                # Resolve sidebar-selected personas the same way the chat handler does,
+                # so a batch run honors the active multi-persona / ORG selection.
+                _bt_resolved_personas = []
+                _bt_selected_pids = list(st.session_state.get("selected_persona_ids") or [])
+                _bt_selected_org = st.session_state.get("selected_org")
+                if _bt_selected_pids and _bt_selected_org:
+                    _bt_persona_files = st.session_state.agent_data.get("PERSONA_FILES") or None
+                    _bt_persona_source = st.session_state.agent_data.get("PERSONA_SOURCE")
+                    try:
+                        _bt_candidates = dap.find_personas_by_org(
+                            _bt_selected_org,
+                            template_agent=st.session_state.agent_file,
+                            persona_files=_bt_persona_files,
+                            source=_bt_persona_source,
+                        )
+                        _bt_by_id = {p["persona_id"]: p for p in _bt_candidates}
+                        _bt_resolved_personas = [
+                            _bt_by_id[pid] for pid in _bt_selected_pids if pid in _bt_by_id
+                        ]
+                    except Exception:
+                        _bt_resolved_personas = []
+
                 _bt_params = {
                     "xlsx_path": str(_saved_path),
                     "target_sheet": _target_sheet,
@@ -6380,6 +6481,8 @@ def main():
                     "session_name": st.session_state.session.session_name,
                     "agent_file": st.session_state.agent_file,
                     "execution": _bt_execution,
+                    "personas": _bt_resolved_personas,
+                    "org": _bt_selected_org,
                 }
                 st.session_state["batch_test_uploader_counter"] = (
                     st.session_state.get("batch_test_uploader_counter", 0) + 1

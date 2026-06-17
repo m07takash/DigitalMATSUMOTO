@@ -520,7 +520,21 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     yield service_info, user_info, "[STATUS]Starting RAG", [], []
     if add_knowledge:
         agent.knowledge += add_knowledge
-    exec_info = {"SERVICE_INFO": service_info, "USER_INFO": user_info}
+    # AgentSearch / FunctionSearch need session + parent agent_file to call
+    # downstream Practice / tool registry. The AgentSearch counter is shared
+    # across the whole request — seed it from in_execution (set by an upstream
+    # AgentSearch retriever) or initialise from the agent's root default.
+    exec_info = {"SERVICE_INFO": service_info, "USER_INFO": user_info,
+                  "_SESSION_ID": session_id, "_SESSION_NAME": session_name,
+                  "_AGENT_FILE": agent_file}
+    if execution.get("_AGENT_SEARCH_STATE") is not None:
+        exec_info["_AGENT_SEARCH_STATE"] = execution["_AGENT_SEARCH_STATE"]
+    else:
+        try:
+            _ag_max = int(agent.agent.get("AGENT_SEARCH_MAX_CALLS", 3))
+        except (TypeError, ValueError):
+            _ag_max = 3
+        exec_info["_AGENT_SEARCH_STATE"] = {"calls": 0, "max": _ag_max}
     knowledge_context, knowledge_selected = agent.set_knowledge_context(
         user_query, query_vecs, exec_info, meta_searches, private_mode=cfg["private_mode"])
 
@@ -621,6 +635,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             },
             "thinking": thinking_log,
             "web_search": web_search_log,
+            "agent_search": exec_info.get("_AGENT_SEARCH_LOG", []),
+            "function_search": exec_info.get("_FUNCTION_SEARCH_LOG", []),
             "RAG_query_genetor": RAG_query_gene_log,
             "meta_search": meta_search_log,
             "knowledge_rag": {"setting": agent.agent["KNOWLEDGE"]},
@@ -1034,6 +1050,9 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                     "_SEQ_OVERRIDE":     in_execution.get("_SEQ_OVERRIDE"),
                     "_SUB_SEQ_START":    in_execution.get("_SUB_SEQ_START"),
                     "_SESSION_BASE_PATH": in_execution.get("_SESSION_BASE_PATH", ""),
+                    # AgentSearch shared recursion counter — pass-through so nested
+                    # AgentSearch calls keep honoring the same cap.
+                    "_AGENT_SEARCH_STATE": in_execution.get("_AGENT_SEARCH_STATE"),
                 }
 
                 # Phase 6/7: Decide multi-persona parallel execution within a step based on chain.PERSONAS
