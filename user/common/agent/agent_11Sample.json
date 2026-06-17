@@ -1,0 +1,169 @@
+{
+    "DISPLAY": true,
+    "DISPLAY_NAME": "ハイブリッドリサーチャー(サンプル)",
+    "GROUP": [
+        "User"
+    ],
+    "ORG": [],
+    "PERSONA_FILES": [],
+    "NAME": "ハイブリッドリサーチャー",
+    "ACT": "ベクトル検索 / エージェントサーチ / ファンクションサーチ を組み合わせて回答するリサーチエージェント (サンプル)",
+    "PERSONALITY": {
+        "SEX": "中性",
+        "BIRTHDAY": "01-Jan-2026",
+        "IS_ALIVE": true,
+        "NATIONALITY": "Japanese",
+        "BIG5": {
+            "Openness": 0.8,
+            "Conscientiousness": 0.8,
+            "Extraversion": 0.5,
+            "Agreeableness": 0.6,
+            "Neuroticism": 0.2
+        },
+        "LANGUAGE": "日本語",
+        "SPEAKING_STYLE": "Polite",
+        "CHARACTER": "Sample.txt"
+    },
+    "ENGINE": {
+        "LLM": {
+            "DEFAULT": "GPT-5-mini",
+            "GPT-5-mini": {
+                "NAME": "GPT-5-mini",
+                "FUNC_NAME": "generate_response_T_gpt",
+                "MODEL": "gpt-5-mini-2025-08-07",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "GPT-5-nano": {
+                "NAME": "GPT-5-nano",
+                "FUNC_NAME": "generate_response_T_gpt",
+                "MODEL": "gpt-5-nano-2025-08-07",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            }
+        }
+    },
+    "HABIT": {
+        "DEFAULT": {
+            "MAGIC_WORDS": [
+                ""
+            ],
+            "PRACTICE": "practice_00Default.json",
+            "ADD_KNOWLEDGE": []
+        },
+        "Chat": {
+            "MAGIC_WORDS": [
+                "簡潔に回答して",
+                "簡潔に答えて"
+            ],
+            "PRACTICE": "practice_01Chat.json",
+            "ADD_KNOWLEDGE": []
+        },
+        "FORGET_HISTORY": {
+            "MAGIC_WORDS": [
+                "までの会話を忘れて",
+                "会話履歴を削除して"
+            ],
+            "PRACTICE": "practice_02ForgetHistory.json"
+        },
+        "REMEMBER_HISTORY": {
+            "MAGIC_WORDS": [
+                "までの会話を思い出して",
+                "会話履歴を回復して"
+            ],
+            "PRACTICE": "practice_03RememberHistory.json"
+        }
+    },
+    "AGENT_SEARCH_MAX_CALLS": 3,
+    "KNOWLEDGE": [
+        {
+            "RAG_NAME": "Experience",
+            "RETRIEVER": "Vector",
+            "DATA": [
+                {
+                    "DATA_TYPE": "DB",
+                    "DATA_NAME": "Sample02_Memo",
+                    "META_SEARCH": {
+                        "CONDITION": [
+                            "DATE"
+                        ],
+                        "BONUS": 0.5
+                    }
+                }
+            ],
+            "TIMESTAMP": "CREATE_DATE",
+            "TIMESTAMP_STYLE": "%Y年%-m月%-d日",
+            "HEADER_TEMPLATE": "以下はこれまで蓄積した経験/メモです。\n",
+            "CHUNK_TEMPLATE": "・({timestamp}({days_difference}日前)の情報、類似度:{similarity_prompt}){value_text}\n\n",
+            "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB':'{bucket}', 'ID':'{id}', 'similarity_Q':{similarity_prompt}, 'similarity_A':{similarity_response}, 'title':'{title}', 'text_short':'{value_text_short}'",
+            "TEXT_LIMITS": 2000,
+            "DISTANCE_LOGIC": "Cosine"
+        },
+        {
+            "RAG_NAME": "DigitalConsultantSecondOpinion",
+            "RETRIEVER": "AgentSearch",
+            "DATA": [
+                {
+                    "DATA_TYPE": "AGENT_SEARCH",
+                    "AGENT_FILE": "agent_10Sample.json",
+                    "MAX_CALLS": 2,
+                    "EXECUTION": {
+                        "WEB_SEARCH": false,
+                        "THINKING_MODE": false,
+                        "MEMORY_USE": false,
+                        "MEMORY_SAVE": false,
+                        "SAVE_DIGEST": false,
+                        "STREAM_MODE": false,
+                        "PRIVATE_MODE": true
+                    },
+                    "OVERWRITE_ITEMS": {},
+                    "ADD_KNOWLEDGE": [],
+                    "SITUATION": {"TIME": "", "SITUATION": ""}
+                }
+            ],
+            "HEADER_TEMPLATE": "【別エージェントの所見】以下は別のコンサルタントエージェントの見解です。参考にしてください。\n",
+            "CHUNK_TEMPLATE": "■{agent_name} のセカンドオピニオン\nQ: {query}\nA: {response}\n\n",
+            "LOG_TEMPLATE": "'rag':'{rag_name}', 'agent':'{agent_name}', 'agent_file':'{agent_file}', 'tokens':'{response_tokens}'",
+            "TEXT_LIMITS": 4000
+        },
+        {
+            "RAG_NAME": "CurrentTimeContext",
+            "RETRIEVER": "FunctionSearch",
+            "DATA": [
+                {
+                    "DATA_TYPE": "FUNCTION_SEARCH",
+                    "FUNCTION_NAME": "current_time",
+                    "ARGS_TEMPLATE": "{query}"
+                }
+            ],
+            "HEADER_TEMPLATE": "【ファンクション結果】以下は外部関数 (current_time) の出力です。\n",
+            "CHUNK_TEMPLATE": "[{rag_name} / {function_name}] {response}\n\n",
+            "LOG_TEMPLATE": "'rag':'{rag_name}', 'function':'{function_name}'",
+            "TEXT_LIMITS": 500
+        }
+    ],
+    "SKILL": {},
+    "DEFINE_CODE": {
+        "COMPANY_CODE": [],
+        "DEPT_CODE": [],
+        "EMP_CODE": []
+    },
+    "FEEDBACK": {
+        "ACTIVE": "N",
+        "SAVE_MODE": "CSV",
+        "SAVE_DB": "Sample00_Feedback",
+        "DEFAULT_CATEGORY": "未設定",
+        "FEEDBACK_ITEM_LIST": [
+            "memo",
+            "comment"
+        ]
+    },
+    "SUPPORT_AGENT": {
+        "DIALOG_DIGEST": "agent_51DialogDigest.json",
+        "RAG_QUERY_GENERATOR": "agent_56RAGQueryGenerator.json",
+        "THINKING": "agent_58Thinking.json"
+    },
+    "BOOK": []
+}
