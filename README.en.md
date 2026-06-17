@@ -43,6 +43,13 @@
   - [Export / Report](#export--report)
   - [Session management](#session-management)
 - [User Memory Explorer](#user-memory-explorer)
+- [Batch Test (bulk Q&A evaluation)](#batch-test-bulk-qa-evaluation)
+  - [Input Excel format](#input-excel-format)
+  - [Output Excel format](#output-excel-format)
+  - [Key features](#key-features)
+  - [Result Analysis (instant)](#result-analysis-instant)
+  - [LLM critique (on-demand)](#llm-critique-on-demand)
+  - [Implementation notes](#implementation-notes)
 - [API Reference](#api-reference)
   - [Endpoint list](#endpoint-list)
   - [POST /run — Send a message](#post-run--send-a-message)
@@ -1222,6 +1229,8 @@ Return values can be generators / 4-tuples / 6-tuples — all are normalised. Ea
 
 **Sample**: `user/common/agent/agent_11Sample.json` ships a sample agent with Vector + AgentSearch + FunctionSearch coexisting in `KNOWLEDGE`.
 
+**Analytics Result - Knowledge Utility integration**: PageIndex / AgentSearch / FunctionSearch chunks each compute `similarity_Q` (similarity to the question) and `similarity_A` (similarity to the response) internally — the same fields that Vector entries carry — so they appear in the Chat tab's **"Analytics Results - Knowledge Utility"** panel side-by-side with Vector results. This lets you compare "how much did vector search vs. other-agent referrals vs. external functions contribute to the answer". Read `knowledge_utility = similarity_Q − similarity_A`: a high value means the chunk fit the question well but wasn't fully reflected in the response → room for improvement.
+
 #### ORG / Persona (multi-persona parallel execution)
 
 For a single template agent, you can register **multiple personas** in PostgreSQL (`digim_agent_personas`) or Excel (`user/common/agent/persona_data/`), and switch between them via ORG to run them in parallel from the WebUI or a Practice.
@@ -2034,6 +2043,70 @@ A 3-tab layout from the left: **"My Memory" / "User Understanding (Individual)" 
 | Storage destination | `user/common/analytics/user_memory_explorer/analyticsYYYYMMDD_HHMMSS/` |
 | State saving | Pickle format saves the analysis cache / selection / dialogue history. `report.md` is output simultaneously |
 | Data source | The 3 layers from `DigiM_UserMemory.load_all`. Formatting reuses `DigiM_UserMemoryBuilder` |
+
+---
+
+## Batch Test (bulk Q&A evaluation)
+
+The `Batch Test (upload Q&A xlsx)` expander at the bottom of the Chat screen runs a spreadsheet of questions through **the current session with the current chat settings**, and — when a Ground Truth column is present — auto-scores each answer with LLM + deterministic metrics.
+
+### Input Excel format
+
+| Column | Required | Description |
+|------|------|------|
+| `Question` | ✓ | The question text |
+| `Ground Truth` | – | Expected answer. Triggers evaluation when present |
+| `Answer` | – | Filled in by the run |
+| Any other column | – | Preserved verbatim in the output |
+
+- **Multi-sheet xlsx** is supported: every sheet that has a `Question` column is auto-detected; a dropdown lets you target one sheet or run them all. Each input sheet is written back to a same-named output sheet.
+- **Sheet name is arbitrary** (no need to be called `Test`).
+- Sample: `test/Sample_BatchTest.xlsx`.
+
+### Output Excel format
+
+Input columns are preserved as-is; the following are appended (overwritten if already present):
+
+| Column | Content |
+|------|------|
+| `Persona` | Persona name for the run (multi-persona only). Empty for 0/1 persona |
+| `Answer` | The agent's response |
+| `Verdict` | LLM verdict (○ / △ / ✕) |
+| `Score` | 0-100 (LLM-judged against `Ground Truth`) |
+| `Match` | `Y` / `N` — exact match after normalisation |
+| `Seq Ratio` | `difflib.SequenceMatcher` ratio (0-1) |
+| `Token F1` | Token-overlap F1 over word + CJK-char tokens (0-1) |
+| `Eval` | One-line LLM comment |
+
+### Key features
+
+- **`Memory Use (BatchTest only)` checkbox**: an independent toggle that affects BatchTest only. OFF scores each row in isolation (prior turns are not loaded into the LLM context). Independent from the chat header `Memory Use`.
+- **Honors the sidebar persona selection**: when 2+ persona ids are selected, each question is run in **multi-persona parallel mode** and the result xlsx is written in **long format** (one row per question × persona).
+- **Progress display**: the sidebar bg-task message shows `(N/N) Running batch Q&A...` in near-real-time (counter ticks per persona completion).
+- **Result file picker**: a dropdown switches between past `batch_results_*.xlsx` files for download / analysis.
+
+### Result Analysis (instant)
+
+Reads the result xlsx from the session folder and renders a cross-sheet summary plus per-sheet panels:
+
+- Verdict (○/△/✕) distribution bar chart
+- Score histogram (0-100, 10-wide bins)
+- Count / Score avg / ○ ratio / Exact-match count
+- Worst-5 rows table
+
+### LLM critique (on-demand)
+
+"LLM評価を生成" sends the summary + worst rows (up to 5 per sheet) to the LLM and produces a Markdown critique cached to `batch_results_<TS>.critique.md`:
+
+- **Overall** (2-3 lines)
+- **Failure patterns** (pattern name / example / hypothesised cause)
+- **Improvements** (concrete actions on Agent JSON / KNOWLEDGE / prompts / etc., ordered by priority)
+
+### Implementation notes
+
+- Multi-persona mode auto-sets `MEMORY_SAVE=True` (the parallel path only streams `[STATUS]` chunks; per-persona responses are read from chat_memory's sub_seqs of the latest seq).
+- Evaluation uses `dmt.eval_answer_vs_groundtruth` in `user/common/tool/analysis.py`. Default LLM agent for the verdict step is `agent_53CompareTexts.json`.
+- LLM critique uses `dmt.critique_batch_results` (same file).
 
 ---
 
