@@ -2259,7 +2259,7 @@ LLM critique is provided by the generic `DigiM_Evaluation.llm_evaluate()` helper
 
 ### PersonalEvaluation plugin
 
-Scores 7 personality theories at once: Big Five / Schwartz Value Theory / Self-Determination / Personal Strivings / Narrative Identity / Social Identity / Attachment. Template: `test/PersonalTestQA.xlsx`.
+Scores 7 personality theories at once: Big Five / Schwartz Value Theory / Self-Determination / Personal Strivings / Narrative Identity / Social Identity / Attachment. Template ships in the plugin folder itself (`user/common/evaluation/PersonalEvaluation/PersonalTestQA.xlsx`) — grab it from the `Download template (.xlsx)` button.
 
 **Input Excel** — 2 sheets:
 - `Category`: 7 rows of theory metadata

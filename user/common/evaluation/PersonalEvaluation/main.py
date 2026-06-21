@@ -31,9 +31,15 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from pathlib import Path as _Path
 from typing import Any
 
 import pandas as pd
+
+
+# Plugin folder — used to resolve the template Excel relative to *this* file
+# so the path is correct regardless of where Streamlit was launched from.
+_PLUGIN_DIR = _Path(__file__).resolve().parent
 
 
 # Answer keyword → score (0.0 to 1.0)
@@ -67,7 +73,9 @@ class Plugin:
 
     @staticmethod
     def sample_path() -> str:
-        return "test/PersonalTestQA.xlsx"
+        # Template lives alongside main.py so the plugin folder is self-
+        # contained. Returned as a string for st.download_button consumers.
+        return str(_PLUGIN_DIR / "PersonalTestQA.xlsx")
 
     @staticmethod
     def run(input_path: str) -> dict[str, Any]:
