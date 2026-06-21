@@ -2260,7 +2260,7 @@ LLM 講評は汎用ヘルパー `DigiM_Evaluation.llm_evaluate()` が `report_md
 
 ### PersonalEvaluation プラグイン
 
-人格評価7理論 (Big Five / Schwartz Value Theory / Self-Determination / Personal Strivings / Narrative Identity / Social Identity / Attachment) を一括スコアリング。`test/PersonalTestQA.xlsx` をテンプレートとして配布。
+人格評価7理論 (Big Five / Schwartz Value Theory / Self-Determination / Personal Strivings / Narrative Identity / Social Identity / Attachment) を一括スコアリング。テンプレートはプラグインフォルダ直下に同梱 (`user/common/evaluation/PersonalEvaluation/PersonalTestQA.xlsx`) — UI の `Download template (.xlsx)` ボタンから取得。
 
 **入力 Excel**: 2シート構成
 - `Category` シート: 7 行 (理論メタ情報)

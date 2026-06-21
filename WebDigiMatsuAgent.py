@@ -6035,8 +6035,10 @@ def main():
         return
     if st.session_state.get("main_view") == "User Memory Explorer":
         _user_memory_explorer()
+        return
     if st.session_state.get("main_view") == "Agent Performance Explorer":
         _agent_performance_explorer()
+        return
     if st.session_state.get("main_view") == "Evaluation":
         _evaluation_screen()
         return

@@ -20,6 +20,11 @@
       "Session Archive": true,
       "RAG Management": true,
       "Knowledge Explorer": true,
+      "User Memory Explorer": true,
+      "Agent Performance Explorer": true,
+      "Evaluation": true,
+      "Support Eval": true,
+      "Scheduler": true,
       "Exec Setting": true,
       "RAG Setting": true,
       "Feedback": true,
@@ -30,10 +35,7 @@
       "Book": true,
       "Download Md": true,
       "Web API": true,
-      "Support Eval": true,
-      "Scheduler": true,
       "User Memory": true,
-      "User Memory Explorer": true,
       "User Memory Layers": ["persona", "nowaday", "history"]
     }
   }
