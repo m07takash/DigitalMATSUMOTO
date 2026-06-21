@@ -127,6 +127,8 @@ if 'allowed_user_memory_explorer' not in st.session_state:
     st.session_state.allowed_user_memory_explorer = False
 if 'allowed_agent_performance_explorer' not in st.session_state:
     st.session_state.allowed_agent_performance_explorer = False
+if 'allowed_evaluation' not in st.session_state:
+    st.session_state.allowed_evaluation = False
 if 'allowed_exec_setting' not in st.session_state:
     st.session_state.allowed_exec_setting = True
 if 'allowed_rag_setting' not in st.session_state:
@@ -397,6 +399,7 @@ def user_allowed_parameter(allowded_dict):
     st.session_state.allowed_knowledge_explorer = allowded_dict.get("Knowledge Explorer", True)
     st.session_state.allowed_user_memory_explorer = allowded_dict.get("User Memory Explorer", False)
     st.session_state.allowed_agent_performance_explorer = allowded_dict.get("Agent Performance Explorer", False)
+    st.session_state.allowed_evaluation = allowded_dict.get("Evaluation", False)
     st.session_state.allowed_exec_setting = allowded_dict.get("Exec Setting", True)
     st.session_state.allowed_rag_setting = allowded_dict.get("RAG Setting", True)
     st.session_state.allowed_feedback = allowded_dict.get("Feedback", True)
@@ -682,12 +685,12 @@ def _clear_bg_task_status():
 
 # Execute the task in the background and set a file-flag on completion
 def _run_bg_task(task_type, message, func, *args, **kwargs):
-    st.session_state._bg_task = {"type": task_type, "message": message}
-    _task_file = _bg_task_path()
-    _write_bg_task_status_to(_task_file, {"status": "running", "message": message, "error": ""})
-
     _user_id = st.session_state.get("user_id")
     _job_id = djr.new_job_id()
+    # Stash the job_id so the sidebar indicator can render a Cancel button.
+    st.session_state._bg_task = {"type": task_type, "message": message, "job_id": _job_id}
+    _task_file = _bg_task_path()
+    _write_bg_task_status_to(_task_file, {"status": "running", "message": message, "error": "", "job_id": _job_id})
     # Capture the current session_id (if any) from the Streamlit thread BEFORE spawning the worker,
     # because session_state is not safe to read from a background thread. This lets us mirror
     # errors that originate from job-queue dispatch into the active session's errors.log.
@@ -5146,6 +5149,176 @@ def _render_ape_pageindex_tree(rag_def, rag_name, rag_agg):
 
 
 
+### Evaluation screen ###
+def _evaluation_screen():
+    """Sidebar → Evaluation. Picks a plugin under user/common/evaluation/,
+    uploads input (Excel), runs the plugin's analysis, renders the result,
+    optionally asks a chosen agent to evaluate it, and exports a Markdown
+    report. Adding a new evaluation is a matter of dropping a new
+    `<name>/main.py` under the evaluation folder."""
+    import DigiM_Evaluation as de
+
+    st.subheader("Evaluation")
+
+    _plugins = de.list_evaluations()
+    if not _plugins:
+        st.info(
+            "No evaluation plugins found. Add a plugin under "
+            "`user/common/evaluation/<name>/main.py`."
+        )
+        return
+
+    _opt_labels = [f"{p['display_name']} ({p['folder']})" for p in _plugins]
+    _sel = st.selectbox("Evaluation:", _opt_labels, key="eval_plugin_sel")
+    _sel_idx = _opt_labels.index(_sel)
+    _meta = _plugins[_sel_idx]
+    _plugin = _meta["plugin"]
+
+    if _meta.get("description"):
+        st.caption(_meta["description"])
+    try:
+        _sample = _plugin.sample_path() if hasattr(_plugin, "sample_path") else None
+        if _sample:
+            _sample_p = Path(_sample)
+            _sc1, _sc2 = st.columns([3, 1])
+            _sc1.caption(f"📎 Sample input: `{_sample}`")
+            if _sample_p.exists() and _sample_p.is_file():
+                try:
+                    _sc2.download_button(
+                        "Download template (.xlsx)",
+                        data=_sample_p.read_bytes(),
+                        file_name=_sample_p.name,
+                        mime=("application/vnd.openxmlformats-officedocument."
+                               "spreadsheetml.sheet"),
+                        key=f"eval_sample_dl_{_meta['folder']}",
+                    )
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    _state_pfx = f"_eval_{_meta['folder']}"
+
+    # ---------- Upload ----------
+    _uploader_key = f"eval_upload_{_meta['folder']}_{st.session_state.get(_state_pfx + '_upload_counter', 0)}"
+    _uploaded = st.file_uploader(
+        "Upload input (.xlsx)", type=["xlsx"], key=_uploader_key,
+        label_visibility="collapsed",
+    )
+    if _uploaded is not None:
+        _ts_in = datetime.now().strftime("%Y%m%d_%H%M%S")
+        _saved = Path(temp_folder_path) / f"eval_{_meta['folder']}_{_ts_in}_{_uploaded.name}"
+        _saved.write_bytes(_uploaded.getbuffer())
+        st.session_state[_state_pfx + "_input"] = str(_saved)
+        st.session_state[_state_pfx + "_upload_counter"] = (
+            st.session_state.get(_state_pfx + "_upload_counter", 0) + 1
+        )
+        st.session_state.pop(_state_pfx + "_result", None)
+        st.session_state.pop(_state_pfx + "_llm", None)
+        st.session_state.pop(_state_pfx + "_report", None)
+        st.rerun()
+
+    _input_path = st.session_state.get(_state_pfx + "_input")
+    if _input_path:
+        st.caption(f"Loaded: `{Path(_input_path).name}`")
+
+    _bc1, _bc2 = st.columns([1, 3])
+    if _bc1.button("Run analysis", key="eval_run", type="primary",
+                    disabled=not bool(_input_path) or bool(st.session_state._bg_task)):
+        with st.spinner("Running…"):
+            try:
+                _res = _plugin.run(_input_path)
+                st.session_state[_state_pfx + "_result"] = _res
+                st.session_state.pop(_state_pfx + "_llm", None)
+                st.session_state.pop(_state_pfx + "_report", None)
+            except Exception as _e:
+                st.error(f"Analysis failed: {_e}")
+        st.rerun()
+
+    _result = st.session_state.get(_state_pfx + "_result")
+    if not _result:
+        st.caption("Upload an input file and press *Run analysis*.")
+        return
+
+    # ---------- Render plugin output ----------
+    st.markdown("---")
+    try:
+        _plugin.render(_result)
+    except Exception as _e:
+        st.error(f"Render failed: {_e}")
+
+    # ---------- LLM evaluation ----------
+    st.markdown("---")
+    st.subheader("LLM Evaluation")
+    _agent_files = [a["FILE"] for a in st.session_state.agents]
+    if _agent_files:
+        _default_af = (st.session_state.agent_file
+                        if st.session_state.agent_file in _agent_files
+                        else _agent_files[0])
+        _eval_agent = st.selectbox(
+            "Agent for evaluation:", _agent_files,
+            index=_agent_files.index(_default_af),
+            key=f"eval_llm_agent_{_meta['folder']}",
+        )
+        _le_c1, _le_c2 = st.columns([1, 3])
+        if _le_c1.button("Evaluate with LLM", key="eval_llm_run",
+                          disabled=bool(st.session_state._bg_task)):
+            with st.spinner("Asking agent…"):
+                try:
+                    _txt, _model = de.llm_evaluate(
+                        _plugin, _result, _eval_agent,
+                        dict(st.session_state.web_service),
+                        dict(st.session_state.web_user),
+                    )
+                    st.session_state[_state_pfx + "_llm"] = {
+                        "text": _txt, "model": _model,
+                        "agent": _eval_agent,
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+                except Exception as _e:
+                    st.error(f"LLM evaluation failed: {_e}")
+            st.rerun()
+
+        _llm = st.session_state.get(_state_pfx + "_llm")
+        if _llm:
+            st.caption(
+                f"Agent: `{_llm['agent']}`  /  Model: `{_llm['model']}`  /  "
+                f"Generated: {_llm['timestamp']}"
+            )
+            st.markdown(_llm.get("text", ""))
+    else:
+        st.caption("No agents available.")
+
+    # ---------- Generate Report ----------
+    st.markdown("---")
+    st.subheader("Generate Report")
+    _bcr1, _bcr2 = st.columns([1, 3])
+    if _bcr1.button("Generate Report", key="eval_gen_report"):
+        try:
+            _md = _plugin.report_md(_result)
+            _llm = st.session_state.get(_state_pfx + "_llm")
+            if _llm and _llm.get("text"):
+                _md += (f"\n\n---\n\n## LLM Evaluation\n\n"
+                          f"- Agent: `{_llm['agent']}`\n"
+                          f"- Model: `{_llm['model']}`\n"
+                          f"- Generated: {_llm['timestamp']}\n\n"
+                          f"{_llm['text']}\n")
+            st.session_state[_state_pfx + "_report"] = _md
+        except Exception as _e:
+            st.error(f"Report generation failed: {_e}")
+    _report_md = st.session_state.get(_state_pfx + "_report")
+    if _report_md:
+        _ts_dl = datetime.now().strftime("%Y%m%d_%H%M%S")
+        st.download_button(
+            "Download (.md)", data=_report_md.encode("utf-8"),
+            file_name=f"Evaluation_{_meta['folder']}_{_ts_dl}.md",
+            mime="text/markdown", key=f"eval_dl_{_meta['folder']}",
+        )
+        with st.expander("Preview", expanded=False):
+            st.markdown(_report_md)
+
+
+
 ### Support Agent Test screen ###
 def _support_agent_test():
     """Support-Agent evaluation (the legacy sidebar Support Eval, moved to the main view)."""
@@ -5252,6 +5425,8 @@ def main():
             _view_options.append("User Memory Explorer")
         if st.session_state.allowed_agent_performance_explorer:
             _view_options.append("Agent Performance Explorer")
+        if st.session_state.allowed_evaluation:
+            _view_options.append("Evaluation")
         if st.session_state.allowed_support_eval:
             _view_options.append("Support Agent Test")
         if st.session_state.allowed_scheduler:
@@ -5410,6 +5585,18 @@ def main():
                     for _jid in _selected_job_ids:
                         st.session_state.pop(f"bg_job_sel__{_jid}", None)
                     st.session_state.sidebar_message = f"Requested cancellation for {_cancelled} background job(s)"
+                    st.rerun()
+                # Force release — clears the bg-task flag file/state when the
+                # in-process thread no longer exists (typical after a Streamlit
+                # restart while a batch was running, which leaves a stale
+                # /tmp/digim_bg_task_*.json behind and shows a phantom ⏳).
+                # Last-resort below Cancel so it can't be hit accidentally.
+                if st.button("Force release bg-task flag",
+                              key="bg_force_release_sessions",
+                              help="Clears the sidebar `⏳` indicator when the underlying job is no longer in the registry. Use this if Cancel does not work."):
+                    st.session_state._bg_task = None
+                    _clear_bg_task_status()
+                    st.toast("Background task flag cleared.")
                     st.rerun()
             st.markdown("---")
 
@@ -5850,6 +6037,8 @@ def main():
         _user_memory_explorer()
     if st.session_state.get("main_view") == "Agent Performance Explorer":
         _agent_performance_explorer()
+    if st.session_state.get("main_view") == "Evaluation":
+        _evaluation_screen()
         return
     if st.session_state.get("main_view") == "Support Agent Test":
         _support_agent_test()
@@ -6967,10 +7156,19 @@ def main():
 
             exec_agent_name = dma.get_agent_item(ag_file, "DISPLAY_NAME") or "Agent"
 
-            def _wait_for_unlock(_sess, timeout_sec=120):
-                """Poll until the session is UNLOCKED. Returns True if unlocked,
-                False on timeout. Background digest threads from a prior turn
-                normally release the lock within a few seconds."""
+            # Only wait for the lock when there's actually something that
+            # could be holding it. SAVE_DIGEST=True spawns a digest worker
+            # that releases the lock when done; SAVE_DIGEST=False means
+            # Practice releases at end of its finally and there's nothing
+            # to wait for. Polling longer than the typical digest finish
+            # time just inflates between-row latency for nothing.
+            _will_digest = bool(execution.get("SAVE_DIGEST"))
+            _wait_timeout = 15 if _will_digest else 1  # seconds
+
+            def _wait_for_unlock(_sess, timeout_sec=_wait_timeout):
+                """Single status check when no digest is expected; short poll
+                (default 15s) when a background digest could still be working.
+                Returns True if unlocked (or no wait needed), False on timeout."""
                 _t0 = _time.time()
                 while _time.time() - _t0 < timeout_sec:
                     try:
@@ -6978,7 +7176,7 @@ def main():
                             return True
                     except Exception:
                         return True
-                    _time.sleep(0.5)
+                    _time.sleep(0.3)
                 return False
 
             # Pre-read every sheet once so we can compute the total processable
@@ -7006,6 +7204,27 @@ def main():
             if len(bt_personas) >= 2:
                 execution["MEMORY_SAVE"] = True
 
+            # If any sheet has a `Memory No` / `MemoryNo` column, force
+            # MEMORY_SAVE=True so later rows can selectively refer back to
+            # prior rows by their `No` value (the seq → No map below depends
+            # on persistence). Both spaced and unspaced variants are accepted.
+            def _has_col_any(_d, *_names):
+                return any(_n in _d.columns for _n in _names)
+            _has_memno = any(
+                _has_col_any(_d, "Memory No", "MemoryNo")
+                for _d in sheet_dfs.values()
+            )
+            if _has_memno:
+                execution["MEMORY_SAVE"] = True
+
+            # batch No (string) → list of seq keys created when that row ran.
+            # Used to translate `MemoryNo` cell values into a visibility filter
+            # over chat_memory (toggling SETTING.MEMORY_FLG=N on prior seqs the
+            # current row should not see).
+            _no_to_seqs: dict[str, list[str]] = {}
+
+            import re as _re_no_to_seqs
+
             _eval_cols = ("Verdict", "Score", "Match", "Seq Ratio", "Token F1", "Eval")
             result_dfs = {}
             _done = 0
@@ -7026,17 +7245,67 @@ def main():
                     q = str(df_in.at[idx, "Question"]).strip()
                     if not q or q.lower() == "nan":
                         continue
-                    # Optional QuestionStyle column — prepended to the query
+                    # Optional Question Style column — prepended to the query
                     # only when present and non-empty (the raw Question stays
                     # unmodified, including for Ground Truth evaluation).
+                    # Accept both "Question Style" (with space) and the legacy
+                    # camelCase "QuestionStyle" variant.
                     _qstyle = ""
-                    if "QuestionStyle" in df_in.columns:
-                        _qs_raw = df_in.at[idx, "QuestionStyle"]
+                    _qs_col = next(
+                        (_c for _c in ("Question Style", "QuestionStyle")
+                         if _c in df_in.columns),
+                        None,
+                    )
+                    if _qs_col:
+                        _qs_raw = df_in.at[idx, _qs_col]
                         if not pd.isna(_qs_raw):
                             _qstyle = str(_qs_raw).strip()
                             if _qstyle.lower() in ("nan", "none"):
                                 _qstyle = ""
                     q_agent = (_qstyle + "\n" + q) if _qstyle else q
+
+                    # ---- Per-row memory policy (No / MemoryNo columns) -----
+                    # row_no: this row's identifier (any non-empty string).
+                    # mem_policy:
+                    #   "off"      -> no history loaded
+                    #   "all"      -> default memory pipeline (full history)
+                    #   "specific" -> only seqs created by rows whose `No`
+                    #                 appears in `allowed_nos`
+                    _row_no = ""
+                    if "No" in df_in.columns:
+                        _raw_no = df_in.at[idx, "No"]
+                        if not pd.isna(_raw_no):
+                            _row_no = str(_raw_no).strip()
+                            # Normalize "1.0" → "1" for int-y values
+                            if _row_no.endswith(".0"):
+                                _row_no = _row_no[:-2]
+                    _mem_policy = "off"
+                    _allowed_nos: set[str] = set()
+                    # Accept "Memory No" (with space, sample format) and
+                    # "MemoryNo" (legacy camelCase).
+                    _mn_col = next(
+                        (_c for _c in ("Memory No", "MemoryNo")
+                         if _c in df_in.columns),
+                        None,
+                    )
+                    if _mn_col:
+                        _raw_mn = df_in.at[idx, _mn_col]
+                        if not pd.isna(_raw_mn):
+                            _mn_str = str(_raw_mn).strip()
+                            if _mn_str.lower() == "all":
+                                _mem_policy = "all"
+                            elif _mn_str and _mn_str.lower() not in ("nan", "none"):
+                                _mem_policy = "specific"
+                                _allowed_nos = {
+                                    _s.strip()
+                                    for _s in _re_no_to_seqs.split(r"[,;\s]+", _mn_str)
+                                    if _s.strip()
+                                }
+                                # Normalize "1.0" → "1"
+                                _allowed_nos = {
+                                    (_n[:-2] if _n.endswith(".0") else _n)
+                                    for _n in _allowed_nos
+                                }
 
                     sess = dms.DigiMSession(sid, sname)
                     sess.save_status_message(
@@ -7051,13 +7320,61 @@ def main():
                         except Exception:
                             pass
 
+                    # ---- For "specific" mode, hide non-allowed prior seqs by
+                    # toggling SETTING.MEMORY_FLG=N. We track which seqs we
+                    # flipped so we can restore them after the row runs.
+                    _flipped_off: list[str] = []
+                    if _mem_policy == "specific":
+                        _allowed_seqs = set()
+                        for _n in _allowed_nos:
+                            _allowed_seqs.update(_no_to_seqs.get(_n, []))
+                        try:
+                            _pre_hist = sess.get_history()
+                            for _sk in _pre_hist:
+                                if not _sk.isdigit():
+                                    continue
+                                if _sk in _allowed_seqs:
+                                    continue
+                                _curr_flg = ((_pre_hist[_sk].get("SETTING") or {})
+                                              .get("MEMORY_FLG") or "Y")
+                                if _curr_flg == "Y":
+                                    try:
+                                        sess.chg_seq_memory_flg(_sk, "N")
+                                        _flipped_off.append(_sk)
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
+
+                    # Per-row execution: only override MEMORY_USE; everything
+                    # else (MEMORY_SAVE, SAVE_DIGEST, WEB_SEARCH, ...) flows
+                    # through from the WebUI snapshot.
+                    _row_execution = dict(execution)
+                    _row_execution["MEMORY_USE"] = (_mem_policy != "off")
+
+                    # Only snapshot existing seqs when we actually need to
+                    # track per-row provenance for future MemoryNo lookups
+                    # (= we have a No on this row AND any sheet exposes a
+                    # MemoryNo column). Skip the heavy `get_history()` call
+                    # entirely for the common "no per-row memory" case.
+                    _need_seq_track = bool(_row_no and _has_memno)
+                    if _need_seq_track:
+                        try:
+                            _seqs_before = {
+                                _k for _k in sess.get_history() if _k.isdigit()
+                            }
+                        except Exception:
+                            _seqs_before = set()
+                    else:
+                        _seqs_before = set()
+
                     last_resp_stream = ""
                     try:
                         _captured = []
                         for _y in dme.DigiMatsuExecute_MultiPersona(
                             svc, usr, sid, sname, ag_file, q_agent,
                             [], {"TIME": "", "SITUATION": ""}, {}, [],
-                            execution, bt_personas,
+                            _row_execution, bt_personas,
                             in_rag_query_text="", in_org=bt_org,
                         ):
                             if isinstance(_y, tuple) and len(_y) >= 3:
@@ -7067,6 +7384,38 @@ def main():
                         last_resp_stream = "".join(_captured).strip()
                     except Exception as e:
                         last_resp_stream = f"[Error] {type(e).__name__}: {e}"
+
+                    # Restore any MEMORY_FLG we toggled off for this row.
+                    if _flipped_off:
+                        try:
+                            _sess_restore = dms.DigiMSession(sid, sname)
+                            for _sk in _flipped_off:
+                                try:
+                                    _sess_restore.chg_seq_memory_flg(_sk, "Y")
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+
+                    # Record the seqs created by this row so future rows
+                    # can reference them via `MemoryNo`. Skip the
+                    # `get_history()` call when seq tracking is disabled
+                    # (no MemoryNo column anywhere) — saves a chat_memory
+                    # full-file read per row, which dominates wall-clock as
+                    # the session grows.
+                    if _need_seq_track:
+                        try:
+                            _sess_after = dms.DigiMSession(sid, sname)
+                            _seqs_after = {
+                                _k for _k in _sess_after.get_history() if _k.isdigit()
+                            }
+                            _new_seqs = sorted(_seqs_after - _seqs_before, key=int)
+                            if _new_seqs:
+                                _no_to_seqs.setdefault(_row_no, []).extend(
+                                    [str(_s) for _s in _new_seqs]
+                                )
+                        except Exception:
+                            pass
 
                     # Build the list of (persona_name, response_text) for this row.
                     persona_responses = []
@@ -7185,11 +7534,12 @@ def main():
                 "completed Excel (with `Answer`, `Verdict`, `Score`, `Match`, "
                 "`Seq Ratio`, `Token F1`, `Eval` columns filled) is saved to the "
                 "session folder and downloadable below.\n\n"
-                "**Benchmark tip** — `Memory Use (BatchTest only)` (OFF = each row scored in "
-                "isolation, prior turns not loaded into LLM context) and "
-                "`Save Digest (BatchTest only)` (OFF = skip digest generation per row "
-                "to save cost/time on large runs) are independent of the chat "
-                "header toggles, so changing them does not affect normal chat."
+                "**Memory control (per-row)** — add an optional `No` column (row id) and "
+                "`MemoryNo` column to drive memory access per row: `All` = full history (default "
+                "memory pipeline), comma-separated ids (e.g. `1,3`) = load ONLY the prior rows with "
+                "those `No` values, empty cell or column missing = NO history. "
+                "`Save Digest (BatchTest only)` (OFF = skip digest generation) is independent of the "
+                "chat header toggle."
             )
             _batch_uploader_key = f"batch_test_uploader_{st.session_state.get('batch_test_uploader_counter', 0)}"
             _batch_file = st.file_uploader(
@@ -7231,18 +7581,8 @@ def main():
                     st.warning(
                         "`Question` 列のあるシートが見つかりませんでした。"
                     )
-            _bc1, _bc2, _bc3 = st.columns([1, 1, 1])
+            _bc1, _bc2 = st.columns([1, 1])
             _bc2.checkbox(
-                "Memory Use (BatchTest only)",
-                value=False,
-                key="batch_memory_use",
-                help=(
-                    "バッチテストにのみ有効な独立トグル。OFF にすると各行を独立に評価 "
-                    "(過去ターンを LLM コンテキストに載せない)。Chat ヘッダーの "
-                    "Memory Use とは独立。"
-                ),
-            )
-            _bc3.checkbox(
                 "Save Digest (BatchTest only)",
                 value=False,
                 key="batch_save_digest",
@@ -7262,7 +7602,14 @@ def main():
                 _saved_path.write_bytes(_batch_file.getbuffer())
 
                 _bt_execution = {
-                    "MEMORY_USE":        st.session_state.batch_memory_use,
+                    # MEMORY_USE is decided per-row inside _run_batch_bg
+                    # from the `MemoryNo` column. MEMORY_SAVE follows the
+                    # chat header `Memory Save` (so the user keeps control
+                    # of whether batch rows land in chat_memory.json);
+                    # when the input has a `MemoryNo` column, _run_batch_bg
+                    # auto-promotes MEMORY_SAVE to True so the seq map can
+                    # resolve later rows that reference earlier ones.
+                    "MEMORY_USE":        False,
                     "MEMORY_SAVE":       st.session_state.memory_save,
                     "MEMORY_SIMILARITY": st.session_state.memory_similarity,
                     "MAGIC_WORD_USE":    st.session_state.magic_word_use,
