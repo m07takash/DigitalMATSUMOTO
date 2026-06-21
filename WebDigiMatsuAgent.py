@@ -125,6 +125,8 @@ if 'allowed_knowledge_explorer' not in st.session_state:
     st.session_state.allowed_knowledge_explorer = True
 if 'allowed_user_memory_explorer' not in st.session_state:
     st.session_state.allowed_user_memory_explorer = False
+if 'allowed_agent_performance_explorer' not in st.session_state:
+    st.session_state.allowed_agent_performance_explorer = False
 if 'allowed_exec_setting' not in st.session_state:
     st.session_state.allowed_exec_setting = True
 if 'allowed_rag_setting' not in st.session_state:
@@ -394,6 +396,7 @@ def user_allowed_parameter(allowded_dict):
     st.session_state.allowed_rag_management = allowded_dict.get("RAG Management", True)
     st.session_state.allowed_knowledge_explorer = allowded_dict.get("Knowledge Explorer", True)
     st.session_state.allowed_user_memory_explorer = allowded_dict.get("User Memory Explorer", False)
+    st.session_state.allowed_agent_performance_explorer = allowded_dict.get("Agent Performance Explorer", False)
     st.session_state.allowed_exec_setting = allowded_dict.get("Exec Setting", True)
     st.session_state.allowed_rag_setting = allowded_dict.get("RAG Setting", True)
     st.session_state.allowed_feedback = allowded_dict.get("Feedback", True)
@@ -419,6 +422,223 @@ _BG_TASK_FILE = "/tmp/digim_bg_task_{}.json"
 def _bg_task_path():
     sid = st.session_state.get("user_id", "default")
     return _BG_TASK_FILE.format(sid)
+
+
+def _render_llm_input_tab(v2: dict):
+    """Detail Information → LLM Input tab. Shows everything the LLM actually
+    received this turn: reconstructed system prompt, conversation memories,
+    the final assembled user message, plus a per-component breakdown
+    (User Memory / RAG / Prompt Template code / Situation / Web context)."""
+    _agent_file = (v2.get("setting") or {}).get("agent_file", "")
+    _persona = _resolve_persona_for_analytics(_agent_file, v2.get("setting") or {})
+
+    _system_prompt = ""
+    try:
+        _agent_obj = dma.DigiM_Agent(_agent_file, persona=_persona)
+        _system_prompt = _agent_obj.system_prompt or ""
+    except Exception as _e:
+        _system_prompt = f"(failed to reconstruct: {_e})"
+
+    st.markdown("**System Prompt**")
+    st.code(_system_prompt or "(none)", language=None)
+
+    _mem_refs = ((v2.get("response") or {}).get("reference", {}) or {}).get("memory") or []
+    if _mem_refs:
+        st.markdown("**Conversation Memories Loaded**")
+        for _m in _mem_refs:
+            if isinstance(_m, dict):
+                st.markdown(f"- {_m.get('log') or str(_m)}", unsafe_allow_html=True)
+            else:
+                st.markdown(f"- {_m}", unsafe_allow_html=True)
+
+    st.markdown("**Final Assembled Prompt (sent as user message)**")
+    _final_prompt = (v2.get("prompt") or {}).get("text", "")
+    # Render as a wrapped <pre> block so the whole prompt is visible top-to-
+    # bottom — newlines preserved, word-wrap on, no inner scroll container.
+    import html as _html_lim
+    _esc = _html_lim.escape(_final_prompt or "(empty)")
+    st.markdown(
+        f'<pre style="white-space: pre-wrap; word-wrap: break-word; '
+        f'background-color: #f6f8fa; padding: 12px; border-radius: 6px; '
+        f'font-family: monospace; font-size: 0.9em; margin: 0;">{_esc}</pre>',
+        unsafe_allow_html=True,
+    )
+
+    with st.expander("Components Breakdown"):
+        _q = (v2.get("prompt") or {}).get("query") or {}
+
+        _um_ctx = (v2.get("prompt") or {}).get("user_memory_context", "") or ""
+        if _um_ctx:
+            st.markdown("**User Memory Context**")
+            st.code(_um_ctx, language=None)
+
+        _km_refs = ((v2.get("response") or {}).get("reference", {}) or {}).get("knowledge_rag") or []
+        if _km_refs:
+            st.markdown(f"**Knowledge References (RAG)** — {len(_km_refs)} entries")
+            for _r in _km_refs:
+                st.markdown(f"- `{str(_r)[:300]}`")
+
+        _tpl_code = ((v2.get("prompt") or {}).get("prompt_template") or {}).get("setting", "")
+        if _tpl_code:
+            st.markdown(f"**Prompt Template Code:** `{_tpl_code}`")
+
+        _user_raw = _q.get("input", "") or ""
+        _user_after = _q.get("text", "") or ""
+        if _user_raw:
+            st.markdown(f"**User Input (raw):** {_user_raw}")
+        if _user_after and _user_after != _user_raw:
+            st.markdown(f"**User Query (post-preproc):** {_user_after}")
+
+        _sit = _q.get("situation", {})
+        if _sit:
+            st.markdown(f"**Situation:** `{_sit}`")
+
+        _web = (v2.get("prompt") or {}).get("web_search") or {}
+        if _web and _web.get("web_context"):
+            st.markdown("**Web Search Context**")
+            st.code(str(_web["web_context"])[:4000], language=None)
+
+        _ag_calls = (v2.get("prompt") or {}).get("agent_search") or []
+        if _ag_calls:
+            st.markdown(f"**AgentSearch internal calls** — {len(_ag_calls)} entries")
+            for _ag in _ag_calls:
+                st.markdown(
+                    f"- `{_ag.get('rag_name','')}` → `{_ag.get('agent_name','')}` "
+                    f"(resp {_ag.get('response_tokens',0)} chars)"
+                )
+
+        _fn_calls = (v2.get("prompt") or {}).get("function_search") or []
+        if _fn_calls:
+            st.markdown(f"**FunctionSearch internal calls** — {len(_fn_calls)} entries")
+            for _fn in _fn_calls:
+                st.markdown(
+                    f"- `{_fn.get('rag_name','')}` → `{_fn.get('function_name','')}`"
+                )
+
+
+def _render_token_usage_tab(v2: dict):
+    """Detail Information → Token Usage tab. A per-role table aggregating the
+    main LLM, all support agents (Thinking / RAG Query Gen / Meta Search /
+    Digest), Web Search, the embedding pipeline, and the AgentSearch/
+    FunctionSearch chunks for this turn, plus a total row and a per-model
+    rollup when more than one model was used. Web Search and Embedding
+    numbers are estimated from the captured input/output text (the
+    underlying APIs don't always return usage to the caller)."""
+    rows = []
+
+    def _add(role, agent_file, model, inp, out, note=""):
+        rows.append({
+            "Role":   role,
+            "Agent":  agent_file or "—",
+            "Model":  model or "—",
+            "Input":  int(inp) if isinstance(inp, (int, float)) else 0,
+            "Output": int(out) if isinstance(out, (int, float)) else 0,
+            "Note":   note,
+        })
+
+    _eng = (v2.get("setting") or {}).get("engine") or {}
+    _add("Main LLM",
+         (v2.get("setting") or {}).get("agent_file", ""),
+         _eng.get("MODEL", ""),
+         (v2.get("prompt") or {}).get("token", 0),
+         (v2.get("response") or {}).get("token", 0))
+
+    _th = (v2.get("prompt") or {}).get("thinking") or {}
+    if _th:
+        _add("Thinking", _th.get("agent_file", ""), _th.get("model", ""),
+             _th.get("prompt_token", 0), _th.get("response_token", 0))
+
+    _rqg = (v2.get("prompt") or {}).get("RAG_query_genetor") or {}
+    if _rqg:
+        _add("RAG Query Gen", _rqg.get("agent_file", ""), _rqg.get("model", ""),
+             _rqg.get("prompt_token", 0), _rqg.get("response_token", 0))
+
+    _ms = (v2.get("prompt") or {}).get("meta_search") or {}
+    if _ms.get("date"):
+        _d = _ms["date"]
+        _add("Meta Search (Date)", _d.get("agent_file", ""), _d.get("model", ""),
+             _d.get("prompt_token", 0), _d.get("response_token", 0))
+
+    _dg = v2.get("digest") or {}
+    if _dg:
+        _add("Dialog Digest", _dg.get("agent_file", ""), _dg.get("model", ""),
+             0, _dg.get("token", 0))
+
+    # Web Search — usage is not reported back by the search engines, so we
+    # estimate by counting tokens on the captured search_text (input) and
+    # web_context (output) with the same tiktoken encoding the main LLM uses.
+    _ws = (v2.get("prompt") or {}).get("web_search") or {}
+    if _ws:
+        try:
+            _ws_in = dmu.count_token("tiktoken", _ws.get("model", "") or "",
+                                       _ws.get("search_text", "") or "")
+            _ws_out = dmu.count_token("tiktoken", _ws.get("model", "") or "",
+                                        _ws.get("web_context", "") or "")
+        except Exception:
+            _ws_in = _ws_out = 0
+        _add(f"Web Search ({_ws.get('engine', '') or '?'})",
+             "", _ws.get("model", ""),
+             _ws_in, _ws_out, note="estimated")
+
+    # Embedding — every turn embeds the query + the response (memory
+    # similarity), and additionally the RAG_query_genetor output when used.
+    # The OpenAI embeddings API doesn't surface usage in our wrapper, so
+    # the numbers are estimated from the input lengths.
+    try:
+        _embed_model = dmu._embed_model_name()
+    except Exception:
+        _embed_model = "embedding"
+    try:
+        _q = ((v2.get("prompt") or {}).get("query") or {})
+        _q_text = (_q.get("text") or _q.get("input") or "")[:8000]
+        _r_text = ((v2.get("response") or {}).get("text") or "")[:8000]
+        _emb_total = (
+            dmu.count_token("tiktoken", _embed_model, _q_text)
+            + dmu.count_token("tiktoken", _embed_model, _r_text)
+        )
+        if _rqg.get("llm_response"):
+            _emb_total += dmu.count_token(
+                "tiktoken", _embed_model, _rqg.get("llm_response", "") or "")
+        if _dg.get("text"):
+            _emb_total += dmu.count_token(
+                "tiktoken", _embed_model, _dg.get("text", "") or "")
+    except Exception:
+        _emb_total = 0
+    if _emb_total > 0:
+        _add("Embedding", "", _embed_model, _emb_total, 0, note="estimated")
+
+    for _ag in ((v2.get("prompt") or {}).get("agent_search") or []):
+        _add(f"AgentSearch ({_ag.get('rag_name', '')})",
+             _ag.get("agent_file", ""),
+             "(see child turn)",
+             0, _ag.get("response_tokens", 0))
+
+    for _fn in ((v2.get("prompt") or {}).get("function_search") or []):
+        _add(f"FunctionSearch ({_fn.get('rag_name', '')})",
+             "",
+             _fn.get("function_name", ""),
+             0, 0)
+
+    _df = pd.DataFrame(rows)
+    _df["Total"] = _df["Input"] + _df["Output"]
+    _total_row = pd.DataFrame([{
+        "Role": "TOTAL", "Agent": "", "Model": "",
+        "Input": int(_df["Input"].sum()),
+        "Output": int(_df["Output"].sum()),
+        "Total": int(_df["Input"].sum() + _df["Output"].sum()),
+        "Note":  "",
+    }])
+    _df_out = pd.concat([_df, _total_row], ignore_index=True)
+    st.dataframe(_df_out, hide_index=True, use_container_width=True)
+
+    _grp = (_df.groupby("Model", as_index=False)[["Input", "Output"]].sum())
+    _grp["Total"] = _grp["Input"] + _grp["Output"]
+    if len(_grp) > 1:
+        st.markdown("**Per-Model Summary**")
+        st.dataframe(
+            _grp.sort_values("Total", ascending=False),
+            hide_index=True, use_container_width=True,
+        )
 
 
 def _resolve_persona_for_analytics(agent_file: str, setting_dict: dict):
@@ -533,6 +753,8 @@ def initialize_session_states():
         st.session_state.is_processing = False
     if 'pending_input' not in st.session_state:
         st.session_state.pending_input = ""
+    if 'draft_input' not in st.session_state:
+        st.session_state.draft_input = ""
     if '_fragment_was_locked' not in st.session_state:
         st.session_state._fragment_was_locked = False
     if '_bg_user_input' not in st.session_state:
@@ -1310,6 +1532,31 @@ def _knowledge_explorer():
                         _cmp_engine = ""
                         if _cmp_engine_list:
                             _cmp_engine = st.selectbox("Compare Engine(LLM):", _cmp_engine_list, key=f"{key_prefix}_cmp_engine")
+                        # Regression — optionally exclude KNOWLEDGE / BOOK
+                        _cmp_kn_names = [
+                            _kk.get("RAG_NAME") for _kk in (_cmp_data_tmp.get("KNOWLEDGE") or [])
+                            if _kk.get("RAG_NAME")
+                        ]
+                        _cmp_bk_names = [
+                            _bb.get("RAG_NAME") for _bb in (_cmp_data_tmp.get("BOOK") or [])
+                            if _bb.get("RAG_NAME")
+                        ]
+                        _cmp_excl_k = []
+                        _cmp_excl_b = []
+                        if _cmp_kn_names:
+                            _cmp_excl_k = st.multiselect(
+                                "Exclude KNOWLEDGE (regression):",
+                                _cmp_kn_names, default=[],
+                                key=f"{key_prefix}_cmp_excl_k",
+                                help="比較対象から外したい KNOWLEDGE RAG_NAME を選択。空 = 通常比較。",
+                            )
+                        if _cmp_bk_names:
+                            _cmp_excl_b = st.multiselect(
+                                "Exclude BOOK (regression):",
+                                _cmp_bk_names, default=[],
+                                key=f"{key_prefix}_cmp_excl_b",
+                                help="比較対象から外したい BOOK RAG_NAME を選択。空 = 通常比較。",
+                            )
                         compare_col1, _ = st.columns(2)
                         if compare_col1.button("Analytics Results - Compare Agents", key=f"{key_prefix}_cmp_run", disabled=bool(st.session_state._bg_task)):
                             _cmp_file = _cmp_file_tmp
@@ -1317,6 +1564,19 @@ def _knowledge_explorer():
                                 _cmp_overwrite = {}
                                 if _cmp_engine and _cmp_engine in _cmp_data_tmp.get("ENGINE", {}).get("LLM", {}):
                                     _cmp_overwrite.setdefault("ENGINE", {})["LLM"] = _cmp_data_tmp["ENGINE"]["LLM"][_cmp_engine]
+                                # Apply KNOWLEDGE/BOOK exclusions for the regression run.
+                                _cmp_excl_k_local = list(_cmp_excl_k)
+                                _cmp_excl_b_local = list(_cmp_excl_b)
+                                if _cmp_excl_k_local:
+                                    _cmp_overwrite["KNOWLEDGE"] = [
+                                        _kk for _kk in (_cmp_data_tmp.get("KNOWLEDGE") or [])
+                                        if _kk.get("RAG_NAME") not in _cmp_excl_k_local
+                                    ]
+                                if _cmp_excl_b_local:
+                                    _cmp_overwrite["BOOK"] = [
+                                        _bb for _bb in (_cmp_data_tmp.get("BOOK") or [])
+                                        if _bb.get("RAG_NAME") not in _cmp_excl_b_local
+                                    ]
                                 _orig_query = _v2["prompt"]["query"]["input"]
                                 _orig_situation = _v2["prompt"]["query"].get("situation", {})
                                 _orig_template = _v2["prompt"]["prompt_template"]["setting"]
@@ -1340,14 +1600,24 @@ def _knowledge_explorer():
                                         "agent_file": _cmp_file, "agent": _cmp_agent, "model_name": cmp_model,
                                         "response": cmp_resp, "diff": round(cmp_diff, 3),
                                         "compare_text": cmp_text, "compare_model": cmp_text_model,
-                                        "knowledge_rag": cmp_know_ref}
+                                        "knowledge_rag": cmp_know_ref,
+                                        "excluded_knowledge": _cmp_excl_k_local,
+                                        "excluded_book": _cmp_excl_b_local}
                                 _run_bg_task("compare", f"Running comparative analysis (Knowledge Explorer)", _run_cmp)
                                 st.rerun()
 
                     # Compare results display
                     if st.session_state.get(f"_{key_prefix}_cmp_result"):
                         _cmp_r = st.session_state[f"_{key_prefix}_cmp_result"]
-                        st.markdown(f"**Agent:** {_cmp_r.get('agent', '')} | **Model:** {_cmp_r.get('model_name', '')} | **Diff:** {_cmp_r.get('diff', '')}")
+                        _cmp_excl_k_v = _cmp_r.get("excluded_knowledge") or []
+                        _cmp_excl_b_v = _cmp_r.get("excluded_book") or []
+                        _cmp_tags = []
+                        if _cmp_excl_k_v:
+                            _cmp_tags.append(f"-K:{','.join(_cmp_excl_k_v)}")
+                        if _cmp_excl_b_v:
+                            _cmp_tags.append(f"-B:{','.join(_cmp_excl_b_v)}")
+                        _cmp_excl_suffix = f" | **Excluded:** {' / '.join(_cmp_tags)}" if _cmp_tags else ""
+                        st.markdown(f"**Agent:** {_cmp_r.get('agent', '')} | **Model:** {_cmp_r.get('model_name', '')} | **Diff:** {_cmp_r.get('diff', '')}{_cmp_excl_suffix}")
                         st.markdown("")
                         st.markdown(_cmp_r.get("response", "").replace("\n", "<br>"), unsafe_allow_html=True)
                         if _cmp_r.get("compare_text"):
@@ -4505,6 +4775,377 @@ def _user_memory_explorer():
                            file_name=f"{_rname}.md", mime="text/markdown", key="ume_dl_md")
 
 
+### Agent Performance Explorer screen ###
+def _agent_performance_explorer():
+    """Agent-side analytics — cross-session aggregates per agent. Mirrors UME
+    in shape: pick an agent, optional period, then two tabs:
+      - Overview: scale (sessions/turns/users/period) + monthly activity
+      - KB Utilization: per-RAG scatter (query-type colored, referenced
+        chunks highlighted), top-N rankings, PageIndex page hotspots."""
+    import DigiM_AgentPerformanceExplorer as ape
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import io as _io_ape
+
+    st.subheader("Agent Performance Explorer")
+
+    # --- Agent + period picker -------------------------------------------
+    _all_agents = ape.list_agents_with_history()
+    if not _all_agents:
+        st.info("No saved chat history yet — start a conversation first.")
+        return
+
+    # Default to the sidebar-active agent when it exists in the dropdown
+    _default_idx = (_all_agents.index(st.session_state.agent_file)
+                     if st.session_state.agent_file in _all_agents else 0)
+    _ape_af = st.selectbox("Agent:", _all_agents, index=_default_idx, key="ape_agent")
+
+    _today = now_time.date()
+    try:
+        _def_from = _today.replace(year=_today.year - 1)
+    except ValueError:
+        _def_from = _today
+    _pcol1, _pcol2 = st.columns(2)
+    _ape_from = _pcol1.date_input("Period From:", value=_def_from, key="ape_from")
+    _ape_to   = _pcol2.date_input("Period To:",   value=_today,    key="ape_to")
+
+    # --- Scan + cache -----------------------------------------------------
+    _cache_key = f"_ape_cache_{_ape_af}_{_ape_from}_{_ape_to}"
+    if st.button("Run analysis", key="ape_run", type="primary"):
+        with st.spinner("Scanning sessions..."):
+            _turns = ape.scan_agent_turns(
+                _ape_af, period_from=_ape_from.isoformat(),
+                period_to=_ape_to.isoformat())
+        st.session_state[_cache_key] = _turns
+
+    _turns = st.session_state.get(_cache_key)
+    if _turns is None:
+        st.caption("Pick an agent and period, then press \"Run analysis\".")
+        return
+    if not _turns:
+        st.info(f"No turns for {_ape_af} in {_ape_from} – {_ape_to}.")
+        return
+
+    _tab_overview, _tab_kb = st.tabs(["Overview", "Knowledge / Book Utilization"])
+
+    # =================================================================
+    # Tab 1 — Overview
+    # =================================================================
+    with _tab_overview:
+        _ov = ape.overview_stats(_turns)
+        _kc = st.columns(5)
+        _kc[0].metric("Sessions", _ov["sessions"])
+        _kc[1].metric("Turns", _ov["turns"])
+        _kc[2].metric("Users", _ov["users"])
+        _kc[3].metric("Total chars", f"{_ov['total_chars']:,}")
+        _kc[4].metric("Avg turns / session", _ov["avg_turns_per_session"])
+        st.caption(f"Period (data): **{_ov['first_ts']} – {_ov['last_ts']}**")
+
+        if _ov["monthly"]:
+            st.markdown("#### Monthly activity (turns)")
+            _months = list(_ov["monthly"].keys())
+            _counts = list(_ov["monthly"].values())
+            _fig, _ax = plt.subplots(figsize=(10, 3.2))
+            _ax.bar(_months, _counts, color="#4A90D9", alpha=0.85)
+            _ax.set_xticklabels(_months, rotation=45, ha="right", fontsize=9)
+            _ax.grid(True, alpha=0.3)
+            plt.tight_layout()
+            st.pyplot(_fig); plt.close(_fig)
+
+        if _ov["user_top"]:
+            st.markdown("#### Top users (by turn count)")
+            st.dataframe(
+                pd.DataFrame(_ov["user_top"], columns=["user_id", "turns"]),
+                hide_index=True, use_container_width=True, height=320,
+            )
+
+    # =================================================================
+    # Tab 2 — Knowledge / Book Utilization
+    # =================================================================
+    with _tab_kb:
+        _agg = ape.aggregate_chunk_refs(_turns)
+        if not _agg:
+            st.info("No RAG references were captured in these turns.")
+            return
+
+        # Per-RAG summary table
+        _summary_rows = []
+        for _rag, _rag_agg in _agg.items():
+            _s = ape.rag_summary(_rag_agg)
+            _summary_rows.append({
+                "RAG_NAME":       _rag,
+                "Unique chunks":  _s["unique_chunks"],
+                "Total refs":     _s["total_refs"],
+                "Σ utility":      _s["utility_sum"],
+                "Max utility":    _s["utility_max"],
+            })
+        _summary_df = pd.DataFrame(_summary_rows).sort_values(
+            "Total refs", ascending=False)
+        st.markdown("**Per-RAG summary (period-cumulative)**")
+        st.dataframe(_summary_df, hide_index=True, use_container_width=True)
+
+        # Value + size controls. Value picks which metric drives color (sign)
+        # and dot size (|value|). Uniform-size disables the |value| scaling.
+        _sc1, _sc2, _sc3 = st.columns(3)
+        _ape_dim = _sc1.radio("Dimension reduction:", ["PCA", "t-SNE"],
+                                index=0, horizontal=True, key="ape_dim")
+        _ape_size_mode = _sc2.radio(
+            "Value:",
+            ["count", "Σ similarity_Q", "Σ similarity_A", "Σ utility"],
+            index=0, horizontal=True, key="ape_dot_size",
+            help="Color follows sign (blue +, red −, gray 0). "
+                 "Dot size follows |value| unless Uniform size is on.",
+        )
+        _ape_uniform_size = _sc3.checkbox(
+            "Uniform size", value=False, key="ape_uniform_size",
+            help="OFF: dot size scales with |value|.  ON: every referenced dot is the same size.",
+        )
+        _ape_tsne_perp = 30
+        if _ape_dim == "t-SNE":
+            _ape_tsne_perp = int(st.number_input(
+                "Perplexity:", value=30, step=1, min_value=2,
+                key="ape_tsne_perp"))
+
+        # Per-RAG scatter: for Vector RAGs we fetch the entire Chroma
+        # collection as background, color referenced chunks by their
+        # dominant QUERY_SEQ × QUERY_MODE, size by chosen mode.
+        try:
+            _agent_data = dmu.read_json_file(_ape_af, agent_folder_path) or {}
+        except Exception:
+            _agent_data = {}
+        _rag_to_def = {k.get("RAG_NAME"): (k, "KNOWLEDGE")
+                        for k in (_agent_data.get("KNOWLEDGE") or [])}
+        for _b in (_agent_data.get("BOOK") or []):
+            _rag_to_def[_b.get("RAG_NAME")] = (_b, "BOOK")
+
+        for _rag, _rag_agg in _agg.items():
+            _def, _origin = _rag_to_def.get(_rag, (None, "?"))
+            with st.expander(f"### {_rag} ({_origin})", expanded=False):
+                _retr = (_def or {}).get("RETRIEVER", "Vector") if _def else "?"
+                st.caption(f"RETRIEVER: **{_retr}**  /  DBs: {', '.join(_rag_agg.keys())}")
+
+                if _retr == "Vector" and _def:
+                    _render_ape_vector_scatter(
+                        _def, _rag, _rag_agg,
+                        dim=_ape_dim, perp=_ape_tsne_perp,
+                        size_mode=_ape_size_mode,
+                        uniform=_ape_uniform_size,
+                    )
+                elif _retr == "PageIndex" and _def:
+                    _render_ape_pageindex_tree(_def, _rag, _rag_agg)
+                else:
+                    st.caption("(Scatter unavailable — fallback to ranking only)")
+
+                st.markdown("**Top chunks by ref_count**")
+                _rank_count = ape.rank_chunks(_rag_agg, by="ref_count", top_n=10)
+                st.dataframe(pd.DataFrame(_rank_count), hide_index=True,
+                              use_container_width=True)
+                st.markdown("**Top chunks by Σ knowledge_utility**")
+                _rank_util = ape.rank_chunks(_rag_agg, by="knowledge_utility_sum",
+                                              top_n=10)
+                st.dataframe(pd.DataFrame(_rank_util), hide_index=True,
+                              use_container_width=True)
+
+
+def _ape_value_for_mode(slot, mode):
+    """Raw signed value of the chosen metric — drives both color and size."""
+    if mode == "Σ similarity_Q":
+        return slot.get("similarity_Q_sum", 0.0)
+    if mode == "Σ similarity_A":
+        return slot.get("similarity_A_sum", 0.0)
+    if mode == "Σ utility":
+        return slot.get("knowledge_utility_sum", 0.0)
+    # "count"
+    return slot.get("ref_count", 0)
+
+
+def _ape_color_for_value(value):
+    """Blue (+) / red (−) / gray (0) — sign of the chosen metric only."""
+    if value > 0:
+        return "#1565C0"
+    if value < 0:
+        return "#C62828"
+    return "#9E9E9E"
+
+
+# Per-metric absolute-value caps, calibrated against production-scale data
+# (one chunk's lifetime totals on agent_01DigitalMATSUMOTO: count≈500,
+# Σ sim_Q≈200, Σ sim_A≈200, Σ utility≈|50|). Anything beyond caps to max.
+_APE_ABS_CAP = {
+    "count":          30.0,
+    "Σ similarity_Q": 10.0,
+    "Σ similarity_A": 10.0,
+    "Σ utility":      5.0,
+}
+_APE_UNIFORM_SIZE = 110
+
+
+def _ape_size_for_value(value, mode, uniform=False):
+    """Pixel-area driven by |value| / metric cap, clamped to 40–260 px.
+    When uniform=True, return a constant so every referenced dot is identical."""
+    if uniform:
+        return _APE_UNIFORM_SIZE
+    cap = _APE_ABS_CAP.get(mode, 30.0)
+    return 40 + 220 * min(abs(value) / cap, 1.0)
+
+
+def _render_ape_vector_scatter(rag_def, rag_name, rag_agg, dim, perp, size_mode, uniform=False):
+    """Vector RAG scatter. Background = every chunk in every backing Chroma
+    collection (gray). Foreground = chunks referenced this period, colored
+    by the SIGN of the selected metric (blue+, red−, gray 0) and sized by
+    its absolute value (or uniform if the user opted in)."""
+    import matplotlib.pyplot as plt
+    import ast
+
+    _db_client = dmc.get_chroma_client()
+    _all_rows = []
+    for _data in rag_def.get("DATA", []):
+        if _data.get("DATA_TYPE") != "DB":
+            continue
+        _col_name = _data["DATA_NAME"]
+        try:
+            _col = _db_client.get_collection(_col_name)
+            _resp = _col.get(include=["metadatas", "embeddings"])
+        except Exception:
+            st.caption(f"(skipped {_col_name}: collection not found)")
+            continue
+        _ids = _resp["ids"]; _metas = _resp["metadatas"]; _embeds = _resp["embeddings"]
+        for _i, _id in enumerate(_ids):
+            _meta = _metas[_i] or {}
+            _vec_str = _meta.get("vector_data_value_text", "")
+            try:
+                _vec = ast.literal_eval(_vec_str) if isinstance(_vec_str, str) else _vec_str
+            except Exception:
+                continue
+            _all_rows.append({
+                "id":         str(_id),
+                "db":         _col_name,
+                "title":      _meta.get("title", ""),
+                "category":   _meta.get("category", ""),
+                "vector_data_value_text": _vec,
+            })
+    if not _all_rows:
+        st.caption("(no Chroma rows to plot)")
+        return
+
+    _df_in = pd.DataFrame(_all_rows)
+    try:
+        _df_red, _info = dmva.reduce_dimensions(
+            _df_in, method=dim,
+            params={"perplexity": perp} if dim == "t-SNE" else {})
+    except Exception as _e:
+        st.warning(f"Dimension reduction failed: {_e}")
+        return
+
+    _x = _df_red["X1"].values
+    _y = _df_red["X2"].values
+    _ids_red = _df_red["id"].astype(str).tolist()
+    _dbs_red = _df_red["db"].astype(str).tolist() if "db" in _df_red.columns else [""] * len(_ids_red)
+
+    _fig, _ax = plt.subplots(figsize=(9, 5.8))
+    _ax.scatter(_x, _y, color=(0.55, 0.55, 0.55, 0.55), s=18,
+                 edgecolors="white", linewidths=0.4, label="all chunks")
+
+    _pos_n = _neg_n = _zero_n = 0
+    for _i, (_id, _db) in enumerate(zip(_ids_red, _dbs_red)):
+        _slot = (rag_agg.get(_db) or {}).get(_id)
+        if not _slot:
+            continue
+        _val = _ape_value_for_mode(_slot, size_mode)
+        _color = _ape_color_for_value(_val)
+        _size = _ape_size_for_value(_val, size_mode, uniform=uniform)
+        if _val > 0: _pos_n += 1
+        elif _val < 0: _neg_n += 1
+        else: _zero_n += 1
+        _ax.scatter(_x[_i], _y[_i], color=_color, s=_size,
+                     edgecolors="black", linewidths=0.6, zorder=3)
+
+    _size_label = "uniform" if uniform else f"|{size_mode}|"
+    _ax.set_title(f"{rag_name} — {dim}  /  value = {size_mode}  /  size = {_size_label}")
+    # Three-bin legend by sign (independent of query type).
+    from matplotlib.lines import Line2D as _L2D
+    _legend = [
+        _L2D([0], [0], marker="o", linestyle="None", markerfacecolor="#1565C0",
+             markeredgecolor="black", markersize=8, label=f"positive ({_pos_n})"),
+        _L2D([0], [0], marker="o", linestyle="None", markerfacecolor="#C62828",
+             markeredgecolor="black", markersize=8, label=f"negative ({_neg_n})"),
+        _L2D([0], [0], marker="o", linestyle="None", markerfacecolor="#9E9E9E",
+             markeredgecolor="black", markersize=8, label=f"zero ({_zero_n})"),
+    ]
+    _ax.legend(handles=_legend, loc="best", fontsize=8)
+    _ax.grid(True, alpha=0.3)
+    plt.tight_layout()
+    st.pyplot(_fig); plt.close(_fig)
+
+
+def _render_ape_pageindex_tree(rag_def, rag_name, rag_agg):
+    """PageIndex Page Tree — same shape as Knowledge Explorer's PageIndex
+    view. Pages grouped under their category, referenced ones rendered in
+    blue with `(N refs)` next to the title; unreferenced pages stay muted."""
+    import matplotlib.pyplot as plt
+
+    _all_pages = []
+    for _data in rag_def.get("DATA", []):
+        if _data.get("DATA_TYPE") != "PAGE_INDEX":
+            continue
+        _idx_path = os.path.join("user/common/rag/pages",
+                                   _data["DATA_NAME"], "_index.json")
+        try:
+            _idx = json.load(open(_idx_path, encoding="utf-8"))
+        except Exception:
+            continue
+        for _p in (_idx.get("PAGES") or []):
+            _all_pages.append(_p)
+    if not _all_pages:
+        st.caption("(no PageIndex pages to plot)")
+        return
+
+    # Group by category preserving the order they first appear
+    _categories: dict = {}
+    for _p in _all_pages:
+        cat = _p.get("category", "Uncategorized")
+        _categories.setdefault(cat, []).append(_p)
+
+    _ref_dict = rag_agg.get("PageIndex") or {}
+    _ref_total = sum(slot["ref_count"] for slot in _ref_dict.values())
+
+    _total_rows = len(_all_pages) + len(_categories)
+    _fig, _ax = plt.subplots(figsize=(12, max(4, _total_rows * 0.32)))
+    _ax.set_xlim(-0.5, 12)
+    _ax.set_ylim(-0.5, _total_rows)
+    _ax.axis("off")
+    _ax.set_title(
+        f"PageIndex: {rag_name}  "
+        f"({len(_all_pages)} pages / {len(_ref_dict)} referenced / "
+        f"{_ref_total} total refs)",
+        fontsize=12, fontweight="bold",
+    )
+
+    y_pos = _total_rows - 1
+    for cat, pages in _categories.items():
+        _ax.text(0.2, y_pos, f"[{cat}]", fontsize=10, fontweight="bold",
+                  va="center", fontfamily="IPAexGothic")
+        y_pos -= 1
+        for p in pages:
+            pid = str(p.get("id", ""))
+            title = p.get("title", "")
+            slot = _ref_dict.get(pid)
+            if slot and slot["ref_count"] > 0:
+                color = "#1565C0"; weight = "bold"; marker = ">>>"
+                suffix = f"  ({slot['ref_count']} refs)"
+            else:
+                color = "#888888"; weight = "normal"; marker = " - "
+                suffix = ""
+            _ax.text(1.0, y_pos, f"{marker} [{pid}] {title}{suffix}",
+                      fontsize=9, va="center", color=color,
+                      fontweight=weight, fontfamily="IPAexGothic")
+            y_pos -= 1
+    plt.tight_layout()
+    st.pyplot(_fig); plt.close(_fig)
+
+
+
 ### Support Agent Test screen ###
 def _support_agent_test():
     """Support-Agent evaluation (the legacy sidebar Support Eval, moved to the main view)."""
@@ -4609,6 +5250,8 @@ def main():
             _view_options.append("Knowledge Explorer")
         if st.session_state.allowed_user_memory_explorer:
             _view_options.append("User Memory Explorer")
+        if st.session_state.allowed_agent_performance_explorer:
+            _view_options.append("Agent Performance Explorer")
         if st.session_state.allowed_support_eval:
             _view_options.append("Support Agent Test")
         if st.session_state.allowed_scheduler:
@@ -5205,6 +5848,8 @@ def main():
         return
     if st.session_state.get("main_view") == "User Memory Explorer":
         _user_memory_explorer()
+    if st.session_state.get("main_view") == "Agent Performance Explorer":
+        _agent_performance_explorer()
         return
     if st.session_state.get("main_view") == "Support Agent Test":
         _support_agent_test()
@@ -5435,16 +6080,22 @@ def main():
                                 download_data.append({"role": "detail", "content": st.session_state.session.get_detail_info(k, k2)})
                                 chat_expander = st.expander("Detail Information")
                                 with chat_expander:
-                                    _detail_info = st.session_state.session.get_detail_info(k, k2)
-                                    # Split into per-section blocks and attach a Copy button to each.
-                                    # Current marker is "[Section]"; older sessions saved with "【...】" still split correctly.
-                                    import re as _re
-                                    _blocks = _re.split(r'\n(?=\[[^\]\n]+\]|【)', _detail_info)
-                                    for _bi, _block in enumerate(_blocks):
-                                        _block_stripped = _block.strip()
-                                        if _block_stripped:
-                                            render_copy_button(_block_stripped, f"detail_copy_{k}_{k2}_{_bi}")
-                                            st.markdown(_block_stripped.replace("\n", "<br>"), unsafe_allow_html=True)
+                                    _dt_t1, _dt_t2, _dt_t3 = st.tabs(["LLM Input", "Token Usage", "Detail"])
+                                    with _dt_t1:
+                                        _render_llm_input_tab(v2)
+                                    with _dt_t2:
+                                        _render_token_usage_tab(v2)
+                                    with _dt_t3:
+                                        _detail_info = st.session_state.session.get_detail_info(k, k2)
+                                        # Split into per-section blocks and attach a Copy button to each.
+                                        # Current marker is "[Section]"; older sessions saved with "【...】" still split correctly.
+                                        import re as _re
+                                        _blocks = _re.split(r'\n(?=\[[^\]\n]+\]|【)', _detail_info)
+                                        for _bi, _block in enumerate(_blocks):
+                                            _block_stripped = _block.strip()
+                                            if _block_stripped:
+                                                render_copy_button(_block_stripped, f"detail_copy_{k}_{k2}_{_bi}")
+                                                st.markdown(_block_stripped.replace("\n", "<br>"), unsafe_allow_html=True)
 
                         # Analytics
                         if st.session_state.allowed_analytics_knowledge or st.session_state.allowed_analytics_compare:
@@ -5481,6 +6132,35 @@ def main():
 #                                            if _cmp_imagegen_list:
 #                                                _cmp_img_idx = _cmp_imagegen_list.index(st.session_state.compare_imagegen_engine_name) if st.session_state.compare_imagegen_engine_name in _cmp_imagegen_list else 0
 #                                                st.session_state.compare_imagegen_engine_name = st.selectbox("Compare Engine(IMAGEGEN):", _cmp_imagegen_list, index=_cmp_img_idx, key=f"cmpEngine_img{k}_{k2}")
+                                            # Regression test — optionally exclude KNOWLEDGE / BOOK
+                                            # entries from the compare agent for this run. Empty selection
+                                            # = normal comparison (full agent vs full agent).
+                                            _cmp_knowledge_names = [
+                                                _k.get("RAG_NAME") for _k in (_compare_agent_data_tmp.get("KNOWLEDGE") or [])
+                                                if _k.get("RAG_NAME")
+                                            ]
+                                            _cmp_book_names = [
+                                                _b.get("RAG_NAME") for _b in (_compare_agent_data_tmp.get("BOOK") or [])
+                                                if _b.get("RAG_NAME")
+                                            ]
+                                            _cmp_exclude_k = []
+                                            _cmp_exclude_b = []
+                                            if _cmp_knowledge_names:
+                                                _cmp_exclude_k = st.multiselect(
+                                                    "Exclude KNOWLEDGE (regression):",
+                                                    _cmp_knowledge_names,
+                                                    default=[],
+                                                    key=f"cmpExcludeK_{k}_{k2}",
+                                                    help="比較対象から外したい KNOWLEDGE RAG_NAME を選択。空 = 通常比較。",
+                                                )
+                                            if _cmp_book_names:
+                                                _cmp_exclude_b = st.multiselect(
+                                                    "Exclude BOOK (regression):",
+                                                    _cmp_book_names,
+                                                    default=[],
+                                                    key=f"cmpExcludeB_{k}_{k2}",
+                                                    help="比較対象から外したい BOOK RAG_NAME を選択。空 = 通常比較。",
+                                                )
                                             compare_col1, _ = st.columns(2)
                                             if compare_col1.button("Analytics Results - Compare Agents", key=f"conpareAgent_btn{k}_{k2}", disabled=bool(st.session_state._bg_task)):
                                                 _cmp_seq = k
@@ -5492,6 +6172,20 @@ def main():
                                                     _cmp_overwrite.setdefault("ENGINE", {})["LLM"] = _cmp_agent_data["ENGINE"]["LLM"][st.session_state.compare_engine_name]
                                                 if st.session_state.compare_imagegen_engine_name and st.session_state.compare_imagegen_engine_name in _cmp_agent_data.get("ENGINE", {}).get("IMAGEGEN", {}):
                                                     _cmp_overwrite.setdefault("ENGINE", {})["IMAGEGEN"] = _cmp_agent_data["ENGINE"]["IMAGEGEN"][st.session_state.compare_imagegen_engine_name]
+                                                # Apply KNOWLEDGE/BOOK exclusions — update_dict treats list values
+                                                # as full replacements, so the filtered list replaces the original.
+                                                _cmp_excl_k = list(_cmp_exclude_k)
+                                                _cmp_excl_b = list(_cmp_exclude_b)
+                                                if _cmp_excl_k:
+                                                    _cmp_overwrite["KNOWLEDGE"] = [
+                                                        _k for _k in (_cmp_agent_data.get("KNOWLEDGE") or [])
+                                                        if _k.get("RAG_NAME") not in _cmp_excl_k
+                                                    ]
+                                                if _cmp_excl_b:
+                                                    _cmp_overwrite["BOOK"] = [
+                                                        _b for _b in (_cmp_agent_data.get("BOOK") or [])
+                                                        if _b.get("RAG_NAME") not in _cmp_excl_b
+                                                    ]
                                                 _cmp_v2 = v2
                                                 _cmp_svc = dict(st.session_state.web_service)
                                                 _cmp_usr = dict(st.session_state.web_user)
@@ -5516,7 +6210,9 @@ def main():
                                                         _cmp_analytics_dict["compare_agents"] = []
                                                     _cmp_analytics_dict["compare_agents"].append({
                                                         "compare_agent": {"timestamp": str(datetime.now()), "agent_file": _cmp_agent_file, "model_name": cmp_model,
-                                                                          "response": cmp_resp, "diff": cmp_diff, "knowledge_rag": cmp_know_ref},
+                                                                          "response": cmp_resp, "diff": cmp_diff, "knowledge_rag": cmp_know_ref,
+                                                                          "excluded_knowledge": _cmp_excl_k,
+                                                                          "excluded_book": _cmp_excl_b},
                                                         "compare_text": {"compare_model_name": cmp_text_model, "text": cmp_text}})
                                                     _cmp_session.set_analytics_history(_cmp_k, _cmp_k2, _cmp_analytics_dict)
                                                 _run_bg_task("compare", f"Running comparative analysis ({_cmp_k}_{_cmp_k2})", _run_compare)
@@ -5560,10 +6256,17 @@ def main():
                                         chat_expander_compare = st.expander("Analytics Results - Compare Agents")
                                         with chat_expander_compare:
                                             compare_agents = analytics_dict["compare_agents"]
-                                            compare_agent_labels = [
-                                                f"{i+1}: {agent['compare_agent']['agent_file']} ({agent['compare_agent']['model_name']})"
-                                                for i, agent in enumerate(compare_agents)
-                                            ]
+                                            def _cmp_label(_i, _ag):
+                                                _base = f"{_i+1}: {_ag['compare_agent']['agent_file']} ({_ag['compare_agent']['model_name']})"
+                                                _excl_k = _ag['compare_agent'].get('excluded_knowledge') or []
+                                                _excl_b = _ag['compare_agent'].get('excluded_book') or []
+                                                _tags = []
+                                                if _excl_k:
+                                                    _tags.append(f"-K:{','.join(_excl_k)}")
+                                                if _excl_b:
+                                                    _tags.append(f"-B:{','.join(_excl_b)}")
+                                                return _base + (f" [{' / '.join(_tags)}]" if _tags else "")
+                                            compare_agent_labels = [_cmp_label(i, ag) for i, ag in enumerate(compare_agents)]
                                             selected_compare_idx = st.selectbox(
                                                 "Select Compare Agent Result:",
                                                 range(len(compare_agents)),
@@ -5576,6 +6279,12 @@ def main():
                                             compare_agent_file = compare_agent_info["agent_file"]
                                             st.markdown(f"Agent: {compare_agent_file}")
                                             st.markdown(f"Model: {compare_agent_info['model_name']}")
+                                            _cmp_excl_k_view = compare_agent_info.get('excluded_knowledge') or []
+                                            _cmp_excl_b_view = compare_agent_info.get('excluded_book') or []
+                                            if _cmp_excl_k_view:
+                                                st.markdown(f"Excluded KNOWLEDGE: `{', '.join(_cmp_excl_k_view)}`")
+                                            if _cmp_excl_b_view:
+                                                st.markdown(f"Excluded BOOK: `{', '.join(_cmp_excl_b_view)}`")
                                             st.markdown(f"Diff: {compare_agent_info['diff']}")
                                             if st.session_state.allowed_analytics_knowledge:
                                                 if "knowledge_rag" in compare_agent_info:
@@ -5636,23 +6345,43 @@ def main():
                                                                 rag: {lk: _resolve_ku_file(st.session_state.session.session_analytics_folder_path, _ku_seq, _ku_sub, v, lk, rag) for lk, v in image_files.items()}
                                                                 for rag in sorted({os.path.splitext(f)[0].rsplit("_", 1)[-1] for v in image_files.values() for f in v})
                                                             }
+                                                            # Compare-side PageIndex tree support, same as the main side.
+                                                            _cmp_kbu_agent_data = dmu.read_json_file(compare_agent_file, agent_folder_path) or {}
+                                                            _cmp_kbu_rag_defs = {
+                                                                _r.get("RAG_NAME"): _r
+                                                                for _r in ((_cmp_kbu_agent_data.get("KNOWLEDGE") or []) + (_cmp_kbu_agent_data.get("BOOK") or []))
+                                                                if _r.get("RAG_NAME")
+                                                            }
                                                             for rag_category, files in rag_to_files.items():
-                                                                st_scatter01, st_scatter02 = st.columns(2)
-                                                                if files.get("scatter_plot_file_ref"):
-                                                                    st_scatter01.image(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_ref"])
-                                                                if files.get("scatter_plot_file_category"):
-                                                                    st_scatter02.image(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_category"])
-                                                                with st.expander(f"Coordinate - {rag_category}"):
-                                                                    rag_rank_df = pd.read_csv(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_csv"])
-                                                                    if 'category_color' in rag_rank_df.columns:
-                                                                        display_items = ["id", "title", "create_date", "X1", "X2", "category_color", "category_sum", "category", "db", "value_text"]
-                                                                        display_items = [c for c in display_items if c in rag_rank_df.columns]
-                                                                    else:
-                                                                        display_items = ["id", "title", "create_date", "X1", "X2", "value_text"]
-                                                                    rag_rank_df = rag_rank_df[display_items]
-                                                                    st.dataframe(rag_rank_df)
-                                                                if files.get("similarity_plot_file"):
-                                                                    st.image(st.session_state.session.session_analytics_folder_path + files["similarity_plot_file"])
+                                                                _cmp_rag_def_here = _cmp_kbu_rag_defs.get(rag_category)
+                                                                _cmp_is_pi = bool(_cmp_rag_def_here and _cmp_rag_def_here.get("RETRIEVER") == "PageIndex")
+                                                                if _cmp_is_pi:
+                                                                    import DigiM_AgentPerformanceExplorer as _ape_ku_cmp
+                                                                    _cmp_pi_refs = [
+                                                                        _p for _p in (dmu.parse_log_template(_rd) for _rd in (compare_agent_info.get("knowledge_rag", {}).get("knowledge_ref") or []))
+                                                                        if _p.get("rag") == rag_category and "similarity_Q" in _p
+                                                                    ]
+                                                                    _cmp_pi_agg = _ape_ku_cmp.aggregate_chunk_refs(
+                                                                        [{"knowledge_refs": _cmp_pi_refs, "timestamp": ""}]
+                                                                    )
+                                                                    _render_ape_pageindex_tree(_cmp_rag_def_here, rag_category, _cmp_pi_agg.get(rag_category, {}))
+                                                                else:
+                                                                    st_scatter01, st_scatter02 = st.columns(2)
+                                                                    if files.get("scatter_plot_file_ref"):
+                                                                        st_scatter01.image(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_ref"])
+                                                                    if files.get("scatter_plot_file_category"):
+                                                                        st_scatter02.image(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_category"])
+                                                                    with st.expander(f"Coordinate - {rag_category}"):
+                                                                        rag_rank_df = pd.read_csv(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_csv"])
+                                                                        if 'category_color' in rag_rank_df.columns:
+                                                                            display_items = ["id", "title", "create_date", "X1", "X2", "category_color", "category_sum", "category", "db", "value_text"]
+                                                                            display_items = [c for c in display_items if c in rag_rank_df.columns]
+                                                                        else:
+                                                                            display_items = ["id", "title", "create_date", "X1", "X2", "value_text"]
+                                                                        rag_rank_df = rag_rank_df[display_items]
+                                                                        st.dataframe(rag_rank_df)
+                                                                    if files.get("similarity_plot_file"):
+                                                                        st.image(st.session_state.session.session_analytics_folder_path + files["similarity_plot_file"])
                                                                 for ak_dict in compare_agent_info["knowledge_utility"]["similarity_rank"][rag_category]:
                                                                     st.markdown(ak_line(ak_dict))
 
@@ -5740,25 +6469,46 @@ def main():
                                                             st.markdown(_ki_interp["_all"].get("text", ""))
                                                             st.caption(f"generated: {_ki_interp['_all'].get('timestamp','')}")
 
+                                                    # Pre-load this turn's agent RAG defs so the loop can swap the
+                                                    # (empty) scatter for a Page Tree on any PageIndex RAG.
+                                                    _kbu_agent_data = dmu.read_json_file(v2.get("setting", {}).get("agent_file", ""), agent_folder_path) or {}
+                                                    _kbu_rag_defs = {
+                                                        _r.get("RAG_NAME"): _r
+                                                        for _r in ((_kbu_agent_data.get("KNOWLEDGE") or []) + (_kbu_agent_data.get("BOOK") or []))
+                                                        if _r.get("RAG_NAME")
+                                                    }
                                                     for rag_category, files in rag_to_files.items():
                                                         st.markdown(f"### {rag_category}")
-                                                        st_scatter01, st_scatter02 = st.columns(2)
-                                                        if files.get("scatter_plot_file_ref"):
-                                                            st_scatter01.image(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_ref"])
-                                                        if files.get("scatter_plot_file_category"):
-                                                            st_scatter02.image(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_category"])
-                                                        if files.get("scatter_plot_file_csv"):
-                                                            with st.expander(f"Coordinate - {rag_category}"):
-                                                                rag_rank_df = pd.read_csv(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_csv"])
-                                                                if 'category_color' in rag_rank_df.columns:
-                                                                    display_items = ["id", "title", "create_date", "X1", "X2", "category_color", "category_sum", "category", "db", "value_text"]
-                                                                    display_items = [c for c in display_items if c in rag_rank_df.columns]
-                                                                else:
-                                                                    display_items = ["id", "title", "create_date", "X1", "X2", "value_text"]
-                                                                rag_rank_df = rag_rank_df[display_items]
-                                                                st.dataframe(rag_rank_df)
-                                                        if files.get("similarity_plot_file"):
-                                                            st.image(st.session_state.session.session_analytics_folder_path + files["similarity_plot_file"])
+                                                        _rag_def_here = _kbu_rag_defs.get(rag_category)
+                                                        _is_pi_render = bool(_rag_def_here and _rag_def_here.get("RETRIEVER") == "PageIndex")
+                                                        if _is_pi_render:
+                                                            import DigiM_AgentPerformanceExplorer as _ape_ku
+                                                            _pi_refs = [
+                                                                _p for _p in (dmu.parse_log_template(_rd) for _rd in v2["response"]["reference"]["knowledge_rag"])
+                                                                if _p.get("rag") == rag_category and "similarity_Q" in _p
+                                                            ]
+                                                            _pi_agg = _ape_ku.aggregate_chunk_refs(
+                                                                [{"knowledge_refs": _pi_refs, "timestamp": ""}]
+                                                            )
+                                                            _render_ape_pageindex_tree(_rag_def_here, rag_category, _pi_agg.get(rag_category, {}))
+                                                        else:
+                                                            st_scatter01, st_scatter02 = st.columns(2)
+                                                            if files.get("scatter_plot_file_ref"):
+                                                                st_scatter01.image(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_ref"])
+                                                            if files.get("scatter_plot_file_category"):
+                                                                st_scatter02.image(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_category"])
+                                                            if files.get("scatter_plot_file_csv"):
+                                                                with st.expander(f"Coordinate - {rag_category}"):
+                                                                    rag_rank_df = pd.read_csv(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_csv"])
+                                                                    if 'category_color' in rag_rank_df.columns:
+                                                                        display_items = ["id", "title", "create_date", "X1", "X2", "category_color", "category_sum", "category", "db", "value_text"]
+                                                                        display_items = [c for c in display_items if c in rag_rank_df.columns]
+                                                                    else:
+                                                                        display_items = ["id", "title", "create_date", "X1", "X2", "value_text"]
+                                                                    rag_rank_df = rag_rank_df[display_items]
+                                                                    st.dataframe(rag_rank_df)
+                                                            if files.get("similarity_plot_file"):
+                                                                st.image(st.session_state.session.session_analytics_folder_path + files["similarity_plot_file"])
                                                         for ak_dict in analytics_dict["knowledge_utility"]["similarity_rank"][rag_category]:
                                                             st.markdown(ak_line(ak_dict))
                                                         # Per-DB "Interpret with LLM" button + existing result
@@ -6276,6 +7026,17 @@ def main():
                     q = str(df_in.at[idx, "Question"]).strip()
                     if not q or q.lower() == "nan":
                         continue
+                    # Optional QuestionStyle column — prepended to the query
+                    # only when present and non-empty (the raw Question stays
+                    # unmodified, including for Ground Truth evaluation).
+                    _qstyle = ""
+                    if "QuestionStyle" in df_in.columns:
+                        _qs_raw = df_in.at[idx, "QuestionStyle"]
+                        if not pd.isna(_qs_raw):
+                            _qstyle = str(_qs_raw).strip()
+                            if _qstyle.lower() in ("nan", "none"):
+                                _qstyle = ""
+                    q_agent = (_qstyle + "\n" + q) if _qstyle else q
 
                     sess = dms.DigiMSession(sid, sname)
                     sess.save_status_message(
@@ -6294,7 +7055,7 @@ def main():
                     try:
                         _captured = []
                         for _y in dme.DigiMatsuExecute_MultiPersona(
-                            svc, usr, sid, sname, ag_file, q,
+                            svc, usr, sid, sname, ag_file, q_agent,
                             [], {"TIME": "", "SITUATION": ""}, {}, [],
                             execution, bt_personas,
                             in_rag_query_text="", in_org=bt_org,
@@ -6424,11 +7185,11 @@ def main():
                 "completed Excel (with `Answer`, `Verdict`, `Score`, `Match`, "
                 "`Seq Ratio`, `Token F1`, `Eval` columns filled) is saved to the "
                 "session folder and downloadable below.\n\n"
-                "**Benchmark tip** — the `Memory Use (BatchTest only)` toggle below scores "
-                "each row in isolation when OFF (prior turns are not loaded into "
-                "the LLM context); each row is still saved to chat history (and "
-                "a digest is still generated if `Save Digest` is on). This toggle "
-                "is independent from the chat header Memory Use."
+                "**Benchmark tip** — `Memory Use (BatchTest only)` (OFF = each row scored in "
+                "isolation, prior turns not loaded into LLM context) and "
+                "`Save Digest (BatchTest only)` (OFF = skip digest generation per row "
+                "to save cost/time on large runs) are independent of the chat "
+                "header toggles, so changing them does not affect normal chat."
             )
             _batch_uploader_key = f"batch_test_uploader_{st.session_state.get('batch_test_uploader_counter', 0)}"
             _batch_file = st.file_uploader(
@@ -6470,7 +7231,7 @@ def main():
                     st.warning(
                         "`Question` 列のあるシートが見つかりませんでした。"
                     )
-            _bc1, _bc2 = st.columns([1, 2])
+            _bc1, _bc2, _bc3 = st.columns([1, 1, 1])
             _bc2.checkbox(
                 "Memory Use (BatchTest only)",
                 value=False,
@@ -6479,6 +7240,16 @@ def main():
                     "バッチテストにのみ有効な独立トグル。OFF にすると各行を独立に評価 "
                     "(過去ターンを LLM コンテキストに載せない)。Chat ヘッダーの "
                     "Memory Use とは独立。"
+                ),
+            )
+            _bc3.checkbox(
+                "Save Digest (BatchTest only)",
+                value=False,
+                key="batch_save_digest",
+                help=(
+                    "バッチテストにのみ有効な独立トグル。OFF で各行の digest 生成を "
+                    "抑止 — 大量実行のコスト/時間を節約。Chat ヘッダーの "
+                    "Save Digest とは独立。"
                 ),
             )
             _can_run_batch = (
@@ -6496,7 +7267,7 @@ def main():
                     "MEMORY_SIMILARITY": st.session_state.memory_similarity,
                     "MAGIC_WORD_USE":    st.session_state.magic_word_use,
                     "STREAM_MODE":       False,
-                    "SAVE_DIGEST":       st.session_state.save_digest,
+                    "SAVE_DIGEST":       st.session_state.batch_save_digest,
                     "META_SEARCH":       st.session_state.meta_search,
                     "RAG_QUERY_GENE":    st.session_state.RAG_query_gene,
                     "WEB_SEARCH":        st.session_state.web_search,
@@ -6773,14 +7544,44 @@ def main():
                     "See agent_02DigitalMATSUMOTO_ToolUser.json for an example."
                 )
 
-        if raw_input := st.chat_input("Your Message", disabled=_chat_disabled):
-            st.session_state.pending_input = raw_input
-            st.session_state.is_processing = True
-            # Detect skill slash command up-front so the processing branch can route.
-            _slash = _parse_slash_command(raw_input)
-            if _slash is not None:
-                st.session_state.pending_skill = _slash
-            st.rerun()
+        # Draft banner — surfaces a stashed message when the user typed something
+        # while a prior turn was still running. Send is gated on the same
+        # `_chat_disabled` flag the chat_input itself used to honour.
+        if st.session_state.get("draft_input"):
+            with st.container():
+                _draft_text = st.session_state.draft_input
+                _draft_preview = _draft_text if len(_draft_text) <= 200 else (_draft_text[:200] + " …")
+                st.info(f"📝 下書き: {_draft_preview}")
+                _dc1, _dc2 = st.columns([1, 1])
+                _send_disabled = _chat_disabled or not _draft_text.strip()
+                if _dc1.button("Send draft", key="draft_send_btn", disabled=_send_disabled):
+                    st.session_state.pending_input = _draft_text
+                    st.session_state.draft_input = ""
+                    st.session_state.is_processing = True
+                    _slash = _parse_slash_command(_draft_text)
+                    if _slash is not None:
+                        st.session_state.pending_skill = _slash
+                    st.rerun()
+                if _dc2.button("Discard", key="draft_discard_btn"):
+                    st.session_state.draft_input = ""
+                    st.rerun()
+
+        # chat_input itself is always enabled — when a prior turn is still
+        # running we save the submission as a draft instead of executing,
+        # so the user can compose their next message in the meantime.
+        if raw_input := st.chat_input("Your Message"):
+            if _chat_disabled:
+                st.session_state.draft_input = raw_input
+                st.toast("実行中のため下書きとして保存しました。完了後に Send draft で送信できます。")
+                st.rerun()
+            else:
+                st.session_state.pending_input = raw_input
+                st.session_state.is_processing = True
+                # Detect skill slash command up-front so the processing branch can route.
+                _slash = _parse_slash_command(raw_input)
+                if _slash is not None:
+                    st.session_state.pending_skill = _slash
+                st.rerun()
 
         if st.session_state.is_processing and st.session_state.pending_input:
             user_input = st.session_state.pending_input
