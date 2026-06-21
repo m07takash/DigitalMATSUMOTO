@@ -79,14 +79,20 @@ class Plugin:
 
     @staticmethod
     def run(input_path: str) -> dict[str, Any]:
+        # PersonalTest sheet is the only required one — scoring works off of
+        # its `Category` + `Memo` columns alone. The Category sheet is purely
+        # for label / theory metadata and is optional.
+        try:
+            df_qa = pd.read_excel(input_path, sheet_name="PersonalTest")
+        except Exception as e:
+            return {"error": f"Failed to read PersonalTest sheet: {e}"}
         try:
             df_cat = pd.read_excel(input_path, sheet_name="Category")
-            df_qa  = pd.read_excel(input_path, sheet_name="PersonalTest")
-        except Exception as e:
-            return {"error": f"Failed to read Excel: {e}"}
+        except Exception:
+            df_cat = pd.DataFrame()  # missing Category sheet is fine
 
-        # Category meta lookup
-        cat_meta = _build_category_meta(df_cat)
+        # Category meta lookup (empty dict when Category sheet is absent)
+        cat_meta = _build_category_meta(df_cat) if not df_cat.empty else {}
         # Group QA by category, in the order they first appear
         categories: dict[str, dict] = {}
         cat_order: list[str] = []
@@ -221,17 +227,35 @@ def _score_answer(answer: Any) -> float | None:
     return None
 
 
+def _get_cell(row: dict, *names: str) -> Any:
+    """Lenient cell lookup — accepts a few spelling/casing variants per slot
+    so user-edited Excel files with `メモ` / `回答` / `MemoryNo` etc. still
+    feed the scorer correctly."""
+    for n in names:
+        if n in row and not (isinstance(row[n], float) and pd.isna(row[n])):
+            return row[n]
+    # Case-insensitive / whitespace-insensitive fallback
+    norm_keys = {str(k).strip().lower(): k for k in row.keys()}
+    for n in names:
+        k = norm_keys.get(n.strip().lower())
+        if k is not None:
+            v = row[k]
+            if not (isinstance(v, float) and pd.isna(v)):
+                return v
+    return None
+
+
 def _analyze_category(cat: str, rows: list[dict]) -> dict:
     axes_raw: dict[str, list[float]] = {}
     narratives: list[dict] = []
     scored = unscored = 0
     for r in rows:
-        memo = _norm(r.get("Memo"))
-        answer = _norm(r.get("Answer"))
-        gt = _norm(r.get("Ground Truth"))
-        question = _norm(r.get("Question"))
-        question_style = _norm(r.get("Question Style"))
-        no = _norm(r.get("No"))
+        memo = _norm(_get_cell(r, "Memo", "メモ", "MEMO"))
+        answer = _norm(_get_cell(r, "Answer", "回答", "ANSWER"))
+        gt = _norm(_get_cell(r, "Ground Truth", "GroundTruth", "GT"))
+        question = _norm(_get_cell(r, "Question", "質問"))
+        question_style = _norm(_get_cell(r, "Question Style", "QuestionStyle"))
+        no = _norm(_get_cell(r, "No", "no", "番号"))
         axis, reverse = _parse_axis(memo)
 
         score = _score_answer(answer)
@@ -316,10 +340,36 @@ def _render_category(cat: str, data: dict) -> None:
             st.dataframe(df, hide_index=True, use_container_width=True)
         st.caption(f"scored: **{data['scored']}**  /  unscored: **{data['unscored']}**")
     elif data["narratives"]:
-        st.caption(
-            f"narrative-only category — {len(data['narratives'])} answers below"
-            f" (use LLM evaluation for scoring)"
-        )
+        # No axes were scored. Provide a self-diagnosing hint so the user
+        # can tell whether it's `Memo` / `Answer` that's the culprit,
+        # rather than seeing an empty section with no explanation.
+        n_rows = len(data["narratives"])
+        n_with_memo = sum(1 for n in data["narratives"] if n.get("memo"))
+        n_with_answer = sum(1 for n in data["narratives"] if n.get("answer"))
+        if n_with_memo == 0 and n_with_answer == 0:
+            st.info(
+                f"narrative-only category — {n_rows} 件 (Memo / Answer どちらも空)。"
+                " 採点軸を出すには Memo 列に軸ラベル (例: `外向性（Extraversion）`)、"
+                " Answer 列に `はい / どちらでもない / いいえ` を入れてください。"
+            )
+        elif n_with_memo == 0:
+            st.warning(
+                f"Memo 列が空のため採点軸が作れません ({n_rows} 件中 Answer 入力 {n_with_answer} 件)。"
+                f" 各行の `Memo` 列に軸ラベル (例: `外向性（Extraversion）`) を入れてください。"
+            )
+        elif n_with_answer == 0:
+            st.warning(
+                f"Answer 列が全行で空です ({n_rows} 件中 Memo 入力 {n_with_memo} 件)。"
+                " 回答を入れて再 Run してください。"
+            )
+        else:
+            st.warning(
+                f"採点できる Answer が 1 件もありませんでした"
+                f" ({n_rows} 件中 Answer 入力 {n_with_answer} 件 / Memo 入力 {n_with_memo} 件)。"
+                " Answer は `はい` / `どちらでもない` / `いいえ` / `Agree` / `Disagree` /"
+                " `1`〜`7` のいずれかにしてください。"
+                " (narrative-only category の場合は LLM 評価で読み込まれます)"
+            )
 
     with st.expander(f"Answers ({len(data['narratives'])})"):
         for n in data["narratives"]:
