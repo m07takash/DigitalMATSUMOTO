@@ -43,6 +43,15 @@
   - [Export / Report](#export--report)
   - [Session management](#session-management)
 - [User Memory Explorer](#user-memory-explorer)
+- [Agent Performance Explorer (APE)](#agent-performance-explorer-ape)
+  - [Data sources (precedence: PG → live folders → archives)](#data-sources-precedence-pg--live-folders--archives)
+  - [Tab 1: Overview](#tab-1-overview)
+  - [Tab 2: Knowledge / Book Utilization](#tab-2-knowledge--book-utilization)
+  - [Integration with Chat tab Analytics Results](#integration-with-chat-tab-analytics-results)
+- [Chat tab — other features](#chat-tab--other-features)
+  - [Detail Information tabs](#detail-information-tabs)
+  - [Compare Agent — regression with KNOWLEDGE / BOOK exclusion](#compare-agent--regression-with-knowledge--book-exclusion)
+  - [Draft input mode](#draft-input-mode)
 - [Batch Test (bulk Q&A evaluation)](#batch-test-bulk-qa-evaluation)
   - [Input Excel format](#input-excel-format)
   - [Output Excel format](#output-excel-format)
@@ -50,6 +59,11 @@
   - [Result Analysis (instant)](#result-analysis-instant)
   - [LLM critique (on-demand)](#llm-critique-on-demand)
   - [Implementation notes](#implementation-notes)
+- [Evaluation](#evaluation)
+  - [Plugin architecture](#plugin-architecture)
+  - [UI flow](#ui-flow)
+  - [PersonalEvaluation plugin](#personalevaluation-plugin)
+  - [Adding a new evaluation](#adding-a-new-evaluation)
 - [API Reference](#api-reference)
   - [Endpoint list](#endpoint-list)
   - [POST /run — Send a message](#post-run--send-a-message)
@@ -2046,6 +2060,82 @@ A 3-tab layout from the left: **"My Memory" / "User Understanding (Individual)" 
 
 ---
 
+## Agent Performance Explorer (APE)
+
+The agent-side counterpart of User Memory Explorer. Pick a target agent from the **Agent Performance Explorer** sidebar option and explore its cross-session performance. Backend: `DigiM_AgentPerformanceExplorer.py`. Requires `Allowed["Agent Performance Explorer"] = true`.
+
+### Data sources (precedence: PG → live folders → archives)
+
+| # | Source | Purpose |
+|---|------|------|
+| 1 | **PostgreSQL** (`digim_dialogs / digim_references / digim_sessions`) | Warehouse populated by the sidebar Sessions → **Export DB** button. Indexed and fast |
+| 2 | **Live session folders** (`user/session2*/chat_memory.json`) | Sessions not yet Export-DB'd |
+| 3 | **Archived ZIPs** (`user/archive/sessions_archive_*.zip`) | Compressed after `ARCHIVE_DAYS` |
+
+De-duplicated by session_id with PG winning. The union gives the full history including archived sessions and not-yet-exported sessions.
+
+### Tab 1: Overview
+
+- Sessions / Turns / Users / Total chars / Avg turns per session
+- Data period (first_ts – last_ts)
+- Monthly activity bar chart
+- Top Users table
+
+### Tab 2: Knowledge / Book Utilization
+
+Cumulative reference profile per KNOWLEDGE / BOOK / PageIndex entry:
+
+- **Per-RAG summary**: Unique chunks / Total refs / Σ utility / Max utility
+- **Value selector**: `count` / `Σ similarity_Q` / `Σ similarity_A` / `Σ utility`
+- **Scatter (Vector RAG)**: every chunk in the backing collection as a gray background dot; referenced chunks overlaid
+  - **Color**: by **sign** of the selected value — 🔵 blue (+) / 🔴 red (−) / ⚫ gray (0)
+  - **Size**: scales with `|value|` by default; **Uniform size** checkbox flattens all referenced dots to a constant size
+- **Page Tree (PageIndex RAG)**: same shape as Knowledge Explorer's PageIndex view. Referenced pages rendered in **blue** with `>>>` marker + `(N refs)` suffix; unreferenced ones in muted gray
+- **Top chunks table**: by `ref_count` / by `Σ knowledge_utility` (top 10)
+
+### Integration with Chat tab Analytics Results
+
+The Chat tab's **"Analytics Results - Knowledge Utility"** button also renders a **Page Tree** when the referenced RAGs include any PageIndex (referenced pages in blue with ref counts). Both surfaces share the same `_render_ape_pageindex_tree` helper.
+
+The Knowledge Utility scatter's **background dots** ("all chunks") are now scoped to the **persona-accessible subset** of the Chroma collection — the `where` filter is built from the persona's `define_code` at chat time so each persona sees its own knowledge space.
+
+---
+
+## Chat tab — other features
+
+### Detail Information tabs
+
+The "**Detail Information**" expander under each turn is now split into three tabs:
+
+1. **LLM Input** — the actual LLM input recovered for this turn
+   - **System Prompt** — reconstructed with the chat-time persona override
+   - **Conversation Memories Loaded** — what was actually pulled from history
+   - **Final Assembled Prompt** — the full user-message string (newlines preserved, wrapped `<pre>` block so the whole thing is visible top-to-bottom)
+   - **Components Breakdown** — User Memory / RAG / Prompt Template Code / Situation / Web Context / AgentSearch / FunctionSearch
+2. **Token Usage** — per-role table of consumed tokens
+   - **Main LLM / Thinking / RAG Query Gen / Meta Search / Dialog Digest** — real token counts
+   - **Web Search / Embedding** — estimated via `dmu.count_token` (`Note: estimated`)
+   - **AgentSearch / FunctionSearch** — chunk count + response tokens
+   - TOTAL row + a **Per-Model Summary** when multiple models were used
+3. **Detail** — the previous text-block view (per-section Copy buttons)
+
+### Compare Agent — regression with KNOWLEDGE / BOOK exclusion
+
+After picking a compare agent in "Analytics Results - Compare Agents", two multiselects (`Exclude KNOWLEDGE (regression):` / `Exclude BOOK (regression):`) let you **remove specific RAG_NAME entries** before re-running the same question.
+
+Example use: "What changes if I drop the `Comment` Knowledge? What about `SystemGuide` Book?" Multiple ablations stack in one session and their labels carry an `[-K:Comment,Diary]` style suffix. Available on both the Chat tab and Knowledge Explorer side.
+
+### Draft input mode
+
+The chat input is **always editable** even while a previous turn is running. On Enter:
+
+- **Idle** → runs immediately as usual
+- **Busy** → stashed into `draft_input`, a `📝 下書き:` banner appears above the chat input
+
+The banner has `Send draft` / `Discard` buttons. Send becomes enabled once the previous turn finishes. Re-submitting overwrites the draft; slash commands (`/skill_name …`) are preserved verbatim.
+
+---
+
 ## Batch Test (bulk Q&A evaluation)
 
 The `Batch Test (upload Q&A xlsx)` expander at the bottom of the Chat screen runs a spreadsheet of questions through **the current session with the current chat settings**, and — when a Ground Truth column is present — auto-scores each answer with LLM + deterministic metrics.
@@ -2055,9 +2145,23 @@ The `Batch Test (upload Q&A xlsx)` expander at the bottom of the Chat screen run
 | Column | Required | Description |
 |------|------|------|
 | `Question` | ✓ | The question text |
+| `Question Style` / `QuestionStyle` | – | When present, prepended to the query (`Question Style\nQuestion` sent to the agent). Both spaced and camelCase variants are accepted |
+| `No` | – | Row identifier. Referenced by `Memory No` to pin specific prior rows for history |
+| `Memory No` / `MemoryNo` | – | Per-row history access control (see below). Both spaced and camelCase variants are accepted |
 | `Ground Truth` | – | Expected answer. Triggers evaluation when present |
 | `Answer` | – | Filled in by the run |
 | Any other column | – | Preserved verbatim in the output |
+
+**`Memory No` semantics**
+
+| Cell value | Effect |
+|------|------|
+| `All` | Full history (MEMORY_USE=True) |
+| `1, 3` / `1,3` / `1; 3` / `1 3` | Load history ONLY from the rows whose `No` is 1 or 3 (others get `MEMORY_FLG=N` for the duration of this row, then restored) |
+| Empty cell | No history (MEMORY_USE=False) |
+| `Memory No` column absent | All rows: no history |
+
+When a `Memory No` column is present, `MEMORY_SAVE` is auto-promoted to True so the seq map stays populated. Separators: comma / semicolon / whitespace. Excel's `1.0` auto-coercion is normalised back to `1`.
 
 - **Multi-sheet xlsx** is supported: every sheet that has a `Question` column is auto-detected; a dropdown lets you target one sheet or run them all. Each input sheet is written back to a same-named output sheet.
 - **Sheet name is arbitrary** (no need to be called `Test`).
@@ -2080,7 +2184,8 @@ Input columns are preserved as-is; the following are appended (overwritten if al
 
 ### Key features
 
-- **`Memory Use (BatchTest only)` checkbox**: an independent toggle that affects BatchTest only. OFF scores each row in isolation (prior turns are not loaded into the LLM context). Independent from the chat header `Memory Use`.
+- **Per-row history is fully driven by the `Memory No` column**: the previous `Memory Use (BatchTest only)` checkbox has been removed in favour of `No` + `Memory No` columns, which let you express "this row sees rows 1 & 3" / "this row sees nothing" at row granularity rather than one toggle for the whole run.
+- **`Save Digest (BatchTest only)` checkbox**: independent toggle to suppress digest generation. OFF saves cost / time on large runs. Independent from the chat header `Save Digest`.
 - **Honors the sidebar persona selection**: when 2+ persona ids are selected, each question is run in **multi-persona parallel mode** and the result xlsx is written in **long format** (one row per question × persona).
 - **Progress display**: the sidebar bg-task message shows `(N/N) Running batch Q&A...` in near-real-time (counter ticks per persona completion).
 - **Result file picker**: a dropdown switches between past `batch_results_*.xlsx` files for download / analysis.
@@ -2107,6 +2212,68 @@ Reads the result xlsx from the session folder and renders a cross-sheet summary 
 - Multi-persona mode auto-sets `MEMORY_SAVE=True` (the parallel path only streams `[STATUS]` chunks; per-persona responses are read from chat_memory's sub_seqs of the latest seq).
 - Evaluation uses `dmt.eval_answer_vs_groundtruth` in `user/common/tool/analysis.py`. Default LLM agent for the verdict step is `agent_53CompareTexts.json`.
 - LLM critique uses `dmt.critique_batch_results` (same file).
+
+---
+
+## Evaluation
+
+Sidebar → **Evaluation**: a plugin host for evaluation tests. Requires `Allowed["Evaluation"] = true`. Backend: [DigiM_Evaluation.py](DigiM_Evaluation.py).
+
+### Plugin architecture
+
+Drop a `Plugin` class under `user/common/evaluation/<name>/main.py` and it shows up in the picker automatically. **Plugin contract**:
+
+```python
+class Plugin:
+    name         = "<internal id>"
+    display_name = "<UI label>"
+    description  = "<short blurb>"
+
+    @staticmethod
+    def sample_path() -> str | None:
+        "Path to a sample input (used as the downloadable template)."
+
+    @staticmethod
+    def run(input_path: str) -> dict:
+        "Heavy lifting. Returns a dict consumed by render & report below."
+
+    @staticmethod
+    def render(result: dict) -> None:
+        "Streamlit render (st.pyplot / st.dataframe / ...)."
+
+    @staticmethod
+    def report_md(result: dict) -> str:
+        "Markdown for `Generate Report`."
+```
+
+LLM critique is provided by the generic `DigiM_Evaluation.llm_evaluate()` helper — it formats `report_md` and asks a chosen agent to write a critique in 4 sections (全体評価 / 強み / 弱み / 改善提案). Plugins may override by exposing their own `llm_evaluate(...)`.
+
+### UI flow
+
+1. Pick a plugin from the dropdown
+2. **Download template (.xlsx)** — when the plugin's `sample_path()` points to a real file
+3. **Upload input (.xlsx)** — the filled-in spreadsheet
+4. **Run analysis** → plugin's `run()` → `render()` displays the result
+5. **LLM Evaluation** — choose an agent → `Evaluate with LLM` (the critique is cached on the result)
+6. **Generate Report** → Markdown export including the LLM critique
+
+### PersonalEvaluation plugin
+
+Scores 7 personality theories at once: Big Five / Schwartz Value Theory / Self-Determination / Personal Strivings / Narrative Identity / Social Identity / Attachment. Template: `test/PersonalTestQA.xlsx`.
+
+**Input Excel** — 2 sheets:
+- `Category`: 7 rows of theory metadata
+- `PersonalTest`: Q/A rows (`No / Category / Question Style / Question / Memory No / Memo / Answer / Ground Truth / Compare`)
+
+**Scoring**:
+- The `Memo` column is parsed into `(axis_label, reverse_flag)` — e.g. "神経症傾向の逆（Emotional Stability）" → axis=`Emotional Stability`, reverse=True.
+- Answer keywords → 0–1 scores: `はい/Agree`→1.0, `どちらでもない/Neutral`→0.5, `いいえ/Disagree`→0.0; bare `1-5` / `1-7` scales are auto-normalised.
+- 4 categories (Traits / Values / Motivations / Attachment) get a **radar chart** + score table.
+- 3 narrative-only categories (Goals / Identity / Sociability) are rendered as text and read by the LLM critique step.
+
+### Adding a new evaluation
+
+Drop a `<name>/main.py` under `user/common/evaluation/` that defines the `Plugin` class — the picker auto-discovers it on next page load. No restart, no registration step.
 
 ---
 

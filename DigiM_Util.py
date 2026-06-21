@@ -217,13 +217,25 @@ def extract_list_pattern(text, pattern=r"(\[\s*{.*?}\s*\])"):
 
 # Trim a list of date ranges
 def merge_periods(periods):
-    converted = [
-        {
-            "start": datetime.strptime(p["start"], "%Y/%m/%d"),
-            "end": datetime.strptime(p["end"], "%Y/%m/%d"),
-        }
-        for p in periods
-    ]
+    # The upstream extract_date LLM occasionally returns items that lack one
+    # or both date fields (e.g. `{"end": "2026/06/20"}` or `{"label": "今"}`).
+    # Silently skip those rather than KeyError-ing the entire turn — Meta
+    # Search is supplemental, not load-bearing.
+    converted = []
+    for p in periods:
+        if not isinstance(p, dict):
+            continue
+        _s = p.get("start")
+        _e = p.get("end")
+        if not _s or not _e:
+            continue
+        try:
+            converted.append({
+                "start": datetime.strptime(str(_s), "%Y/%m/%d"),
+                "end":   datetime.strptime(str(_e), "%Y/%m/%d"),
+            })
+        except (ValueError, TypeError):
+            continue
 
     # Sort by start
     converted.sort(key=lambda x: x["start"])
