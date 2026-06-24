@@ -1,4 +1,4 @@
-"""Tool plugin: web search across Perplexity / OpenAI / Google / Claude.
+"""Tool plugin: web search across Perplexity / OpenAI / AzureOpenAI / Google / Claude.
 
 Migrated from DigiM_Tool.py — see that file for the historical implementation.
 
@@ -101,6 +101,52 @@ def WebSearch_OpenAI(service_info, user_info, session_id, session_name, agent_fi
     return service_info, user_info, response_text, export_urls
 
 
+# Web search (Azure OpenAI Service — Responses API with web_search_preview)
+def WebSearch_AzureOpenAI(service_info, user_info, session_id, session_name, agent_file,
+                          input, import_contents=[], add_info={}):
+    from openai import AzureOpenAI
+    if os.path.exists("system.env"):
+        load_dotenv("system.env")
+    api_key       = os.getenv("AZURE_OPENAI_API_KEY")
+    azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
+    # Web search via the Responses API requires a recent preview api-version;
+    # honour a per-engine override, fall back to the project default.
+    api_version   = os.getenv("AZURE_OPENAI_SEARCH_API_VERSION") \
+                        or os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+
+    system_setting_dict = dmu.read_yaml_file("setting.yaml")
+    system_prompt = system_setting_dict.get("AZURE_OPENAI_SEARCH_SYSTEM_PROMPT", "Be precise and concise.")
+    user_prompt   = system_setting_dict.get("AZURE_OPENAI_SEARCH_USER_PROMPT", "以下の入力に基づいて、関連する情報を提供してください。")
+    # NB: for Azure, this is the *deployment name*, not the base model id.
+    model         = system_setting_dict.get("AZURE_OPENAI_SEARCH_MODEL", "gpt-5.4-mini")
+
+    client = AzureOpenAI(
+        api_key=api_key,
+        azure_endpoint=azure_endpoint,
+        api_version=api_version,
+    )
+    response = client.responses.create(
+        model=model,
+        tools=[{"type": "web_search"}],
+        input=user_prompt + "\n" + input,
+        instructions=system_prompt,
+    )
+
+    response_text = ""
+    export_urls = []
+    for item in response.output:
+        if item.type == "message":
+            for content in item.content:
+                if hasattr(content, "text"):
+                    response_text += content.text
+                    if hasattr(content, "annotations"):
+                        for ann in content.annotations:
+                            if hasattr(ann, "url"):
+                                export_urls.append({"url": ann.url, "title": getattr(ann, "title", "")})
+
+    return service_info, user_info, response_text, export_urls
+
+
 # Web search (Google Grounding Search)
 def WebSearch_Google(service_info, user_info, session_id, session_name, agent_file,
                      input, import_contents=[], add_info={}):
@@ -112,7 +158,7 @@ def WebSearch_Google(service_info, user_info, session_id, session_name, agent_fi
 
     system_setting_dict = dmu.read_yaml_file("setting.yaml")
     user_prompt = system_setting_dict.get("GOOGLE_SEARCH_USER_PROMPT", "以下の入力に基づいて、関連する情報を提供してください。")
-    model = system_setting_dict.get("GOOGLE_SEARCH_MODEL", "gemini-2.5-flash-preview-05-20")
+    model = system_setting_dict.get("GOOGLE_SEARCH_MODEL", "gemini-3.5-flash")
 
     client = genai.Client(api_key=api_key)
     response = client.models.generate_content(
@@ -179,6 +225,7 @@ def WebSearch_Claude(service_info, user_info, session_id, session_name, agent_fi
 WEB_SEARCH_ENGINES = {
     "Perplexity": WebSearch_PerplexityAI,
     "OpenAI": WebSearch_OpenAI,
+    "AzureOpenAI": WebSearch_AzureOpenAI,
     "Google": WebSearch_Google,
     "Claude": WebSearch_Claude,
 }
@@ -206,7 +253,7 @@ dmtr.register_tool(
     "WebSearch",
     description=(
         "Run a web search via the engine specified in args.engine "
-        "('Perplexity' | 'OpenAI' | 'Google' | 'Claude'; default Perplexity). "
+        "('Perplexity' | 'OpenAI' | 'AzureOpenAI' | 'Google' | 'Claude'; default Perplexity). "
         "Use when the question requires up-to-date information from the open web."
     ),
     schema={
@@ -215,7 +262,7 @@ dmtr.register_tool(
             "input": _INPUT_TEXT,
             "engine": {
                 "type": "string",
-                "enum": ["Perplexity", "OpenAI", "Google", "Claude"],
+                "enum": ["Perplexity", "OpenAI", "AzureOpenAI", "Google", "Claude"],
                 "description": "Which web-search backend to use.",
                 "default": "Perplexity",
             },
@@ -240,6 +287,14 @@ dmtr.register_tool(
     schema={"type": "object", "properties": {"input": _INPUT_TEXT}, "required": ["input"]},
     func=WebSearch_OpenAI,
     example="/WebSearch_OpenAI OpenAI GPTシリーズの最新動向",
+)
+
+dmtr.register_tool(
+    "WebSearch_AzureOpenAI",
+    description="Web search via Azure OpenAI Service (Responses API + web_search_preview tool). Uses AZURE_OPENAI_* env vars. Prefer the generic 'WebSearch' tool unless a specific engine is required.",
+    schema={"type": "object", "properties": {"input": _INPUT_TEXT}, "required": ["input"]},
+    func=WebSearch_AzureOpenAI,
+    example="/WebSearch_AzureOpenAI Azure OpenAI Service の最新リージョン",
 )
 
 dmtr.register_tool(
