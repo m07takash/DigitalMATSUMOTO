@@ -6744,8 +6744,15 @@ def main():
             _ws_col1, _ws_col2 = st.columns([1, 2])
             if _ws_col1.checkbox("WEB Search", value=st.session_state.web_search):
                 st.session_state.web_search = True
-                _ws_default = dmu.read_yaml_file("setting.yaml").get("WEB_SEARCH_DEFAULT", "Perplexity")
-                _ws_engines = list(dmt.WEB_SEARCH_ENGINES.keys())
+                _ws_setting = dmu.read_yaml_file("setting.yaml")
+                _ws_default = _ws_setting.get("WEB_SEARCH_DEFAULT", "Perplexity")
+                # `WEB_SEARCH_ENGINES_AVAILABLE` (setting.yaml) is the allowlist
+                # for the dropdown — if missing/empty, fall back to every
+                # registered engine. Unknown entries are dropped silently so a
+                # stale config doesn't break the picker.
+                _ws_all = list(dmt.WEB_SEARCH_ENGINES.keys())
+                _ws_allow = _ws_setting.get("WEB_SEARCH_ENGINES_AVAILABLE") or []
+                _ws_engines = [e for e in _ws_allow if e in _ws_all] or _ws_all
                 if "web_search_engine" not in st.session_state or st.session_state.web_search_engine not in _ws_engines:
                     st.session_state.web_search_engine = _ws_default if _ws_default in _ws_engines else _ws_engines[0]
                 _ws_col2.selectbox("Engine:", _ws_engines, key="web_search_engine", label_visibility="collapsed")

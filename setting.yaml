@@ -24,20 +24,35 @@ TEST_FOLDER: "test/"
 MAX_PARALLEL_PERSONAS: 4
 # Maximum number of personas auto-selected in Thinking Mode (default for the WebUI "Max Personas" input)
 MAX_PERSONAS: 3
-# Default web-search engine (choose one of OpenAI, Perplexity, Google)
+# Default web-search engine. Must be one of the keys in WEB_SEARCH_ENGINES_AVAILABLE.
 WEB_SEARCH_DEFAULT: "OpenAI"
+# Which engines appear in the WebUI dropdown. Comment out or remove entries
+# to hide them from the picker (the underlying function still exists; this
+# only controls the UI surface). Leave empty/missing to expose all.
+WEB_SEARCH_ENGINES_AVAILABLE:
+  - "Perplexity"
+  - "OpenAI"
+#  - "AzureOpenAI"
+  - "Google"
+  - "Claude"
 PERPLEXITY_URL: "https://api.perplexity.ai/chat/completions"
 PERPLEXITY_MODEL: "sonar"
 PERPLEXITY_SYSTEM_PROMPT: "Be precise and concise."
 PERPLEXITY_USER_PROMPT: "以下の入力に基づいて、関連する情報を提供してください。"
 PERPLEXITY_MAX_TOKENS: 2000
 PERPLEXITY_REASONING_EFFORT: "medium"
-OPENAI_SEARCH_MODEL: "gpt-5-mini"
+OPENAI_SEARCH_MODEL: "gpt-5.4-mini"
 OPENAI_SEARCH_SYSTEM_PROMPT: "Be precise and concise."
 OPENAI_SEARCH_USER_PROMPT: "以下の入力に基づいて、関連する情報を提供してください。"
-GOOGLE_SEARCH_MODEL: "gemini-2.5-flash-preview-05-20"
+# Azure OpenAI Service — uses AZURE_OPENAI_API_KEY / AZURE_OPENAI_ENDPOINT /
+# AZURE_OPENAI_API_VERSION env vars (same convention as the rest of the app).
+# AZURE_OPENAI_SEARCH_MODEL is the *deployment name* (not the base model id).
+AZURE_OPENAI_SEARCH_MODEL: "gpt-5.4-mini"
+AZURE_OPENAI_SEARCH_SYSTEM_PROMPT: "Be precise and concise."
+AZURE_OPENAI_SEARCH_USER_PROMPT: "以下の入力に基づいて、関連する情報を提供してください。"
+GOOGLE_SEARCH_MODEL: "gemini-3.5-flash"
 GOOGLE_SEARCH_USER_PROMPT: "以下の入力に基づいて、関連する情報を提供してください。"
-CLAUDE_SEARCH_MODEL: "claude-sonnet-4-6"
+CLAUDE_SEARCH_MODEL: "claude-opus-4-8"
 CLAUDE_SEARCH_SYSTEM_PROMPT: "Be precise and concise."
 CLAUDE_SEARCH_USER_PROMPT: "以下の入力に基づいて、関連する情報を提供してください。"
 CLAUDE_SEARCH_MAX_TOKENS: 4096
