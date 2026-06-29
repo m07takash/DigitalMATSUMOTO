@@ -127,3 +127,51 @@ def llm_evaluate(plugin, result: dict, agent_file: str,
     except Exception as e:
         response = f"[Evaluation error] {type(e).__name__}: {e}"
     return response, model_name
+
+
+def llm_compare_section(section_name: str, section_md: str, agent_file: str,
+                         service_info: dict, user_info: dict,
+                         plugin_name: str = "") -> tuple[str, str]:
+    """Per-section commentary: ask the LLM to highlight commonalities and
+    differences between Answer(AI) and Ground Truth for one section only.
+
+    The prompt is intentionally tighter than `llm_evaluate` so the response
+    stays focused on a single category. Returns `(markdown_text, model_name)`.
+    """
+    import DigiM_Agent as dma
+    agent = dma.DigiM_Agent(agent_file)
+    model_type = "LLM"
+    engine = agent.agent.get("ENGINE", {}).get(model_type, {})
+    model_name = engine.get("MODEL", "")
+
+    _ctx = f"{plugin_name} - {section_name}" if plugin_name else section_name
+    prompt = (
+        f"以下は **{_ctx}** の評価結果です。\n"
+        f"「Answer(AI)」(被評価エージェントの回答) と「Ground Truth」(正解 / 期待値) を比較し、"
+        f"**共通点** と **相違点** を簡潔に解説してください。\n"
+        f"\n"
+        f"出力構成 (Markdown):\n"
+        f"\n"
+        f"### 共通点\n"
+        f"- 箇条書きで 2〜5項目\n"
+        f"\n"
+        f"### 相違点\n"
+        f"- 箇条書きで 2〜5項目\n"
+        f"\n"
+        f"注意:\n"
+        f"- 各項目は1〜2文で簡潔に。冗長な前置きや総評は不要。\n"
+        f"- 数値スコアや軸ラベルが含まれる場合は具体的に言及する。\n"
+        f"- ナラティブテキストの場合は内容の方向性 (志向 / トーン / 強調点) で比較する。\n"
+        f"\n"
+        f"---\n\n"
+        f"## 評価結果\n\n{section_md}"
+    )
+
+    response = ""
+    try:
+        for _p, chunk, _comp in agent.generate_response(model_type, prompt):
+            if chunk:
+                response += chunk
+    except Exception as e:
+        response = f"[Section commentary error] {type(e).__name__}: {e}"
+    return response, model_name

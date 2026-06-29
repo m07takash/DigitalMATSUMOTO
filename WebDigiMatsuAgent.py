@@ -2042,12 +2042,41 @@ def _knowledge_explorer():
         df_display = st.session_state._rag_df_display
         _filterable_cols = st.session_state._rag_filterable_cols
     else:
-        _exclude_cols = [c for c in df.columns if "vector_data" in c]
+        # Exclude vector embeddings and other internal fields that aren't useful
+        # filter axes. `key_text` / `value_text` are long content fields that
+        # would never satisfy the <100-unique threshold anyway, but we drop them
+        # explicitly so they don't briefly appear in the picker on small DBs.
+        _internal_cols = {
+            "key_text", "value_text",            # long content — never a useful filter
+            "id", "X1", "X2", "Cluster",          # synthetic identifiers / coords
+            "create_date_ts",                     # numeric mirror of create_date
+            "vector_data_key_text",
+        }
+        _exclude_cols = [c for c in df.columns
+                          if "vector_data" in c or c in _internal_cols]
         df_display = df.drop(columns=_exclude_cols, errors="ignore")
         for c in df_display.columns:
             if df_display[c].apply(lambda x: isinstance(x, list)).any():
                 df_display[c] = df_display[c].apply(lambda x: ", ".join(str(i) for i in x) if isinstance(x, list) else x)
-        _filterable_cols = [c for c in df_display.columns if df_display[c].dtype == "object" and df_display[c].nunique() < 100]
+        # Filter eligibility — include EVERY column with a useful cardinality,
+        # regardless of dtype. The earlier dtype=="object" check excluded:
+        #   • numeric CSV fields (scores, counts, ratings)
+        #   • boolean flags (`private`, custom Chk fields)
+        #   • collection-specific fields that pandas infers as float/int when
+        #     they're absent (NaN) from other selected collections
+        # Cast to str for the nunique check so mixed-type columns count
+        # consistently, and gate on a sensible cardinality window.
+        _filterable_cols = []
+        for c in df_display.columns:
+            col = df_display[c].dropna()
+            if col.empty:
+                continue
+            try:
+                n_unique = col.astype(str).nunique()
+            except Exception:
+                continue
+            if 1 < n_unique < 100:
+                _filterable_cols.append(c)
         st.session_state._rag_df_display = df_display
         st.session_state._rag_filterable_cols = _filterable_cols
         st.session_state._rag_disp_sig = _disp_sig
@@ -2210,7 +2239,10 @@ def _knowledge_explorer():
     _filter_column = _fc1.selectbox("Filter Column:", ["(none)"] + _filterable_cols, key="rag_filter_col")
     _filter_values = []
     if _filter_column != "(none)":
-        _uv = sorted(df_display[_filter_column].dropna().unique().tolist())
+        # Cast to str so the value picker handles numeric / boolean / mixed
+        # collection-specific columns uniformly (sorted on mixed types raises
+        # TypeError; the downstream isin() also matches as str — see below).
+        _uv = sorted(df_display[_filter_column].dropna().astype(str).unique().tolist())
         _filter_values = _fc2.multiselect("Filter Value:", _uv, key="rag_filter_val")
     _search_text = _fc3.text_input("Text Search:", value="", placeholder="Supports wildcard *", key="rag_search_text")
 
@@ -2265,7 +2297,9 @@ def _knowledge_explorer():
     if _exclude_private and "private" in df_filtered.columns:
         df_filtered = df_filtered[df_filtered["private"] != True]
     if _filter_column != "(none)" and _filter_values:
-        df_filtered = df_filtered[df_filtered[_filter_column].isin(_filter_values)]
+        # str-side match so the filter works regardless of the column's
+        # underlying dtype (object / float / bool from mixed-collection unions).
+        df_filtered = df_filtered[df_filtered[_filter_column].astype(str).isin(_filter_values)]
     if _date_from is not None and _date_to is not None and _has_date:
         _dd = pd.to_datetime(df_filtered["create_date"], errors="coerce")
         df_filtered = df_filtered[(_dd >= pd.Timestamp(_date_from)) & (_dd <= pd.Timestamp(_date_to) + pd.Timedelta(days=1))]
@@ -7906,8 +7940,13 @@ def main():
         if st.session_state.get("draft_input"):
             with st.container():
                 _draft_text = st.session_state.draft_input
-                _draft_preview = _draft_text if len(_draft_text) <= 200 else (_draft_text[:200] + " …")
-                st.info(f"📝 下書き: {_draft_preview}")
+                # Compact preview — collapse whitespace then hard-cap at 30
+                # chars so a long / multi-line draft doesn't eat half the
+                # screen while a prior turn is still running. The full text
+                # is still re-sent verbatim when "Send draft" is clicked.
+                _draft_collapsed = " ".join(_draft_text.split())
+                _draft_preview = (_draft_collapsed[:30] + "…") if len(_draft_collapsed) > 30 else _draft_collapsed
+                st.info(f"📝 下書き ({len(_draft_text)}字): {_draft_preview}")
                 _dc1, _dc2 = st.columns([1, 1])
                 _send_disabled = _chat_disabled or not _draft_text.strip()
                 if _dc1.button("Send draft", key="draft_send_btn", disabled=_send_disabled):

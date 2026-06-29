@@ -433,8 +433,13 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
     # scatter-plot background will then be scoped to the persona-accessible
     # subset of each DB collection (matching what the persona could actually
     # have retrieved at chat time).
+    # NB: both KNOWLEDGE and BOOK entries identify themselves with `RAG_NAME`
+    # (NOT `NAME`). Using `NAME` here previously produced empty strings for
+    # every KNOWLEDGE entry, which collapsed the intended ordering so BOOK
+    # came out first and KNOWLEDGE fell into the unordered tail.
     agent = dma.DigiM_Agent(agent_file, persona=persona)
-    rag_order = [k.get("NAME", "") for k in agent.knowledge] + [b.get("RAG_NAME", "") for b in agent.book]
+    rag_order = [k.get("RAG_NAME", "") for k in agent.knowledge] + [b.get("RAG_NAME", "") for b in agent.book]
+    rag_order = [name for name in rag_order if name]
 
     # Compute similarity_Q statistics
     similarity_Q_stats = df.groupby('rag')['similarity_Q'].agg([
