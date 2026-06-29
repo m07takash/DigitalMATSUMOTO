@@ -187,7 +187,10 @@ def get_rag_collection_data(collection_name, where=None):
         return []
     data = []
     for i, cid in enumerate(response["ids"]):
-        row = {"id": cid}
+        # Defensive str() — ChromaDB always returns str ids, but enforcing it
+        # here means callers can safely do equality / merge / isin without
+        # extra type checks regardless of which collection produced the row.
+        row = {"id": str(cid)}
         row.update(response["metadatas"][i])
         data.append(row)
     return data
@@ -337,7 +340,7 @@ def _query_collection_single(collection, query_vec, result_limit, where_limitati
                 include=["metadatas", "embeddings", "distances"], where=where_clause)
             for i in range(len(rag_data_db["ids"])):
                 for j in range(len(rag_data_db["ids"][i])):
-                    v = {"id": rag_data_db["ids"][i][j]}
+                    v = {"id": str(rag_data_db["ids"][i][j])}
                     v |= rag_data_db["metadatas"][i][j]
                     v["vector_data_value_text"] = ast.literal_eval(v["vector_data_value_text"])
                     v["vector_data_key_text"] = rag_data_db["embeddings"][i][j].tolist()
@@ -359,7 +362,7 @@ def _query_collection_single(collection, query_vec, result_limit, where_limitati
             include=["metadatas", "embeddings", "distances"])
     for i in range(len(rag_data_db["ids"])):
         for j in range(len(rag_data_db["ids"][i])):
-            v = {"id": rag_data_db["ids"][i][j]}
+            v = {"id": str(rag_data_db["ids"][i][j])}
             v |= rag_data_db["metadatas"][i][j]
             v["vector_data_value_text"] = ast.literal_eval(v["vector_data_value_text"])
             v["vector_data_key_text"] = rag_data_db["embeddings"][i][j].tolist()
@@ -597,8 +600,10 @@ def get_chunk_notion(bucket, db_name, item_dict, chk_dict=None, date_dict=None, 
     # Fetch RAG-target pages
     pages = dmn.get_pages_done(db_id, chk_dict, date_dict, category_dict)
 
-    # Convert to RAG-data form
-    page_ids = [page['id'] for page in pages]
+    # Convert to RAG-data form. Force str() on every Notion-derived id so
+    # downstream lookups (chat-log id_color_map, scatter merge/isin) stay
+    # consistent with ChromaDB's string-only id contract.
+    page_ids = [str(page['id']) for page in pages]
     for page_id in page_ids:
         if item_dict is not None:
             page_items = {}
@@ -653,7 +658,7 @@ def get_chunk_notion_pageindex(bucket, db_name, item_dict, chk_dict=None, date_d
     pages = dmn.get_pages_done(db_id, chk_dict, date_dict, category_dict)
 
     for page in pages:
-        notion_page_id = page["id"]
+        notion_page_id = str(page["id"])
         if item_dict is None:
             continue
 
@@ -791,7 +796,10 @@ def save_rag_pageindex(bucket, rag_data):
 
     index_path = str(Path(pages_dir) / "_index.json")
     index_data = dmu.read_json_file(index_path) if os.path.exists(index_path) else {}
-    pages_map = {p["id"]: p for p in index_data.get("PAGES", []) if "id" in p}
+    # Coerce existing-JSON keys to str so a legacy index that happens to
+    # carry integer ids merges cleanly with the freshly-ingested str ids.
+    pages_map = {str(p["id"]): {**p, "id": str(p["id"])}
+                  for p in index_data.get("PAGES", []) if "id" in p}
 
     book_title = None
     processed = []
@@ -910,10 +918,15 @@ def save_rag_chunk_db(rag_id, rag_data):
     db_client = get_chroma_client()
     collection = db_client.get_or_create_collection(name=rag_id, metadata={"hnsw:space": "cosine"})
     response = collection.get(include=["metadatas"])
+    # All keys in `existing_map` and every ChromaDB id sent below are str()'d.
+    # ChromaDB itself stores ids as strings; the defensive coercion guards
+    # against numeric ids leaking in from upstream ingestion paths (Excel
+    # numeric cell, JSON int) so downstream dict/isin/merge lookups don't
+    # break on a "5" vs 5 mismatch.
     existing_map = {}
     if response and "ids" in response:
         for i, cid in enumerate(response["ids"]):
-            existing_map[cid] = response["metadatas"][i]
+            existing_map[str(cid)] = response["metadatas"][i]
     cnt_add = 0
     cnt_extent = 0
 
@@ -934,6 +947,9 @@ def save_rag_chunk_db(rag_id, rag_data):
         if not rag_chunk.get("value_text"):
             continue
 
+        # Normalise the chunk id to str() so all comparisons against
+        # existing_map (also string-keyed) work uniformly.
+        rag_chunk["id"] = str(rag_chunk["id"])
         chunk_id = rag_chunk["id"]
         if chunk_id not in existing_map:
             chunks_need_embed.append(rag_chunk)
@@ -968,7 +984,7 @@ def save_rag_chunk_db(rag_id, rag_data):
         val_vecs = all_vecs[n:]
 
         for i, rag_chunk in enumerate(chunks_need_embed):
-            chunk_id = rag_chunk["id"]
+            chunk_id = str(rag_chunk["id"])
             del rag_chunk["id"]
             rag_chunk["vector_data_value_text"] = str(val_vecs[i])
             if chunk_id in existing_map:
@@ -981,7 +997,7 @@ def save_rag_chunk_db(rag_id, rag_data):
 
     # Overwrite metadata-only chunks without re-embedding
     for rag_chunk in chunks_meta_only:
-        chunk_id = rag_chunk["id"]
+        chunk_id = str(rag_chunk["id"])
         del rag_chunk["id"]
         rag_chunk["vector_data_value_text"] = existing_map[chunk_id].get("vector_data_value_text", "")
         collection.update(ids=[chunk_id], metadatas=rag_chunk)
@@ -1025,7 +1041,9 @@ def save_rag_pages(rag_id, rag_data):
     index_pages = []
     cnt = 0
     for chunk in rag_data:
-        page_id = chunk.get("page_id", "").strip()
+        # `.strip()` is unsafe on non-str sources; coerce first so a numeric
+        # page_id from upstream doesn't crash the loop.
+        page_id = str(chunk.get("page_id", "") or "").strip()
         if not page_id:
             continue
 
