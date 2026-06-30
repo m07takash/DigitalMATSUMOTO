@@ -360,8 +360,18 @@ def _score_answer(answer: Any) -> float | None:
       2. Bare number alone: `^\\s*([1-7])\\s*$`
       3. Narrative-with-Likert: head-of-string patterns like `4かな`, `7、まったく`,
          `「2」くらい`, `評価は「6」` (matches the Matsumoto-style answers).
-    For 1–7 scales the bare-number lookahead disambiguates 5-scale vs 7-scale
-    via the threshold n>5: anything ≥6 is treated as 1–7.
+
+    Numeric Likert normalization is **proportional**: `n / 7` (NOT the older
+    `(n - 1) / (max - 1)`).
+      - All numeric Likert use in this plugin is MWMS / BPNSFS — both 1–7.
+        Defaulting to 1–7 also fixes the previous heuristic bug where small
+        values (e.g. 4) got over-scored by being treated as a 1–5 scale.
+      - `n / 7` keeps the smallest valid response (1) at ~0.14 instead of 0,
+        so the radar stays informative when every item is answered 1
+        (a respondent who genuinely "doesn't agree with anything"
+        shouldn't render visually identical to "didn't answer at all").
+      - The radar midpoint of 4 lands at 4/7 ≈ 0.57 instead of exactly 0.5,
+        a small skew we accept in exchange for a visible floor.
     """
     if answer is None:
         return None
@@ -377,7 +387,7 @@ def _score_answer(answer: Any) -> float | None:
     m = re.match(r"^\s*([1-7])\s*$", a)
     if m:
         n = int(m.group(1))
-        return (n - 1) / 6.0 if n > 5 else (n - 1) / 4.0
+        return n / 7.0
     # 3. Narrative-with-Likert (head-of-string only — avoids picking up
     #    incidental digits later in the text). Looks at the first 80 chars.
     head = a[:80]
@@ -385,17 +395,17 @@ def _score_answer(answer: Any) -> float | None:
     m = re.search(r"[「『\[\(（]\s*([1-7])\s*[」』\]\)）]", head)
     if m:
         n = int(m.group(1))
-        return (n - 1) / 6.0
+        return n / 7.0
     # 3b. Leading digit with Japanese particle/punct: "4かな", "7、", "2."
     m = re.match(r"\s*([1-7])\s*[、。,.\sかなだですよねぐらいくら]", head)
     if m:
         n = int(m.group(1))
-        return (n - 1) / 6.0
+        return n / 7.0
     # 3c. Anywhere phrase like "評価(は|を)「N」" / "Nくらい" / "Nに近い"
     m = re.search(r"([1-7])\s*(?:くらい|に近い|前後|程度|あたり)", head)
     if m:
         n = int(m.group(1))
-        return (n - 1) / 6.0
+        return n / 7.0
     return None
 
 
@@ -782,7 +792,18 @@ def _render_category(cat: str, data: dict) -> None:
         _render_motivation_category(data)
         _render_narratives_expander(data)
         return
+    if cat == "目標":
+        # Specialised: LLM-driven structured analysis (Venn + ratings + connectors).
+        _render_goals_category(data)
+        _render_narratives_expander(data)
+        return
     if cat in _NARRATIVE_CATEGORIES:
+        # For 人格形成 / 社会性 / 愛着 we run the new LLM-driven scored radar
+        # ABOVE the existing similarity diagnostics. The two are complementary:
+        #   - LLM scored radar = what each side IS (substantive content)
+        #   - Text similarity   = how closely Answer text matches GT text
+        if cat in _NARRATIVE_SCORED_AXES:
+            _render_narrative_scored_category(cat, data)
         _render_narrative_category(cat, data)
         return
 
@@ -1004,6 +1025,569 @@ def _render_motivation_category(data: dict) -> None:
 
 # Japanese reading labels for BPNSFS axes (used for radar ticks).
 _BPNSFS_JP = {"Autonomy": "自律性", "Competence": "有能感", "Relatedness": "関係性"}
+
+
+# --------------------------------------------------------------------------
+# Narrative-scored categories — LLM-driven radar + similarities/differences
+# (人格形成 / 社会性 / 愛着). Each category has a fixed axis list; the LLM
+# scores Answer(AI) and Ground Truth on every axis using a 5-step discrete
+# rubric and produces a similarities + differences commentary capped at
+# ~300 chars each. See `DigiM_Evaluation.llm_extract_narrative_scored`.
+# --------------------------------------------------------------------------
+
+_NARRATIVE_SCORED_AXES = {
+    "人格形成": [
+        ("物語的一貫性", "narrative coherence",
+         "エピソード全体が時系列的・因果的に整合し、首尾一貫したストーリーとして語られているか"),
+        ("行為主体性 vs 共同性", "agency / communion",
+         "自己決定・達成志向 (Agency) と、他者との関係性・親密さ (Communion) の両面が見られるか。両者がバランスよく統合されているほど高得点"),
+        ("感情の連鎖", "redemption / contamination",
+         "ネガティブな出来事からポジティブな気付き・成長への変容 (Redemption) が描かれているか。逆にポジティブが急にネガティブに反転する (Contamination) パターンは減点要素"),
+        ("意味づけ", "autobiographical reasoning / meaning-making",
+         "過去の経験から自分の在り方への教訓・洞察を抽出している程度。出来事を解釈・概念化する深さ"),
+    ],
+    "社会性": [
+        ("中心性 (Centrality)", "centrality",
+         "そのグループへの所属が自己定義の中心にどれだけ位置するか (自己概念への組み込み度)"),
+        ("連帯感 (Solidarity)", "solidarity",
+         "グループのメンバーとの感情的な結びつき・絆・愛着の強さ"),
+        ("満足感 (Satisfaction)", "satisfaction",
+         "そのグループの一員であることへの満足度・誇りの度合い"),
+        ("自己カテゴリー化 (Self-stereotyping)", "self-stereotyping",
+         "自分をそのグループの典型的・代表的メンバーとして認識する程度"),
+        ("集団との類似性 (In-group homogeneity)", "in-group homogeneity",
+         "集団内のメンバーが互いに似ていると認識する程度 (内集団の同質性知覚)"),
+    ],
+    "愛着": [
+        ("回避 (Avoidance)", "avoidance",
+         "他者との情緒的接近を避け、距離・独立を維持しようとする傾向"),
+        ("不安 (Anxiety)", "anxiety",
+         "他者からの拒絶・見捨てへの強い不安・過剰な関係依存"),
+        ("信頼 (Trust)", "trust",
+         "他者の善意・信頼性を肯定的に捉えられる程度"),
+        ("自尊 (Worth)", "worth",
+         "自分は愛される価値があると感じる程度 (自己受容)"),
+        ("いたわり (Caregiving)", "caregiving",
+         "他者へのケア・配慮・サポートを能動的に行う傾向"),
+        ("喪失 (Loss)", "loss",
+         "重要な対象を失った経験への意識・統合度 (喪失体験との折り合い)"),
+    ],
+}
+
+
+def _render_narrative_scored_category(cat: str, data: dict) -> None:
+    """LLM-driven radar + similarities/differences commentary for narrative
+    categories (人格形成 / 社会性 / 愛着).
+
+    Reads `_NARRATIVE_SCORED_AXES[cat]` for the per-category axis list, fires
+    the LLM once on click, caches the result under
+    `_pe_narr_scored_<plugin>_<cat>` and renders a dual-layer radar
+    (Answer(AI) blue / Ground Truth green) + score table + 類似点/相違点 text.
+    Called BEFORE the existing similarity bar / text-comparison renderer
+    so it sits at the top of the section."""
+    import streamlit as st
+
+    axes_config = _NARRATIVE_SCORED_AXES.get(cat) or []
+    if not axes_config:
+        return
+
+    items: list[dict] = data.get("narrative_items") or []
+    if not items:
+        return
+
+    _plugin = _PLUGIN_DIR.name
+    _key = f"_pe_narr_scored_{_plugin}_{cat}"
+    _btn_k = f"btn_pe_narr_scored_{cat}"
+    _agent_state_key = f"eval_llm_agent_{_plugin}"
+
+    cols = st.columns([2, 6])
+    if cols[0].button(
+        f"{cat} を構造化分析する (LLM)",
+        key=_btn_k,
+        help=f"{cat} を {len(axes_config)} 軸で LLM 採点し、Answer(AI) と Ground Truth を重ねレーダー比較 + 類似点 / 相違点を要約します",
+    ):
+        _agent_file = st.session_state.get(_agent_state_key)
+        if not _agent_file:
+            cols[1].warning("先に LLM Evaluation セクションでエージェントを選択してください。")
+        else:
+            try:
+                with st.spinner(f"LLM が {cat} を採点中..."):
+                    # Concatenate all per-question Answer / GT into a single
+                    # block for the LLM. Memo is included so it can group
+                    # by the dimension naming convention used in the Excel.
+                    _ans_block = "\n\n".join(
+                        f"[{it.get('no','')}] {it.get('memo','')}\n"
+                        f"Q: {it.get('question','')}\n"
+                        f"A: {it.get('answer','')}"
+                        for it in items
+                    )
+                    _gt_block = "\n\n".join(
+                        f"[{it.get('no','')}] {it.get('memo','')}\n"
+                        f"Q: {it.get('question','')}\n"
+                        f"GT: {it.get('ground_truth','')}"
+                        for it in items
+                    )
+                    import DigiM_Evaluation as _de
+                    parsed, _model = _de.llm_extract_narrative_scored(
+                        category_name=cat,
+                        axes=axes_config,
+                        answer_text=_ans_block,
+                        gt_text=_gt_block,
+                        agent_file=_agent_file,
+                        service_info=st.session_state.get("web_service", {}),
+                        user_info=st.session_state.get("web_user", {}),
+                    )
+                    from datetime import datetime as _dt
+                    st.session_state[_key] = {
+                        "data": parsed, "model": _model, "agent": _agent_file,
+                        "timestamp": _dt.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+            except Exception as _e:
+                st.error(f"{cat} の構造化分析に失敗しました: {_e}")
+                return
+
+    res = st.session_state.get(_key)
+    if not res:
+        st.caption(
+            f"💡 「{cat} を構造化分析する (LLM)」を押すと、{len(axes_config)} 軸の LLM スコアで"
+            f" Answer(AI) と Ground Truth を比較する重ねレーダーと、類似点・相違点 (各300字以内) を出力します。"
+        )
+        return
+
+    d = res.get("data") or {}
+    ans_scores = d.get("answer_scores") or {}
+    gt_scores  = d.get("gt_scores") or {}
+
+    # ---- Dual-layer radar (Answer blue / GT green) ----
+    labels = [a[0] for a in axes_config]
+    vals_a  = [float(ans_scores.get(lbl, 0.0)) for lbl in labels]
+    vals_gt = [float(gt_scores.get(lbl, 0.0))  for lbl in labels]
+
+    st.markdown(f"#### {cat} — LLM スコアによる重ねレーダー (Answer(AI) ↔ Ground Truth)")
+    c1, c2 = st.columns([3, 2])
+    if len(labels) >= 3:
+        # Wrap long labels — narrative axes have parens with English which
+        # otherwise overflow into the chart area.
+        _short_labels = [re.split(r"[ \(（]", lbl, maxsplit=1)[0] for lbl in labels]
+        fig = _radar(_short_labels, vals_a,
+                       f"{cat} (LLM, 5段階離散)", values_gt=vals_gt)
+        if fig is not None:
+            with c1:
+                st.pyplot(fig)
+                import matplotlib.pyplot as _plt
+                _plt.close(fig)
+    with c2:
+        st.markdown("**スコア (Answer(AI) / Ground Truth):**")
+        _df = pd.DataFrame([
+            {"Axis": lbl, "Answer(AI)": vals_a[i], "Ground Truth": vals_gt[i],
+             "Δ (A-GT)": round(vals_a[i] - vals_gt[i], 2)}
+            for i, lbl in enumerate(labels)
+        ])
+        st.dataframe(_df, hide_index=True, use_container_width=True)
+
+    # ---- Similarities / Differences (300-char commentary) ----
+    sim_text = d.get("similarities", "") or "_(LLM 出力なし)_"
+    dif_text = d.get("differences",  "") or "_(LLM 出力なし)_"
+    st.markdown("**類似点:**")
+    st.markdown(sim_text)
+    st.markdown("**相違点:**")
+    st.markdown(dif_text)
+    st.caption(
+        f"Agent: `{res.get('agent','')}`  /  Model: `{res.get('model','')}`  /  "
+        f"Generated: {res.get('timestamp','')}"
+    )
+    st.markdown("---")
+
+
+# --------------------------------------------------------------------------
+# 目標 (Goals) — structured LLM-driven analysis (Venn + ratings + connectors)
+# --------------------------------------------------------------------------
+
+# H/M/L → 表示色 (赤 / 緑 / 青) — Streamlit Markdown 用の HTML カラー。
+_HML_COLORS = {"H": "#D32F2F", "M": "#2E7D32", "L": "#1565C0"}
+_HML_LABEL  = {"H": "High",    "M": "Medium",  "L": "Low"}
+
+
+def _hml_badge(level: str) -> str:
+    """Return an inline-styled HTML badge for a H/M/L rating."""
+    lv = (level or "M").upper()
+    color = _HML_COLORS.get(lv, "#666")
+    label = _HML_LABEL.get(lv, "?")
+    return (f'<span style="display:inline-block;padding:0 6px;border-radius:4px;'
+            f'background:{color};color:white;font-weight:600;font-size:0.85em;">'
+            f'{label}</span>')
+
+
+def _ratings_inline(d: dict, prefix: str = "") -> str:
+    """Render 4-axis ratings as inline colored badges. `prefix` selects between
+    the common dict's `answer_*` / `gt_*` slots and the side-only dict's
+    bare keys (`importance`, `commitment`, etc.)."""
+    keys = [
+        ("importance",  "大切さ"),
+        ("commitment",  "本気度"),
+        ("feasibility", "達成見込"),
+        ("achievement", "達成度"),
+    ]
+    out = []
+    for k, ja in keys:
+        out.append(f"{ja} {_hml_badge(d.get(prefix + k, 'M'))}")
+    return "  ".join(out)
+
+
+# --- 3-column band geometry --------------------------------------------------
+# Replaces the original 2-circle Venn diagram, which couldn't keep many
+# overlapping labels readable. The new layout sets three vertical bands
+# (Answer(AI) / 共通 / Ground Truth) side-by-side, each carrying its own
+# tinted background. Labels stack purely vertically within their column so
+# horizontal collisions across columns can never happen.
+#
+# Both `_render_goals_venn` (kept under the same name for backward compat)
+# and `_render_goals_connectors` consume `_venn_positions` and the same
+# `_draw_venn_base` background.
+_BAND_X      = {"answer": -2.0, "common": 0.0, "gt": +2.0}  # column centres
+_BAND_WIDTH  = 1.6                                            # background tint width
+_BAND_Y_TOP  = 1.10                                           # vertical extent of bands
+_BAND_COLORS = {"answer": "#1565C0", "common": "#555555", "gt": "#2E7D32"}
+_BAND_LABELS = {"answer": "Answer(AI)", "common": "共通", "gt": "Ground Truth"}
+
+
+def _venn_positions(answer_only: list, common: list, gt_only: list) -> dict[str, tuple[float, float]]:
+    """Return label → (x, y) layout for every Goals region.
+
+    Three vertical bands at x=-2.0 / 0.0 / +2.0. Within each band labels
+    are **scattered** rather than stacked on a rigid grid:
+
+    - Stratified Y: each item gets its own vertical strip in input order,
+      so the LLM's importance ordering still reads top-down.
+    - Hashed X jitter: each label's horizontal offset is derived from
+      MD5(label) — an organic, non-mechanical look that is still
+      deterministic (the same goal text always lands at the same spot,
+      so re-renders are stable for screenshots / comparison).
+    - Hashed Y wobble: a small extra Y offset (capped at 30 % of the
+      strip height) breaks the perfectly even spacing without letting
+      neighbours collide.
+
+    All offsets are bounded so labels stay safely inside their band
+    (band half-width 0.8, label x ∈ cx ± 0.45 → 0.35 clearance).
+    """
+    pos: dict[str, tuple[float, float]] = {}
+
+    # Hash each label into a deterministic [0,1) offset — gives every goal
+    # an organic-looking position that's still reproducible across renders.
+    import hashlib
+    def _hu(s: str, salt: int) -> float:
+        h = hashlib.md5(f"{salt}|{s}".encode("utf-8")).digest()
+        return int.from_bytes(h[:4], "big") / float(1 << 32)
+
+    # Half-width of the X scatter. Band is 1.6 wide, so ±0.45 leaves
+    # plenty of clearance to band edges even with multi-char labels.
+    _X_SCATTER = 0.45
+
+    def _scatter(items: list, cx: float, y_max: float) -> None:
+        n = len(items)
+        if n == 0:
+            return
+        if n == 1:
+            label = items[0]["label"]
+            x = cx + (_hu(label, 0) - 0.5) * (_X_SCATTER * 0.6)
+            pos[label] = (x, 0.0)
+            return
+        # Y-wobble capped at 30 % of one strip's height so adjacent labels
+        # never overlap vertically even with maximum jitter.
+        strip = (2 * y_max) / (n - 1)
+        y_wobble = min(0.12, strip * 0.30)
+        for i, it in enumerate(items):
+            label = it["label"]
+            # Stratified Y: preserve LLM importance order top-down...
+            t = i / (n - 1)
+            y_base = y_max - t * (2 * y_max)
+            # ...add hashed wobble so the stripes don't read as rigid rows.
+            y = y_base + (_hu(label, 1) - 0.5) * 2 * y_wobble
+            # X is purely hashed — different x per label by design.
+            x = cx + (_hu(label, 0) - 0.5) * 2 * _X_SCATTER
+            pos[label] = (x, y)
+
+    _scatter(answer_only, cx=_BAND_X["answer"], y_max=_BAND_Y_TOP * 0.92)
+    _scatter(common,      cx=_BAND_X["common"], y_max=_BAND_Y_TOP * 0.92)
+    _scatter(gt_only,     cx=_BAND_X["gt"],     y_max=_BAND_Y_TOP * 0.92)
+    return pos
+
+
+def _draw_venn_base(ax, title: str = ""):
+    """Draw the 3 tinted columns + headers onto `ax`. Replaces the old
+    overlapping-circle Venn background. `ax` is returned so callers can
+    keep plotting on top."""
+    import matplotlib.patches as _patches
+    for key, cx in _BAND_X.items():
+        color = _BAND_COLORS[key]
+        ax.add_patch(_patches.Rectangle(
+            (cx - _BAND_WIDTH / 2, -_BAND_Y_TOP),
+            _BAND_WIDTH, 2 * _BAND_Y_TOP,
+            facecolor=color, alpha=0.10,
+            edgecolor=color, linewidth=1.2,
+        ))
+        ax.text(
+            cx, _BAND_Y_TOP + 0.08, _BAND_LABELS[key],
+            ha="center", va="bottom",
+            fontsize=12, fontweight="bold", color=color,
+            fontfamily="IPAexGothic",
+        )
+    ax.set_xlim(_BAND_X["answer"] - _BAND_WIDTH, _BAND_X["gt"] + _BAND_WIDTH)
+    ax.set_ylim(-_BAND_Y_TOP - 0.30, _BAND_Y_TOP + 0.45)
+    # Don't force equal aspect — the layout is intentionally wide-and-short.
+    ax.set_axis_off()
+    if title:
+        ax.set_title(title, fontsize=12, fontfamily="IPAexGothic")
+    return ax
+
+
+def _venn_label_fontsize(answer_only: list, common: list, gt_only: list) -> int:
+    """Pick a single label font size that keeps a region's vertical column
+    from overlapping itself. The maximum-cardinality region drives the
+    choice so all labels read at one uniform size in the figure."""
+    n_max = max(len(answer_only), len(common), len(gt_only), 1)
+    if n_max <= 4:  return 12
+    if n_max <= 7:  return 11
+    if n_max <= 10: return 10
+    if n_max <= 14: return 9
+    if n_max <= 18: return 8
+    return 7
+
+
+def _render_goals_venn(answer_only: list, common: list, gt_only: list):
+    """Draw the 3-column Goals layout with labels placed inside each band.
+    Returns `(fig, positions)`. The caller can reuse `positions` to draw
+    connectors over the same coordinate system."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots(figsize=(10, 5.5))
+    _draw_venn_base(ax, title="目標の分布")
+    pos = _venn_positions(answer_only, common, gt_only)
+    fs = _venn_label_fontsize(answer_only, common, gt_only)
+    for label, (x, y) in pos.items():
+        ax.text(x, y, label, ha="center", va="center", fontsize=fs,
+                 fontfamily="IPAexGothic",
+                 bbox=dict(boxstyle="round,pad=0.25", facecolor="white",
+                            edgecolor="#666", alpha=0.92))
+    plt.tight_layout()
+    return fig, pos
+
+
+def _render_goals_connectors(answer_only: list, common: list, gt_only: list,
+                              edges_answer: list, edges_gt: list):
+    """Draw the same Venn + connector lines between goals.
+
+    Color encoding:
+      - black: edge present in BOTH edges_answer and edges_gt
+      - red:   edge present only in edges_answer
+      - blue:  edge present only in edges_gt
+    Line style:
+      - solid:  synergy
+      - dashed: tradeoff
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    pos = _venn_positions(answer_only, common, gt_only)
+    # Normalise an edge into a hashable key. Synergy is undirected, but we
+    # keep direction info via the sorted-tuple for consistent dedup.
+    def _key(e):
+        return (tuple(sorted([e.get("from", ""), e.get("to", "")])),
+                e.get("kind", "synergy"))
+    set_a = {_key(e) for e in (edges_answer or [])}
+    set_g = {_key(e) for e in (edges_gt or [])}
+
+    fig, ax = plt.subplots(figsize=(10, 5.5))
+    _draw_venn_base(ax, title="目標間のシナジー / トレードオフ")
+
+    # Place labels exactly as in the base Venn so connectors line up.
+    fs = _venn_label_fontsize(answer_only, common, gt_only)
+    for label, (x, y) in pos.items():
+        ax.text(x, y, label, ha="center", va="center", fontsize=fs,
+                 fontfamily="IPAexGothic",
+                 bbox=dict(boxstyle="round,pad=0.25", facecolor="white",
+                            edgecolor="#666", alpha=0.92), zorder=3)
+
+    # Edge drawing — use curved arcs (FancyArrowPatch) instead of straight
+    # ax.plot lines so overlapping edges fan out and stay distinguishable:
+    #   - each edge gets a unique curvature based on its sort-stable index
+    #   - rad alternates sign so half the arcs bow upward, half downward
+    #   - the magnitude grows with horizontal distance: edges that span
+    #     all three columns curve harder than within-column edges
+    from matplotlib.patches import FancyArrowPatch
+    # Deterministic order so curvature assignment is stable across renders.
+    all_keys = sorted(set_a | set_g)
+    for idx, key in enumerate(all_keys):
+        (a, b), kind = key
+        if a not in pos or b not in pos:
+            continue
+        x1, y1 = pos[a]
+        x2, y2 = pos[b]
+        color = ("#222"   if key in set_a and key in set_g else
+                 "#D32F2F" if key in set_a else
+                 "#1565C0")
+        ls = "-" if kind == "synergy" else "--"
+        # Curvature: base ramps with span width so long arcs bow more.
+        span = abs(x2 - x1)
+        base_rad = 0.18 + 0.06 * span
+        rad = base_rad * (1 if (idx % 2 == 0) else -1)
+        # Small per-edge wiggle so even same-direction edges separate.
+        rad += ((idx // 2) % 3 - 1) * 0.05
+        arrow = FancyArrowPatch(
+            (x1, y1), (x2, y2),
+            connectionstyle=f"arc3,rad={rad:.3f}",
+            arrowstyle="-",
+            color=color, linestyle=ls,
+            linewidth=1.6, alpha=0.78,
+            zorder=2,
+            shrinkA=18, shrinkB=18,   # leave clearance around label bboxes
+        )
+        ax.add_patch(arrow)
+
+    # Legend
+    from matplotlib.lines import Line2D
+    legend_handles = [
+        Line2D([0], [0], color="#222",    linewidth=1.6, linestyle="-",  label="A & GT 共通"),
+        Line2D([0], [0], color="#D32F2F", linewidth=1.6, linestyle="-",  label="Answer(AI) のみ"),
+        Line2D([0], [0], color="#1565C0", linewidth=1.6, linestyle="-",  label="Ground Truth のみ"),
+        Line2D([0], [0], color="#666",    linewidth=1.6, linestyle="-",  label="シナジー"),
+        Line2D([0], [0], color="#666",    linewidth=1.6, linestyle="--", label="トレードオフ"),
+    ]
+    ax.legend(handles=legend_handles, loc="lower center",
+                bbox_to_anchor=(0.5, -0.05), ncol=5, frameon=False,
+                prop={"family": "IPAexGothic", "size": 8})
+    plt.tight_layout()
+    return fig
+
+
+def _render_goals_listing(common: list, answer_only: list, gt_only: list) -> None:
+    """Render the 3-region goal listing with colored H/M/L badges.
+    For `common` items, Answer and GT ratings are shown side-by-side."""
+    import streamlit as st
+
+    if common:
+        st.markdown("#### 共通する目標")
+        for g in common:
+            st.markdown(
+                f"**【{g.get('label', '?')}】**", unsafe_allow_html=False
+            )
+            ca, cg = st.columns(2)
+            with ca:
+                st.markdown("*Answer(AI)*")
+                st.markdown(g.get("answer_text", "") or "_(原文なし)_")
+                st.markdown(_ratings_inline(g, prefix="answer_"),
+                              unsafe_allow_html=True)
+            with cg:
+                st.markdown("*Ground Truth*")
+                st.markdown(g.get("gt_text", "") or "_(原文なし)_")
+                st.markdown(_ratings_inline(g, prefix="gt_"),
+                              unsafe_allow_html=True)
+            st.markdown("---")
+
+    if answer_only:
+        st.markdown("#### Answer(AI) のみにある目標")
+        for g in answer_only:
+            st.markdown(f"**【{g.get('label','?')}】** {g.get('text', '')}")
+            st.markdown(_ratings_inline(g), unsafe_allow_html=True)
+            st.markdown("")
+
+    if gt_only:
+        st.markdown("#### Ground Truth のみにある目標")
+        for g in gt_only:
+            st.markdown(f"**【{g.get('label','?')}】** {g.get('text', '')}")
+            st.markdown(_ratings_inline(g), unsafe_allow_html=True)
+            st.markdown("")
+
+
+def _render_goals_category(data: dict) -> None:
+    """目標 (Goals) renderer: LLM-driven structured analysis with a Venn
+    diagram, colored H/M/L listing, and a synergy/tradeoff connector graph.
+
+    Triggered by a button so the LLM call only runs when the user asks for it;
+    the result is cached in session state for the rest of the screen."""
+    import streamlit as st
+
+    items: list[dict] = data.get("narrative_items") or []
+    # Gather G1/G2/G3 raw text from the narratives, keyed by Memo.
+    by_memo = {it.get("memo", ""): it for it in items}
+    g1 = by_memo.get("目標", {})
+    g2 = by_memo.get("目標の評点", {})
+    g3 = by_memo.get("目標のトレードオフ", {})
+
+    _plugin = _PLUGIN_DIR.name
+    _key = f"_pe_goals_struct_{_plugin}"
+    _agent_state_key = f"eval_llm_agent_{_plugin}"
+
+    cols = st.columns([2, 6])
+    if cols[0].button("目標を構造化分析する (LLM)",
+                       key="btn_pe_goals_struct",
+                       help="Answer(AI) と Ground Truth の目標一覧を LLM で構造化し、ベン図 / 評点付き一覧 / シナジー・トレードオフ図を描画します"):
+        _agent_file = st.session_state.get(_agent_state_key)
+        if not _agent_file:
+            cols[1].warning("先に LLM Evaluation セクションでエージェントを選択してください。")
+        else:
+            try:
+                with st.spinner("LLM が目標を構造化中..."):
+                    import DigiM_Evaluation as _de
+                    parsed, _model = _de.llm_extract_goals_structured(
+                        g1_answer=g1.get("answer", ""), g1_gt=g1.get("ground_truth", ""),
+                        g2_answer=g2.get("answer", ""), g2_gt=g2.get("ground_truth", ""),
+                        g3_answer=g3.get("answer", ""), g3_gt=g3.get("ground_truth", ""),
+                        agent_file=_agent_file,
+                        service_info=st.session_state.get("web_service", {}),
+                        user_info=st.session_state.get("web_user", {}),
+                    )
+                    from datetime import datetime as _dt
+                    st.session_state[_key] = {
+                        "data": parsed, "model": _model, "agent": _agent_file,
+                        "timestamp": _dt.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    }
+            except Exception as _e:
+                st.error(f"目標分析に失敗しました: {_e}")
+                return
+
+    res = st.session_state.get(_key)
+    if not res:
+        st.info("「目標を構造化分析する (LLM)」を押すと、ベン図 / 評点付き一覧 / コネクタ図を表示します。")
+        return
+
+    d = res.get("data") or {}
+    answer_only = d.get("answer_only") or []
+    common      = d.get("common")      or []
+    gt_only     = d.get("gt_only")     or []
+    edges_a     = d.get("edges_answer") or []
+    edges_g     = d.get("edges_gt")     or []
+
+    st.caption(
+        f"Agent: `{res.get('agent','')}`  /  Model: `{res.get('model','')}`  /  "
+        f"Generated: {res.get('timestamp','')}  /  "
+        f"Answer-only={len(answer_only)} / 共通={len(common)} / GT-only={len(gt_only)}  ・  "
+        f"edges A={len(edges_a)} / GT={len(edges_g)}"
+    )
+
+    # ---- 1. Venn diagram (with 1-word labels in each region) ----
+    if answer_only or common or gt_only:
+        fig, _pos = _render_goals_venn(answer_only, common, gt_only)
+        st.pyplot(fig)
+        import matplotlib.pyplot as _plt
+        _plt.close(fig)
+    else:
+        st.warning("目標が抽出できませんでした。LLM 出力が空、または JSON パースに失敗した可能性があります。")
+        return
+
+    # ---- 2. Listing with colored H/M/L per dimension ----
+    _render_goals_listing(common, answer_only, gt_only)
+
+    # ---- 3. Connector graph (synergy/tradeoff, color by source) ----
+    if edges_a or edges_g:
+        fig = _render_goals_connectors(answer_only, common, gt_only, edges_a, edges_g)
+        st.pyplot(fig)
+        import matplotlib.pyplot as _plt
+        _plt.close(fig)
+    else:
+        st.caption("シナジー / トレードオフが抽出されなかったため、コネクタ図はスキップしました。")
 
 
 def _render_section_llm_button(section_name: str, section_md: str) -> None:
@@ -1321,21 +1905,25 @@ def _render_narrative_category(cat: str, data: dict) -> None:
         st.pyplot(fig); plt.close(fig)
 
     # ---- Side-by-side text comparison per row ----
-    st.markdown("#### Answer / Ground Truth 比較")
-    for it in items:
-        _head = f"**[{it['no']}] {it['axis'] or '(unmapped)'}**"
-        _meta = f"  *(Seq={it['seq']:.2f} · F1={it['f1']:.2f} · A={it['len_a']}字 / GT={it['len_b']}字)*"
-        st.markdown(_head + _meta)
-        if it["question"]:
-            st.markdown(f"**Q:** {it['question']}")
-        ca, cb = st.columns(2)
-        with ca:
-            st.markdown("**Answer(AI)**")
-            st.markdown(it["answer"] or "_(empty)_")
-        with cb:
-            st.markdown("**Ground Truth**")
-            st.markdown(it["ground_truth"] or "_(empty)_")
-        st.markdown("---")
+    # Collapsed by default — the per-row Q/A/GT block can be 10+ rows of long
+    # free-form text per category (e.g. 人格形成 has 8 rows). Keep the
+    # summary stats + radar above visible, hide the verbose row-by-row body
+    # behind an expander the user can pop open on demand.
+    with st.expander(f"Answer(AI) / Ground Truth 比較 (個別 · {len(items)} 件)", expanded=False):
+        for it in items:
+            _head = f"**[{it['no']}] {it['axis'] or '(unmapped)'}**"
+            _meta = f"  *(Seq={it['seq']:.2f} · F1={it['f1']:.2f} · A={it['len_a']}字 / GT={it['len_b']}字)*"
+            st.markdown(_head + _meta)
+            if it["question"]:
+                st.markdown(f"**Q:** {it['question']}")
+            ca, cb = st.columns(2)
+            with ca:
+                st.markdown("**Answer(AI)**")
+                st.markdown(it["answer"] or "_(empty)_")
+            with cb:
+                st.markdown("**Ground Truth**")
+                st.markdown(it["ground_truth"] or "_(empty)_")
+            st.markdown("---")
 
 
 def _category_to_md(cat: str, data: dict) -> str:

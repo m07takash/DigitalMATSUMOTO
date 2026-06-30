@@ -418,7 +418,8 @@
         "ART_CRITICS": "agent_52ArtCritic.json",
         "EXTRACT_DATE": "agent_55ExtractDate.json",
         "RAG_QUERY_GENERATOR": "agent_56RAGQueryGenerator.json",
-        "THINKING": "agent_58Thinking.json"
+        "THINKING": "agent_58Thinking.json",
+        "KNOWLEDGE_INTERPRET": "agent_63KnowledgeInterpret.json"
     },
     "BOOK": [
         {

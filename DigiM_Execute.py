@@ -896,9 +896,20 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
             _targets = in_execution.get("THINKING_TARGETS", {})
             if thinking_result:
                 if _targets.get("web_search", True) and "web_search" in thinking_result:
-                    cfg["web_search"] = thinking_result["web_search"]
-                    if "web_search_engine" in thinking_result:
-                        cfg["web_search_engine"] = thinking_result["web_search_engine"]
+                    # Thinking can promote OFF → ON, but should NOT silently
+                    # disable a user-explicit ON toggle. Mirror semantics:
+                    # the UI checkbox is a hard "yes please search" hint;
+                    # Thinking can supplement, not veto, it.
+                    if cfg["web_search"]:
+                        # User already wants WebSearch — keep it on, but still
+                        # let Thinking refine the engine choice (e.g. when it
+                        # has a stronger signal about which engine fits).
+                        if "web_search_engine" in thinking_result and thinking_result.get("web_search_engine"):
+                            cfg["web_search_engine"] = thinking_result["web_search_engine"]
+                    else:
+                        cfg["web_search"] = thinking_result["web_search"]
+                        if "web_search_engine" in thinking_result:
+                            cfg["web_search_engine"] = thinking_result["web_search_engine"]
                 if _targets.get("rag_query_gene", True) and "rag_query_gene" in thinking_result:
                     cfg["RAG_query_gene"] = thinking_result["rag_query_gene"]
 

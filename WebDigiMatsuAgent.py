@@ -429,9 +429,16 @@ def _bg_task_path():
 
 def _render_llm_input_tab(v2: dict):
     """Detail Information → LLM Input tab. Shows everything the LLM actually
-    received this turn: reconstructed system prompt, conversation memories,
-    the final assembled user message, plus a per-component breakdown
-    (User Memory / RAG / Prompt Template code / Situation / Web context)."""
+    received this turn, in the order it appears in the final prompt:
+
+      1. System Prompt
+      2. Conversation Memories Loaded
+      3. Knowledge (header + chunk templates applied, one block per RAG)
+      4. Prompt Template
+      5. User Query (raw input + attachments + web search context)
+      6. Situation
+      7. Final Assembled Prompt (collapsed in an expander)
+    """
     _agent_file = (v2.get("setting") or {}).get("agent_file", "")
     _persona = _resolve_persona_for_analytics(_agent_file, v2.get("setting") or {})
 
@@ -454,69 +461,122 @@ def _render_llm_input_tab(v2: dict):
             else:
                 st.markdown(f"- {_m}", unsafe_allow_html=True)
 
-    st.markdown("**Final Assembled Prompt (sent as user message)**")
-    _final_prompt = (v2.get("prompt") or {}).get("text", "")
-    # Render as a wrapped <pre> block so the whole prompt is visible top-to-
-    # bottom — newlines preserved, word-wrap on, no inner scroll container.
-    import html as _html_lim
-    _esc = _html_lim.escape(_final_prompt or "(empty)")
-    st.markdown(
-        f'<pre style="white-space: pre-wrap; word-wrap: break-word; '
-        f'background-color: #f6f8fa; padding: 12px; border-radius: 6px; '
-        f'font-family: monospace; font-size: 0.9em; margin: 0;">{_esc}</pre>',
-        unsafe_allow_html=True,
-    )
+    _prompt_dict = v2.get("prompt") or {}
+    _q = _prompt_dict.get("query") or {}
 
-    with st.expander("Components Breakdown"):
-        _q = (v2.get("prompt") or {}).get("query") or {}
+    # ---- 1. Retrieved Knowledge — HEADER + per-chunk CHUNK template ----
+    _km_refs = ((v2.get("response") or {}).get("reference", {}) or {}).get("knowledge_rag") or []
+    _km_settings = (_prompt_dict.get("knowledge_rag") or {}).get("setting") or []
+    _header_by_rag = {k.get("RAG_NAME", ""): k.get("HEADER_TEMPLATE", "")
+                       for k in _km_settings}
+    if _km_refs:
+        st.markdown("**取得された Knowledge (RAG)**")
+        # Group references by rag_name.
+        #   - dict entries: read .rag_name (or .bucket / .DB as fallback hints)
+        #   - string entries (legacy log fallback for AgentSearch /
+        #     FunctionSearch / PageIndex embed failures): extract `rag_name`
+        #     from the LOG_TEMPLATE string itself before bucketing.
+        _grouped: dict[str, list] = {}
+        for _r in _km_refs:
+            if isinstance(_r, dict):
+                _rn = (_r.get("rag_name")
+                        or _r.get("bucket")
+                        or _r.get("DB")
+                        or "(unknown)")
+            else:
+                _s = str(_r)
+                _rn = "(log)"
+                import re as _re
+                _m = _re.search(r"['\"]?rag['\"]?\s*[:=]\s*['\"]?([^,'\"]+)", _s)
+                if _m:
+                    _rn = _m.group(1).strip()
+            _grouped.setdefault(_rn, []).append(_r)
+        for _rn, _items in _grouped.items():
+            _hdr = _header_by_rag.get(_rn, "")
+            with st.container():
+                st.markdown(f"📚 **{_rn}** &nbsp;・&nbsp; {len(_items)} chunks")
+                _block = ""
+                if _hdr:
+                    _block += _hdr.rstrip() + "\n\n"
+                for _it in _items:
+                    if isinstance(_it, dict):
+                        _ck = _it.get("chunk_context") or _it.get("log") or str(_it)
+                    else:
+                        _ck = str(_it)
+                    _block += _ck.rstrip() + "\n\n"
+                st.code(_block.rstrip() or "(empty)", language=None)
 
-        _um_ctx = (v2.get("prompt") or {}).get("user_memory_context", "") or ""
-        if _um_ctx:
-            st.markdown("**User Memory Context**")
-            st.code(_um_ctx, language=None)
+    # ---- 2. Prompt Template ----
+    _tpl_code = (_prompt_dict.get("prompt_template") or {}).get("setting", "")
+    if _tpl_code:
+        st.markdown("**プロンプトテンプレート**")
+        _tpl_text = ""
+        try:
+            _tpl_text = _agent_obj.set_prompt_template(_tpl_code) or ""
+        except Exception:
+            _tpl_text = ""
+        if _tpl_text and _tpl_text.strip() and _tpl_text.strip() != _tpl_code:
+            st.code(f"[{_tpl_code}]\n\n{_tpl_text}", language=None)
+        else:
+            st.code(_tpl_code, language=None)
 
-        _km_refs = ((v2.get("response") or {}).get("reference", {}) or {}).get("knowledge_rag") or []
-        if _km_refs:
-            st.markdown(f"**Knowledge References (RAG)** — {len(_km_refs)} entries")
-            for _r in _km_refs:
-                st.markdown(f"- `{str(_r)[:300]}`")
-
-        _tpl_code = ((v2.get("prompt") or {}).get("prompt_template") or {}).get("setting", "")
-        if _tpl_code:
-            st.markdown(f"**Prompt Template Code:** `{_tpl_code}`")
-
-        _user_raw = _q.get("input", "") or ""
-        _user_after = _q.get("text", "") or ""
+    # ---- 3. User Query (+ attachments + web search context) ----
+    _user_raw = _q.get("input", "") or ""
+    _user_after = _q.get("text", "") or ""
+    _attachments = _q.get("contents") or []
+    _web = _prompt_dict.get("web_search") or {}
+    if _user_raw or _user_after or _attachments or _web.get("web_context"):
+        st.markdown("**ユーザークエリ**")
+        _parts = []
         if _user_raw:
-            st.markdown(f"**User Input (raw):** {_user_raw}")
+            _parts.append(_user_raw)
         if _user_after and _user_after != _user_raw:
-            st.markdown(f"**User Query (post-preproc):** {_user_after}")
+            _parts.append(f"--- 前処理後 ---\n{_user_after}")
+        if _attachments:
+            _names = []
+            for _a in _attachments:
+                if isinstance(_a, dict):
+                    _names.append(str(_a.get("file_name") or _a.get("name") or _a))
+                else:
+                    _names.append(str(_a))
+            _parts.append("--- 添付ファイル ---\n" + "\n".join(f"📎 {n}" for n in _names))
+        if _web.get("web_context"):
+            _engine = _web.get("engine", "?")
+            _urls   = _web.get("urls") or []
+            _ws = f"--- Web Search ({_engine}) ---\n" + str(_web["web_context"]).strip()
+            if _urls:
+                _ws += "\n\n[Source URLs]"
+                for _u in _urls:
+                    if isinstance(_u, dict):
+                        _ws += f"\n - {_u.get('title', '')}: {_u.get('url', '')}"
+                    else:
+                        _ws += f"\n - {_u}"
+            _parts.append(_ws)
+        st.code("\n\n".join(_parts) or "(empty)", language=None)
 
-        _sit = _q.get("situation", {})
-        if _sit:
-            st.markdown(f"**Situation:** `{_sit}`")
+    # ---- 4. Situation ----
+    _sit = _q.get("situation") or {}
+    if _sit:
+        st.markdown("**シチュエーション**")
+        if isinstance(_sit, dict):
+            _lines = []
+            for _k, _v in _sit.items():
+                _lines.append(f"{_k}: {_v}")
+            st.code("\n".join(_lines), language=None)
+        else:
+            st.code(str(_sit), language=None)
 
-        _web = (v2.get("prompt") or {}).get("web_search") or {}
-        if _web and _web.get("web_context"):
-            st.markdown("**Web Search Context**")
-            st.code(str(_web["web_context"])[:4000], language=None)
-
-        _ag_calls = (v2.get("prompt") or {}).get("agent_search") or []
-        if _ag_calls:
-            st.markdown(f"**AgentSearch internal calls** — {len(_ag_calls)} entries")
-            for _ag in _ag_calls:
-                st.markdown(
-                    f"- `{_ag.get('rag_name','')}` → `{_ag.get('agent_name','')}` "
-                    f"(resp {_ag.get('response_tokens',0)} chars)"
-                )
-
-        _fn_calls = (v2.get("prompt") or {}).get("function_search") or []
-        if _fn_calls:
-            st.markdown(f"**FunctionSearch internal calls** — {len(_fn_calls)} entries")
-            for _fn in _fn_calls:
-                st.markdown(
-                    f"- `{_fn.get('rag_name','')}` → `{_fn.get('function_name','')}`"
-                )
+    # ---- 5. Final Assembled Prompt (collapsed) ----
+    _final_prompt = _prompt_dict.get("text", "")
+    with st.expander("Final Assembled Prompt (sent as user message)", expanded=False):
+        import html as _html_lim
+        _esc = _html_lim.escape(_final_prompt or "(empty)")
+        st.markdown(
+            f'<pre style="white-space: pre-wrap; word-wrap: break-word; '
+            f'background-color: #f6f8fa; padding: 12px; border-radius: 6px; '
+            f'font-family: monospace; font-size: 0.9em; margin: 0;">{_esc}</pre>',
+            unsafe_allow_html=True,
+        )
 
 
 def _render_token_usage_tab(v2: dict):
@@ -2041,33 +2101,45 @@ def _knowledge_explorer():
     if st.session_state.get("_rag_disp_sig") == _disp_sig and st.session_state.get("_rag_df_display") is not None:
         df_display = st.session_state._rag_df_display
         _filterable_cols = st.session_state._rag_filterable_cols
+        _color_marker_cols = st.session_state.get("_rag_color_marker_cols") or _filterable_cols
     else:
-        # Exclude vector embeddings and other internal fields that aren't useful
-        # filter axes. `key_text` / `value_text` are long content fields that
-        # would never satisfy the <100-unique threshold anyway, but we drop them
-        # explicitly so they don't briefly appear in the picker on small DBs.
-        _internal_cols = {
-            "key_text", "value_text",            # long content — never a useful filter
-            "id", "X1", "X2", "Cluster",          # synthetic identifiers / coords
-            "create_date_ts",                     # numeric mirror of create_date
-            "vector_data_key_text",
-        }
-        _exclude_cols = [c for c in df.columns
-                          if "vector_data" in c or c in _internal_cols]
+        # Drop only vector embedding columns from df_display. We KEEP id /
+        # key_text / value_text here because downstream code needs them:
+        #   - `df["id"].isin(df_filtered["id"])` for scatter row selection
+        #   - text search (`_search_text`) iterates every column of every row,
+        #     including value_text / key_text
+        #   - `_order_cols` references id explicitly
+        # The filter picker excludes them separately via `_filter_exclude`.
+        _exclude_cols = [c for c in df.columns if "vector_data" in c]
         df_display = df.drop(columns=_exclude_cols, errors="ignore")
         for c in df_display.columns:
             if df_display[c].apply(lambda x: isinstance(x, list)).any():
                 df_display[c] = df_display[c].apply(lambda x: ", ".join(str(i) for i in x) if isinstance(x, list) else x)
-        # Filter eligibility — include EVERY column with a useful cardinality,
-        # regardless of dtype. The earlier dtype=="object" check excluded:
-        #   • numeric CSV fields (scores, counts, ratings)
-        #   • boolean flags (`private`, custom Chk fields)
-        #   • collection-specific fields that pandas infers as float/int when
-        #     they're absent (NaN) from other selected collections
-        # Cast to str for the nunique check so mixed-type columns count
-        # consistently, and gate on a sensible cardinality window.
+        # Filter-eligibility exclusion list — columns that exist in df_display
+        # for downstream joins/search but should NOT appear in the Filter Column
+        # picker (uninteresting identifiers, long content, synthetic coords).
+        _filter_exclude = {
+            "id", "X1", "X2", "Cluster", "create_date_ts",
+            "key_text", "value_text", "vector_data_key_text",
+        }
+        # dtype-agnostic eligibility: cast to str for nunique so mixed-type
+        # columns from union-of-collections count consistently. The earlier
+        # dtype=="object" check used to exclude numeric/boolean CSV fields and
+        # collection-specific columns that pandas inferred as float64 because
+        # of NaN in other selected collections.
+        # `_filterable_cols`     — Filter Column picker only. Multiselect needs
+        #                          tractable cardinality (<100 distinct values).
+        # `_color_marker_cols`   — Color By / Marker By pickers. NO cardinality
+        #                          gate: every CSV-defined `field_items` entry
+        #                          should be selectable, even fields with many
+        #                          unique values (matplotlib will cycle its
+        #                          10-color / 12-marker palettes — visually busy
+        #                          but never errors).
         _filterable_cols = []
+        _color_marker_cols = []
         for c in df_display.columns:
+            if c in _filter_exclude:
+                continue
             col = df_display[c].dropna()
             if col.empty:
                 continue
@@ -2075,10 +2147,14 @@ def _knowledge_explorer():
                 n_unique = col.astype(str).nunique()
             except Exception:
                 continue
-            if 1 < n_unique < 100:
+            if n_unique <= 1:
+                continue   # all rows the same → useless for both pickers
+            _color_marker_cols.append(c)
+            if n_unique < 100:
                 _filterable_cols.append(c)
         st.session_state._rag_df_display = df_display
         st.session_state._rag_filterable_cols = _filterable_cols
+        st.session_state._rag_color_marker_cols = _color_marker_cols
         st.session_state._rag_disp_sig = _disp_sig
 
     _has_date = "create_date" in df_display.columns
@@ -2266,7 +2342,11 @@ def _knowledge_explorer():
     _dim_params = {}
     if _dim_method == "t-SNE":
         _dim_params["perplexity"] = _s2.number_input("Perplexity:", value=30, step=1, key="rag_tsne_perp")
-    _color_options = (["rag_name"] if "rag_name" in _filterable_cols else []) + ["(none)"] + [c for c in _filterable_cols if c != "rag_name"]
+    # Color By / Marker By pull from the broader `_color_marker_cols` (no
+    # cardinality cap). Every CSV field_items entry is selectable here — even
+    # high-cardinality text fields. matplotlib cycles its 10-color / 12-marker
+    # palettes when cardinality exceeds them; visually busy, never errors.
+    _color_options = (["rag_name"] if "rag_name" in _color_marker_cols else []) + ["(none)"] + [c for c in _color_marker_cols if c != "rag_name"]
     if "rag_name" in _color_options:
         _cdef = _color_options.index("rag_name")
     elif "category" in _color_options:
@@ -2274,7 +2354,7 @@ def _knowledge_explorer():
     else:
         _cdef = _color_options.index("(none)")
     _color_col = _s3.selectbox("Color By:", _color_options, index=_cdef, key="rag_color_by")
-    _marker_col = _s4.selectbox("Marker By:", ["(none)"] + [c for c in _filterable_cols if c != _color_col], index=0, key="rag_marker_by")
+    _marker_col = _s4.selectbox("Marker By:", ["(none)"] + [c for c in _color_marker_cols if c != _color_col], index=0, key="rag_marker_by")
     _s5, _s6 = st.columns([1, 1])
     _size_mode = _s5.radio("Dot Size:", ["Uniform", "Newer=Larger", "Highlight Period"], index=0, horizontal=True, key="rag_dot_size")
     _do_search = _s6.button("Search & Plot", key="rag_do_search", type="primary")
@@ -6605,8 +6685,10 @@ def main():
                                                                             display_items = ["id", "title", "create_date", "X1", "X2", "value_text"]
                                                                         rag_rank_df = rag_rank_df[display_items]
                                                                         st.dataframe(rag_rank_df)
-                                                                    if files.get("similarity_plot_file"):
-                                                                        st.image(st.session_state.session.session_analytics_folder_path + files["similarity_plot_file"])
+                                                                # Per-chunk similarity_Q vs similarity_A bar —
+                                                                # shared by ChromaDB and PageIndex branches.
+                                                                if files.get("similarity_plot_file"):
+                                                                    st.image(st.session_state.session.session_analytics_folder_path + files["similarity_plot_file"])
                                                                 for ak_dict in compare_agent_info["knowledge_utility"]["similarity_rank"][rag_category]:
                                                                     st.markdown(ak_line(ak_dict))
 
@@ -6732,8 +6814,12 @@ def main():
                                                                         display_items = ["id", "title", "create_date", "X1", "X2", "value_text"]
                                                                     rag_rank_df = rag_rank_df[display_items]
                                                                     st.dataframe(rag_rank_df)
-                                                            if files.get("similarity_plot_file"):
-                                                                st.image(st.session_state.session.session_analytics_folder_path + files["similarity_plot_file"])
+                                                        # Per-chunk similarity_Q vs similarity_A bar — useful for
+                                                        # ChromaDB AND PageIndex alike (the chart is generated for
+                                                        # every group in analytics_knowledge), so render it after
+                                                        # whichever scatter/tree branch ran above.
+                                                        if files.get("similarity_plot_file"):
+                                                            st.image(st.session_state.session.session_analytics_folder_path + files["similarity_plot_file"])
                                                         for ak_dict in analytics_dict["knowledge_utility"]["similarity_rank"][rag_category]:
                                                             st.markdown(ak_line(ak_dict))
                                                         # Per-DB "Interpret with LLM" button + existing result
