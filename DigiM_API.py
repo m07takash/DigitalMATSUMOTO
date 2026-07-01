@@ -1,8 +1,10 @@
 import os
 import time
+import traceback
 from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
 
@@ -20,6 +22,23 @@ api_port = os.getenv("API_PORT")
 api_default_session_name = os.getenv("API_DEFAULT_SESSION_NAME")
 
 app = FastAPI()
+
+# CORS — the demo frontend (demo/sample_demo/*.html) is a static page served
+# from a different origin (e.g. `python3 -m http.server` or the Azure host on
+# a different port), so cross-origin fetch() requires an explicit allow-list
+# from the API side. Without this middleware the browser fails preflight
+# (OPTIONS /run → 405) and reports "Failed to fetch".
+#
+# `allow_origins=["*"]` is intentionally permissive for demo use. If this API
+# ever exposes authenticated endpoints, tighten to the exact demo origin(s)
+# and set `allow_credentials=False` (which is required whenever origins="*").
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # ---------- Request / Response ----------
 class ServiceInfo(BaseModel):
@@ -186,6 +205,17 @@ async def run(data: InputData):
         )
         return result
     except Exception as e:
+        # Full traceback + the raw request payload go to stderr (captured in
+        # /var/log/digim_api.log when launched by the WebUI Start button).
+        # Without these the log only shows `POST /run 500` with no context.
+        import sys
+        print("=" * 78, file=sys.stderr, flush=True)
+        print(f"[/run 500] agent_file={agent_file!r} engine={data.engine!r} "
+              f"user_input={data.user_input!r} session_id={data.session_id!r} "
+              f"exec_keys={list(execution.keys())}",
+              file=sys.stderr, flush=True)
+        traceback.print_exc()
+        print("=" * 78, file=sys.stderr, flush=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 # Backward compatibility (legacy endpoint -> falls back to the same synchronous handler)

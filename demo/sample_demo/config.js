@@ -1,18 +1,15 @@
 // ============================================================================
-// Digital MATSUMOTO — Sample Demo :: config loader
+// Sample Agent Demo :: config loader
 // ----------------------------------------------------------------------------
-// The *source of truth* for demo configuration is `config.json` (pure JSON).
-// Edit that file to change backend URL, fallback agents, playback speed, etc.
-// This tiny loader is intentionally not the place to change values — it exists
-// only because the rest of the demo needs `window.DIGIM_CONFIG` synchronously
-// before api.js / app.js are parsed.
+// Loads DIGIM_CONFIG from three sources, later ones winning:
+//   1. Embedded DEFAULTS (below)          — always applies
+//   2. `config.json` via XHR              — HTTP-served demos only
+//   3. `window.DIGIM_CONFIG_USER`         — set in config.local.js
 //
-// Fallback behavior
-// -----------------
-// If config.json cannot be fetched (typically when the page is opened via
-// `file://`, or the file is missing), the embedded DEFAULTS below are used and
-// a warning is logged to the console. For editable config in production demos
-// always serve via a local HTTP server (see MANUAL.md > "3. 起動方法").
+// **file:// opening is fully supported.** Browsers block XHR to config.json
+// from a `file://` origin, so config.json alone does not work when the user
+// double-clicks index.html. `config.local.js` is loaded via a plain <script>
+// tag (which works from file://) and takes highest priority.
 //
 // Config schema
 // -------------
@@ -41,29 +38,48 @@
     HEALTH_POLL_MS: 0
   };
 
-  let loaded = null;
+  // Layer 2: config.json — only loadable when the page is served over HTTP.
+  // From file:// Chrome/Edge/Safari block the XHR (Firefox allows it). We
+  // silently fall through in that case; config.local.js is the intended path.
+  let loadedJson = null;
   try {
-    // Synchronous XHR is deprecated on the main thread but the only way to
-    // guarantee DIGIM_CONFIG is ready before api.js / app.js parse. For a demo
-    // tool loaded once at boot this trade-off is acceptable; the request is
-    // to a same-origin static file and completes in single-digit ms.
     const xhr = new XMLHttpRequest();
     xhr.open("GET", "./config.json", false);
     xhr.send();
     if (xhr.status >= 200 && xhr.status < 300) {
-      loaded = JSON.parse(xhr.responseText);
+      loadedJson = JSON.parse(xhr.responseText);
     }
   } catch (e) {
-    // file:// or missing file — fall through to DEFAULTS.
+    // file:// or missing file — layered lookup below still resolves via
+    // config.local.js / DEFAULTS, so no warning is needed on this path.
   }
 
-  window.DIGIM_CONFIG = Object.assign({}, DEFAULTS, loaded || {});
+  // Layer 3: config.local.js (highest priority). Populated by the user editing
+  // `config.local.js`, which is loaded via a normal <script> tag from
+  // index.html — that works everywhere including file://.
+  const userOverride = (typeof window.DIGIM_CONFIG_USER === "object"
+                          && window.DIGIM_CONFIG_USER)
+                          ? window.DIGIM_CONFIG_USER : null;
 
-  if (!loaded) {
+  window.DIGIM_CONFIG = Object.assign(
+    {}, DEFAULTS, loadedJson || {}, userOverride || {}
+  );
+
+  // Diagnostics — surface the layered lookup in the console so operators can
+  // see which source wound up providing each value.
+  const sources = [];
+  sources.push("DEFAULTS");
+  if (loadedJson)   sources.push("config.json");
+  if (userOverride) sources.push("config.local.js");
+  console.info(
+    "[digim-demo] DIGIM_CONFIG resolved from:", sources.join(" → "),
+    "\n  BACKEND_URL =", window.DIGIM_CONFIG.BACKEND_URL
+  );
+  if (!loadedJson && !userOverride) {
     console.warn(
-      "[digim-demo] config.json was not loaded — using embedded defaults. " +
-      "Open the demo via `python3 -m http.server` (or another HTTP server) " +
-      "to make config.json editable at runtime. See MANUAL.md."
+      "[digim-demo] Only embedded DEFAULTS are in effect. If you're opening " +
+      "index.html directly from disk, edit config.local.js to set your " +
+      "BACKEND_URL. If serving over HTTP, edit config.json."
     );
   }
 })();

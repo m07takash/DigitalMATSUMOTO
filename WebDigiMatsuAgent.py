@@ -5953,9 +5953,26 @@ def main():
                             stderr=subprocess.STDOUT,
                             start_new_session=True
                         )
-                        import time
-                        time.sleep(2)
-                        st.session_state.sidebar_message = "Started FastAPI"
+                        # Poll the port until uvicorn accepts a TCP connect —
+                        # DigiM_API imports ChromaDB / LLM wrappers and startup
+                        # regularly takes 5-10 s, so the old `sleep(2)` used to
+                        # report "Running" while Health Check still failed with
+                        # ECONNREFUSED. Give it up to 30 s.
+                        import socket, time
+                        _ready = False
+                        for _ in range(30):
+                            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
+                                _s.settimeout(0.5)
+                                if _s.connect_ex(("127.0.0.1", 8899)) == 0:
+                                    _ready = True
+                                    break
+                            time.sleep(1)
+                        st.session_state.sidebar_message = (
+                            "Started FastAPI" if _ready
+                            else "FastAPI process launched but port 8899 not "
+                                  "accepting connections after 30 s — check "
+                                  "/var/log/digim_api.log"
+                        )
                         st.rerun()
 
                 # Health check

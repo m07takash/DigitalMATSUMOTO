@@ -1,6 +1,6 @@
-# Digital MATSUMOTO — Sample Demo (Mockup)
+# Sample Agent Demo (Mockup)
 
-Digital MATSUMOTO の FastAPI バックエンドをそのまま叩けるデモ用画面のスケルトンです。HTML + CSS + JavaScript のみで構成されており、CDNや外部依存はありません。フォルダをそのままコピーすれば、ローカルPCからでも動作します。
+Sample Agent の FastAPI バックエンドをそのまま叩けるデモ用画面のスケルトンです。HTML + CSS + JavaScript のみで構成されており、CDNや外部依存はありません。フォルダをそのままコピーすれば、ローカルPCからでも動作します。
 
 > 📖 **実際にデモを打つ人向けの詳細マニュアルは [`MANUAL.md`](MANUAL.md) を参照してください**（画面ごとの操作手順・デモシナリオ例・オフライン運用・トラブル対処など）。このファイルは要点まとめです。
 

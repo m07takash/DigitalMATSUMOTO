@@ -1,5 +1,5 @@
 // ============================================================================
-// Digital MATSUMOTO — Sample Demo :: App
+// Sample Agent Demo :: App
 // ----------------------------------------------------------------------------
 // UI wiring only. All network access goes through window.Api, all recording
 // state lives in window.Recorder. Keep this file the "boring glue" layer so
@@ -59,13 +59,19 @@
       agents = (cfg.FALLBACK_AGENTS || []).map(a => ({ file: a.file, agent_name: a.name }));
       setStatus("Using fallback agent list (backend unreachable).");
     }
+    // FastAPI returns agents keyed by UPPERCASE `FILE`/`AGENT` (DigiM_API.py's
+    // `list_agents` builds each row from the on-disk JSON headers). Older /
+    // fallback data uses lowercase `file`/`agent_file`/`name`, so accept both
+    // shapes when normalising.
+    const _fileOf = a => a.FILE || a.file || a.agent_file || "";
+    const _nameOf = a => a.AGENT || a.agent_name || a.name || "";
     for (const sel of ["#chat-agent", "#fb-agent"]) {
       const el = $(sel); if (!el) continue;
       el.innerHTML = "";
       for (const a of agents) {
         const opt = document.createElement("option");
-        opt.value = a.file || a.agent_file || "";
-        opt.textContent = `${opt.value} — ${a.agent_name || a.name || ""}`;
+        opt.value = _fileOf(a);
+        opt.textContent = `${opt.value} — ${_nameOf(a)}`;
         el.appendChild(opt);
       }
     }
@@ -76,14 +82,14 @@
       for (const a of agents) {
         const tr = document.createElement("tr");
         tr.dataset.clickable = "1";
-        tr.innerHTML = `<td>${esc(a.file || a.agent_file)}</td>` +
-                       `<td>${esc(a.agent_name || a.name || "")}</td>` +
-                       `<td>${esc(a.description || "")}</td>`;
+        tr.innerHTML = `<td>${esc(_fileOf(a))}</td>` +
+                       `<td>${esc(_nameOf(a))}</td>` +
+                       `<td>${esc(a.description || a.DESCRIPTION || "")}</td>`;
         tr.addEventListener("click", async () => {
           $$("#agents-table tr").forEach(r => r.classList.remove("selected"));
           tr.classList.add("selected");
           try {
-            const eng = await Api.listEngines(a.file || a.agent_file);
+            const eng = await Api.listEngines(_fileOf(a));
             $("#engines-detail").textContent = JSON.stringify(eng, null, 2);
           } catch (e) {
             $("#engines-detail").textContent = "Error: " + e.message;

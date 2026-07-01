@@ -1,5 +1,5 @@
 // ============================================================================
-// Digital MATSUMOTO — Sample Demo :: Recorder
+// Sample Agent Demo :: Recorder
 // ----------------------------------------------------------------------------
 // Captures API calls during a demo session and replays them later, so the demo
 // works standalone (no backend) once a recording exists.
@@ -172,7 +172,7 @@
         meta: rec.meta,
         events: rec.events,
       };
-      const banner = "// Digital MATSUMOTO demo recording. Load via <script src>.\n";
+      const banner = "// Sample Agent Demo recording. Load via <script src>.\n";
       return banner +
         "window.Recorder && window.Recorder.register(" +
         JSON.stringify(clean, null, 2) +

@@ -1,5 +1,5 @@
 // ============================================================================
-// Digital MATSUMOTO — Sample Demo :: Recording Editor
+// Sample Agent Demo :: Recording Editor
 // ----------------------------------------------------------------------------
 // The Editor tab lets a demo operator inspect, tweak, and export a recording
 // without leaving the browser. Two views on the same data stay in sync:

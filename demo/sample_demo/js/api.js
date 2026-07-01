@@ -1,5 +1,5 @@
 // ============================================================================
-// Digital MATSUMOTO — Sample Demo :: API client
+// Sample Agent Demo :: API client
 // ----------------------------------------------------------------------------
 // Thin wrapper around fetch() that:
 //   1. Prepends config.BACKEND_URL (with a UI override via localStorage).
@@ -44,7 +44,14 @@
         const text = await res.text();
         try { response = text ? JSON.parse(text) : null; }
         catch { response = text; }
-        if (!res.ok) error = `HTTP ${status}`;
+        if (!res.ok) {
+          // FastAPI convention: {"detail": "…root cause…"}. Fall back to raw
+          // text (or status alone) when the server responded without a body.
+          const detail = (response && typeof response === "object" && response.detail)
+                            ? response.detail
+                            : (typeof response === "string" && response) ? response : "";
+          error = detail ? `HTTP ${status}: ${detail}` : `HTTP ${status}`;
+        }
       } catch (e) {
         error = e.message || String(e);
       }
