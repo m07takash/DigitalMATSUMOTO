@@ -1,0 +1,11 @@
+{
+  "BACKEND_URL": "http://localhost:8899",
+  "DEFAULT_USER_ID": "DemoUser",
+  "DEFAULT_SERVICE_ID": "DEMO",
+  "FALLBACK_AGENTS": [
+    { "file": "agent_10Sample.json", "name": "Sample Agent" }
+  ],
+  "PLAYBACK_SPEED": 1.0,
+  "AUTO_FALLBACK_TO_RECORDING": true,
+  "HEALTH_POLL_MS": 0
+}

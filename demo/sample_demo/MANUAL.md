@@ -406,7 +406,23 @@ window.Recorder && window.Recorder.register({
 
 ---
 
-## 11. 設定 (`config.js`) リファレンス
+## 11. 設定 (`config.json`) リファレンス
+
+**編集対象は `config.json`**（pure JSON）です。`config.js` は起動時に config.json を同期読み込みするだけのローダーなので、通常は触りません。
+
+```json
+{
+  "BACKEND_URL": "http://localhost:8899",
+  "DEFAULT_USER_ID": "DemoUser",
+  "DEFAULT_SERVICE_ID": "DEMO",
+  "FALLBACK_AGENTS": [
+    { "file": "agent_10Sample.json", "name": "Sample Agent" }
+  ],
+  "PLAYBACK_SPEED": 1.0,
+  "AUTO_FALLBACK_TO_RECORDING": true,
+  "HEALTH_POLL_MS": 0
+}
+```
 
 | キー | 型 | 既定 | 説明 |
 |------|-----|------|------|
@@ -417,6 +433,12 @@ window.Recorder && window.Recorder.register({
 | `PLAYBACK_SPEED` | number | `1.0` | 録画再生の速度倍率（`2.0`で2倍速、`0.5`で半分） |
 | `AUTO_FALLBACK_TO_RECORDING` | boolean | `true` | 実 API 失敗時に録画から自動応答するか |
 | `HEALTH_POLL_MS` | number | `0` | `>0` にすると自動的に Health チェックを繰り返す（例: `15000` で15秒毎）。`0` で無効 |
+
+### 11-1. `file://` で開いた場合の挙動
+
+`config.json` は `fetch()` で同期読み込みされます。`file://` プロトコルではブラウザのセキュリティ制約により取得できないケースが多いため、その場合は `config.js` に埋め込まれた **DEFAULTS** にフォールバックし、コンソールに警告が出ます。
+
+**config.json の編集を反映したいときは必ず HTTP サーバ経由で開いてください**（`python3 -m http.server` など）。
 
 ---
 
