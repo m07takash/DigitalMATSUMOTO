@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Digital MATSUMOTO — Sample Demo</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='13' font-size='13'%3E%E2%97%86%3C/text%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand">
+      <span class="brand-mark">◆</span>
+      <span class="brand-name">Digital MATSUMOTO</span>
+      <span class="brand-sub">Sample Demo</span>
+    </div>
+
+    <div class="conn">
+      <label class="conn-label">Backend</label>
+      <input type="text" id="backend-url" class="conn-input" />
+      <button id="btn-health" class="btn ghost">Check</button>
+      <span id="health-dot" class="dot dot-unknown" title="Unknown"></span>
+    </div>
+
+    <div class="rec-controls">
+      <select id="recording-select" class="select">
+        <option value="">— select recording —</option>
+      </select>
+      <button id="btn-play" class="btn">▶ Play</button>
+      <button id="btn-record" class="btn danger">● Record</button>
+      <button id="btn-stop" class="btn ghost" disabled>■ Stop</button>
+      <button id="btn-download" class="btn ghost" disabled>⬇ Save</button>
+      <label class="btn ghost">
+        ⬆ Load
+        <input type="file" id="file-load" accept=".js,.json" hidden />
+      </label>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="chat">Chat (/run)</button>
+    <button class="tab" data-tab="sessions">Sessions</button>
+    <button class="tab" data-tab="agents">Agents & Engines</button>
+    <button class="tab" data-tab="websearch">Web Search Engines</button>
+    <button class="tab" data-tab="feedback">Feedback</button>
+    <button class="tab" data-tab="health">Health / Raw API</button>
+  </nav>
+
+  <main class="content">
+    <!-- ========== CHAT ========== -->
+    <section class="panel active" data-panel="chat">
+      <aside class="side">
+        <h3>Session</h3>
+        <label>User ID</label>
+        <input type="text" id="chat-user-id" value="DemoUser" />
+        <label>Service ID</label>
+        <input type="text" id="chat-service-id" value="DEMO" />
+        <label>Agent file</label>
+        <select id="chat-agent" class="select"></select>
+        <label>Engine (LLM)</label>
+        <select id="chat-engine" class="select"></select>
+        <label>Session ID (blank = new)</label>
+        <input type="text" id="chat-session-id" placeholder="(new session)" />
+
+        <h3>Execution flags</h3>
+        <div class="flags">
+          <label><input type="checkbox" id="flag-memory_use" checked /> memory_use</label>
+          <label><input type="checkbox" id="flag-rag_query_gene" checked /> rag_query_gene</label>
+          <label><input type="checkbox" id="flag-meta_search" checked /> meta_search</label>
+          <label><input type="checkbox" id="flag-web_search" /> web_search</label>
+          <label><input type="checkbox" id="flag-thinking_mode" /> thinking_mode</label>
+          <label><input type="checkbox" id="flag-private_mode" /> private_mode</label>
+        </div>
+      </aside>
+
+      <div class="main-col">
+        <div id="chat-log" class="chat-log"></div>
+        <div class="chat-input-row">
+          <textarea id="chat-input" placeholder="メッセージを入力..." rows="3"></textarea>
+          <button id="btn-send" class="btn primary">Send</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== SESSIONS ========== -->
+    <section class="panel" data-panel="sessions">
+      <div class="toolbar">
+        <label>User ID filter</label>
+        <input type="text" id="sess-user-id" placeholder="(all)" />
+        <label>Service ID filter</label>
+        <input type="text" id="sess-service-id" placeholder="(all)" />
+        <button id="btn-sess-load" class="btn">GET /sessions</button>
+      </div>
+      <div class="split">
+        <div class="split-left">
+          <h3>Sessions</h3>
+          <table id="sess-table" class="tbl">
+            <thead><tr><th>ID</th><th>Name</th><th>Agent</th><th>Updated</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="split-right">
+          <h3>History (GET /sessions/{id})</h3>
+          <pre id="sess-detail" class="json-box">(select a session)</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== AGENTS ========== -->
+    <section class="panel" data-panel="agents">
+      <div class="toolbar">
+        <button id="btn-agents-load" class="btn">GET /agents</button>
+      </div>
+      <div class="split">
+        <div class="split-left">
+          <h3>Agents</h3>
+          <table id="agents-table" class="tbl">
+            <thead><tr><th>File</th><th>Name</th><th>Description</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="split-right">
+          <h3>Engines (GET /agents/{file}/engines)</h3>
+          <pre id="engines-detail" class="json-box">(select an agent)</pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== WEB SEARCH ========== -->
+    <section class="panel" data-panel="websearch">
+      <div class="toolbar">
+        <button id="btn-web-load" class="btn">GET /web_search_engines</button>
+      </div>
+      <pre id="web-detail" class="json-box">(not loaded)</pre>
+    </section>
+
+    <!-- ========== FEEDBACK ========== -->
+    <section class="panel" data-panel="feedback">
+      <div class="toolbar">
+        <label>Agent file</label>
+        <select id="fb-agent" class="select"></select>
+        <button id="btn-fb-config" class="btn">GET /agents/{file}/feedback</button>
+      </div>
+      <div class="split">
+        <div class="split-left">
+          <h3>Config</h3>
+          <pre id="fb-config" class="json-box">(not loaded)</pre>
+        </div>
+        <div class="split-right">
+          <h3>Submit feedback (POST /feedback)</h3>
+          <label>Session ID</label>
+          <input type="text" id="fb-session" />
+          <label>seq / sub_seq</label>
+          <div class="row">
+            <input type="text" id="fb-seq" value="1" />
+            <input type="text" id="fb-subseq" value="1" />
+          </div>
+          <label>feedbacks (JSON)</label>
+          <textarea id="fb-body" rows="8">{
+  "rating": 5,
+  "comment": "Great answer"
+}</textarea>
+          <button id="btn-fb-send" class="btn primary">Submit</button>
+          <pre id="fb-result" class="json-box"></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== HEALTH / RAW ========== -->
+    <section class="panel" data-panel="health">
+      <div class="toolbar">
+        <button id="btn-raw-health" class="btn">GET /health</button>
+      </div>
+      <h3>Raw fetch</h3>
+      <div class="raw-row">
+        <select id="raw-method" class="select">
+          <option>GET</option>
+          <option>POST</option>
+        </select>
+        <input type="text" id="raw-path" value="/health" />
+        <button id="btn-raw-send" class="btn">Send</button>
+      </div>
+      <label>Body (POST only, JSON)</label>
+      <textarea id="raw-body" rows="6">{}</textarea>
+      <h3>Response</h3>
+      <pre id="raw-response" class="json-box"></pre>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <span id="mode-indicator" class="mode-badge mode-live">LIVE</span>
+    <span id="status-text">Ready.</span>
+  </footer>
+
+  <!-- Config first, then engine, then recordings self-register, then app -->
+  <script src="config.js"></script>
+  <script src="js/recorder.js"></script>
+  <script src="js/api.js"></script>
+  <script src="recordings/manifest.js"></script>
+  <script src="recordings/sample_chat.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

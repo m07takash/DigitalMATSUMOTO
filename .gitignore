@@ -252,3 +252,10 @@ nohup.out
 # auto-mkdir is just a fallback.
 user/common/tool/local/*
 !user/common/tool/local/.gitkeep
+
+# Demo mockups: only demo/sample_demo/ is version-controlled.
+# Other subfolders under demo/ (customer-specific mockups, local recordings, etc.)
+# are user-authored and intentionally excluded from the repo.
+demo/*
+!demo/sample_demo/
+!demo/sample_demo/**
