@@ -1,5 +1,5 @@
 // ============================================================================
-// Digital MATSUMOTO — Sample Demo :: Recording manifest
+// Sample Agent Demo :: Recording manifest
 // ----------------------------------------------------------------------------
 // This file is loaded before any recording so it can set defaults, and to give
 // operators a single, obvious place to enumerate the recordings that ship with

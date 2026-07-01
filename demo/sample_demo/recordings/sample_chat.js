@@ -1,4 +1,4 @@
-// Digital MATSUMOTO demo recording. Load via <script src>.
+// Sample Agent Demo recording. Load via <script src>.
 // ---------------------------------------------------------------------------
 // A hand-authored example recording so the demo has something to play back
 // even before an operator captures their own. Replace freely.
@@ -38,8 +38,8 @@ window.Recorder && window.Recorder.register({
       },
       response: {
         session_id: "APIDEMO2026063000001",
-        session_name: "(User:DemoUser)デジタルMATSUMOTOの自己紹介",
-        response: "こんにちは。私はデジタルMATSUMOTOです。人格・知識・記憶を持つエージェントとして、みなさまとの対話を通じて学び続けます。"
+        session_name: "(User:DemoUser)サンプルエージェント自己紹介",
+        response: "こんにちは。私はサンプルエージェントです。デモ用に用意されたシンプルな AI アシスタントで、対話 API の動作確認にお使いいただけます。"
       }
     },
     {
@@ -53,8 +53,8 @@ window.Recorder && window.Recorder.register({
       },
       response: {
         session_id: "APIDEMO2026063000001",
-        session_name: "(User:DemoUser)デジタルMATSUMOTOの自己紹介",
-        response: "階層的ユーザーメモリ（History/Nowaday/Persona）、複数ペルソナの並列実行、RAG＋メタ検索の統合、といった機能を備えています。"
+        session_name: "(User:DemoUser)サンプルエージェント自己紹介",
+        response: "セッション管理・ユーザーメモリ・RAG・Web 検索といった基本機能を備えたエージェントです。詳細は接続先のバックエンド仕様をご参照ください。"
       }
     },
     {
@@ -68,7 +68,7 @@ window.Recorder && window.Recorder.register({
       },
       response: {
         session_id: "APIDEMO2026063000001",
-        session_name: "(User:DemoUser)デジタルMATSUMOTOの自己紹介",
+        session_name: "(User:DemoUser)サンプルエージェント自己紹介",
         response: "こちらこそ、ありがとうございました。またいつでもお声がけください。"
       }
     },
@@ -78,7 +78,7 @@ window.Recorder && window.Recorder.register({
       response: {
         sessions: [
           { id: "APIDEMO2026063000001",
-            name: "(User:DemoUser)デジタルMATSUMOTOの自己紹介",
+            name: "(User:DemoUser)サンプルエージェント自己紹介",
             agent: "agent_10Sample.json",
             last_update_date: "2026-06-30 09:00:10" }
         ]

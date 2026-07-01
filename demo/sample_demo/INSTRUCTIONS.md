@@ -1,6 +1,6 @@
 # INSTRUCTIONS for AI editors (Copilot / Claude / Cursor / etc.)
 
-このフォルダ (`sample_demo/`) は Digital MATSUMOTO デモ用モックアップの **スケルトン** です。デザインやレイアウトの変更を任せるためのガイドです。読んでから作業を始めてください。
+このフォルダ (`sample_demo/`) は サンプルデモ用モックアップの **スケルトン** です。デザインやレイアウトの変更を任せるためのガイドです。読んでから作業を始めてください。
 
 ## 全体像
 

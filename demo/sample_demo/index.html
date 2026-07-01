@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Digital MATSUMOTO — Sample Demo</title>
+  <title>Sample Agent Demo</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ctext y='13' font-size='13'%3E%E2%97%86%3C/text%3E%3C/svg%3E" />
   <link rel="stylesheet" href="css/style.css" />
 </head>
@@ -11,7 +11,7 @@
   <header class="app-header">
     <div class="brand">
       <span class="brand-mark">◆</span>
-      <span class="brand-name">Digital MATSUMOTO</span>
+      <span class="brand-name">Sample Agent</span>
       <span class="brand-sub">Sample Demo</span>
     </div>
 
@@ -264,6 +264,9 @@
   </footer>
 
   <!-- Config first, then engine, then recordings self-register, then app -->
+  <!-- config.local.js is optional (may 404 in HTTP-served mode if the user
+       edits config.json only). config.js resolves the layered lookup. -->
+  <script src="config.local.js"></script>
   <script src="config.js"></script>
   <script src="js/recorder.js"></script>
   <script src="js/api.js"></script>
