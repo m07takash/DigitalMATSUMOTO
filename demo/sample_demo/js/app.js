@@ -1,0 +1,425 @@
+// ============================================================================
+// Digital MATSUMOTO — Sample Demo :: App
+// ----------------------------------------------------------------------------
+// UI wiring only. All network access goes through window.Api, all recording
+// state lives in window.Recorder. Keep this file the "boring glue" layer so
+// designers can edit HTML/CSS/js/pages/* without touching plumbing.
+// ============================================================================
+
+(function () {
+  "use strict";
+
+  const cfg = window.DIGIM_CONFIG || {};
+  const $  = (sel, root) => (root || document).querySelector(sel);
+  const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+
+  // ---------- Header: backend URL & health ------------------------------
+  const backendInput = $("#backend-url");
+  backendInput.value = Api.getBackendUrl() || cfg.BACKEND_URL || "";
+  backendInput.addEventListener("change", () => {
+    Api.setBackendUrl(backendInput.value);
+    setStatus(`Backend set to ${Api.getBackendUrl()}`);
+  });
+
+  $("#btn-health").addEventListener("click", async () => {
+    const dot = $("#health-dot");
+    dot.className = "dot dot-unknown";
+    try {
+      const r = await Api.health();
+      dot.className = "dot dot-ok";
+      dot.title = JSON.stringify(r);
+      setStatus("Backend healthy.");
+    } catch (e) {
+      dot.className = "dot dot-bad";
+      dot.title = e.message;
+      setStatus("Backend unreachable: " + e.message);
+    }
+  });
+
+  if (cfg.HEALTH_POLL_MS && cfg.HEALTH_POLL_MS > 0) {
+    setInterval(() => $("#btn-health").click(), cfg.HEALTH_POLL_MS);
+  }
+
+  // ---------- Tabs -------------------------------------------------------
+  $$(".tab").forEach(t => {
+    t.addEventListener("click", () => {
+      const name = t.dataset.tab;
+      $$(".tab").forEach(x => x.classList.toggle("active", x === t));
+      $$(".panel").forEach(p => p.classList.toggle("active", p.dataset.panel === name));
+    });
+  });
+
+  // ---------- Agent selector (shared across panels) --------------------
+  async function loadAgents() {
+    let agents;
+    try {
+      const r = await Api.listAgents();
+      agents = r.agents || [];
+    } catch (e) {
+      agents = (cfg.FALLBACK_AGENTS || []).map(a => ({ file: a.file, agent_name: a.name }));
+      setStatus("Using fallback agent list (backend unreachable).");
+    }
+    for (const sel of ["#chat-agent", "#fb-agent"]) {
+      const el = $(sel); if (!el) continue;
+      el.innerHTML = "";
+      for (const a of agents) {
+        const opt = document.createElement("option");
+        opt.value = a.file || a.agent_file || "";
+        opt.textContent = `${opt.value} — ${a.agent_name || a.name || ""}`;
+        el.appendChild(opt);
+      }
+    }
+    // Render agents table too.
+    const tbody = $("#agents-table tbody");
+    if (tbody) {
+      tbody.innerHTML = "";
+      for (const a of agents) {
+        const tr = document.createElement("tr");
+        tr.dataset.clickable = "1";
+        tr.innerHTML = `<td>${esc(a.file || a.agent_file)}</td>` +
+                       `<td>${esc(a.agent_name || a.name || "")}</td>` +
+                       `<td>${esc(a.description || "")}</td>`;
+        tr.addEventListener("click", async () => {
+          $$("#agents-table tr").forEach(r => r.classList.remove("selected"));
+          tr.classList.add("selected");
+          try {
+            const eng = await Api.listEngines(a.file || a.agent_file);
+            $("#engines-detail").textContent = JSON.stringify(eng, null, 2);
+          } catch (e) {
+            $("#engines-detail").textContent = "Error: " + e.message;
+          }
+        });
+        tbody.appendChild(tr);
+      }
+    }
+    // Refresh engine selector for the chat panel.
+    onChatAgentChanged();
+  }
+  async function onChatAgentChanged() {
+    const file = $("#chat-agent").value;
+    if (!file) return;
+    try {
+      const r = await Api.listEngines(file);
+      const engSel = $("#chat-engine");
+      engSel.innerHTML = "";
+      const engines = (r.LLM && r.LLM.engines) || [];
+      const def     = (r.LLM && r.LLM.default)  || "";
+      for (const e of engines) {
+        const opt = document.createElement("option");
+        opt.value = e; opt.textContent = e;
+        if (e === def) opt.selected = true;
+        engSel.appendChild(opt);
+      }
+    } catch (e) {
+      // silent — chat can still fire with default engine
+    }
+  }
+  $("#chat-agent").addEventListener("change", onChatAgentChanged);
+  $("#btn-agents-load").addEventListener("click", loadAgents);
+
+  // ---------- Chat -------------------------------------------------------
+  const chatLog = $("#chat-log");
+
+  $("#btn-send").addEventListener("click", sendChat);
+  $("#chat-input").addEventListener("keydown", e => {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) sendChat();
+  });
+
+  async function sendChat() {
+    const text = $("#chat-input").value.trim();
+    if (!text) return;
+    $("#chat-input").value = "";
+    appendMsg("user", text);
+
+    const body = {
+      service_info: { SERVICE_ID: $("#chat-service-id").value || cfg.DEFAULT_SERVICE_ID, SERVICE_DATA: {} },
+      user_info:    { USER_ID:    $("#chat-user-id").value    || cfg.DEFAULT_USER_ID,    USER_DATA: {} },
+      session_id:   $("#chat-session-id").value || null,
+      user_input:   text,
+      agent_file:   $("#chat-agent").value || null,
+      engine:       $("#chat-engine").value || null,
+      memory_use:      $("#flag-memory_use").checked,
+      rag_query_gene:  $("#flag-rag_query_gene").checked,
+      meta_search:     $("#flag-meta_search").checked,
+      web_search:      $("#flag-web_search").checked,
+      thinking_mode:   $("#flag-thinking_mode").checked,
+      private_mode:    $("#flag-private_mode").checked,
+    };
+
+    const placeholder = appendMsg("agent", "…");
+    try {
+      const r = await Api.run(body);
+      if (r.session_id) $("#chat-session-id").value = r.session_id;
+      placeholder.querySelector(".body").textContent = r.response || "(empty response)";
+      placeholder.querySelector(".meta").textContent =
+        `session=${r.session_id || ""}${r.session_name ? " · " + r.session_name : ""}`;
+    } catch (e) {
+      placeholder.querySelector(".body").textContent = "⚠ " + e.message;
+      placeholder.classList.add("error");
+    }
+  }
+
+  function appendMsg(role, text) {
+    const el = document.createElement("div");
+    el.className = `msg ${role}`;
+    el.innerHTML = `<div class="body"></div><div class="meta"></div>`;
+    el.querySelector(".body").textContent = text;
+    chatLog.appendChild(el);
+    chatLog.scrollTop = chatLog.scrollHeight;
+    return el;
+  }
+
+  // ---------- Sessions ---------------------------------------------------
+  $("#btn-sess-load").addEventListener("click", async () => {
+    try {
+      const r = await Api.listSessions({
+        user_id:    $("#sess-user-id").value    || undefined,
+        service_id: $("#sess-service-id").value || undefined,
+      });
+      const tbody = $("#sess-table tbody");
+      tbody.innerHTML = "";
+      for (const s of (r.sessions || [])) {
+        const tr = document.createElement("tr");
+        tr.dataset.clickable = "1";
+        tr.innerHTML = `<td>${esc(s.id)}</td><td>${esc(s.name)}</td>` +
+                       `<td>${esc(s.agent)}</td><td>${esc(s.last_update_date)}</td>`;
+        tr.addEventListener("click", async () => {
+          $$("#sess-table tr").forEach(r => r.classList.remove("selected"));
+          tr.classList.add("selected");
+          try {
+            const detail = await Api.getSession(s.id);
+            $("#sess-detail").textContent = JSON.stringify(detail, null, 2);
+          } catch (e) {
+            $("#sess-detail").textContent = "Error: " + e.message;
+          }
+        });
+        tbody.appendChild(tr);
+      }
+    } catch (e) { setStatus("Sessions load failed: " + e.message); }
+  });
+
+  // ---------- Web search engines ----------------------------------------
+  $("#btn-web-load").addEventListener("click", async () => {
+    try {
+      const r = await Api.listWebEngines();
+      $("#web-detail").textContent = JSON.stringify(r, null, 2);
+    } catch (e) { $("#web-detail").textContent = "Error: " + e.message; }
+  });
+
+  // ---------- Feedback ---------------------------------------------------
+  $("#btn-fb-config").addEventListener("click", async () => {
+    try {
+      const r = await Api.feedbackConfig($("#fb-agent").value);
+      $("#fb-config").textContent = JSON.stringify(r, null, 2);
+    } catch (e) { $("#fb-config").textContent = "Error: " + e.message; }
+  });
+  $("#btn-fb-send").addEventListener("click", async () => {
+    let feedbacks;
+    try { feedbacks = JSON.parse($("#fb-body").value); }
+    catch (e) { $("#fb-result").textContent = "Invalid JSON: " + e.message; return; }
+    try {
+      const r = await Api.submitFeedback({
+        session_id: $("#fb-session").value,
+        agent_file: $("#fb-agent").value,
+        seq:     $("#fb-seq").value,
+        sub_seq: $("#fb-subseq").value,
+        feedbacks,
+      });
+      $("#fb-result").textContent = JSON.stringify(r, null, 2);
+    } catch (e) { $("#fb-result").textContent = "Error: " + e.message; }
+  });
+
+  // ---------- Health / Raw fetch ----------------------------------------
+  $("#btn-raw-health").addEventListener("click", async () => {
+    try {
+      const r = await Api.health();
+      $("#raw-response").textContent = JSON.stringify(r, null, 2);
+    } catch (e) { $("#raw-response").textContent = "Error: " + e.message; }
+  });
+  $("#btn-raw-send").addEventListener("click", async () => {
+    const method = $("#raw-method").value;
+    const path   = $("#raw-path").value;
+    let body;
+    if (method === "POST") {
+      try { body = JSON.parse($("#raw-body").value || "{}"); }
+      catch (e) { $("#raw-response").textContent = "Invalid JSON: " + e.message; return; }
+    }
+    try {
+      const r = await Api.call(method, path, body);
+      $("#raw-response").textContent = JSON.stringify(r, null, 2);
+    } catch (e) { $("#raw-response").textContent = "Error: " + e.message; }
+  });
+
+  // ---------- Recording controls ----------------------------------------
+  const recSelect = $("#recording-select");
+
+  function refreshRecordingList() {
+    const currentSelection = recSelect.value;
+    recSelect.innerHTML = '<option value="">— select recording —</option>';
+    for (const r of Recorder.list()) {
+      const opt = document.createElement("option");
+      opt.value = r.id;
+      opt.textContent = `${r.title} (${r.events} events)`;
+      recSelect.appendChild(opt);
+    }
+    if (currentSelection && registryHas(currentSelection)) recSelect.value = currentSelection;
+  }
+  function registryHas(id) { return Recorder.list().some(r => r.id === id); }
+
+  recSelect.addEventListener("change", () => {
+    Recorder.activeRecordingId = recSelect.value || null;
+    setStatus(recSelect.value ? `Recording selected: ${recSelect.value}` : "No recording selected.");
+  });
+
+  $("#btn-play").addEventListener("click", async () => {
+    const id = recSelect.value;
+    if (!id) { setStatus("Select a recording first."); return; }
+    setStatus("Playing " + id + " …");
+    await Recorder.play(id, handlePlaybackEvent);
+    setStatus("Playback finished.");
+  });
+
+  $("#btn-record").addEventListener("click", () => {
+    const title = prompt("Recording title?", "Demo " + new Date().toLocaleString());
+    if (title === null) return;
+    Recorder.startRecording(title);
+    setStatus("Recording…");
+  });
+
+  $("#btn-stop").addEventListener("click", () => {
+    if (Recorder.mode === "playing") { Recorder.stopPlayback(); return; }
+    const rec = Recorder.stopRecording();
+    if (rec) {
+      Recorder.register(rec);
+      recSelect.value = rec.id;
+      Recorder.activeRecordingId = rec.id;
+      refreshRecordingList();
+      setStatus(`Captured ${rec.events.length} events. Click ⬇ Save to download.`);
+      $("#btn-download").disabled = false;
+      $("#btn-download").dataset.recId = rec.id;
+    }
+  });
+
+  $("#btn-download").addEventListener("click", () => {
+    const id = $("#btn-download").dataset.recId;
+    if (!id) return;
+    const rec = Recorder.get(id);
+    if (!rec) return;
+    const text = Recorder.exportAsScript(rec);
+    const blob = new Blob([text], { type: "application/javascript" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `${rec.id}.js`;
+    a.click();
+    setStatus(`Downloaded ${rec.id}.js — drop it into recordings/ and add to index.html`);
+  });
+
+  $("#file-load").addEventListener("change", async e => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const text = await f.text();
+    try {
+      // A recording exported by this app is a self-registering .js snippet;
+      // eval'ing it here calls Recorder.register(...) directly. If the file is
+      // raw JSON, we parse it and register manually.
+      if (f.name.endsWith(".json")) {
+        Recorder.register(JSON.parse(text));
+      } else {
+        // eslint-disable-next-line no-new-func
+        (new Function(text))();
+      }
+      refreshRecordingList();
+      setStatus(`Loaded recording from ${f.name}`);
+    } catch (err) {
+      setStatus("Load failed: " + err.message);
+    }
+    e.target.value = "";
+  });
+
+  // ---------- Recorder mode indicator -----------------------------------
+  Recorder.onChange(state => {
+    const modeEl = $("#mode-indicator");
+    modeEl.classList.remove("mode-live", "mode-rec", "mode-play");
+    if (state.mode === "recording") { modeEl.classList.add("mode-rec"); modeEl.textContent = "REC"; }
+    else if (state.mode === "playing") { modeEl.classList.add("mode-play"); modeEl.textContent = "PLAY"; }
+    else { modeEl.classList.add("mode-live"); modeEl.textContent = "LIVE"; }
+    $("#btn-stop").disabled = state.mode === "idle";
+    $("#btn-record").disabled = state.mode !== "idle";
+    $("#btn-play").disabled = state.mode !== "idle";
+    refreshRecordingList();
+  });
+
+  // Called for each event during playback. Route to the panel that owns it.
+  function handlePlaybackEvent(evt) {
+    if (evt.type !== "api") return;
+    // Switch to the relevant tab so the operator sees the update.
+    const path = evt.path || "";
+    if      (path === "/run" || path === "/run_function") switchTab("chat");
+    else if (path.startsWith("/sessions"))                switchTab("sessions");
+    else if (path.startsWith("/agents") &&
+             path.endsWith("/feedback"))                  switchTab("feedback");
+    else if (path.startsWith("/agents"))                  switchTab("agents");
+    else if (path === "/web_search_engines")              switchTab("websearch");
+    else                                                  switchTab("health");
+
+    // Panel-specific rendering.
+    if (path === "/run" || path === "/run_function") {
+      const req = evt.request || {};
+      if (req.user_input) appendMsg("user", req.user_input);
+      const resp = evt.response || {};
+      const bubble = appendMsg("agent", resp.response || "(no response captured)");
+      bubble.querySelector(".meta").textContent =
+        `session=${resp.session_id || ""}${resp.session_name ? " · " + resp.session_name : ""}`;
+      if (resp.session_id) $("#chat-session-id").value = resp.session_id;
+    } else if (path === "/health") {
+      $("#raw-response").textContent = JSON.stringify(evt.response, null, 2);
+    } else if (path === "/web_search_engines") {
+      $("#web-detail").textContent = JSON.stringify(evt.response, null, 2);
+    } else if (path === "/agents") {
+      // Re-render agents table from recorded response.
+      const tbody = $("#agents-table tbody");
+      tbody.innerHTML = "";
+      for (const a of (evt.response && evt.response.agents) || []) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${esc(a.file || a.agent_file)}</td>` +
+                       `<td>${esc(a.agent_name || a.name || "")}</td>` +
+                       `<td>${esc(a.description || "")}</td>`;
+        tbody.appendChild(tr);
+      }
+    } else if (path.startsWith("/sessions/")) {
+      $("#sess-detail").textContent = JSON.stringify(evt.response, null, 2);
+    } else if (path === "/sessions") {
+      const tbody = $("#sess-table tbody");
+      tbody.innerHTML = "";
+      for (const s of (evt.response && evt.response.sessions) || []) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `<td>${esc(s.id)}</td><td>${esc(s.name)}</td>` +
+                       `<td>${esc(s.agent)}</td><td>${esc(s.last_update_date)}</td>`;
+        tbody.appendChild(tr);
+      }
+    } else if (path.endsWith("/feedback") && evt.method === "GET") {
+      $("#fb-config").textContent = JSON.stringify(evt.response, null, 2);
+    } else if (path === "/feedback" && evt.method === "POST") {
+      $("#fb-result").textContent = JSON.stringify(evt.response, null, 2);
+    }
+  }
+
+  function switchTab(name) {
+    $$(".tab").forEach(t => t.classList.toggle("active", t.dataset.tab === name));
+    $$(".panel").forEach(p => p.classList.toggle("active", p.dataset.panel === name));
+  }
+
+  // ---------- Utility ----------------------------------------------------
+  function setStatus(msg) { $("#status-text").textContent = msg; }
+  function esc(s) {
+    if (s == null) return "";
+    return String(s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
+  // ---------- Boot -------------------------------------------------------
+  refreshRecordingList();
+  loadAgents();   // best-effort; falls back on network error
+  setStatus(`Ready. Backend: ${Api.getBackendUrl() || "(unset)"}`);
+})();
