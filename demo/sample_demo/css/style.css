@@ -311,3 +311,104 @@ body {
 .mode-live { background: #e5f3ea; color: var(--success); }
 .mode-rec { background: #fbe5e5; color: var(--danger); }
 .mode-play { background: #fff5d6; color: var(--warn); }
+
+/* --- Recording Editor tab -------------------------------------------- */
+.toolbar .spacer { flex: 1; }
+
+.ed-meta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  gap: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px;
+}
+.ed-field { display: flex; flex-direction: column; }
+.ed-field label {
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 2px;
+}
+.ed-field input {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+}
+
+.ed-split {
+  display: flex;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+.ed-events, .ed-json-col {
+  flex: 1;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: auto;
+}
+.ed-events-head, .ed-json-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.ed-events-head h3, .ed-json-head h3 {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.ed-json-actions { display: flex; gap: 6px; }
+
+#ed-table td { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12px; }
+#ed-table .ed-preview {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+#ed-table .ed-actions { white-space: nowrap; display: flex; gap: 2px; }
+#ed-table .ed-actions button {
+  padding: 2px 6px;
+  font-size: 11px;
+  border: 1px solid var(--border);
+  background: transparent;
+  border-radius: 3px;
+  cursor: pointer;
+}
+#ed-table .ed-actions button:hover { border-color: var(--accent); }
+#ed-table .ed-actions .del { color: var(--danger); }
+
+#ed-json {
+  flex: 1;
+  width: 100%;
+  min-height: 240px;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  background: #0f172a;
+  color: #d7dae0;
+  resize: vertical;
+}
+.ed-status {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.ed-status.ok { color: var(--success); }
+.ed-status.err { color: var(--danger); }

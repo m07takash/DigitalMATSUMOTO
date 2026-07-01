@@ -148,6 +148,21 @@
       return null;
     },
 
+    // --- editing / update -------------------------------------------------
+    // Replace an existing recording in the registry (used by the Editor tab
+    // after Apply). If the new recording changes its id, both entries end up
+    // registered — the caller is responsible for pruning if needed.
+    update(id, rec) {
+      if (!rec || !rec.id) throw new Error("update: recording must have an id");
+      if (id && id !== rec.id) delete registry[id];
+      registry[rec.id] = rec;
+      this._emit();
+    },
+
+    remove(id) {
+      if (registry[id]) { delete registry[id]; this._emit(); }
+    },
+
     // --- export ----------------------------------------------------------
     // Produce a downloadable .js file that self-registers. Preferred format
     // because <script src> works with file:// while fetch() does not.
@@ -162,6 +177,12 @@
         "window.Recorder && window.Recorder.register(" +
         JSON.stringify(clean, null, 2) +
         ");\n";
+    },
+
+    // Pretty JSON serialization for the Editor tab (and for hand-editable
+    // recordings that the operator prefers to store as .json rather than .js).
+    exportAsJson(rec) {
+      return JSON.stringify({ id: rec.id, meta: rec.meta, events: rec.events }, null, 2);
     },
 
     // --- subscription ----------------------------------------------------

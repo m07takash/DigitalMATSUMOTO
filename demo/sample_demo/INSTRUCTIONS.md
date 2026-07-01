@@ -24,6 +24,7 @@
 - **`config.json`** — デモの挙動を決める主要な設定はここ。既存キーの型を変えると `js/app.js` / `js/api.js` を壊します。追加は末尾に。
 - **`config.js`** — `config.json` を同期読み込みするローダー。原則触らない。埋め込み DEFAULTS はキー追加時に `config.json` と揃える。
 - **タブ (`data-tab`) と パネル (`data-panel`) の対応** — 一致していないと切替が動きません。
+- **`js/editor.js`** — Recording Editor タブの実装。`Recorder.update / remove / exportAsJson` を利用しているので、これらを削るとエディタが壊れます。DOM ID (`#ed-*`) を変える場合は editor.js 側も同期修正してください。
 
 ### ❌ 触らないでほしいもの（不可侵の契約）
 
@@ -60,6 +61,7 @@
 | `POST /feedback`                     | `feedback`        | `#fb-session`, `#fb-seq`, `#fb-subseq`, `#fb-body`, `#btn-fb-send`, `#fb-result` |
 | `GET /health`                        | header / `health` | `#btn-health`, `#health-dot`, `#btn-raw-health`, `#raw-response` |
 | （任意）                             | `health`          | `#raw-method`, `#raw-path`, `#raw-body`, `#btn-raw-send` |
+| Recording 編集                       | `editor`          | `#ed-select`, `#ed-id`, `#ed-title`, `#ed-createdAt`, `#ed-backend`, `#ed-table`, `#ed-json`, `#btn-ed-*` |
 
 新しいエンドポイントを画面に追加するときは:
 
