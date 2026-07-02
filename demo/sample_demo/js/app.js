@@ -125,17 +125,65 @@
 
   // ---------- Chat -------------------------------------------------------
   const chatLog = $("#chat-log");
+  // Files staged for the next send. Cleared after a successful send.
+  const chatAttachments = [];
 
   $("#btn-send").addEventListener("click", sendChat);
   $("#chat-input").addEventListener("keydown", e => {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) sendChat();
   });
 
+  // Attachment picker
+  $("#chat-files").addEventListener("change", e => {
+    for (const f of Array.from(e.target.files || [])) chatAttachments.push(f);
+    e.target.value = "";
+    renderAttachmentChips();
+  });
+
+  function renderAttachmentChips() {
+    const list = $("#chat-files-list");
+    list.innerHTML = "";
+    chatAttachments.forEach((f, i) => {
+      const chip = document.createElement("span");
+      chip.className = "chat-file-chip";
+      chip.innerHTML = `📄 <span class="fname"></span>
+                       <span class="fsize"></span>
+                       <button class="rm" title="Remove">×</button>`;
+      chip.querySelector(".fname").textContent = f.name;
+      chip.querySelector(".fsize").textContent = `(${formatBytes(f.size)})`;
+      chip.querySelector(".rm").addEventListener("click", () => {
+        chatAttachments.splice(i, 1);
+        renderAttachmentChips();
+      });
+      list.appendChild(chip);
+    });
+  }
+
+  function formatBytes(n) {
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + " KB";
+    return (n / 1024 / 1024).toFixed(1) + " MB";
+  }
+
+  async function fileToBase64(file) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => {
+        const s = r.result || "";
+        // strip "data:<mime>;base64,"
+        const i = s.indexOf(",");
+        resolve(i >= 0 ? s.slice(i + 1) : s);
+      };
+      r.onerror = () => reject(r.error);
+      r.readAsDataURL(file);
+    });
+  }
+
   async function sendChat() {
     const text = $("#chat-input").value.trim();
-    if (!text) return;
+    if (!text && chatAttachments.length === 0) return;
     $("#chat-input").value = "";
-    appendMsg("user", text);
+    appendMsg("user", text || "(files only)");
 
     const body = {
       service_info: { SERVICE_ID: $("#chat-service-id").value || cfg.DEFAULT_SERVICE_ID, SERVICE_DATA: {} },
@@ -152,13 +200,35 @@
       private_mode:    $("#flag-private_mode").checked,
     };
 
+    const files = chatAttachments.slice();
+    const useBase64 = $("#chat-attach-base64").checked;
+
     const placeholder = appendMsg("agent", "…");
     try {
-      const r = await Api.run(body);
+      let r;
+      if (files.length === 0) {
+        r = await Api.run(body);
+      } else if (useBase64) {
+        // /run + inline base64 attachments — good for small text/CSV/images.
+        body.attachments = await Promise.all(files.map(async f => ({
+          filename: f.name,
+          content_base64: await fileToBase64(f),
+          content_type: f.type || null,
+        })));
+        r = await Api.run(body);
+      } else {
+        // /run_multipart — the FastAPI endpoint that accepts UploadFiles.
+        r = await Api.runMultipart(body, files);
+      }
       if (r.session_id) $("#chat-session-id").value = r.session_id;
       placeholder.querySelector(".body").textContent = r.response || "(empty response)";
+      const attachSummary = Array.isArray(r.attachments_processed) && r.attachments_processed.length
+        ? ` · attached=${r.attachments_processed.length}` : "";
       placeholder.querySelector(".meta").textContent =
-        `session=${r.session_id || ""}${r.session_name ? " · " + r.session_name : ""}`;
+        `session=${r.session_id || ""}${r.session_name ? " · " + r.session_name : ""}${attachSummary}`;
+      // Successful send → clear the attachment tray.
+      chatAttachments.length = 0;
+      renderAttachmentChips();
     } catch (e) {
       placeholder.querySelector(".body").textContent = "⚠ " + e.message;
       placeholder.classList.add("error");

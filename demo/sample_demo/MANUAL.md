@@ -182,6 +182,16 @@ location /demo/ {
 - **thinking_mode** を ON にして「エージェントが考えている感」を強調
 - **private_mode** ON で「メモリに残らない機微な会話」を示す
 
+**添付ファイル（📎 Attach）**:
+- 入力欄の上に **📎 Attach** ボタンがあり、複数ファイルを選択できます
+- 選んだファイルはチップとして表示され、`×` で個別削除できます
+- Send すると:
+  - **既定（`Send as base64` OFF）**: ファイルは `multipart/form-data` で **`POST /run_multipart`** に送信
+  - **`Send as base64` ON**: ファイルは base64 エンコードされ **`POST /run`** の JSON ボディに `attachments` として同梱
+- 添付なしの送信は従来通り `POST /run`
+- サーバ側は WebUI と同じ経路（`in_contents` として `DigiMatsuExecute_Practice` に渡す）で処理
+- レスポンスの `attachments_processed` に受理されたファイル名一覧が返り、吹き出し下のメタ欄に `attached=N` として表示
+
 ### 6-2. Sessions — 会話履歴一覧
 
 **やりたいこと**: `GET /sessions` でセッション一覧、行クリックで `GET /sessions/{id}` の詳細JSON

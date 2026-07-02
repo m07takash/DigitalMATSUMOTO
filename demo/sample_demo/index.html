@@ -77,6 +77,19 @@
 
       <div class="main-col">
         <div id="chat-log" class="chat-log"></div>
+
+        <div class="chat-attach-row">
+          <label class="btn ghost" title="Attach file(s) — sent as multipart/form-data to /run_multipart">
+            📎 Attach
+            <input type="file" id="chat-files" multiple hidden />
+          </label>
+          <div id="chat-files-list" class="chat-files-list"></div>
+          <label class="chat-attach-mode" title="Base64 encodes files into the JSON body (calls /run). Multipart posts as form data (calls /run_multipart).">
+            <input type="checkbox" id="chat-attach-base64" />
+            Send as base64 (/run)
+          </label>
+        </div>
+
         <div class="chat-input-row">
           <textarea id="chat-input" placeholder="メッセージを入力..." rows="3"></textarea>
           <button id="btn-send" class="btn primary">Send</button>
