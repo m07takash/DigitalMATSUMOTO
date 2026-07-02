@@ -78,6 +78,19 @@ class Plugin:
         return str(_PLUGIN_DIR / "PersonalTestQA.xlsx")
 
     @staticmethod
+    def list_categories() -> list[str]:
+        """Return the expected category order for PersonalEvaluation.
+
+        Optional plugin hook — read by the WebUI to render a category-
+        selection checklist BEFORE `Run analysis`. Return the 7 theories in
+        the fixed display order. When the operator's Excel omits a category
+        the render layer silently skips it; the WebUI still uses this list
+        for the pre-run checkboxes because those need to exist before we've
+        seen the file.
+        """
+        return ["特性", "価値観", "動機", "目標", "人格形成", "社会性", "愛着"]
+
+    @staticmethod
     def run(input_path: str) -> dict[str, Any]:
         # PersonalTest sheet is the only required one — scoring works off of
         # its `Category` + `Memo` columns alone. The Category sheet is purely
@@ -770,6 +783,11 @@ def _render_category(cat: str, data: dict) -> None:
     st.markdown(f"### {cat}")
     if meta.get("theory"):
         st.caption(f"理論: **{meta['theory']}**")
+
+    # Prominent Cos-similarity metric at the very top of the section
+    # (same number that appears in the summary radar for this category).
+    # For 動機 this also surfaces BPNSFS / MWMS sub-scores.
+    _render_cos_metric_strip(cat, data)
     # 動機 carries a long axis-listing description that the user explicitly
     # asked to hide (BPNSFS / MWMS sub-axis enumeration). The radar + score
     # table below already convey the same info.
@@ -1128,7 +1146,7 @@ def _render_narrative_scored_category(cat: str, data: dict) -> None:
                         for it in items
                     )
                     import DigiM_Evaluation as _de
-                    parsed, _model = _de.llm_extract_narrative_scored(
+                    parsed, _model, _prompt = _de.llm_extract_narrative_scored(
                         category_name=cat,
                         axes=axes_config,
                         answer_text=_ans_block,
@@ -1140,6 +1158,7 @@ def _render_narrative_scored_category(cat: str, data: dict) -> None:
                     from datetime import datetime as _dt
                     st.session_state[_key] = {
                         "data": parsed, "model": _model, "agent": _agent_file,
+                        "prompt": _prompt,
                         "timestamp": _dt.now().strftime("%Y-%m-%d %H:%M:%S"),
                     }
             except Exception as _e:
@@ -1177,13 +1196,22 @@ def _render_narrative_scored_category(cat: str, data: dict) -> None:
                 import matplotlib.pyplot as _plt
                 _plt.close(fig)
     with c2:
-        st.markdown("**スコア (Answer(AI) / Ground Truth):**")
+        st.markdown("**軸別スコア + 類似度 (Answer(AI) / Ground Truth):**")
         _df = pd.DataFrame([
-            {"Axis": lbl, "Answer(AI)": vals_a[i], "Ground Truth": vals_gt[i],
-             "Δ (A-GT)": round(vals_a[i] - vals_gt[i], 2)}
+            {
+                "Axis":         lbl,
+                "Answer(AI)":   vals_a[i],
+                "Ground Truth": vals_gt[i],
+                "Δ (A-GT)":     round(vals_a[i] - vals_gt[i], 2),
+                "類似度":       round(1.0 - abs(vals_a[i] - vals_gt[i]), 3),
+            }
             for i, lbl in enumerate(labels)
         ])
         st.dataframe(_df, hide_index=True, use_container_width=True)
+        _mean_sim = round(sum(1.0 - abs(vals_a[i] - vals_gt[i])
+                                 for i in range(len(labels))) / max(1, len(labels)), 3)
+        st.caption(f"**軸別類似度の平均: {_mean_sim:.3f}**  · "
+                     "各軸 `1 - |A - GT|`, LLM 5段階離散ルーブリックが基準")
 
     # ---- Similarities / Differences (300-char commentary) ----
     sim_text = d.get("similarities", "") or "_(LLM 出力なし)_"
@@ -1196,6 +1224,17 @@ def _render_narrative_scored_category(cat: str, data: dict) -> None:
         f"Agent: `{res.get('agent','')}`  /  Model: `{res.get('model','')}`  /  "
         f"Generated: {res.get('timestamp','')}"
     )
+    _prompt = res.get("prompt")
+    if _prompt:
+        with st.expander(
+            f"🔎 LLM に与えたスコアリング指示 (prompt) — {cat}",
+            expanded=False,
+        ):
+            st.caption(
+                f"prompt length: {len(_prompt):,} 文字 · "
+                "5 段階離散ルーブリック + 軸別独立採点を強制"
+            )
+            st.code(_prompt, language="markdown")
     st.markdown("---")
 
 
@@ -1531,7 +1570,7 @@ def _render_goals_category(data: dict) -> None:
             try:
                 with st.spinner("LLM が目標を構造化中..."):
                     import DigiM_Evaluation as _de
-                    parsed, _model = _de.llm_extract_goals_structured(
+                    parsed, _model, _prompt = _de.llm_extract_goals_structured(
                         g1_answer=g1.get("answer", ""), g1_gt=g1.get("ground_truth", ""),
                         g2_answer=g2.get("answer", ""), g2_gt=g2.get("ground_truth", ""),
                         g3_answer=g3.get("answer", ""), g3_gt=g3.get("ground_truth", ""),
@@ -1542,6 +1581,7 @@ def _render_goals_category(data: dict) -> None:
                     from datetime import datetime as _dt
                     st.session_state[_key] = {
                         "data": parsed, "model": _model, "agent": _agent_file,
+                        "prompt": _prompt,
                         "timestamp": _dt.now().strftime("%Y-%m-%d %H:%M:%S"),
                     }
             except Exception as _e:
@@ -1566,6 +1606,16 @@ def _render_goals_category(data: dict) -> None:
         f"Answer-only={len(answer_only)} / 共通={len(common)} / GT-only={len(gt_only)}  ・  "
         f"edges A={len(edges_a)} / GT={len(edges_g)}"
     )
+    _prompt = res.get("prompt")
+    if _prompt:
+        with st.expander(
+            "🔎 LLM に与えたスコアリング指示 (prompt) — 目標", expanded=False,
+        ):
+            st.caption(
+                f"prompt length: {len(_prompt):,} 文字 · "
+                "目標のラベル化 → 共通/片側分類 → H/M/L 評点抽出 → 関係エッジ抽出まで一括指示"
+            )
+            st.code(_prompt, language="markdown")
 
     # ---- 1. Venn diagram (with 1-word labels in each region) ----
     if answer_only or common or gt_only:
@@ -1588,6 +1638,69 @@ def _render_goals_category(data: dict) -> None:
         _plt.close(fig)
     else:
         st.caption("シナジー / トレードオフが抽出されなかったため、コネクタ図はスキップしました。")
+
+    # ---- 4. Individual scoring — 3 sub-scores (semantic, LLM-driven) ----
+    _sc = _score_goals_all(d)
+    st.markdown("#### 個別スコアリング")
+
+    # ① Lineup
+    _n_common = len(common); _n_a = len(answer_only); _n_g = len(gt_only)
+    _lu = _sc["lineup"]
+    st.markdown(
+        f"**① Lineup 類似度 (どんな目標を挙げるかの一致度):** "
+        f"**{_lu:.3f}**" if _lu is not None else "**① Lineup 類似度:** _(no goals)_"
+    )
+    st.caption(
+        f"Jaccard = 共通 / (共通 + Answer-only + GT-only) = "
+        f"{_n_common} / ({_n_common} + {_n_a} + {_n_g}) — "
+        f"LLM が意味的に同一の目標を「共通」に分類済み"
+    )
+
+    # ② Score (4-axis H/M/L agreement over common goals)
+    _sc_overall = _sc["score"]
+    _per_axis   = _sc["score_per_axis"] or {}
+    st.markdown(
+        f"**② Score 類似度 (共通目標での H/M/L 評点の一致):** "
+        f"**{_sc_overall:.3f}**" if _sc_overall is not None
+        else "**② Score 類似度:** _(no common goals to compare)_"
+    )
+    if _per_axis:
+        _axis_labels = {
+            "importance":  "大切さ",
+            "commitment":  "本気度",
+            "feasibility": "達成見込",
+            "achievement": "達成度",
+        }
+        _df_sc = pd.DataFrame([
+            {"Axis": _axis_labels.get(k, k),
+             "類似度 (1 - |A-GT|)": v if v is not None else "-"}
+            for k, v in _per_axis.items()
+        ])
+        st.dataframe(_df_sc, hide_index=True, use_container_width=True)
+        st.caption(
+            "H=1.0 / M=0.5 / L=0.0 に変換した上で各共通目標の |A - GT| を計算、"
+            "軸ごとに共通目標全体の平均を取っています。"
+        )
+
+    # ③ Synergy/Tradeoff edges (Jaccard)
+    _ed = _sc["edges"]
+    _ec = _sc["edge_counts"] or {}
+    st.markdown(
+        f"**③ Synergy & Tradeoff 関係 類似度 (エッジ集合の一致):** "
+        f"**{_ed:.3f}**" if _ed is not None
+        else "**③ Synergy & Tradeoff 関係 類似度:** _(no edges on either side)_"
+    )
+    if _ec.get("union"):
+        st.caption(
+            f"Edge Jaccard = |共通エッジ| / |エッジ和集合| = "
+            f"{_ec.get('inter', 0)} / {_ec.get('union', 0)}   "
+            f"(Answer: {_ec.get('a', 0)} 本 / GT: {_ec.get('g', 0)} 本)"
+        )
+    st.caption(
+        "💡 いずれのスコアも **LLM の意味的な抽出結果**(概念単位の共通判定 / "
+        "評点 / 関係エッジ) から機械的に算出しています。"
+        "表面的な文字一致ではありません。"
+    )
 
 
 def _render_section_llm_button(section_name: str, section_md: str) -> None:
@@ -1644,6 +1757,475 @@ def _render_section_llm_button(section_name: str, section_md: str) -> None:
                 f"Generated: {res['timestamp']}"
             )
             st.markdown(res.get("text", ""))
+
+
+# --------------------------------------------------------------------------
+# Cosine-similarity primitives
+# ---------------------------------------------------------------------------
+# Every category is reduced to a single number in [0, 1] that measures how
+# close Answer(AI) is to Ground Truth. Ground Truth is the fixed reference
+# (=1.0 by construction); the reported score is `cos(Answer, GT)`.
+#
+#   Likert (特性 / 価値観 / 動機):
+#       cosine of `axes_avg` and `axes_avg_gt` numeric vectors, with the
+#       axis-key union filled with 0.0 for missing entries. For 動機 we
+#       ALSO surface BPNSFS-only and MWMS-only sub-scores.
+#
+#   Narrative (目標 / 人格形成 / 社会性 / 愛着):
+#       cosine of OpenAI embeddings of the concatenated Answer / GT texts.
+#       We embed once per category and cache the result under
+#       `data["_cos_cache"]` so re-renders (Streamlit reruns) don't burn
+#       API calls. Fallback: aggregate Token F1 (already computed by the
+#       analyzer) — this is a bag-of-tokens proxy for cosine that we can
+#       always evaluate offline. `source` in the return dict signals which
+#       path was taken so the UI can label it appropriately.
+
+
+def _vec_cos(vec_a: list, vec_b: list) -> float:
+    """Standard cosine of two equal-length numeric vectors. Zero vectors
+    return 0.0 so callers don't have to guard for the pathological case."""
+    import math
+    dot = sum(a * b for a, b in zip(vec_a, vec_b))
+    na  = math.sqrt(sum(a * a for a in vec_a))
+    nb  = math.sqrt(sum(b * b for b in vec_b))
+    if na <= 1e-12 or nb <= 1e-12:
+        return 0.0
+    return dot / (na * nb)
+
+
+def _dict_cos(d_a: dict, d_b: dict) -> float | None:
+    """Cosine sim of two axis dicts (Likert). Returns None when either is
+    empty — the caller distinguishes 'no data' from 'orthogonal 0.0'."""
+    if not d_a or not d_b:
+        return None
+    keys = sorted(set(d_a.keys()) | set(d_b.keys()))
+    va = [float(d_a.get(k, 0.0)) for k in keys]
+    vb = [float(d_b.get(k, 0.0)) for k in keys]
+    return _vec_cos(va, vb)
+
+
+def _text_embedding_cos(text_a: str, text_b: str) -> float | None:
+    """Cosine sim via OpenAI embeddings. Returns None if the embed client
+    is unavailable, texts are empty, or any exception fires — callers fall
+    back to Token F1 in that case."""
+    if not text_a.strip() or not text_b.strip():
+        return None
+    try:
+        import DigiM_Util as _dmu
+        embs = _dmu.embed_texts_batch([text_a, text_b])
+        if not embs or embs[0] is None or embs[1] is None:
+            return None
+        return _vec_cos(list(embs[0]), list(embs[1]))
+    except Exception:
+        return None
+
+
+def _mean_abs_err(d_a: dict, d_b: dict) -> float | None:
+    """Mean absolute error over the union of keys — used for per-axis /
+    per-item MAE. Returns None when both dicts are empty."""
+    if not d_a and not d_b:
+        return None
+    keys = sorted(set(d_a.keys()) | set(d_b.keys()))
+    if not keys:
+        return None
+    errs = [abs(float(d_a.get(k, 0.0)) - float(d_b.get(k, 0.0))) for k in keys]
+    return round(sum(errs) / len(errs), 3)
+
+
+def _cat_cos_similarity(cat: str, data: dict) -> dict:
+    """Compute per-category similarity between Answer(AI) and Ground Truth.
+
+    Preference order (most-semantic first):
+        1. **LLM-based individual scoring** — reads session_state for the
+           user's already-run structured analysis. For 目標 this is the
+           lineup/score/edges hybrid; for 人格形成/社会性/愛着 it's the
+           per-axis LLM rubric average.
+        2. **Embedding cosine** — OpenAI embeddings for narrative text.
+        3. **Axes cosine** — for Likert categories.
+
+    Returns:
+        {
+          "overall": float | None,       # Cos similarity in [0, 1]
+          "mae":     float | None,       # Per-item MAE in [0, 1] (0 = ideal)
+          "source":  "llm_goals" | "llm_axes" | "axes" | "embed"
+                     | "f1_fallback" | "none",
+          "extra":   {
+              "lineup"/"score"/"edges":  goals sub-scores,
+              "bpnsfs" (cos), "bpnsfs_mae", "mwms" (cos), "mwms_mae": 動機,
+              "per_axis": {axis: cos_sim},
+              "score_per_axis" / "edge_counts": goals detail,
+          },
+        }
+    """
+    import streamlit as st
+    _plugin = _PLUGIN_DIR.name
+
+    # ── Priority 1: LLM-based individual scoring (semantic, structured) ──
+    if cat == "目標":
+        _llm = st.session_state.get(f"_pe_goals_struct_{_plugin}")
+        _llm_data = (_llm or {}).get("data") or {}
+        if _llm_data:
+            _cache_key = "_cos_cache_llm_goals"
+            _cached = data.get(_cache_key)
+            if _cached:
+                return _cached
+            scores = _score_goals_all(_llm_data)
+            _valid = [v for v in (scores["lineup"], scores["score"],
+                                    scores["edges"]) if v is not None]
+            if _valid:
+                # MAE for 目標: mean over the 3 sub-scores of (1 - sub_score)
+                # — the "breakdown score differences" the user asked for
+                # (lineup / score / edges each deviate from the ideal 1.0).
+                _mae = round(sum(1.0 - v for v in _valid) / len(_valid), 3)
+                _out = {
+                    "overall": round(sum(_valid) / len(_valid), 3),
+                    "mae":     _mae,
+                    "source":  "llm_goals",
+                    "extra":   {
+                        "lineup": scores["lineup"],
+                        "score":  scores["score"],
+                        "edges":  scores["edges"],
+                        "score_per_axis": scores["score_per_axis"],
+                        "edge_counts":    scores["edge_counts"],
+                    },
+                }
+                data[_cache_key] = _out
+                return _out
+    elif cat in _NARRATIVE_CATEGORIES:
+        _llm = st.session_state.get(f"_pe_narr_scored_{_plugin}_{cat}")
+        _llm_data = (_llm or {}).get("data") or {}
+        if _llm_data:
+            _cache_key = f"_cos_cache_llm_axes_{cat}"
+            _cached = data.get(_cache_key)
+            if _cached:
+                return _cached
+            _overall, _per_axis = _score_narrative_axes(_llm_data)
+            if _overall is not None:
+                _mae = _mean_abs_err(_llm_data.get("answer_scores") or {},
+                                       _llm_data.get("gt_scores")     or {})
+                _out = {
+                    "overall": _overall,
+                    "mae":     _mae,
+                    "source":  "llm_axes",
+                    "extra":   {"per_axis": _per_axis},
+                }
+                data[_cache_key] = _out
+                return _out
+
+    # ── Priority 2/3: embedding cosine (narrative) or axes cosine (Likert) ──
+    _cache = data.get("_cos_cache")
+    if isinstance(_cache, dict) and "overall" in _cache:
+        return _cache
+
+    if cat in _NARRATIVE_CATEGORIES:
+        items = data.get("narrative_items") or data.get("narratives") or []
+        ans_text = "\n\n".join(str(it.get("answer") or "").strip()
+                                 for it in items if it.get("answer"))
+        gt_text  = "\n\n".join(str(it.get("ground_truth") or "").strip()
+                                 for it in items if it.get("ground_truth"))
+        _cos = _text_embedding_cos(ans_text, gt_text)
+        # Without LLM structured / rubric data there's no per-axis vector
+        # to compute MAE on directly. Derive it from the overall Cos as
+        # `1 - cos` so the UI always shows a number rather than "-" — the
+        # operator can still see the ranking. Clicking the "LLM 構造化分析"
+        # button upgrades both Cos and MAE to LLM-based per-axis values.
+        if _cos is not None:
+            _cos_r = round(_cos, 3)
+            _mae   = round(max(0.0, 1.0 - _cos_r), 3)
+            _out = {"overall": _cos_r, "mae": _mae,
+                    "source": "embed", "extra": {}}
+        else:
+            _f1 = data.get("narrative_overall_f1")
+            if _f1 is not None:
+                _cos_r = round(float(_f1), 3)
+                _out = {"overall": _cos_r,
+                        "mae": round(max(0.0, 1.0 - _cos_r), 3),
+                        "source": "f1_fallback", "extra": {}}
+            else:
+                _out = {"overall": None, "mae": None,
+                        "source": "none", "extra": {}}
+        data["_cos_cache"] = _out
+        return _out
+
+    # Likert path — axes_avg dicts
+    axes    = data.get("axes_avg") or {}
+    axes_gt = data.get("axes_avg_gt") or {}
+    _overall = _dict_cos(axes, axes_gt)
+    _mae     = _mean_abs_err(axes, axes_gt)
+    _out = {
+        "overall": round(_overall, 3) if _overall is not None else None,
+        "mae":     _mae,
+        "source":  "axes" if _overall is not None else "none",
+        "extra":   {},
+    }
+    # For 動機, expose BPNSFS-only and MWMS-only sub-scores as requested.
+    # BOTH cosine AND MAE per sub-theory so the operator can see whether
+    # a low overall cos is driven by direction or magnitude.
+    if cat == "動機":
+        _bp, _bp_gt = data.get("bpnsfs_avg") or {}, data.get("bpnsfs_avg_gt") or {}
+        _bp_cos = _dict_cos(_bp, _bp_gt)
+        _bp_mae = _mean_abs_err(_bp, _bp_gt)
+        if _bp_cos is not None:
+            _out["extra"]["bpnsfs"]     = round(_bp_cos, 3)
+        if _bp_mae is not None:
+            _out["extra"]["bpnsfs_mae"] = _bp_mae
+        _mw, _mw_gt = data.get("mwms_avg") or {}, data.get("mwms_avg_gt") or {}
+        _mw_cos = _dict_cos(_mw, _mw_gt)
+        _mw_mae = _mean_abs_err(_mw, _mw_gt)
+        if _mw_cos is not None:
+            _out["extra"]["mwms"]     = round(_mw_cos, 3)
+        if _mw_mae is not None:
+            _out["extra"]["mwms_mae"] = _mw_mae
+    data["_cos_cache"] = _out
+    return _out
+
+
+# --------------------------------------------------------------------------
+# Individual (semantic) scoring — LLM-driven, not surface-text
+# ---------------------------------------------------------------------------
+# These build on the LLM's structured output rather than character/token
+# overlap: `llm_extract_goals_structured` (semantic goal matching + H/M/L
+# ratings + relation edges) and `llm_extract_narrative_scored` (per-axis
+# 5-step rubric). All sub-scores land in [0, 1] where 1.0 means "Answer(AI)
+# agrees perfectly with Ground Truth on this facet".
+
+_HML_NUM = {"H": 1.0, "M": 0.5, "L": 0.0}
+
+
+def _hml_to_num(v) -> float:
+    return _HML_NUM.get(str(v or "M").upper().strip(), 0.5)
+
+
+def _score_goals_lineup(goals_struct: dict) -> float | None:
+    """Jaccard on goal-set membership — the LLM already classified goals
+    into common / answer_only / gt_only using semantic matching, so this
+    is a pure set-similarity calculation on top of a semantic partition."""
+    a_only = len(goals_struct.get("answer_only") or [])
+    common = len(goals_struct.get("common")      or [])
+    g_only = len(goals_struct.get("gt_only")     or [])
+    total  = a_only + common + g_only
+    if total == 0:
+        return None
+    return round(common / total, 3)
+
+
+def _score_goals_ratings(goals_struct: dict) -> tuple[float | None, dict]:
+    """Mean per-axis agreement across all common goals × 4 H/M/L axes.
+    Returns (overall_mean, {axis_key: per_axis_mean}). Only common goals
+    contribute — side-only goals have no counterpart to compare against."""
+    common = goals_struct.get("common") or []
+    if not common:
+        return None, {}
+    axes = ["importance", "commitment", "feasibility", "achievement"]
+    per_axis: dict[str, float] = {}
+    for ax in axes:
+        _agree = []
+        for g in common:
+            _av = _hml_to_num(g.get("answer_" + ax))
+            _gv = _hml_to_num(g.get("gt_"     + ax))
+            _agree.append(1.0 - abs(_av - _gv))
+        per_axis[ax] = round(sum(_agree) / len(_agree), 3) if _agree else None
+    _v = [x for x in per_axis.values() if x is not None]
+    overall = round(sum(_v) / len(_v), 3) if _v else None
+    return overall, per_axis
+
+
+def _score_goals_edges(goals_struct: dict) -> tuple[float | None, dict]:
+    """Jaccard on the (from, to, kind) edge sets between the two graphs.
+    Returns (jaccard, counts_dict)."""
+    ea = goals_struct.get("edges_answer") or []
+    eg = goals_struct.get("edges_gt")     or []
+
+    def _key(e):
+        return (tuple(sorted([e.get("from", ""), e.get("to", "")])),
+                e.get("kind", "synergy"))
+
+    set_a = {_key(e) for e in ea}
+    set_g = {_key(e) for e in eg}
+    union = set_a | set_g
+    inter = set_a & set_g
+    counts = {"a": len(set_a), "g": len(set_g),
+               "inter": len(inter), "union": len(union)}
+    if not union:
+        return None, counts
+    return round(len(inter) / len(union), 3), counts
+
+
+def _score_goals_all(goals_struct: dict) -> dict:
+    """Bundle the 3 sub-scores for the 目標 category into a single dict."""
+    lineup = _score_goals_lineup(goals_struct)
+    rating_overall, rating_per_axis = _score_goals_ratings(goals_struct)
+    edge_jaccard, edge_counts = _score_goals_edges(goals_struct)
+    return {
+        "lineup":         lineup,
+        "score":          rating_overall,
+        "score_per_axis": rating_per_axis,
+        "edges":          edge_jaccard,
+        "edge_counts":    edge_counts,
+    }
+
+
+def _score_narrative_axes(scored: dict) -> tuple[float | None, dict]:
+    """Per-axis similarity from an `llm_extract_narrative_scored` result.
+    Each axis contributes `1 - |A - GT|` (both operands live in [0, 1] by
+    the LLM's discrete 5-step rubric). Overall = mean over axes."""
+    ans = scored.get("answer_scores") or {}
+    gt  = scored.get("gt_scores")     or {}
+    if not ans and not gt:
+        return None, {}
+    axes = list(dict.fromkeys(list(ans.keys()) + list(gt.keys())))
+    per_axis: dict[str, float] = {}
+    for ax in axes:
+        _a = float(ans.get(ax, 0.0) or 0.0)
+        _g = float(gt.get(ax, 0.0)  or 0.0)
+        per_axis[ax] = round(1.0 - abs(_a - _g), 3)
+    _v = list(per_axis.values())
+    overall = round(sum(_v) / len(_v), 3) if _v else None
+    return overall, per_axis
+
+
+def _cat_memo(cat: str, data: dict) -> str:
+    """Short human-readable summary of per-item errors, shown in the
+    summary table's Memo column. Category-specific formatting:
+
+      - **特性 / 価値観**: axis with the largest |Δ|
+      - **動機**: BPNSFS + MWMS cos/MAE breakdown
+      - **人格形成 / 社会性 / 愛着**: axis with the largest |Δ| (if LLM-scored)
+      - **目標**: per-axis MAE across the 4 H/M/L ratings (if LLM-analyzed)
+
+    Returns "-" when there's nothing to summarise so the table row still
+    renders cleanly.
+    """
+    import streamlit as st
+    _plugin = _PLUGIN_DIR.name
+    cos = _cat_cos_similarity(cat, data)
+    _extra = cos.get("extra") or {}
+
+    # 動機 — BPNSFS + MWMS breakdown
+    if cat == "動機":
+        _bits = []
+        if _extra.get("bpnsfs") is not None:
+            _bits.append(
+                f"BPNSFS cos={_extra['bpnsfs']:.2f}"
+                + (f" MAE={_extra['bpnsfs_mae']:.2f}"
+                    if _extra.get("bpnsfs_mae") is not None else "")
+            )
+        if _extra.get("mwms") is not None:
+            _bits.append(
+                f"MWMS cos={_extra['mwms']:.2f}"
+                + (f" MAE={_extra['mwms_mae']:.2f}"
+                    if _extra.get("mwms_mae") is not None else "")
+            )
+        return "  /  ".join(_bits) if _bits else "-"
+
+    # 目標 — per-axis MAE breakdown (LLM structured)
+    if cat == "目標":
+        _llm = st.session_state.get(f"_pe_goals_struct_{_plugin}")
+        _llm_data = (_llm or {}).get("data") or {}
+        _common = _llm_data.get("common") or []
+        if not _common:
+            return "LLM 未実行 (構造化分析ボタンを押下)"
+        axes = [("importance", "大切さ"), ("commitment", "本気度"),
+                 ("feasibility", "達成見込"), ("achievement", "達成度")]
+        _bits = []
+        for _ak, _al in axes:
+            errs = [abs(_hml_to_num(g.get("answer_" + _ak))
+                          - _hml_to_num(g.get("gt_"     + _ak)))
+                     for g in _common]
+            if errs:
+                _bits.append(f"{_al}={sum(errs)/len(errs):.2f}")
+        return " / ".join(_bits) if _bits else "-"
+
+    # 人格形成 / 社会性 / 愛着 — max |Δ| axis
+    if cat in _NARRATIVE_CATEGORIES:
+        _llm = st.session_state.get(f"_pe_narr_scored_{_plugin}_{cat}")
+        _llm_data = (_llm or {}).get("data") or {}
+        _ans = _llm_data.get("answer_scores") or {}
+        _gt  = _llm_data.get("gt_scores")     or {}
+        if not _ans and not _gt:
+            return "LLM 未実行 (構造化分析ボタンを押下)"
+        _diffs = [(abs(float(_ans.get(k, 0.0)) - float(_gt.get(k, 0.0))), k)
+                   for k in (set(_ans) | set(_gt))]
+        if not _diffs:
+            return "-"
+        _max_d, _max_k = max(_diffs)
+        _short = re.split(r"[ \(（]", _max_k, maxsplit=1)[0][:16]
+        return f"最大差: {_short} |Δ|={_max_d:.2f}"
+
+    # Likert 特性 / 価値観 — max |Δ| axis
+    _axes    = data.get("axes_avg")    or {}
+    _axes_gt = data.get("axes_avg_gt") or {}
+    _diffs = [(abs(float(_axes.get(k, 0.0)) - float(_axes_gt.get(k, 0.0))), k)
+               for k in (set(_axes) | set(_axes_gt))]
+    if not _diffs:
+        return "-"
+    _max_d, _max_k = max(_diffs)
+    _short = _max_k[:16]
+    return f"最大差: {_short} |Δ|={_max_d:.2f}"
+
+
+def _render_cos_metric_strip(cat: str, data: dict) -> None:
+    """Big metric row shown at the top of every category section.
+
+    Displays:
+      - **overall similarity** (single number) — same as the summary radar
+      - **sub-scores** appropriate to the source:
+          * `llm_goals`  → ラインナップ / スコア / 関係 (the 3 the user asked for)
+          * `llm_axes`   → per-axis breakdown is deferred to the detail table
+          * `axes` (動機) → BPNSFS / MWMS sub-scores
+      - **source note** so the operator knows how the number was computed
+    """
+    import streamlit as st
+    cos = _cat_cos_similarity(cat, data)
+    if cos["overall"] is None:
+        return
+    _src   = cos.get("source", "")
+    _extra = cos.get("extra") or {}
+    _mae   = cos.get("mae")
+
+    def _fmt(v):
+        return f"{v:.3f}" if isinstance(v, (int, float)) else "-"
+
+    # Layout depends on the source. Every source shows Cos + MAE side-by-
+    # side as the primary pair; additional sub-scores follow:
+    #   llm_goals       → + ① Lineup / ② Score / ③ Synergy&Trade
+    #   axes (動機)     → + BPNSFS cos / BPNSFS MAE / MWMS cos / MWMS MAE
+    #   others          → nothing extra
+    if _src == "llm_goals":
+        _cols = st.columns([2, 2, 1, 1, 1])
+        _cols[0].metric("Cos 類似度 (A↔GT)", _fmt(cos["overall"]))
+        _cols[1].metric("MAE",                _fmt(_mae))
+        _cols[2].metric("① Lineup",           _fmt(_extra.get("lineup")))
+        _cols[3].metric("② Score",             _fmt(_extra.get("score")))
+        _cols[4].metric("③ Synergy/Trade",     _fmt(_extra.get("edges")))
+    elif _src == "axes" and cat == "動機":
+        # 動機 shows overall + BPNSFS cos/MAE + MWMS cos/MAE (6 metrics)
+        _cols = st.columns([2, 2, 1, 1, 1, 1])
+        _cols[0].metric("Cos 類似度 (A↔GT)",  _fmt(cos["overall"]))
+        _cols[1].metric("MAE",                _fmt(_mae))
+        _cols[2].metric("BPNSFS cos",         _fmt(_extra.get("bpnsfs")))
+        _cols[3].metric("BPNSFS MAE",         _fmt(_extra.get("bpnsfs_mae")))
+        _cols[4].metric("MWMS cos",           _fmt(_extra.get("mwms")))
+        _cols[5].metric("MWMS MAE",           _fmt(_extra.get("mwms_mae")))
+    else:
+        _cols = st.columns([1, 1, 3])
+        _cols[0].metric("Cos 類似度 (A↔GT)", _fmt(cos["overall"]))
+        _cols[1].metric("MAE",                _fmt(_mae))
+
+    _src_note = {
+        "llm_goals":   "LLM 構造抽出 (Cos: 3 sub-score 平均 · MAE: 3 sub-score の 1 からの誤差平均)",
+        "llm_axes":    "LLM 軸別ルーブリック (Cos: 1-|Δ| 軸平均 · MAE: |Δ| 軸平均)",
+        "axes":        "軸スコアベクトル (Cos: cosine · MAE: 軸別 |Δ| 平均)",
+        "embed":       "OpenAI Embedding (Cos: 意味類似度 · MAE: 1-Cos で暫定, LLM 分析で軸別 MAE に切替)",
+        "f1_fallback": "Token F1 fallback (embedding 失敗時)",
+    }.get(_src, "")
+    if _src_note:
+        st.caption(f"↑ 基準: {_src_note} · Ground Truth = 1.0")
+    if _src in ("embed", "f1_fallback") and cat in _NARRATIVE_CATEGORIES:
+        st.caption(
+            "💡 「LLM 構造化分析」ボタンを押すと Cos は LLM ベースに切り替わり、"
+            "MAE も算出されます。"
+        )
 
 
 # --------------------------------------------------------------------------
@@ -1714,98 +2296,127 @@ def _summarize_category(cat: str, data: dict) -> dict:
 
 
 def _render_summary(result: dict) -> None:
-    """Cross-category summary at the top of the screen."""
+    """Cross-category summary at the top of the screen.
+
+    For each of the 7 categories, shows:
+      - Cos 類似度  (Ground Truth = 1.0 basis) — higher = closer to GT
+      - MAE         (per-item mean absolute error) — lower = closer to GT
+      - Memo       — a short human-readable summary of where the biggest
+                     errors sit (max-|Δ| axis, or BPNSFS/MWMS cos+MAE for 動機,
+                     or per-axis MAE for 目標)
+
+    The radar overlays both metrics on the same chart so you can see at a
+    glance whether a category is off in *direction* (cos < 1) or in
+    *magnitude* (MAE > 0).
+    """
     import streamlit as st
-    rows = [_summarize_category(cat, result["categories"][cat])
-             for cat in result.get("category_order", [])]
+    _cats = list(result.get("category_order") or [])
+    rows: list[dict] = []
+    for cat in _cats:
+        _d   = result["categories"].get(cat) or {}
+        _cos = _cat_cos_similarity(cat, _d)
+        rows.append({
+            "category": cat,
+            "type":     "Narrative" if cat in _NARRATIVE_CATEGORIES else "Likert",
+            "n":        len(_d.get("narratives") or _d.get("narrative_items")
+                             or _d.get("items") or []),
+            "cos":      _cos["overall"],
+            "mae":      _cos.get("mae"),
+            "memo":     _cat_memo(cat, _d),
+            "source":   _cos.get("source", ""),
+        })
     if not rows:
         return
 
     st.markdown("## サマリー (7カテゴリ横断)")
 
     # --- Compact summary table ---
-    def _fmt(x):
-        return f"{x:.2f}" if isinstance(x, (int, float)) else "-"
-
-    def _delta_cell(d):
-        if d is None: return "-"
-        return f"{d:+.2f}"
-
+    def _f(x): return f"{x:.3f}" if isinstance(x, (int, float)) else "-"
     _df = pd.DataFrame([
         {
-            "Category": r["category"],
-            "Type":     r["type"],
-            "n":        r["n"],
-            "Answer(AI)":   _fmt(r["answer"])   if r["type"] == "Likert"    else "-",
-            "GT":       _fmt(r["gt"])       if r["type"] == "Likert"    else "-",
-            "Δ":        _delta_cell(r["delta"]) if r["type"] == "Likert" else "-",
-            "Sim Seq":  _fmt(r["sim_seq"])  if r["type"] == "Narrative" else "-",
-            "Sim F1":   _fmt(r["sim_f1"])   if r["type"] == "Narrative" else "-",
-            "Note":     r["note"],
-        } for r in rows
+            "Category":         r["category"],
+            "Type":              r["type"],
+            "n":                r["n"],
+            "Cos 類似度 (A↔GT)": _f(r["cos"]),
+            "MAE (各項目誤差)":   _f(r["mae"]),
+            "Memo":              r["memo"] or "-",
+        }
+        for r in rows
     ])
     st.dataframe(_df, hide_index=True, use_container_width=True)
 
-    # --- Radar: per-category aggregate, one axis per category. Likert
-    # categories show (Answer(AI), Ground Truth) axis means; narrative
-    # categories show (Seq Ratio, Token F1) similarity. Both are on the same
-    # 0–1 scale so they share the radar grid. ---
-    cats = [r["category"] for r in rows]
-    # Build labels with a type hint so the reader can tell which "metric" the
-    # axis represents — keeps the radar honest about mixed semantics.
-    labels = [
-        f"{r['category']}\n({'軸平均' if r['type'] == 'Likert' else '類似度'})"
-        for r in rows
-    ]
-    vals_a = [
-        (r["answer"] if r["type"] == "Likert" else r["sim_seq"]) or 0.0
-        for r in rows
-    ]
-    vals_b = [
-        (r["gt"] if r["type"] == "Likert" else r["sim_f1"]) or 0.0
-        for r in rows
-    ]
-    fig = _radar(labels, vals_a, "サマリー (7カテゴリ)", values_gt=vals_b)
-    if fig is not None:
-        # Override the dual-layer legend labels so the semantics are clear
-        # for both Likert (Answer(AI) / Ground Truth) and Narrative
-        # (Seq Ratio / Token F1) modes.
-        _ax = fig.axes[0] if fig.axes else None
-        if _ax and _ax.get_legend():
-            for t, new in zip(_ax.get_legend().get_texts(),
-                                ["Answer(AI) / Seq Ratio",
-                                 "Ground Truth / Token F1"]):
-                t.set_text(new)
-        st.pyplot(fig)
-        import matplotlib.pyplot as _plt
-        _plt.close(fig)
+    # --- Radar overlaying Cos + MAE on the same chart ---
+    # Cos: higher is better (fills outward when GT-close)
+    # MAE: lower is better (small hulls near the centre when GT-close)
+    labels = [r["category"] for r in rows]
+    vals_cos = [r["cos"] if r["cos"] is not None else 0.0 for r in rows]
+    vals_mae = [r["mae"] if r["mae"] is not None else 0.0 for r in rows]
+
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as _plt
+    import numpy as _np
+    _fig = _plt.figure(figsize=(7.5, 5.5))
+    _ax  = _fig.add_subplot(111, projection="polar")
+    _angles = _np.linspace(0, 2 * _np.pi, len(labels) + 1)
+    _cos_closed = vals_cos + vals_cos[:1]
+    _mae_closed = vals_mae + vals_mae[:1]
+    _ax.plot(_angles, _cos_closed, color="#1565C0", linewidth=2.0,
+              label="Cos 類似度 (高いほど良)")
+    _ax.fill(_angles, _cos_closed, color="#1565C0", alpha=0.18)
+    _ax.plot(_angles, _mae_closed, color="#D32F2F", linewidth=2.0,
+              linestyle="--", label="MAE (低いほど良)")
+    _ax.fill(_angles, _mae_closed, color="#D32F2F", alpha=0.10)
+    # GT baseline ring at 1.0
+    _ax.plot(_angles, [1.0] * len(_angles), color="#888888",
+              linestyle=":", linewidth=1.0, alpha=0.6, label="GT (=1.0)")
+    _ax.set_xticks(_angles[:-1])
+    try:
+        _ax.set_xticklabels(labels, fontfamily="IPAexGothic", fontsize=9)
+    except Exception:
+        _ax.set_xticklabels(labels, fontsize=9)
+    _ax.set_ylim(0, 1.0)
+    _ax.set_title("Cos 類似度 & MAE  ·  Ground Truth = 1.0 基準",
+                    fontfamily="IPAexGothic", fontsize=11)
+    try:
+        _ax.legend(loc="upper right", bbox_to_anchor=(1.30, 1.10),
+                    fontsize=8, prop={"family": "IPAexGothic", "size": 8})
+    except Exception:
+        pass
+    _plt.tight_layout()
+    st.pyplot(_fig)
+    _plt.close(_fig)
+
     st.caption(
-        "*Likert カテゴリ (特性 / 価値観 / 動機) は軸平均スコア (Answer(AI) / Ground Truth) を、"
-        "Narrative カテゴリ (目標 / 人格形成 / 社会性 / 愛着) は A↔GT 比較類似度 "
-        "(Seq Ratio / Token F1) を表示。両者を 0–1 の同一スケールに揃えています。*"
+        "**Cos 類似度**: ベクトル方向の一致 (1.0 = 完全一致)。 "
+        "**MAE**: 各項目の絶対誤差の平均 (0.0 = 完全一致)。 "
+        "同じ 0–1 スケールに揃えて重ね描き。両方が「Cos は 1 に近く / MAE は 0 に近い」"
+        "ほど GT に忠実。"
     )
 
 
 def _summary_md(result: dict) -> list[str]:
+    """Markdown mirror of `_render_summary` — used by report_md."""
     out: list[str] = ["", "## サマリー (7カテゴリ横断)", ""]
-    rows = [_summarize_category(cat, result["categories"][cat])
-             for cat in result.get("category_order", [])]
-    if not rows:
+    _cats = list(result.get("category_order") or [])
+    if not _cats:
         return out
-    out.append("| Category | Type | n | Answer(AI) | GT | Δ | Sim Seq | Sim F1 | Note |")
-    out.append("|------|------|---:|---:|---:|---:|---:|---:|------|")
-    for r in rows:
-        def _f(x): return f"{x:.2f}" if isinstance(x, (int, float)) else "-"
-        _d = f"{r['delta']:+.2f}" if r["delta"] is not None else "-"
+    out.append("| Category | Type | n | Cos 類似度 (A↔GT) | MAE (各項目誤差) | Memo |")
+    out.append("|------|------|---:|---:|---:|------|")
+    for cat in _cats:
+        _d   = result["categories"].get(cat) or {}
+        _cos = _cat_cos_similarity(cat, _d)
+        _n   = len(_d.get("narratives") or _d.get("narrative_items")
+                    or _d.get("items") or [])
+        _typ = "Narrative" if cat in _NARRATIVE_CATEGORIES else "Likert"
+        def _f(x): return f"{x:.3f}" if isinstance(x, (int, float)) else "-"
+        _memo = _cat_memo(cat, _d) or "-"
         out.append(
-            f"| {r['category']} | {r['type']} | {r['n']} | "
-            f"{_f(r['answer']) if r['type'] == 'Likert' else '-'} | "
-            f"{_f(r['gt'])     if r['type'] == 'Likert' else '-'} | "
-            f"{_d              if r['type'] == 'Likert' else '-'} | "
-            f"{_f(r['sim_seq']) if r['type'] == 'Narrative' else '-'} | "
-            f"{_f(r['sim_f1'])  if r['type'] == 'Narrative' else '-'} | "
-            f"{r['note']} |"
+            f"| {cat} | {_typ} | {_n} | {_f(_cos['overall'])} | "
+            f"{_f(_cos.get('mae'))} | {_memo} |"
         )
+    out.append("")
+    out.append("_Ground Truth = 1.0 基準_ · Cos: ベクトル方向の一致 / MAE: 各項目の絶対誤差の平均")
     return out
 
 
@@ -1865,44 +2476,10 @@ def _render_narrative_category(cat: str, data: dict) -> None:
                 ])
                 st.dataframe(_df_dim, hide_index=True, use_container_width=True)
 
-    # ---- Per-row similarity bar (overall, one bar per row) ----
-    st.markdown("#### 質問別 類似度")
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    _row_ids = [it["no"] or f"#{i+1}" for i, it in enumerate(items)]
-    _row_seq = [it["seq"] for it in items]
-    _row_f1  = [it["f1"]  for it in items]
-    fig, ax = plt.subplots(figsize=(max(6.0, len(items) * 0.6), 3.2))
-    _x = list(range(len(items)))
-    _w = 0.4
-    ax.bar([x - _w/2 for x in _x], _row_seq, width=_w, color="#1565C0", alpha=0.85, label="Seq Ratio")
-    ax.bar([x + _w/2 for x in _x], _row_f1,  width=_w, color="#2E7D32", alpha=0.85, label="Token F1")
-    ax.set_xticks(_x)
-    ax.set_xticklabels(_row_ids, rotation=0, fontsize=8.5)
-    ax.set_ylim(0, 1.0)
-    ax.set_ylabel("Similarity")
-    ax.legend(loc="upper right", fontsize=8, frameon=False)
-    ax.grid(True, alpha=0.3, axis="y")
-    plt.tight_layout()
-    st.pyplot(fig); plt.close(fig)
-
-    # Length comparison (Answer vs GT char counts) — quick visual cue for
-    # when GT is materially longer/shorter than Answer.
-    _len_a = [it["len_a"] for it in items]
-    _len_b = [it["len_b"] for it in items]
-    if any(_len_a) or any(_len_b):
-        st.markdown("#### 質問別 文字数 (Answer(AI) vs Ground Truth)")
-        fig, ax = plt.subplots(figsize=(max(6.0, len(items) * 0.6), 2.8))
-        ax.bar([x - _w/2 for x in _x], _len_a, width=_w, color="#1565C0", alpha=0.85, label="Answer(AI)")
-        ax.bar([x + _w/2 for x in _x], _len_b, width=_w, color="#2E7D32", alpha=0.85, label="Ground Truth")
-        ax.set_xticks(_x)
-        ax.set_xticklabels(_row_ids, rotation=0, fontsize=8.5)
-        ax.set_ylabel("char count")
-        ax.legend(loc="upper right", fontsize=8, frameon=False)
-        ax.grid(True, alpha=0.3, axis="y")
-        plt.tight_layout()
-        st.pyplot(fig); plt.close(fig)
+    # The per-row similarity bar (Seq Ratio / Token F1) and per-row length
+    # comparison were removed — the aggregate dimension table above already
+    # summarises what those bars showed, and the LLM-scored radar covers
+    # the qualitative side.
 
     # ---- Side-by-side text comparison per row ----
     # Collapsed by default — the per-row Q/A/GT block can be 10+ rows of long

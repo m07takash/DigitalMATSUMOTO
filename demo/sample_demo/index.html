@@ -32,7 +32,7 @@
       <button id="btn-download" class="btn ghost" disabled>⬇ Save</button>
       <label class="btn ghost">
         ⬆ Load
-        <input type="file" id="file-load" accept=".js,.json" hidden />
+        <input type="file" id="file-load" accept=".md,.js,.json" hidden />
       </label>
     </div>
   </header>
@@ -45,6 +45,7 @@
     <button class="tab" data-tab="feedback">Feedback</button>
     <button class="tab" data-tab="health">Health / Raw API</button>
     <button class="tab" data-tab="editor">Recording Editor</button>
+    <button class="tab" data-tab="video">Video (MP4)</button>
   </nav>
 
   <main class="content">
@@ -178,9 +179,10 @@
         <button id="btn-ed-apply" class="btn primary">Apply (register)</button>
         <button id="btn-ed-download-js" class="btn">⬇ .js</button>
         <button id="btn-ed-download-json" class="btn">⬇ .json</button>
+        <button id="btn-ed-download-md" class="btn">⬇ .md</button>
         <label class="btn ghost">
-          ⬆ Import JSON
-          <input type="file" id="ed-import" accept=".json,.js" hidden />
+          ⬆ Import
+          <input type="file" id="ed-import" accept=".md,.json,.js" hidden />
         </label>
       </div>
 
@@ -237,6 +239,53 @@
       </div>
     </section>
 
+    <!-- ========== VIDEO (MP4) ========== -->
+    <section class="panel" data-panel="video">
+      <div class="toolbar">
+        <label>Recording</label>
+        <select id="vid-select" class="select"></select>
+        <label>Speed ×</label>
+        <input type="number" id="vid-speed" value="1" min="0.25" max="16" step="0.25"
+               title="1 = human-comfortable reading speed; 2 = twice as fast" />
+        <label>Resolution</label>
+        <select id="vid-res" class="select">
+          <option value="720p">1280×720</option>
+          <option value="1080p">1920×1080</option>
+        </select>
+        <label>FPS</label>
+        <input type="number" id="vid-fps" value="30" min="10" max="60" step="1" />
+        <span class="spacer"></span>
+        <button id="btn-vid-generate" class="btn primary">● Generate &amp; Download</button>
+        <button id="btn-vid-cancel" class="btn ghost" disabled>Cancel</button>
+      </div>
+
+      <div class="vid-body">
+        <div class="vid-preview">
+          <canvas id="vid-canvas" width="1280" height="720"></canvas>
+          <div class="vid-progress"><div id="vid-progress-bar" class="vid-progress-bar"></div></div>
+          <div id="vid-status" class="ed-status">
+            Select a recording and click Generate. Only the saved recording is
+            replayed — nothing is sent to the backend or an LLM.
+          </div>
+        </div>
+        <aside class="vid-help">
+          <h3>How it works</h3>
+          <p>The recording's chat turns (<code>/run</code> events) are re-played
+             as a canvas animation and captured to a video file — no backend,
+             no LLM, no regeneration.</p>
+          <p><strong>Speed ×</strong> — <code>1</code> is a human-comfortable
+             reading pace. <code>2</code> plays twice as fast (the file is half
+             as long); <code>0.5</code> is slower.</p>
+          <p><strong>Format</strong> — <span id="vid-format">detecting…</span>.
+             MP4 is used when the browser supports it (Chrome / Edge / Safari);
+             otherwise it falls back to WebM.</p>
+          <p>Recording happens in real time, so a longer conversation at ×1
+             takes that long to capture. Keep this tab in the foreground while
+             it runs.</p>
+        </aside>
+      </div>
+    </section>
+
     <!-- ========== HEALTH / RAW ========== -->
     <section class="panel" data-panel="health">
       <div class="toolbar">
@@ -273,6 +322,7 @@
   <script src="recordings/manifest.js"></script>
   <script src="recordings/sample_chat.js"></script>
   <script src="js/editor.js"></script>
+  <script src="js/video.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
