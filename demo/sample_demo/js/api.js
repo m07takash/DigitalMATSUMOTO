@@ -80,6 +80,48 @@
       return response;
     },
 
+    // --- multipart: only for /run_multipart when Files are attached. All
+    //     other endpoints go through call(). Recorder still captures both.
+    async callMultipart(path, jsonData, files) {
+      const base = this.getBackendUrl();
+      const url = base + path;
+      const fd = new FormData();
+      fd.append("data", JSON.stringify(jsonData || {}));
+      for (const f of (files || [])) fd.append("files", f, f.name);
+
+      let response = null, status = 0, error = null;
+      try {
+        const res = await fetch(url, { method: "POST", body: fd });
+        status = res.status;
+        const text = await res.text();
+        try { response = text ? JSON.parse(text) : null; } catch { response = text; }
+        if (!res.ok) {
+          const detail = (response && typeof response === "object" && response.detail)
+                          ? response.detail
+                          : (typeof response === "string" && response) ? response : "";
+          error = detail ? `HTTP ${status}: ${detail}` : `HTTP ${status}`;
+        }
+      } catch (e) { error = e.message || String(e); }
+
+      // Record & fall-back use the same primitives as the JSON path but with
+      // a redacted request body (raw file bytes would bloat the recording).
+      const redactedRequest = Object.assign(
+        {}, jsonData,
+        { _multipart_files: (files || []).map(f => ({ name: f.name, size: f.size, type: f.type })) }
+      );
+      if (error && cfg.AUTO_FALLBACK_TO_RECORDING && window.Recorder) {
+        const hit = window.Recorder.findMatchingResponse("POST", path);
+        if (hit) { response = hit.response; status = hit.status || 200; error = null; }
+      }
+      if (window.Recorder) {
+        window.Recorder.captureCall({
+          method: "POST", path, request: redactedRequest, response, status, error,
+        });
+      }
+      if (error) throw new Error(`POST ${path}: ${error}`);
+      return response;
+    },
+
     // --- Typed helpers matching DigiM_API.py endpoints ------------------
     health()               { return this.call("GET",  "/health"); },
     listSessions(params)   { return this.call("GET",  "/sessions" + qs(params)); },
@@ -90,6 +132,7 @@
     feedbackConfig(file)   { return this.call("GET",  `/agents/${encodeURIComponent(file)}/feedback`); },
     submitFeedback(body)   { return this.call("POST", "/feedback", body); },
     run(body)              { return this.call("POST", "/run", body); },
+    runMultipart(body, files) { return this.callMultipart("/run_multipart", body, files); },
     // Legacy alias kept intentionally so demos targeting older backends work.
     runLegacy(body)        { return this.call("POST", "/run_function", body); },
   };
