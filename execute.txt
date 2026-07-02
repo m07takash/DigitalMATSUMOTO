@@ -119,3 +119,49 @@ curl -s -X POST http://localhost:8899/feedback \
       "memo": {"visible": true, "flg": true, "memo": "参考になった", "category": "AI"}
     }
   }' | python3 -m json.tool --no-ensure-ascii
+
+# 添付ファイル付き実行（base64 で JSON に同梱 → POST /run）
+B64=$(base64 -w0 report.pdf)
+curl -s -X POST http://localhost:8899/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
+    "user_info": {"USER_ID": "TestUser", "USER_DATA": {}},
+    "session_id": "API_TEST_ATTACH_001",
+    "user_input": "この報告書を要約してください",
+    "agent_file": "agent_X0Sample.json",
+    "attachments": [
+      {"filename": "report.pdf", "content_base64": "'"$B64"'", "content_type": "application/pdf"}
+    ]
+  }' | python3 -m json.tool --no-ensure-ascii
+
+# 添付ファイル付き実行（multipart/form-data → POST /run_multipart）
+#   -F 'data=...' 部分に JSON を、-F 'files=@...' で1つ以上のファイルを添付する
+curl -s -X POST http://localhost:8899/run_multipart \
+  -F 'data={"service_info":{"SERVICE_ID":"API_TEST","SERVICE_DATA":{}},"user_info":{"USER_ID":"TestUser","USER_DATA":{}},"session_id":"API_TEST_ATTACH_002","user_input":"この2ファイルを比較して","agent_file":"agent_X0Sample.json"};type=application/json' \
+  -F 'files=@report.pdf' \
+  -F 'files=@sales.csv' | python3 -m json.tool --no-ensure-ascii
+
+# 添付URL（サーバ側で fetch → 添付として渡す）
+curl -s -X POST http://localhost:8899/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
+    "user_info": {"USER_ID": "TestUser", "USER_DATA": {}},
+    "session_id": "API_TEST_ATTACH_003",
+    "user_input": "このページの要旨を教えて",
+    "agent_file": "agent_X0Sample.json",
+    "attachment_urls": ["https://example.com/spec.html"]
+  }' | python3 -m json.tool --no-ensure-ascii
+
+# user_input 内の URL を自動 fetch（WebUI パリティ）
+curl -s -X POST http://localhost:8899/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
+    "user_info": {"USER_ID": "TestUser", "USER_DATA": {}},
+    "session_id": "API_TEST_ATTACH_004",
+    "user_input": "https://example.com/blog を読んで要点を挙げて",
+    "agent_file": "agent_X0Sample.json",
+    "fetch_urls_from_input": true
+  }' | python3 -m json.tool --no-ensure-ascii

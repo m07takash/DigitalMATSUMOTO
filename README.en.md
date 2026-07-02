@@ -67,6 +67,7 @@
 - [API Reference](#api-reference)
   - [Endpoint list](#endpoint-list)
   - [POST /run — Send a message](#post-run--send-a-message)
+  - [File attachments (`attachments` / `attachment_urls` / `/run_multipart`)](#file-attachments-attachments--attachment_urls--run_multipart)
   - [Execution examples](#execution-examples)
   - [LINE integration usage example](#line-integration-usage-example)
 
@@ -2285,7 +2286,8 @@ When FastAPI is launched, you can execute the agent via REST API. It also suppor
 
 | Method | Path | Description |
 |---------|------|------|
-| `POST` | `/run` | Send a message and get the agent's response (synchronous) |
+| `POST` | `/run` | Send a message and get the agent's response (synchronous). Files can be attached inline via JSON `attachments` (base64) / `attachment_urls` |
+| `POST` | `/run_multipart` | `multipart/form-data` variant of `/run`. Ships JSON metadata (`data`) and binary files (`files`) in one request |
 | `GET` | `/agents` | Get the list of available agents |
 | `GET` | `/agents/{agent_file}/engines` | Get the list of engines available for the agent |
 | `GET` | `/agents/{agent_file}/feedback` | Get the agent's feedback settings |
@@ -2323,7 +2325,12 @@ If the same session is in execution (LOCKED), it waits up to 60 seconds and runs
   "web_search_engine": "OpenAI",
   "thinking_mode": false,
   "user_memory": true,
-  "user_memory_layers": ["persona", "nowaday", "history"]
+  "user_memory_layers": ["persona", "nowaday", "history"],
+  "attachments": [
+    {"filename": "report.pdf", "content_base64": "JVBERi0x...", "content_type": "application/pdf"}
+  ],
+  "attachment_urls": ["https://example.com/spec.html"],
+  "fetch_urls_from_input": false
 }
 ```
 
@@ -2369,9 +2376,44 @@ API default values are used for omitted parameters. These correspond to the WebU
 {
   "session_id": "API_TEST_001",
   "session_name": "(User:TestUser) Question about AI",
-  "response": "Agent response text"
+  "response": "Agent response text",
+  "attachments_processed": [
+    {"filename": "report.pdf", "size_bytes": 128432, "content_type": "application/pdf", "source": "base64"}
+  ]
 }
 ```
+
+> `attachments_processed` is an empty array (`[]`) when the request has no attachments.
+
+### File attachments (`attachments` / `attachment_urls` / `/run_multipart`)
+
+Files can be passed as context to the LLM via the same path the WebUI uses (forwarded as `in_contents=` to `DigiMatsuExecute_Practice`). Three intake channels are supported and can be mixed in a single request.
+
+| Channel | Endpoint | Format | Use case |
+|---------|----------|--------|----------|
+| `attachments` | `POST /run` | Base64-encoded inside JSON | Small–medium files (<25 MB each), simple JSON clients |
+| `files` (UploadFile) | `POST /run_multipart` | `multipart/form-data` | Larger files, form-based clients, when base64 overhead is unwelcome |
+| `attachment_urls` | `POST /run` / `POST /run_multipart` | List of URLs | Server-side fetch (via `DigiM_UrlFetch`) |
+
+**Shared behavior**:
+
+- Up to **20 files per request, 25 MB per file** on the JSON path
+- Filenames are normalised to their basename to block path traversal (`../evil/../etc/passwd` → `passwd`)
+- Same-request name collisions get an auto-suffix: `report (1).pdf`, `(2)…`
+- Staging path: `TEMP_FOLDER/api/<uuid-16>/` — one per request, kept separate from the WebUI's temp folder
+- The response's `attachments_processed` lists what the server accepted with filename, byte size, and source (`base64` / `multipart` / `url` / `user_input_url`)
+
+**`fetch_urls_from_input` (WebUI parity)**:
+
+When `true`, `http(s)://…` URLs found inside `user_input` are automatically fetched and attached — same behavior as the WebUI's [Auto URL fetching (as attachments)](#auto-url-fetching-as-attachments) flow.
+
+**Per-attachment schema (`attachments[]`)**:
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `filename` | Yes | Display / on-disk name. Only the basename is kept (path separators stripped) |
+| `content_base64` | Yes | Standard base64 of the file bytes (no `data:` prefix) |
+| `content_type` | | Informational; downstream code infers type from the filename extension |
 
 ### Execution examples
 
@@ -2512,6 +2554,51 @@ curl -s -X POST http://localhost:8899/feedback \
       "name": "Feedback",
       "memo": {"visible": true, "flg": true, "memo": "Helpful", "category": "AI"}
     }
+  }' | python3 -m json.tool --no-ensure-ascii
+
+# Run with an attachment (base64-encoded inside the JSON body → POST /run)
+B64=$(base64 -w0 report.pdf)
+curl -s -X POST http://localhost:8899/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
+    "user_info": {"USER_ID": "TestUser", "USER_DATA": {}},
+    "session_id": "API_TEST_ATTACH_001",
+    "user_input": "Please summarize this report",
+    "agent_file": "agent_10Sample.json",
+    "attachments": [
+      {"filename": "report.pdf", "content_base64": "'"$B64"'", "content_type": "application/pdf"}
+    ]
+  }' | python3 -m json.tool --no-ensure-ascii
+
+# Run with attachments (multipart/form-data → POST /run_multipart)
+curl -s -X POST http://localhost:8899/run_multipart \
+  -F 'data={"service_info":{"SERVICE_ID":"API_TEST","SERVICE_DATA":{}},"user_info":{"USER_ID":"TestUser","USER_DATA":{}},"session_id":"API_TEST_ATTACH_002","user_input":"Compare these two files","agent_file":"agent_10Sample.json"};type=application/json' \
+  -F 'files=@report.pdf' \
+  -F 'files=@sales.csv' | python3 -m json.tool --no-ensure-ascii
+
+# Attachment URLs (server-side fetch → passed as attachments)
+curl -s -X POST http://localhost:8899/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
+    "user_info": {"USER_ID": "TestUser", "USER_DATA": {}},
+    "session_id": "API_TEST_ATTACH_003",
+    "user_input": "Give me the gist of this page",
+    "agent_file": "agent_10Sample.json",
+    "attachment_urls": ["https://example.com/spec.html"]
+  }' | python3 -m json.tool --no-ensure-ascii
+
+# Auto-fetch URLs found inside user_input (WebUI parity)
+curl -s -X POST http://localhost:8899/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
+    "user_info": {"USER_ID": "TestUser", "USER_DATA": {}},
+    "session_id": "API_TEST_ATTACH_004",
+    "user_input": "Read https://example.com/blog and list the key points",
+    "agent_file": "agent_10Sample.json",
+    "fetch_urls_from_input": true
   }' | python3 -m json.tool --no-ensure-ascii
 ```
 

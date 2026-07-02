@@ -67,6 +67,7 @@
 - [API リファレンス](#api-リファレンス)
   - [エンドポイント一覧](#エンドポイント一覧)
   - [POST /run — メッセージ送信](#post-run--メッセージ送信)
+  - [添付ファイル（`attachments` / `attachment_urls` / `/run_multipart`）](#添付ファイルattachments--attachment_urls--run_multipart)
   - [実行例](#実行例)
   - [LINE 連携での利用例](#line-連携での利用例)
 
@@ -2286,7 +2287,8 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
 
 | メソッド | パス | 説明 |
 |---------|------|------|
-| `POST` | `/run` | メッセージを送信してエージェントの応答を取得（同期） |
+| `POST` | `/run` | メッセージを送信してエージェントの応答を取得（同期）。添付ファイルは JSON に `attachments` (base64) / `attachment_urls` として同梱可能 |
+| `POST` | `/run_multipart` | `multipart/form-data` でファイル添付可能な `/run` の派生。JSON メタデータ（`data`）＋バイナリファイル（`files`）を1リクエストで送る |
 | `GET` | `/agents` | 利用可能なエージェント一覧を取得 |
 | `GET` | `/agents/{agent_file}/engines` | エージェントの選択可能なエンジン一覧を取得 |
 | `GET` | `/agents/{agent_file}/feedback` | エージェントのフィードバック設定を取得 |
@@ -2324,7 +2326,12 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
   "web_search_engine": "OpenAI",
   "thinking_mode": false,
   "user_memory": true,
-  "user_memory_layers": ["persona", "nowaday", "history"]
+  "user_memory_layers": ["persona", "nowaday", "history"],
+  "attachments": [
+    {"filename": "report.pdf", "content_base64": "JVBERi0x...", "content_type": "application/pdf"}
+  ],
+  "attachment_urls": ["https://example.com/spec.html"],
+  "fetch_urls_from_input": false
 }
 ```
 
@@ -2370,9 +2377,44 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
 {
   "session_id": "API_TEST_001",
   "session_name": "(User:TestUser)AIについての質問",
-  "response": "エージェントの応答テキスト"
+  "response": "エージェントの応答テキスト",
+  "attachments_processed": [
+    {"filename": "report.pdf", "size_bytes": 128432, "content_type": "application/pdf", "source": "base64"}
+  ]
 }
 ```
+
+> `attachments_processed` はリクエストに添付が無ければ空配列（`[]`）です。
+
+### 添付ファイル（`attachments` / `attachment_urls` / `/run_multipart`）
+
+WebUI と同じ経路（`DigiMatsuExecute_Practice` の `in_contents=`）で LLM に文脈として添付ファイルを渡せます。3つの受け口があり、いずれも混在させて1リクエストで送れます。
+
+| 受け口 | 送信先 | 形式 | 用途 |
+|--------|--------|------|------|
+| `attachments` | `POST /run` | JSON 内に base64 で同梱 | 小～中サイズ（<25MB/ファイル）、シンプルな JSON クライアント向け |
+| `files` (UploadFile) | `POST /run_multipart` | `multipart/form-data` | 大きめのファイル、フォームベースクライアント、base64 化を避けたい場合 |
+| `attachment_urls` | `POST /run` / `POST /run_multipart` | URL のリスト | サーバ側で fetch（`DigiM_UrlFetch`） |
+
+**共通のふるまい**:
+
+- 1リクエストあたり **最大20ファイル / 1ファイルあたり最大25MB**（JSON経路）
+- ファイル名はパストラバーサル対策で basename に正規化（`../evil/../etc/passwd` → `passwd`）
+- 同一リクエスト内の同名ファイルは自動で `report (1).pdf` `(2)...` とサフィックス付与
+- 一時保存先: `TEMP_FOLDER/api/<uuid-16>/`（リクエストごとに独立、WebUI の保存先と分離）
+- レスポンスの `attachments_processed` に受理されたファイル名・サイズ・出所 (`base64` / `multipart` / `url` / `user_input_url`) が返る
+
+**`fetch_urls_from_input`（WebUI パリティ）**:
+
+`true` にすると、`user_input` 内に含まれる `http(s)://...` を自動抽出して fetch し添付します（WebUI の [URL自動取得（添付ファイル化）](#url自動取得添付ファイル化) と同じ挙動）。
+
+**Attachment 個別スキーマ (`attachments[]`)**:
+
+| フィールド | 必須 | 説明 |
+|-----------|------|------|
+| `filename` | ○ | 表示・保存名。basename のみ使用（パス区切り除去） |
+| `content_base64` | ○ | ファイル内容の標準 base64（`data:` プレフィックス無し） |
+| `content_type` | | 情報用。下流の処理は拡張子から推定 |
 
 ### 実行例
 
@@ -2513,6 +2555,51 @@ curl -s -X POST http://localhost:8899/feedback \
       "name": "Feedback",
       "memo": {"visible": true, "flg": true, "memo": "参考になった", "category": "AI"}
     }
+  }' | python3 -m json.tool --no-ensure-ascii
+
+# 添付ファイル付き実行（base64 で JSON に同梱 → POST /run）
+B64=$(base64 -w0 report.pdf)
+curl -s -X POST http://localhost:8899/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
+    "user_info": {"USER_ID": "TestUser", "USER_DATA": {}},
+    "session_id": "API_TEST_ATTACH_001",
+    "user_input": "この報告書を要約してください",
+    "agent_file": "agent_10Sample.json",
+    "attachments": [
+      {"filename": "report.pdf", "content_base64": "'"$B64"'", "content_type": "application/pdf"}
+    ]
+  }' | python3 -m json.tool --no-ensure-ascii
+
+# 添付ファイル付き実行（multipart/form-data → POST /run_multipart）
+curl -s -X POST http://localhost:8899/run_multipart \
+  -F 'data={"service_info":{"SERVICE_ID":"API_TEST","SERVICE_DATA":{}},"user_info":{"USER_ID":"TestUser","USER_DATA":{}},"session_id":"API_TEST_ATTACH_002","user_input":"この2ファイルを比較して","agent_file":"agent_10Sample.json"};type=application/json' \
+  -F 'files=@report.pdf' \
+  -F 'files=@sales.csv' | python3 -m json.tool --no-ensure-ascii
+
+# 添付URL（サーバ側で fetch → 添付として渡す）
+curl -s -X POST http://localhost:8899/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
+    "user_info": {"USER_ID": "TestUser", "USER_DATA": {}},
+    "session_id": "API_TEST_ATTACH_003",
+    "user_input": "このページの要旨を教えて",
+    "agent_file": "agent_10Sample.json",
+    "attachment_urls": ["https://example.com/spec.html"]
+  }' | python3 -m json.tool --no-ensure-ascii
+
+# user_input 内の URL を自動 fetch（WebUI パリティ）
+curl -s -X POST http://localhost:8899/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
+    "user_info": {"USER_ID": "TestUser", "USER_DATA": {}},
+    "session_id": "API_TEST_ATTACH_004",
+    "user_input": "https://example.com/blog を読んで要点を挙げて",
+    "agent_file": "agent_10Sample.json",
+    "fetch_urls_from_input": true
   }' | python3 -m json.tool --no-ensure-ascii
 ```
 
