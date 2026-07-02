@@ -2380,11 +2380,29 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
   "response": "エージェントの応答テキスト",
   "attachments_processed": [
     {"filename": "report.pdf", "size_bytes": 128432, "content_type": "application/pdf", "source": "base64"}
-  ]
+  ],
+  "references": {
+    "knowledge": [
+      {"title": "AI Ethics Guide", "rag_name": "ethics_docs", "chunk_id": "ethics_001",
+       "category": "AI", "snippet": "...", "similarity_prompt": 0.82, "similarity_response": 0.91}
+    ],
+    "page_index": [
+      {"title": "Ch.1", "rag_name": "guide_pages", "page_id": "p001",
+       "summary": "Intro to system", "category": "Manual"}
+    ],
+    "web": {
+      "engine": "OpenAI", "model": "gpt-4.1-mini",
+      "search_text": "AI ethics 2026", "duration_sec": 2.3,
+      "urls": [{"title": "NYT: AI Ethics", "url": "https://...", "date": "2026-03-01"}]
+    },
+    "user_memory": [{"log": "...", "similarity_response": 0.62}]
+  }
 }
 ```
 
 > `attachments_processed` はリクエストに添付が無ければ空配列（`[]`）です。
+>
+> `references` はこのターンでエージェントが参照した情報源をまとめたビューです。RAG に触れなかった場合は空配列 / 空オブジェクト。似度スコア（`similarity_response`）が付いている項目はデモUIのReferencesドロワーでランクに応じた強調表示（strong/medium/mild）に使えます。
 
 ### 添付ファイル（`attachments` / `attachment_urls` / `/run_multipart`）
 

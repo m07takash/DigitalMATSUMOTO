@@ -54,7 +54,35 @@ window.Recorder && window.Recorder.register({
       response: {
         session_id: "APIDEMO2026063000001",
         session_name: "(User:DemoUser)サンプルエージェント自己紹介",
-        response: "セッション管理・ユーザーメモリ・RAG・Web 検索といった基本機能を備えたエージェントです。詳細は接続先のバックエンド仕様をご参照ください。"
+        response: "セッション管理・ユーザーメモリ・RAG・Web 検索といった基本機能を備えたエージェントです。詳細は接続先のバックエンド仕様をご参照ください。",
+        references: {
+          knowledge: [
+            { title: "エージェント設計ガイド",
+              rag_name: "digim_manual", chunk_id: "manual_012",
+              category: "Overview",
+              snippet: "本システムは対話エージェント基盤として、階層的ユーザーメモリと RAG を統合...",
+              similarity_response: 0.92, similarity_prompt: 0.88 },
+            { title: "RAG 実装リファレンス",
+              rag_name: "digim_manual", chunk_id: "manual_034",
+              category: "RAG",
+              snippet: "ChromaDB を用いたベクトル検索とメタ検索を組み合わせて...",
+              similarity_response: 0.71, similarity_prompt: 0.64 },
+            { title: "サンプル FAQ",
+              rag_name: "faq", chunk_id: "faq_007",
+              category: "FAQ",
+              snippet: "よくある質問: セッション管理はどう動きますか?",
+              similarity_response: 0.41, similarity_prompt: 0.38 }
+          ],
+          page_index: [
+            { title: "3. 基本機能一覧",
+              rag_name: "DigiMPGSystemGuide", page_id: "3-1",
+              category: "Manual",
+              summary: "セッション・ユーザーメモリ・RAG・Web検索の4本柱",
+              similarity_response: 0.85 }
+          ],
+          web: {},
+          user_memory: []
+        }
       }
     },
     {
@@ -63,13 +91,37 @@ window.Recorder && window.Recorder.register({
         service_info: { SERVICE_ID: "DEMO", SERVICE_DATA: {} },
         user_info:    { USER_ID: "DemoUser", USER_DATA: {} },
         session_id: "APIDEMO2026063000001",
-        user_input: "ありがとう。",
+        user_input: "最近のAIエージェントの動向は？",
         agent_file: "agent_10Sample.json"
       },
       response: {
         session_id: "APIDEMO2026063000001",
         session_name: "(User:DemoUser)サンプルエージェント自己紹介",
-        response: "こちらこそ、ありがとうございました。またいつでもお声がけください。"
+        response: "2026年時点では、マルチエージェント協調・ツール実行・記憶階層化が主要トレンドです。以下のソースから要点をまとめました。",
+        references: {
+          knowledge: [],
+          page_index: [],
+          web: {
+            engine: "OpenAI", model: "gpt-4.1-mini",
+            search_text: "AI agent trends 2026",
+            duration_sec: 2.4,
+            urls: [
+              { title: "MIT Tech Review: Agents in 2026",
+                url: "https://www.example.com/mit-tech-review/agents-2026",
+                date: "2026-06-15" },
+              { title: "arXiv: Hierarchical Memory for LLM Agents",
+                url: "https://arxiv.example.com/abs/2606.01234",
+                date: "2026-06-02" },
+              { title: "Anthropic Research Blog: Tool-use scaling",
+                url: "https://anthropic.example.com/research/tool-use",
+                date: "2026-05-28" }
+            ]
+          },
+          user_memory: [
+            { log: "Chat history at 2026-05-01: 3_1_user 'What is an AI agent?'<br>",
+              similarity_response: 0.62 }
+          ]
+        }
       }
     },
     {

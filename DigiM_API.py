@@ -231,6 +231,85 @@ def _unique_path(folder: str, filename: str) -> str:
             return cand
     return os.path.join(folder, f"{stem}_{uuid.uuid4().hex[:6]}{ext}")
 
+# ---------- References ----------
+# Each turn yields an `output_reference` dict from DigiMatsuExecute_Practice that
+# mixes structured data (Web_search) with log-format strings (knowledge_ref /
+# memory_ref). The demo UI wants uniformly structured JSON so it can render a
+# reference sidebar with per-item similarity strength. `_shape_references()`
+# is the single place that flattens the internal format into that shape.
+def _shape_references(output_reference: dict) -> Dict[str, Any]:
+    """Return a UI-friendly view of the execution's references.
+
+    Output shape:
+      {
+        "knowledge":  [ {title, snippet, similarity_prompt, similarity_response,
+                         rag_name, chunk_id, category, ...}, ... ],
+        "page_index": [ {page_id, title, category, summary, ...}, ... ],
+        "web":        { "engine": str, "model": str, "search_text": str,
+                        "duration_sec": float,
+                        "urls": [ {title, url, date, ...}, ... ] },
+        "user_memory": [ {log|text, ...}, ... ],
+      }
+    """
+    out: Dict[str, Any] = {
+        "knowledge": [],
+        "page_index": [],
+        "web": {},
+        "user_memory": [],
+    }
+    if not isinstance(output_reference, dict):
+        return out
+
+    # ---- Knowledge / PageIndex -----------------------------------------
+    # `knowledge_ref` is a list of LOG_TEMPLATE strings. We parse each into
+    # a dict, split out entries carrying `page_id` as page_index items, and
+    # keep the rest as generic knowledge items. Similarity fields survive
+    # the parse and drive the client-side strength coloring.
+    for raw in (output_reference.get("knowledge_ref") or []):
+        if not isinstance(raw, str):
+            continue
+        try:
+            d = dmu.parse_log_template(raw)
+        except Exception:
+            d = {"_raw": raw}
+        # keep the raw string too so operators can debug the original entry
+        d.setdefault("_raw", raw)
+        # normalise a UI-friendly snippet
+        for src in ("value_text_short", "value_text", "summary", "title"):
+            if d.get(src):
+                d.setdefault("snippet", str(d[src])[:140])
+                break
+        if "page_id" in d:
+            out["page_index"].append(d)
+        else:
+            out["knowledge"].append(d)
+
+    # ---- Web search ----------------------------------------------------
+    ws = output_reference.get("Web_search") or {}
+    if isinstance(ws, dict) and ws:
+        out["web"] = {
+            "engine":       ws.get("engine") or "",
+            "model":        ws.get("model") or "",
+            "search_text":  ws.get("search_text") or "",
+            "duration_sec": ws.get("duration_sec"),
+            "urls":         [
+                {"title": u.get("title") or "",
+                 "url":   u.get("url") or "",
+                 "date":  u.get("date") or ""}
+                for u in (ws.get("urls") or []) if isinstance(u, dict)
+            ],
+        }
+
+    # ---- User memory ---------------------------------------------------
+    # memory_ref entries look like [{"log": "..."}], we forward them as-is.
+    for m in (output_reference.get("memory_ref") or []):
+        if isinstance(m, dict):
+            out["user_memory"].append(m)
+        elif isinstance(m, str):
+            out["user_memory"].append({"log": m})
+
+    return out
+
 # ---------- Execution function ----------
 def exec_function(service_info: dict, user_info: dict, session_id: str, session_name: str,
                   user_input: str, situation: dict, agent_file: str, engine: str, execution: dict,
@@ -294,6 +373,10 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
         "session_id": session_id,
         "session_name": session_name,
         "response": response,
+        # Structured references so the client can render a per-turn reference
+        # panel without re-fetching /sessions/{id}. Empty when the agent didn't
+        # touch any RAG / web / user-memory sources for this turn.
+        "references": _shape_references(output_reference),
     }
 
 # ---------- Endpoints ----------

@@ -127,6 +127,10 @@
   const chatLog = $("#chat-log");
   // Files staged for the next send. Cleared after a successful send.
   const chatAttachments = [];
+  // Store references keyed by DOM element so the click handler can pull
+  // them without stashing anything on the element itself (which serializes
+  // poorly and can be large).
+  const bubbleRefs = new WeakMap();
 
   $("#btn-send").addEventListener("click", sendChat);
   $("#chat-input").addEventListener("keydown", e => {
@@ -226,6 +230,8 @@
         ? ` · attached=${r.attachments_processed.length}` : "";
       placeholder.querySelector(".meta").textContent =
         `session=${r.session_id || ""}${r.session_name ? " · " + r.session_name : ""}${attachSummary}`;
+      // Attach references to this bubble so a click opens the drawer.
+      attachRefsToBubble(placeholder, r.references, r.session_id, text);
       // Successful send → clear the attachment tray.
       chatAttachments.length = 0;
       renderAttachmentChips();
@@ -242,7 +248,151 @@
     el.querySelector(".body").textContent = text;
     chatLog.appendChild(el);
     chatLog.scrollTop = chatLog.scrollHeight;
+    if (role === "agent") el.addEventListener("click", () => onBubbleClick(el));
     return el;
+  }
+
+  // ---------- References drawer -----------------------------------------
+  // A per-turn drawer that opens when the user clicks an agent bubble.
+  // Data lives in `bubbleRefs` (a WeakMap keyed by the bubble DOM node) so
+  // it disappears automatically when the bubble is removed.
+  const refsDrawer = $("#refs-drawer");
+  $("#btn-refs-close").addEventListener("click", () => closeRefs());
+
+  function attachRefsToBubble(bubbleEl, refs, sessionId, userInput) {
+    // Normalise into { knowledge, page_index, web, user_memory }. Missing
+    // keys become empty arrays / null.
+    const norm = {
+      knowledge:   Array.isArray(refs && refs.knowledge)   ? refs.knowledge   : [],
+      page_index:  Array.isArray(refs && refs.page_index)  ? refs.page_index  : [],
+      web:         (refs && refs.web && typeof refs.web === "object") ? refs.web : null,
+      user_memory: Array.isArray(refs && refs.user_memory) ? refs.user_memory : [],
+      _turn: { session_id: sessionId || "", user_input: userInput || "" },
+    };
+    const total = norm.knowledge.length + norm.page_index.length
+                + (norm.web && (norm.web.urls || []).length || 0)
+                + norm.user_memory.length;
+    bubbleRefs.set(bubbleEl, norm);
+    if (total > 0) bubbleEl.classList.add("has-refs");
+  }
+
+  function onBubbleClick(el) {
+    const refs = bubbleRefs.get(el);
+    // Highlight the active bubble.
+    for (const other of $$(".msg.agent.selected")) other.classList.remove("selected");
+    el.classList.add("selected");
+    renderRefs(refs);
+    openRefs();
+  }
+
+  function openRefs() { refsDrawer.hidden = false; }
+  function closeRefs() {
+    refsDrawer.hidden = true;
+    for (const other of $$(".msg.agent.selected")) other.classList.remove("selected");
+  }
+
+  function renderRefs(refs) {
+    const body = $("#refs-body");
+    const turn = $("#refs-turn");
+    body.innerHTML = "";
+    turn.textContent = "";
+    if (!refs) {
+      body.innerHTML = '<p class="refs-empty">No references captured for this turn.</p>';
+      return;
+    }
+    const s = refs._turn || {};
+    turn.textContent = s.session_id ? `session=${s.session_id}` : "";
+
+    let anyRendered = false;
+    anyRendered = renderRefSection(body, "Knowledge",  refs.knowledge)  || anyRendered;
+    anyRendered = renderRefSection(body, "PageIndex",  refs.page_index) || anyRendered;
+    anyRendered = renderWebSection(body,               refs.web)        || anyRendered;
+    anyRendered = renderRefSection(body, "User Memory", refs.user_memory) || anyRendered;
+    if (!anyRendered) {
+      body.innerHTML = '<p class="refs-empty">Nothing was referenced for this turn.</p>';
+    }
+  }
+
+  // Compute per-item strength (strong / medium / mild) from similarity_response.
+  // Rank-based so a turn with only 2 strong hits still gets clear coloring
+  // even if their absolute scores are moderate.
+  function tagStrengths(items) {
+    const scored = items.map((it, i) => ({
+      it, i, sim: numOrNull(it.similarity_response) ?? numOrNull(it.similarity_prompt),
+    }));
+    const ranked = scored.filter(x => x.sim != null)
+                         .sort((a, b) => b.sim - a.sim);
+    const n = ranked.length;
+    const tag = new Array(items.length).fill("mild");
+    ranked.forEach((r, rank) => {
+      const pos = rank / Math.max(1, n - 1);
+      if      (pos <= 0.33) tag[r.i] = "strong";
+      else if (pos <= 0.66) tag[r.i] = "medium";
+      else                  tag[r.i] = "mild";
+    });
+    // Items without similarity default to "medium" so they don't look inert.
+    scored.forEach((s, i) => { if (s.sim == null) tag[i] = "medium"; });
+    return tag;
+  }
+  function numOrNull(v) { const n = Number(v); return Number.isFinite(n) ? n : null; }
+
+  function renderRefSection(container, label, items) {
+    if (!items || !items.length) return false;
+    const sect = document.createElement("div");
+    sect.className = "refs-section";
+    sect.innerHTML = `<h4>${esc(label)} <span class="count">${items.length}</span></h4>`;
+    const strengths = tagStrengths(items);
+    items.forEach((it, i) => sect.appendChild(refItemEl(it, strengths[i])));
+    container.appendChild(sect);
+    return true;
+  }
+
+  function refItemEl(it, strength) {
+    const el = document.createElement("div");
+    el.className = `ref-item ${strength}`;
+    const title = it.title || it.page_id || it.rag_name || "(no title)";
+    const snippet = it.snippet || it.summary || it.value_text || it.log || it.text || "";
+    const tags = [];
+    if (it.rag_name)    tags.push(esc(it.rag_name));
+    if (it.category)    tags.push(esc(it.category));
+    if (it.page_id)     tags.push("page:" + esc(it.page_id));
+    if (it.chunk_id)    tags.push("chunk:" + esc(it.chunk_id));
+    const sim = numOrNull(it.similarity_response);
+    if (sim != null) tags.push(`<span class="sim">sim ${sim.toFixed(2)}</span>`);
+    el.innerHTML = `
+      <div class="ref-strength-bar"></div>
+      <div class="ref-item-main">
+        <div class="ref-item-title">${esc(title)}</div>
+        <div class="ref-item-meta">${tags.join(" ")}</div>
+        <div class="ref-item-snippet">${esc(snippet)}</div>
+      </div>`;
+    return el;
+  }
+
+  function renderWebSection(container, web) {
+    const urls = (web && web.urls) || [];
+    if (!urls.length) return false;
+    const sect = document.createElement("div");
+    sect.className = "refs-section";
+    const eng = web.engine ? `${esc(web.engine)}${web.model ? " / " + esc(web.model) : ""}` : "";
+    sect.innerHTML = `<h4>Web <span class="count">${urls.length}</span>${eng ? ` <span style="color:var(--text-dim); font-weight:400; text-transform:none;">${eng}</span>` : ""}</h4>`;
+    // Web items have no similarity → all "medium".
+    urls.forEach(u => {
+      const el = document.createElement("div");
+      el.className = "ref-item medium";
+      const title = u.title || u.url || "(untitled)";
+      const href  = u.url || "#";
+      el.innerHTML = `
+        <div class="ref-strength-bar"></div>
+        <div class="ref-item-main">
+          <div class="ref-item-title"><a href="${esc(href)}" target="_blank" rel="noopener">${esc(title)}</a></div>
+          <div class="ref-item-meta">${u.date ? `<span class="tag">${esc(u.date)}</span>` : ""}</div>
+          <div class="ref-item-snippet">${esc(u.url || "")}</div>
+        </div>`;
+      sect.appendChild(el);
+    });
+    container.appendChild(sect);
+    return true;
   }
 
   // ---------- Sessions ---------------------------------------------------
@@ -441,7 +591,7 @@
     else                                                  switchTab("health");
 
     // Panel-specific rendering.
-    if (path === "/run" || path === "/run_function") {
+    if (path === "/run" || path === "/run_function" || path === "/run_multipart") {
       const req = evt.request || {};
       if (req.user_input) appendMsg("user", req.user_input);
       const resp = evt.response || {};
@@ -449,6 +599,9 @@
       bubble.querySelector(".meta").textContent =
         `session=${resp.session_id || ""}${resp.session_name ? " · " + resp.session_name : ""}`;
       if (resp.session_id) $("#chat-session-id").value = resp.session_id;
+      // Preserve the click-to-open References behavior during playback so
+      // recorded reference data (added to sample_chat.js) can be inspected.
+      attachRefsToBubble(bubble, resp.references, resp.session_id, req.user_input);
     } else if (path === "/health") {
       $("#raw-response").textContent = JSON.stringify(evt.response, null, 2);
     } else if (path === "/web_search_engines") {

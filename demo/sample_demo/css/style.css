@@ -174,6 +174,171 @@ body {
 .msg.system { align-self: center; background: transparent; color: var(--text-dim); font-size: 12px; }
 .msg .meta { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
 
+/* --- Chat agent bubbles: hint they're clickable to open References. --- */
+.msg.agent { cursor: pointer; position: relative; }
+.msg.agent:hover { outline: 1px solid rgba(42, 109, 244, 0.35); }
+.msg.agent.has-refs::after {
+  content: "🔎";
+  position: absolute;
+  top: 6px; right: 8px;
+  font-size: 10px;
+  color: var(--text-dim);
+  opacity: 0.7;
+}
+.msg.agent.selected { outline: 2px solid var(--accent); }
+
+/* --- Reference drawer: slides in over the chat area from the right. --- */
+.refs-drawer {
+  position: absolute;
+  top: 0; right: 0; bottom: 0;
+  width: 380px;
+  max-width: 100%;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  box-shadow: -4px 0 12px rgba(0, 0, 0, 0.06);
+  display: flex;
+  flex-direction: column;
+  z-index: 20;
+  transform: translateX(0);
+  transition: transform 0.18s ease-out;
+}
+.refs-drawer[hidden] {
+  display: flex !important;             /* keep it in flow so JS can toggle */
+  transform: translateX(105%);
+  pointer-events: none;
+  visibility: hidden;
+}
+.main-col { position: relative; }        /* anchor for the drawer */
+
+.refs-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.refs-head h3 {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  flex: 0 0 auto;
+}
+.refs-turn { flex: 1; font-size: 12px; color: var(--text-dim); }
+.refs-close {
+  border: none; background: transparent;
+  font-size: 18px; line-height: 1;
+  color: var(--text-dim); cursor: pointer;
+  padding: 0 6px;
+}
+.refs-close:hover { color: var(--danger); }
+
+.refs-body {
+  padding: 10px 12px;
+  overflow: auto;
+  flex: 1;
+}
+.refs-empty { color: var(--text-dim); font-size: 12px; margin: 8px 0; }
+
+.refs-section {
+  margin-bottom: 14px;
+}
+.refs-section h4 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.refs-section h4 .count { color: var(--accent); font-weight: 600; }
+
+.ref-item {
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #fafbfc;
+  font-size: 12px;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.ref-item .ref-strength-bar {
+  width: 3px;
+  flex: 0 0 auto;
+  align-self: stretch;
+  border-radius: 2px;
+  background: transparent;
+}
+.ref-item.strong  .ref-strength-bar { background: var(--accent); }
+.ref-item.medium  .ref-strength-bar { background: #94b3f2; }
+.ref-item.mild    .ref-strength-bar { background: #d0d5da; }
+
+.ref-item.strong { background: #eef4ff; border-color: #b7cdf7; }
+.ref-item.medium { background: #f7faff; }
+
+.ref-item-main { flex: 1; min-width: 0; }
+.ref-item-title {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ref-item-title a { color: var(--accent); text-decoration: none; }
+.ref-item-title a:hover { text-decoration: underline; }
+.ref-item-meta {
+  font-size: 11px;
+  color: var(--text-dim);
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+}
+.ref-item-meta .tag {
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+}
+.ref-item-meta .sim {
+  color: var(--accent);
+  font-weight: 500;
+}
+.ref-item-snippet {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+/* Narrow screens: pull the drawer out of the flex chat layout and pin it to
+   the viewport so it fills the whole width — otherwise the fixed 260 px
+   left aside crowds it into a strip too narrow to read. */
+@media (max-width: 720px) {
+  .refs-drawer {
+    position: fixed;
+    top: auto; left: 0; right: 0; bottom: 0;
+    height: 70vh;
+    width: 100%;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.08);
+    z-index: 40;
+    transform: translateY(0);
+  }
+  .refs-drawer[hidden] { transform: translateY(105%); }
+}
+
 .chat-attach-row {
   display: flex;
   align-items: center;
