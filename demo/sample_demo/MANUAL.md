@@ -192,6 +192,22 @@ location /demo/ {
 - サーバ側は WebUI と同じ経路（`in_contents` として `DigiMatsuExecute_Practice` に渡す）で処理
 - レスポンスの `attachments_processed` に受理されたファイル名一覧が返り、吹き出し下のメタ欄に `attached=N` として表示
 
+**参照情報の閲覧（References ドロワー）**:
+- エージェントの応答吹き出しをクリックすると、右側に **References** ドロワーがスライドインします
+- 右上の **×** ボタンで閉じます
+- 参照が1件以上あった応答には `🔎` の小さなアイコンが表示され、クリック可能であることを示します
+- ドロワー内は以下のセクションに分かれます:
+  - **Knowledge** — RAG で参照した知識チャンク（`rag_name` / `chunk_id` / `category`）
+  - **PageIndex** — PageIndex 経由で選ばれたページ（`page_id` / `summary`）
+  - **Web** — Web 検索で見つけた URL 一覧（クリックで新規タブ）
+  - **User Memory** — 参照したユーザーメモリ項目
+- **強調表示**: 各セクション内で類似度スコア（`similarity_response`）順に並び、
+  - **strong**（上位 33%）: 濃い青のバー＋薄青の背景
+  - **medium**（次の 33%）: 薄い青のバー
+  - **mild**（残り）: グレーのバー
+- 各項目には `sim 0.92` のようにスコアが小さく表示され、`chunk_id` / `page_id` / `category` などのタグも見えるので、どのソースから来た情報かひと目でわかります
+- **狭幅（<640px）**: ドロワーはチャットエリア全体を覆う画面（オーバーレイ）になります
+
 ### 6-2. Sessions — 会話履歴一覧
 
 **やりたいこと**: `GET /sessions` でセッション一覧、行クリックで `GET /sessions/{id}` の詳細JSON

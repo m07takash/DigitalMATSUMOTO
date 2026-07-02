@@ -2379,11 +2379,29 @@ API default values are used for omitted parameters. These correspond to the WebU
   "response": "Agent response text",
   "attachments_processed": [
     {"filename": "report.pdf", "size_bytes": 128432, "content_type": "application/pdf", "source": "base64"}
-  ]
+  ],
+  "references": {
+    "knowledge": [
+      {"title": "AI Ethics Guide", "rag_name": "ethics_docs", "chunk_id": "ethics_001",
+       "category": "AI", "snippet": "...", "similarity_prompt": 0.82, "similarity_response": 0.91}
+    ],
+    "page_index": [
+      {"title": "Ch.1", "rag_name": "guide_pages", "page_id": "p001",
+       "summary": "Intro to system", "category": "Manual"}
+    ],
+    "web": {
+      "engine": "OpenAI", "model": "gpt-4.1-mini",
+      "search_text": "AI ethics 2026", "duration_sec": 2.3,
+      "urls": [{"title": "NYT: AI Ethics", "url": "https://...", "date": "2026-03-01"}]
+    },
+    "user_memory": [{"log": "...", "similarity_response": 0.62}]
+  }
 }
 ```
 
 > `attachments_processed` is an empty array (`[]`) when the request has no attachments.
+>
+> `references` groups everything the agent touched on this turn. When the agent didn't hit any RAG source, the arrays / objects come back empty. Items carrying `similarity_response` power the demo UI's References drawer, which colours them by rank (strong / medium / mild).
 
 ### File attachments (`attachments` / `attachment_urls` / `/run_multipart`)
 

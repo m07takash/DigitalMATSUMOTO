@@ -78,6 +78,18 @@
       <div class="main-col">
         <div id="chat-log" class="chat-log"></div>
 
+        <!-- Reference drawer — populated when an agent bubble is clicked. -->
+        <aside id="refs-drawer" class="refs-drawer" hidden>
+          <div class="refs-head">
+            <h3>References</h3>
+            <span id="refs-turn" class="refs-turn"></span>
+            <button id="btn-refs-close" class="refs-close" title="Close">×</button>
+          </div>
+          <div id="refs-body" class="refs-body">
+            <p class="refs-empty">Click any agent response above to see what it referenced.</p>
+          </div>
+        </aside>
+
         <div class="chat-attach-row">
           <label class="btn ghost" title="Attach file(s) — sent as multipart/form-data to /run_multipart">
             📎 Attach
