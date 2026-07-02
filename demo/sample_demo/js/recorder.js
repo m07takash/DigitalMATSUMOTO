@@ -185,12 +185,75 @@
       return JSON.stringify({ id: rec.id, meta: rec.meta, events: rec.events }, null, 2);
     },
 
+    // Markdown export — a human-readable transcript plus a fenced ```json block
+    // that is the source of truth for re-import. Unlike .js, a .md file can't be
+    // loaded via <script src>, so it is re-imported through the ⬆ Load button or
+    // the Editor's Import (both call parseMarkdown below).
+    exportAsMarkdown(rec) {
+      const meta = rec.meta || {};
+      const events = rec.events || [];
+      const lines = [];
+      lines.push("<!-- Sample Agent Demo recording (Markdown export).");
+      lines.push("     The ```json block at the bottom is the source of truth for re-import");
+      lines.push("     via the ⬆ Load button or the Recording Editor's Import. -->");
+      lines.push("");
+      lines.push(`# ${meta.title || rec.id}`);
+      lines.push("");
+      lines.push(`- **id**: \`${rec.id}\``);
+      if (meta.createdAt)  lines.push(`- **createdAt**: ${meta.createdAt}`);
+      if (meta.backendUrl) lines.push(`- **backendUrl**: \`${meta.backendUrl}\``);
+      lines.push(`- **events**: ${events.length}`);
+      lines.push("");
+      lines.push("## Transcript");
+      lines.push("");
+      lines.push("> Chat turns only. Other API events (health / agents / sessions …) are");
+      lines.push("> omitted here for readability but preserved in the data block below.");
+      lines.push("");
+      let turnNo = 0;
+      for (const evt of events) {
+        if (evt.type !== "api") continue;
+        if (evt.path !== "/run" && evt.path !== "/run_function") continue;
+        const q = (evt.request && evt.request.user_input) || "";
+        const a = (evt.response && evt.response.response) || "";
+        if (!q && !a) continue;
+        turnNo++;
+        lines.push(`### ${turnNo}.`);
+        if (q) { lines.push(`**🧑 User:** ${mdInline(q)}`); lines.push(""); }
+        if (a) { lines.push(`**🤖 Agent:** ${mdInline(a)}`); lines.push(""); }
+      }
+      if (!turnNo) { lines.push("_(No chat turns in this recording.)_"); lines.push(""); }
+      lines.push("## Recording data");
+      lines.push("");
+      lines.push("```json");
+      lines.push(this.exportAsJson(rec));
+      lines.push("```");
+      lines.push("");
+      return lines.join("\n");
+    },
+
+    // Parse a recording back out of a Markdown export. Returns { id, meta,
+    // events }. Reads the first fenced ```json block; if none is present it
+    // falls back to treating the whole text as JSON. Throws on failure.
+    parseMarkdown(text) {
+      const m = String(text).match(/```json\s*([\s\S]*?)```/);
+      const payload = m ? m[1] : text;
+      const obj = JSON.parse(payload);
+      if (!obj || typeof obj !== "object") throw new Error("Markdown has no recording object");
+      obj.meta = obj.meta || {};
+      obj.events = Array.isArray(obj.events) ? obj.events : [];
+      return obj;
+    },
+
     // --- subscription ----------------------------------------------------
     onChange(fn) { listeners.push(fn); },
     _emit() { for (const fn of listeners) { try { fn(this); } catch (e) { console.error(e); } } },
   };
 
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  // Collapse newlines so a multi-line reply stays on one Markdown line in the
+  // human-readable transcript (the JSON data block keeps the original text).
+  function mdInline(s) { return String(s).replace(/\r?\n+/g, " ").trim(); }
 
   window.Recorder = Recorder;
 })();

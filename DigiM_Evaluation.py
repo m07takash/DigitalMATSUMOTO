@@ -135,7 +135,7 @@ def llm_extract_narrative_scored(category_name: str,
                                    gt_text: str,
                                    agent_file: str,
                                    service_info: dict,
-                                   user_info: dict) -> tuple[dict, str]:
+                                   user_info: dict) -> tuple[dict, str, str]:
     """Score a narrative category on a fixed axis list and produce a
     similarities / differences commentary.
 
@@ -147,8 +147,10 @@ def llm_extract_narrative_scored(category_name: str,
     Answer(AI) and Ground Truth are scored on every axis with a discrete
     5-step rubric (0.00 / 0.25 / 0.50 / 0.75 / 1.00) for repeatable scoring.
 
-    Returns ({"answer_scores", "gt_scores", "similarities", "differences"}, model_name).
-    On parse failure returns a skeleton with zeroed scores + empty strings.
+    Returns `({..scored dict..}, model_name, prompt)` — the prompt string
+    is returned so the UI can surface it in an expander for transparency
+    ("what instruction did we send the LLM?"). On parse failure returns a
+    skeleton with zeroed scores + empty strings; the prompt is still returned.
     """
     import DigiM_Agent as dma
     import re as _re
@@ -244,16 +246,16 @@ def llm_extract_narrative_scored(category_name: str,
             if not isinstance(sc, dict):
                 sc = {}
             out[dst] = {jp: _snap(sc.get(jp, 0.0)) for jp in axes_jp_only}
-        return out, model_name
+        return out, model_name, prompt
     except Exception:
-        return skeleton, model_name
+        return skeleton, model_name, prompt
 
 
 def llm_extract_goals_structured(g1_answer: str, g1_gt: str,
                                    g2_answer: str, g2_gt: str,
                                    g3_answer: str, g3_gt: str,
                                    agent_file: str,
-                                   service_info: dict, user_info: dict) -> tuple[dict, str]:
+                                   service_info: dict, user_info: dict) -> tuple[dict, str, str]:
     """Structured Goals analyzer for PersonalEvaluation.
 
     Reads G1 (goal list), G2 (per-goal self-evaluation), G3 (synergy /
@@ -343,7 +345,9 @@ def llm_extract_goals_structured(g1_answer: str, g1_gt: str,
                 data[k] = v
     except Exception:
         data = skeleton
-    return data, model_name
+    # Return the prompt too so the UI can surface it (transparency: operators
+    # want to see exactly what instruction we sent the LLM).
+    return data, model_name, prompt
 
 
 def llm_compare_section(section_name: str, section_md: str, agent_file: str,

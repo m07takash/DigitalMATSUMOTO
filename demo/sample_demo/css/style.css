@@ -412,3 +412,73 @@ body {
 }
 .ed-status.ok { color: var(--success); }
 .ed-status.err { color: var(--danger); }
+
+/* --- Video (MP4) tab ------------------------------------------------- */
+.toolbar input[type="number"] {
+  width: 74px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 13px;
+}
+.vid-body { display: flex; gap: 12px; flex: 1; min-height: 0; }
+.vid-preview {
+  flex: 1;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+#vid-canvas {
+  display: block;
+  max-width: 100%;
+  max-height: 60vh;
+  width: auto;
+  height: auto;
+  margin: 0 auto;
+  background: #f6f7f9;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.vid-progress {
+  height: 8px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.vid-progress-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 0.15s linear;
+}
+.vid-help {
+  flex: 0 0 300px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 14px;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.vid-help h3 {
+  margin: 2px 0 10px;
+  font-size: 12px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.vid-help p { margin: 0 0 10px; }
+.vid-help code {
+  background: #f2f3f5;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+}

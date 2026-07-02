@@ -5264,6 +5264,69 @@ def _render_ape_pageindex_tree(rag_def, rag_name, rag_agg):
 
 
 ### Evaluation screen ###
+_EVAL_ANALYTICS_BASE = "user/common/analytics/evaluation/"
+
+
+def _save_eval_session(plugin_folder: str, display_name: str,
+                        input_path: str, state: dict) -> str:
+    """Persist one Evaluation run to disk so the sidebar can offer it as a
+    saved report (mirrors Knowledge Explorer's `_save_analysis_session`).
+
+    Layout under `_EVAL_ANALYTICS_BASE`:
+        eval<ts>/
+            meta.json     — plugin_folder, display_name, timestamps
+            input.xlsx    — copy of the uploaded input (best-effort)
+            report.md     — the generated Markdown report
+            state.pkl     — pickled dict of (result, llm, report, input)
+    """
+    import pickle, shutil
+    _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    _folder = os.path.join(_EVAL_ANALYTICS_BASE, f"eval{_ts}")
+    os.makedirs(_folder, exist_ok=True)
+    _meta = {
+        "plugin_folder": plugin_folder,
+        "display_name":  display_name,
+        "input_filename": Path(input_path).name if input_path else "",
+        "timestamp":  _ts,
+        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    }
+    dmu.save_json_file(_meta, os.path.join(_folder, "meta.json"))
+    if input_path and os.path.exists(input_path):
+        try:
+            shutil.copy2(input_path, os.path.join(_folder, "input.xlsx"))
+        except Exception:
+            pass
+    if state.get("report"):
+        try:
+            dmu.save_text_file(state["report"], os.path.join(_folder, "report.md"))
+        except Exception:
+            pass
+    try:
+        with open(os.path.join(_folder, "state.pkl"), "wb") as f:
+            pickle.dump(state, f)
+    except Exception:
+        pass
+    return _folder
+
+
+def _load_eval_session(folder_path: str):
+    """Read `meta.json` + `state.pkl`. Returns (meta, state) or (None, None)."""
+    import pickle
+    _meta_path = os.path.join(folder_path, "meta.json")
+    if not os.path.exists(_meta_path):
+        return None, None
+    _meta = dmu.read_json_file(_meta_path)
+    _state: dict = {}
+    _pkl_path = os.path.join(folder_path, "state.pkl")
+    if os.path.exists(_pkl_path):
+        try:
+            with open(_pkl_path, "rb") as f:
+                _state = pickle.load(f)
+        except Exception:
+            _state = {}
+    return _meta, _state
+
+
 def _evaluation_screen():
     """Sidebar → Evaluation. Picks a plugin under user/common/evaluation/,
     uploads input (Excel), runs the plugin's analysis, renders the result,
@@ -5272,15 +5335,70 @@ def _evaluation_screen():
     `<name>/main.py` under the evaluation folder."""
     import DigiM_Evaluation as de
 
-    st.subheader("Evaluation")
-
     _plugins = de.list_evaluations()
     if not _plugins:
+        st.subheader("Evaluation")
         st.info(
             "No evaluation plugins found. Add a plugin under "
             "`user/common/evaluation/<name>/main.py`."
         )
         return
+
+    # --- Handle load request from the sidebar picker --------------------
+    # Must run BEFORE the plugin selectbox is instantiated so we can
+    # pre-set its session_state (Streamlit locks widget state after first
+    # instantiation in a given script run).
+    _load_folder = st.session_state.pop("_eval_load_folder", None)
+    if _load_folder:
+        _loaded_meta, _loaded_state = _load_eval_session(_load_folder)
+        if _loaded_meta:
+            _lp_folder = _loaded_meta.get("plugin_folder", "")
+            for _p_meta in _plugins:
+                if _p_meta["folder"] == _lp_folder:
+                    st.session_state["eval_plugin_sel"] = (
+                        f"{_p_meta['display_name']} ({_p_meta['folder']})"
+                    )
+                    _pfx = f"_eval_{_lp_folder}"
+                    for _k, _v in (_loaded_state or {}).items():
+                        # Special-case: `selected_categories` restores the
+                        # checkbox row, not a state suffix under _pfx.
+                        if _k == "selected_categories":
+                            _sel = _v or []
+                            if _sel:
+                                _cat_cb_pfx = f"eval_cat_cb_{_lp_folder}_"
+                                # Turn every checkbox off first (to reflect
+                                # exactly what was saved), then flip on the
+                                # ones in the saved list.
+                                _all_cats = []
+                                try:
+                                    _all_cats = list(_p_meta["plugin"].list_categories())
+                                except Exception:
+                                    pass
+                                for _c in _all_cats:
+                                    st.session_state[_cat_cb_pfx + _c] = (_c in _sel)
+                            continue
+                        st.session_state[_pfx + "_" + _k] = _v
+                    # If original input path is stale, fall back to the copy
+                    # saved under the analytics folder.
+                    _saved_input = os.path.join(_load_folder, "input.xlsx")
+                    if os.path.exists(_saved_input) and not (
+                        st.session_state.get(_pfx + "_input")
+                        and os.path.exists(st.session_state[_pfx + "_input"])
+                    ):
+                        st.session_state[_pfx + "_input"] = _saved_input
+                    st.session_state["_eval_loaded_banner"] = (
+                        f"Loaded saved report: "
+                        f"{_loaded_meta.get('created_at', '')} — "
+                        f"{_loaded_meta.get('display_name', '')} — "
+                        f"{_loaded_meta.get('input_filename', '')}"
+                    )
+                    break
+
+    st.subheader("Evaluation")
+
+    _banner = st.session_state.pop("_eval_loaded_banner", None)
+    if _banner:
+        st.info(_banner)
 
     _opt_labels = [f"{p['display_name']} ({p['folder']})" for p in _plugins]
     _sel = st.selectbox("Evaluation:", _opt_labels, key="eval_plugin_sel")
@@ -5336,9 +5454,35 @@ def _evaluation_screen():
     if _input_path:
         st.caption(f"Loaded: `{Path(_input_path).name}`")
 
+    # ---------- Category checkbox filter (before Run analysis) ----------
+    # Plugins that declare `list_categories()` get a pre-run checklist so the
+    # operator can narrow the analysis (and downstream render / report / save)
+    # to just the categories they care about. Default: all checked.
+    _plugin_cats = None
+    if hasattr(_plugin, "list_categories"):
+        try:
+            _plugin_cats = list(_plugin.list_categories())
+        except Exception:
+            _plugin_cats = None
+    _cat_cb_prefix = f"eval_cat_cb_{_meta['folder']}_"
+    if _plugin_cats:
+        st.markdown("**対象カテゴリ (Run analysis 前に選択, 複数可):**")
+        _cb_cols = st.columns(min(len(_plugin_cats), 7))
+        for _i, _c in enumerate(_plugin_cats):
+            _cb_key = _cat_cb_prefix + _c
+            if _cb_key not in st.session_state:
+                st.session_state[_cb_key] = True   # default: all checked
+            _cb_cols[_i % len(_cb_cols)].checkbox(_c, key=_cb_key)
+    _selected_cats = ([c for c in (_plugin_cats or [])
+                          if st.session_state.get(_cat_cb_prefix + c, True)]
+                       if _plugin_cats else None)
+
     _bc1, _bc2 = st.columns([1, 3])
+    _run_disabled = (not bool(_input_path)
+                      or bool(st.session_state._bg_task)
+                      or (_plugin_cats is not None and not _selected_cats))
     if _bc1.button("Run analysis", key="eval_run", type="primary",
-                    disabled=not bool(_input_path) or bool(st.session_state._bg_task)):
+                    disabled=_run_disabled):
         with st.spinner("Running…"):
             try:
                 _res = _plugin.run(_input_path)
@@ -5348,16 +5492,31 @@ def _evaluation_screen():
             except Exception as _e:
                 st.error(f"Analysis failed: {_e}")
         st.rerun()
+    if _plugin_cats is not None and not _selected_cats:
+        _bc2.warning("少なくとも 1 つのカテゴリを選択してください")
 
     _result = st.session_state.get(_state_pfx + "_result")
     if not _result:
         st.caption("Upload an input file and press *Run analysis*.")
         return
 
+    # Filter category_order to the user's checkbox selection. The filter is
+    # applied lazily at render time so toggling a checkbox doesn't require
+    # re-running the plugin. `_view_result` is a shallow copy — the original
+    # is preserved in session_state so unchecked categories can come back
+    # instantly on the next toggle.
+    if _selected_cats is not None:
+        _view_result = dict(_result)
+        _view_result["category_order"] = [
+            c for c in _result.get("category_order", []) if c in _selected_cats
+        ]
+    else:
+        _view_result = _result
+
     # ---------- Render plugin output ----------
     st.markdown("---")
     try:
-        _plugin.render(_result)
+        _plugin.render(_view_result)
     except Exception as _e:
         st.error(f"Render failed: {_e}")
 
@@ -5379,8 +5538,11 @@ def _evaluation_screen():
                           disabled=bool(st.session_state._bg_task)):
             with st.spinner("Asking agent…"):
                 try:
+                    # Pass the filtered view so the LLM commentary reflects
+                    # only the selected categories (matches what the operator
+                    # sees on screen).
                     _txt, _model = de.llm_evaluate(
-                        _plugin, _result, _eval_agent,
+                        _plugin, _view_result, _eval_agent,
                         dict(st.session_state.web_service),
                         dict(st.session_state.web_user),
                     )
@@ -5409,7 +5571,9 @@ def _evaluation_screen():
     _bcr1, _bcr2 = st.columns([1, 3])
     if _bcr1.button("Generate Report", key="eval_gen_report"):
         try:
-            _md = _plugin.report_md(_result)
+            # Report reflects the current checkbox selection so downloads /
+            # saved sessions capture what the operator was looking at.
+            _md = _plugin.report_md(_view_result)
             _llm = st.session_state.get(_state_pfx + "_llm")
             if _llm and _llm.get("text"):
                 _md += (f"\n\n---\n\n## LLM Evaluation\n\n"
@@ -5418,6 +5582,26 @@ def _evaluation_screen():
                           f"- Generated: {_llm['timestamp']}\n\n"
                           f"{_llm['text']}\n")
             st.session_state[_state_pfx + "_report"] = _md
+            # Persist to disk so the sidebar can offer this run as a saved
+            # report (parity with Knowledge Explorer / User Memory Explorer).
+            try:
+                _saved_folder = _save_eval_session(
+                    _meta["folder"], _meta["display_name"], _input_path,
+                    {
+                        # Save the filtered view — the categories checked at
+                        # save time are what the reloaded report shows.
+                        "result":            _view_result,
+                        "selected_categories": _selected_cats,
+                        "llm":               _llm,
+                        "report":            _md,
+                        "input":             _input_path,
+                    },
+                )
+                _bcr2.success(
+                    f"Generated report and saved the session: {_saved_folder}"
+                )
+            except Exception as _e_save:
+                _bcr2.warning(f"Report generated but save failed: {_e_save}")
         except Exception as _e:
             st.error(f"Report generation failed: {_e}")
     _report_md = st.session_state.get(_state_pfx + "_report")
@@ -6158,6 +6342,24 @@ def main():
                         _label = f"{_m.get('created_at', '')[:10]} {_m.get('label', '')}"[:24]
                         if st.button(_label, key=f"ume_load_{_sf}"):
                             st.session_state._ume_load_folder = os.path.join(_ume_base, _sf)
+                            st.rerun()
+
+        # Evaluation: saved reports (parity with Knowledge Explorer / UME)
+        elif st.session_state.get("main_view", "Chat") == "Evaluation":
+            st.markdown("----")
+            _ev_base = _EVAL_ANALYTICS_BASE
+            if os.path.exists(_ev_base):
+                _ev_folders = sorted(
+                    [f for f in os.listdir(_ev_base)
+                     if os.path.isdir(os.path.join(_ev_base, f)) and f.startswith("eval")],
+                    reverse=True)
+                for _sf in _ev_folders[:10]:
+                    _meta_p = os.path.join(_ev_base, _sf, "meta.json")
+                    if os.path.exists(_meta_p):
+                        _m = dmu.read_json_file(_meta_p)
+                        _label = f"{_m.get('created_at', '')[:10]} {_m.get('display_name', '')}"[:24]
+                        if st.button(_label, key=f"eval_load_{_sf}"):
+                            st.session_state._eval_load_folder = os.path.join(_ev_base, _sf)
                             st.rerun()
 
     # Switch main-area screens

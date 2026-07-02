@@ -50,6 +50,7 @@
     $("#btn-ed-add").addEventListener("click", addEvent);
     $("#btn-ed-download-js").addEventListener("click", downloadJs);
     $("#btn-ed-download-json").addEventListener("click", downloadJson);
+    $("#btn-ed-download-md").addEventListener("click", downloadMd);
     $("#ed-import").addEventListener("change", importJson);
 
     $("#btn-ed-json-format").addEventListener("click", () => {
@@ -240,13 +241,22 @@
     download(text, `${state.working.id}.json`, "application/json");
   }
 
+  function downloadMd() {
+    if (!state.working) return;
+    const text = Recorder.exportAsMarkdown(state.working);
+    download(text, `${state.working.id}.md`, "text/markdown");
+  }
+
   async function importJson(e) {
     const f = e.target.files[0];
     if (!f) return;
     const text = await f.text();
     try {
       let obj;
-      if (f.name.endsWith(".json")) {
+      if (f.name.endsWith(".md")) {
+        // A .md export carries the recording in a fenced ```json block.
+        obj = Recorder.parseMarkdown(text);
+      } else if (f.name.endsWith(".json")) {
         obj = JSON.parse(text);
       } else {
         // A demo .js recording is a self-registering snippet. Rather than

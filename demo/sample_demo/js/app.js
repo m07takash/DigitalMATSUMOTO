@@ -311,13 +311,13 @@
     if (!id) return;
     const rec = Recorder.get(id);
     if (!rec) return;
-    const text = Recorder.exportAsScript(rec);
-    const blob = new Blob([text], { type: "application/javascript" });
+    const text = Recorder.exportAsMarkdown(rec);
+    const blob = new Blob([text], { type: "text/markdown" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = `${rec.id}.js`;
+    a.download = `${rec.id}.md`;
     a.click();
-    setStatus(`Downloaded ${rec.id}.js — drop it into recordings/ and add to index.html`);
+    setStatus(`Downloaded ${rec.id}.md — reload it any time via ⬆ Load (or the Editor tab).`);
   });
 
   $("#file-load").addEventListener("change", async e => {
@@ -326,9 +326,11 @@
     const text = await f.text();
     try {
       // A recording exported by this app is a self-registering .js snippet;
-      // eval'ing it here calls Recorder.register(...) directly. If the file is
-      // raw JSON, we parse it and register manually.
-      if (f.name.endsWith(".json")) {
+      // eval'ing it here calls Recorder.register(...) directly. A .md export
+      // carries the recording in a fenced ```json block; .json is raw data.
+      if (f.name.endsWith(".md")) {
+        Recorder.register(Recorder.parseMarkdown(text));
+      } else if (f.name.endsWith(".json")) {
         Recorder.register(JSON.parse(text));
       } else {
         // eslint-disable-next-line no-new-func
