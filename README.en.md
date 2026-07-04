@@ -50,6 +50,7 @@
   - [Integration with Chat tab Analytics Results](#integration-with-chat-tab-analytics-results)
 - [Chat tab — other features](#chat-tab--other-features)
   - [Detail Information tabs](#detail-information-tabs)
+  - [Session Summary (user-defined session dossier)](#session-summary-user-defined-session-dossier)
   - [Compare Agent — regression with KNOWLEDGE / BOOK exclusion](#compare-agent--regression-with-knowledge--book-exclusion)
   - [Draft input mode](#draft-input-mode)
 - [Batch Test (bulk Q&A evaluation)](#batch-test-bulk-qa-evaluation)
@@ -68,6 +69,7 @@
   - [Endpoint list](#endpoint-list)
   - [POST /run — Send a message](#post-run--send-a-message)
   - [File attachments (`attachments` / `attachment_urls` / `/run_multipart`)](#file-attachments-attachments--attachment_urls--run_multipart)
+  - [Session Summary API (`/sessions/{id}/summary` / `/session_summary_presets`)](#session-summary-api-sessionsidsummary--session_summary_presets)
   - [Execution examples](#execution-examples)
   - [LINE integration usage example](#line-integration-usage-example)
 
@@ -2106,11 +2108,12 @@ The Knowledge Utility scatter's **background dots** ("all chunks") are now scope
 
 ### Detail Information tabs
 
-The "**Detail Information**" expander under each turn is now split into three tabs:
+The "**Detail Information**" expander under each turn is split into four tabs:
 
 1. **LLM Input** — the actual LLM input recovered for this turn
    - **System Prompt** — reconstructed with the chat-time persona override
    - **Conversation Memories Loaded** — what was actually pulled from history
+   - **Session Summary (context block)** — when session summary is enabled, the injected context block (see [Session Summary](#session-summary-user-defined-session-dossier))
    - **Final Assembled Prompt** — the full user-message string (newlines preserved, wrapped `<pre>` block so the whole thing is visible top-to-bottom)
    - **Components Breakdown** — User Memory / RAG / Prompt Template Code / Situation / Web Context / AgentSearch / FunctionSearch
 2. **Token Usage** — per-role table of consumed tokens
@@ -2119,6 +2122,65 @@ The "**Detail Information**" expander under each turn is now split into three ta
    - **AgentSearch / FunctionSearch** — chunk count + response tokens
    - TOTAL row + a **Per-Model Summary** when multiple models were used
 3. **Detail** — the previous text-block view (per-section Copy buttons)
+4. **Session Summary** — the current session-scoped user-defined dossier (see below)
+
+### Session Summary (user-defined session dossier)
+
+**Distinct from memory digest** — a **user-formatted session state document** that gets updated by a lightweight LLM (default: `agent_65SessionSummary.json` → Gemini-2.5-Flash) after each turn in the background, and injected into subsequent prompts as a `[Current Session Summary]` block.
+
+**Example use cases**:
+- **Customer meeting**: Accumulate "Company / Contact / Issue / Next action" across turns → after a few exchanges the agent naturally holds the whole picture
+- **Issue triage**: Fill in "Current state / Root cause / Solutions / Constraints" through dialogue
+- **Task tracking**: Keep an explicit "High / Mid / Low / Done" TODO list
+
+**Configured via the "Session Summary Setting" expander in the Chat screen** (placed directly under the User Memory expander):
+
+- ☑ **Enable session summary** — turn on per-turn auto-update + prompt injection (default OFF)
+- **Preset** — choose from [`user/common/mst/session_summary_presets.json`](user/common/mst/session_summary_presets.json):
+  - Customer Interview / Issue Triage / Progress Tracking / Task Tracking / Meeting Notes / Research Log / None (freeform)
+- **Template (Markdown)** — free-edit; the `## ...` headers survive LLM updates
+- Press **Save summary settings** to persist to `status.yaml`
+
+> All UI labels and logs are in English (`Session Summary Setting` / `Enable session summary` / `Preset` / `Template (Markdown)` / `Save summary settings` / `Latest summary (updated: ...)` / `Active template`).
+
+**Detail Information → Session Summary tab** shows the latest body. The block that was actually injected into the prompt is visible under the **LLM Input** tab's **Session Summary (context block)** section.
+
+**Parallel execution with Memory Digest**:
+
+Summary updates and digest generation run in **completely separate background threads** (both `threading.Thread(daemon=True).start()`) — neither blocks the chat response. Concurrent writes to `status.yaml` are protected by the per-file lock in [`DigiM_Util.save_yaml_file`](DigiM_Util.py) (`_yaml_file_locks`), so no field is lost.
+
+**Lightweight agent override**:
+
+By default `agent_65SessionSummary.json` (Gemini-2.5-Flash) is picked up as a global fallback, so **every chat agent gets lightweight summary updates without extra configuration**. To use a different model for a specific agent, add to its `SUPPORT_AGENT`:
+
+```json
+"SUPPORT_AGENT": {
+    ...
+    "SESSION_SUMMARY": "agent_65SessionSummary.json"
+}
+```
+
+(`agent_01DigitalMATSUMOTO.json` and `agent_10Sample.json` already have this wired up.) To switch models globally, change the `DEFAULT` engine inside `agent_65SessionSummary.json` (e.g. `GPT-5-nano`, `Claude-Haiku-4.5`).
+
+**Prompt injection order**:
+
+When `session_summary_enabled=True` and `session_summary_content` is non-empty, [`DigiMatsuExecute_Practice`](DigiM_Execute.py) builds the query as:
+
+```
+[Current Session Summary]
+(Confirmed facts about this session so far. Prefer these values ...)
+
+{session_summary_content}
+---
+
+{user_memory_context}
+{knowledge_context}
+{prompt_template}
+{user_query}
+{situation_prompt}
+```
+
+Summary is placed at the top because "facts confirmed inside this session" should take priority over generic memory / RAG retrieval.
 
 ### Compare Agent — regression with KNOWLEDGE / BOOK exclusion
 
@@ -2145,12 +2207,14 @@ The `Batch Test (upload Q&A xlsx)` expander at the bottom of the Chat screen run
 
 | Column | Required | Description |
 |------|------|------|
-| `Question` | ✓ | The question text |
+| `Question` | ✓ (normal mode) | The question text (not needed in Eval-only mode) |
 | `Question Style` / `QuestionStyle` | – | When present, prepended to the query (`Question Style\nQuestion` sent to the agent). Both spaced and camelCase variants are accepted |
 | `No` | – | Row identifier. Referenced by `Memory No` to pin specific prior rows for history |
 | `Memory No` / `MemoryNo` | – | Per-row history access control (see below). Both spaced and camelCase variants are accepted |
 | `Ground Truth` | – | Expected answer. Triggers evaluation when present |
 | `Answer` | – | Filled in by the run |
+| `Baseline` | – | Benchmark model's answer. **Preserved verbatim, never overwritten**. Consumed by Personal Evaluation for "Answer(AI) ↔ Baseline" / "Ground Truth ↔ Baseline" Cos/MAE/Diff scoring |
+| `BaselineModel` | – | The model name that produced the Baseline (metadata). **Also preserved verbatim** |
 | Any other column | – | Preserved verbatim in the output |
 
 **`Memory No` semantics**
@@ -2187,9 +2251,12 @@ Input columns are preserved as-is; the following are appended (overwritten if al
 
 - **Per-row history is fully driven by the `Memory No` column**: the previous `Memory Use (BatchTest only)` checkbox has been removed in favour of `No` + `Memory No` columns, which let you express "this row sees rows 1 & 3" / "this row sees nothing" at row granularity rather than one toggle for the whole run.
 - **`Save Digest (BatchTest only)` checkbox**: independent toggle to suppress digest generation. OFF saves cost / time on large runs. Independent from the chat header `Save Digest`.
+- **`Eval only` checkbox**: skip the agent invocation entirely and just re-run `eval_answer_vs_groundtruth` on the existing `Answer` + `Ground Truth` columns. Overwrites Verdict / Score / Match / Seq Ratio / Token F1 / Eval. **The `Question` column is used as evaluation context when present but isn't required.** Fast/cheap way to refresh evaluation metrics without a fresh LLM generation pass.
+- **`Baseline` / `BaselineModel` columns are never overwritten**: if present in the input, they carry through to the output unchanged. Downstream evaluators (e.g. Personal Evaluation) consume them in aggregate.
+- **Format-preserving output**: the result xlsx is produced by openpyxl **overlaying** cell values onto a byte-for-byte copy of the source file. Column widths / cell fills / fonts / freeze panes / untouched sheets survive intact. Falls back to a fresh pandas write only when row counts change (e.g. multi-persona expansion).
 - **Honors the sidebar persona selection**: when 2+ persona ids are selected, each question is run in **multi-persona parallel mode** and the result xlsx is written in **long format** (one row per question × persona).
-- **Progress display**: the sidebar bg-task message shows `(N/N) Running batch Q&A...` in near-real-time (counter ticks per persona completion).
-- **Result file picker**: a dropdown switches between past `batch_results_*.xlsx` files for download / analysis.
+- **Progress display**: the sidebar bg-task message shows `(N/N) Running batch Q&A...` (or `Re-evaluating Answer vs GT...` in Eval-only mode) in near-real-time (counter ticks per persona completion).
+- **Result file picker**: a dropdown switches between past `batch_results_*.xlsx` / `batch_results_evalonly_*.xlsx` files for download / analysis.
 
 ### Result Analysis (instant)
 
@@ -2247,16 +2314,32 @@ class Plugin:
         "Markdown for `Generate Report`."
 ```
 
-LLM critique is provided by the generic `DigiM_Evaluation.llm_evaluate()` helper — it formats `report_md` and asks a chosen agent to write a critique in 4 sections (全体評価 / 強み / 弱み / 改善提案). Plugins may override by exposing their own `llm_evaluate(...)`.
+LLM critique is provided by the generic `DigiM_Evaluation.llm_evaluate()` helper — it formats `report_md` and asks a chosen agent to write a critique. Default template has 4 sections (全体評価 / 強み / 弱み / 改善提案). When the **Question (optional)** text area is filled in the UI, the helper switches to **Q&A mode** and answers that specific question grounded in the analysis report (target length 300–800 chars). Plugins may override by exposing their own `llm_evaluate(...)`.
+
+### Optional plugin hooks
+
+Adding any of these to your `Plugin` class unlocks matching UI behaviour:
+
+| Hook | Purpose |
+|---|---|
+| `default_agent() -> str` | Dedicated agent file name used by the **Run analysis** structured-scoring pipeline. When set, the UI pins this agent instead of showing an agent picker at the top — reproducibility over flexibility. |
+| `list_categories() -> list[str]` | Pre-run category checkbox filter. Only the selected categories are analysed / rendered / included in the report / persisted. |
+| `llm_augment(result, agent_file, service_info, user_info, categories=None) -> dict` | Fires automatically inside Run analysis. Runs per-category structured LLM extraction (e.g. Identity narrative rubric, Goals structural extraction) **in parallel** and returns `{session_state_key: cache_entry}` for the WebUI to inject. Per-category exceptions are captured under the `_llm_augment_errors` key so one broken category doesn't sink the whole pass. |
 
 ### UI flow
 
 1. Pick a plugin from the dropdown
-2. **Download template (.xlsx)** — when the plugin's `sample_path()` points to a real file
+2. **📎 Sample input: `<filename>`** — only the filename is shown (the absolute server path is hidden for safety). **Download template (.xlsx)** streams the source xlsx byte-for-byte (all formatting preserved)
 3. **Upload input (.xlsx)** — the filled-in spreadsheet
-4. **Run analysis** → plugin's `run()` → `render()` displays the result
-5. **LLM Evaluation** — choose an agent → `Evaluate with LLM` (the critique is cached on the result)
-6. **Generate Report** → Markdown export including the LLM critique
+4. **🔒 Evaluation agent** — when the plugin exposes `default_agent()`, that dedicated agent (e.g. `agent_66Evaluation.json`) is pinned. Otherwise falls back to the first registered agent
+5. **Category checkboxes** — narrow the scope when the plugin exposes `list_categories()`
+6. **Run analysis** → plugin's `run()` executes → `llm_augment` (if defined) runs per-category LLM extractions **in parallel** → `render()` displays the result
+7. **LLM Evaluation** —
+   - **Agent for commentary**: writer agent for the commentary (a separate selector from the pinned Run-analysis agent — defaults to the same but can be swapped for a stronger writer)
+   - **Question (optional)**: free-form question grounded in the analysis. Empty → default critique template; filled → Q&A mode
+   - **`Evaluate with LLM (定型講評)` / `この質問に回答`**: the button label reflects the current mode
+8. **Generate Report** → Markdown export including the LLM critique + auto-saves the session
+9. **Sidebar saved sessions** — each session's Load button has a **`Del`** button stacked directly beneath it (same pattern as Chat), for individual pruning
 
 ### PersonalEvaluation plugin
 
@@ -2264,17 +2347,53 @@ Scores 7 personality theories at once: Big Five / Schwartz Value Theory / Self-D
 
 **Input Excel** — 2 sheets:
 - `Category`: 7 rows of theory metadata
-- `PersonalTest`: Q/A rows (`No / Category / Question Style / Question / Memory No / Memo / Answer / Ground Truth / Compare`)
+- `PersonalTest`: Q/A rows (`No / Category / Question Style / Question / Memory No / Memo / Answer / Ground Truth / Baseline / BaselineModel / Compare`)
 
-**Scoring**:
+**Baseline column**: distinct from `Answer(AI)` (the agent under evaluation) and `Ground Truth` (the human subject), the `Baseline` column carries a **generic model's answer** (identified by `BaselineModel`). When populated the following extras appear:
+
+- Summary tiles: half-size lines for "Answer(AI) ↔ Baseline Cos/MAE" and "Ground Truth ↔ Baseline Cos/MAE" below the primary A↔GT row
+- Summary radar: split into two panels (Cos / MAE) × 3 traces (A↔GT = blue, A↔B = orange, GT↔B = brown)
+- Each category (Traits / Values / Motivations / Sociability / Attachment): score tables include Baseline + Diff(A-B) + Diff(GT-B) columns; radars overlay a third Baseline trace (orange dashed)
+- **Identity / Goals do NOT participate in Baseline scoring** (they compare episodes)
+
+**Scoring (Likert-shaped)**:
 - The `Memo` column is parsed into `(axis_label, reverse_flag)` — e.g. "神経症傾向の逆（Emotional Stability）" → axis=`Emotional Stability`, reverse=True.
 - Answer keywords → 0–1 scores: `はい/Agree`→1.0, `どちらでもない/Neutral`→0.5, `いいえ/Disagree`→0.0; bare `1-5` / `1-7` scales are auto-normalised.
-- 4 categories (Traits / Values / Motivations / Attachment) get a **radar chart** + score table.
-- 3 narrative-only categories (Goals / Identity / Sociability) are rendered as text and read by the LLM critique step.
+- Answer(AI) AND Ground Truth are scored in parallel — the render surfaces Cos similarity + MAE + Diff.
+
+**Per-category rendering**:
+
+| Category | Theory | Render |
+|---|---|---|
+| Traits | Big Five (OCEAN) | OCEAN-ordered radar + Score / Baseline / Diff table |
+| Values | Schwartz Value Theory | 10-value radar + 4-group aggregation (Openness to change / Self-enhancement / Conservation / Self-transcendence) |
+| Motivations | SDT (BPNSFS + MWMS) | Two side-by-side radars (BPNSFS 3-axis + MWMS 6-axis) |
+| **Goals** | Personal Strivings | **2×2 matrix (common / not-common × Answer(AI) / GT) + manual reclassification (common↔individual, N:N pairs supported) + weighted F1 / Precision / Recall** — details below |
+| **Identity** | Narrative Identity | LLM 4-axis rubric with **continuous 0–1 scoring** (narrative coherence / agency vs communion / redemption vs contamination / autobiographical reasoning). **Per-axis Answer / GT / Comparison commentary (100–200 chars each)** + per-axis score table (A / GT / Diff) |
+| Sociability | Leach Hierarchical Multicomponent Model | 5-axis radar + 2-group aggregation (Self-Definition / Self-Investment) |
+| Attachment | ECR (Brennan/Clark/Shaver) | Raw 1–7 table for the 2 axes (Avoidance / Anxiety) + Baseline row + Bartholomew 4-style classification (Secure / Preoccupied / Dismissing-avoidant / Fearful-avoidant) with inline SVG illustrations |
+
+**Goals category — weighted F1/P/R scoring**:
+
+- **Weight per goal** = mean of 4 axes (Importance / Commitment / Feasibility / Achievement) coded as H=1.0 / M=0.5 / L=0.0
+- **Precision** = Σ(common goals' GT weight) / Σ(all GT goals' weight)  — GT-referenced
+- **Recall** = Σ(common goals' Answer weight) / Σ(all Answer goals' weight)  — Answer-referenced
+- **F1** = 2·P·R / (P + R)
+- **Relations F1 / P / R** = Precision / Recall / F1 on (from, to, kind) edge sets (reference indicator; synergy/tradeoff breakdown included)
+- **Deterministic G3 parser**: when the LLM returns empty `edges_answer` / `edges_gt`, a regex parser extracts `X と Y: シナジー` / `X と Y: トレードオフ` patterns from the raw G3 text and merges them in (fills the LLM's blind spots)
+- **N:N support**: an Answer#a can be manually paired with a GT-common goal (`_shared_gt_with_common`). GT weight is deduplicated so double-counting doesn't inflate Precision
+
+**Manual goal reclassification** (correct the LLM's decisions after the fact):
+
+- **✏️ Edit common goals** (collapsible expander): each LLM common goal exposes a `Not common` checkbox (split), each existing manual pair exposes a `Not common` checkbox (unpair)
+- **✏️ Edit non-common goals** (collapsible expander): each Answer-only goal exposes a `Classification` selectbox (`Not common (leave as-is)` / `GT-only#j` / `GT-common#i`) — picking a GT-common creates an N:N cross-pair. Split-generated entries expose a `Revert to common` button
+- **✓ Apply changes** commits every pending widget state in a single rerun (per-widget click doesn't trigger reruns). **F1 / P / R, summary tile extras, and top metric strip all recompute together**
+- **🔄 Reset classifications** wipes every manual override
+- Both sides deduplicate the display (LLM's N:M mappings that repeat the same Answer or GT sentence are collapsed to a single row; counts reflect unique goals)
 
 ### Adding a new evaluation
 
-Drop a `<name>/main.py` under `user/common/evaluation/` that defines the `Plugin` class — the picker auto-discovers it on next page load. No restart, no registration step.
+Drop a `<name>/main.py` under `user/common/evaluation/` that defines the `Plugin` class — the picker auto-discovers it on next page load. No restart, no registration step. Existing PersonalEvaluation / AnimalFortune are reference implementations.
 
 ---
 
@@ -2295,7 +2414,12 @@ When FastAPI is launched, you can execute the agent via REST API. It also suppor
 | `POST` | `/feedback` | Send feedback (saved to CSV/Notion) |
 | `GET` | `/sessions` | Get the session list |
 | `GET` | `/sessions/{session_id}` | Get the conversation history of a session |
+| `GET` | `/sessions/{session_id}/summary` | Get the session summary state (`enabled` / `template` / `content` / `updated_at`) |
+| `POST` | `/sessions/{session_id}/summary` | Update the session summary `enabled` / `template` (either field is optional) |
+| `GET` | `/session_summary_presets` | List preset templates for session summaries |
 | `GET` | `/health` | Health check |
+
+> The API server's listen port is read from `system.env`'s `API_PORT` (default 8899). Changing it makes the "Web API" menu in the WebUI start uvicorn on that port automatically.
 
 ### POST /run — Send a message
 
@@ -2326,6 +2450,8 @@ If the same session is in execution (LOCKED), it waits up to 60 seconds and runs
   "thinking_mode": false,
   "user_memory": true,
   "user_memory_layers": ["persona", "nowaday", "history"],
+  "session_summary_enabled": true,
+  "session_summary_template": "## Customer\n- Company:\n- Contact:\n\n## Issues\n-\n\n## Next actions\n-",
   "attachments": [
     {"filename": "report.pdf", "content_base64": "JVBERi0x...", "content_type": "application/pdf"}
   ],
@@ -2365,6 +2491,8 @@ API default values are used for omitted parameters. These correspond to the WebU
 | `thinking_mode` | `false` | Thinking Mode. When `true`, the AI analyzes the question and dynamically decides Habit / Web search / RAG query generation / Book addition |
 | `user_memory` | (unspecified) | Whether to use User Memory (information about the dialogue partner). `true` = all layers ON / `false` = all Off / unspecified = follows `Allowed["User Memory Layers"]` in `users.json` (or `USER_MEMORY_DEFAULT_LAYERS` if absent) |
 | `user_memory_layers` | (unspecified) | Explicitly specify enabled layers (subset of `["persona","nowaday","history"]`, `[]` to turn all off). When specified, takes priority over `user_memory`. Invalid layer names are ignored |
+| `session_summary_enabled` | (unspecified) | Toggle the session summary feature inline. When set, the value is written to `status.yaml` and takes effect starting on the same turn. Unspecified = keep whatever the session already has |
+| `session_summary_template` | (unspecified) | Session summary template (Markdown). When set, written to `status.yaml`. Fetch presets from `GET /session_summary_presets` |
 
 > `memory_similarity` is always `false` via the API (the parameter cannot be specified).
 >
@@ -2432,6 +2560,95 @@ When `true`, `http(s)://…` URLs found inside `user_input` are automatically fe
 | `filename` | Yes | Display / on-disk name. Only the basename is kept (path separators stripped) |
 | `content_base64` | Yes | Standard base64 of the file bytes (no `data:` prefix) |
 | `content_type` | | Informational; downstream code infers type from the filename extension |
+
+### Session Summary API (`/sessions/{id}/summary` / `/session_summary_presets`)
+
+WebUI and API share the same `status.yaml`, so summary state is transparent across both. See [Session Summary](#session-summary-user-defined-session-dossier) for the feature description.
+
+**GET `/sessions/{session_id}/summary` — read current state**
+
+```bash
+curl -s http://localhost:8899/sessions/API20260702_XXX/summary
+```
+
+Response:
+```json
+{
+  "session_id": "API20260702_XXX",
+  "enabled":    true,
+  "template":   "## Customer\n- Company:\n- Contact:\n\n## Issues\n-",
+  "content":    "## Customer\n- Company: ABC Corp\n- Contact: Ms. Tanaka\n\n## Issues\n- Efficiency",
+  "updated_at": "2026-07-02 14:32:11"
+}
+```
+
+- `enabled` — feature toggle
+- `template` — currently stored template
+- `content` — most recent LLM-generated summary body
+- `updated_at` — last content update time
+
+**POST `/sessions/{session_id}/summary` — change settings**
+
+Both `enabled` and `template` are `Optional`; sending only one preserves the other.
+
+```bash
+# Apply the "Customer Interview" preset and enable
+curl -X POST http://localhost:8899/sessions/API20260702_XXX/summary \
+  -H "Content-Type: application/json" \
+  -d '{
+    "enabled": true,
+    "template": "## Customer info\n- Company:\n- Contact:\n\n## Issues\n-\n\n## Next actions\n-"
+  }'
+
+# Temporarily disable (template is preserved)
+curl -X POST http://localhost:8899/sessions/API20260702_XXX/summary \
+  -H "Content-Type: application/json" \
+  -d '{"enabled": false}'
+```
+
+> `content` cannot be set here (owned by the background updater). Changing the template regenerates the body on the next turn.
+
+**GET `/session_summary_presets` — list preset templates**
+
+```bash
+curl -s http://localhost:8899/session_summary_presets
+```
+
+Response:
+```json
+{
+  "presets": [
+    {"name": "None",         "description": "Empty template...",      "template": ""},
+    {"name": "顧客ヒアリング",  "description": "Customer interview...", "template": "..."},
+    {"name": "課題整理",       "description": "Issue triage...",       "template": "..."},
+    {"name": "進捗管理",       "description": "Progress tracking...", "template": "..."},
+    {"name": "タスク管理",     "description": "Task tracking...",     "template": "..."},
+    {"name": "会議メモ",       "description": "Meeting notes...",     "template": "..."},
+    {"name": "研究ログ",       "description": "Research log...",      "template": "..."}
+  ]
+}
+```
+
+Add or edit presets in [`user/common/mst/session_summary_presets.json`](user/common/mst/session_summary_presets.json) — no server restart required; changes are picked up on the next API call.
+
+**Inline usage (one-shot enable via `/run`)**
+
+Include `session_summary_enabled` / `session_summary_template` in the `/run` payload to activate the feature on the very same turn — handy for stateless clients (LINE bot etc.):
+
+```bash
+curl -X POST http://localhost:8899/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_info": {"SERVICE_ID": "DEMO"},
+    "user_info":    {"USER_ID": "DemoUser"},
+    "user_input":   "Meeting with Ms. Tanaka at ABC Corp. Budget: 1M JPY.",
+    "agent_file":   "agent_10Sample.json",
+    "session_summary_enabled": true,
+    "session_summary_template": "## Customer\n- Company:\n- Contact:\n\n## Budget\n-"
+  }'
+```
+
+The first call writes to `status.yaml`; subsequent turns get auto-injection and auto-update.
 
 ### Execution examples
 
@@ -2550,6 +2767,32 @@ curl -s "http://localhost:8899/sessions?user_id=TestUser" | python3 -m json.tool
 
 # Session history
 curl -s http://localhost:8899/sessions/API_TEST_001 | python3 -m json.tool --no-ensure-ascii
+
+# Session summary state
+curl -s http://localhost:8899/sessions/API_TEST_001/summary | python3 -m json.tool --no-ensure-ascii
+
+# Session summary presets
+curl -s http://localhost:8899/session_summary_presets | python3 -m json.tool --no-ensure-ascii
+
+# Enable session summary + set template
+curl -s -X POST http://localhost:8899/sessions/API_TEST_001/summary \
+  -H "Content-Type: application/json" \
+  -d '{
+    "enabled": true,
+    "template": "## Customer info\n- Company:\n- Contact:\n\n## Issues\n-\n\n## Next actions\n-"
+  }' | python3 -m json.tool --no-ensure-ascii
+
+# Inline enable + chat (first call persists to status.yaml)
+curl -s -X POST http://localhost:8899/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
+    "user_info": {"USER_ID": "TestUser", "USER_DATA": {}},
+    "user_input": "Meeting with Ms. Tanaka at ABC Corp. Budget: 1M JPY.",
+    "agent_file": "agent_10Sample.json",
+    "session_summary_enabled": true,
+    "session_summary_template": "## Customer\n- Company:\n- Contact:\n\n## Budget\n-"
+  }' | python3 -m json.tool --no-ensure-ascii
 
 # Engine list (LLM / IMAGEGEN engines selectable by an agent)
 curl -s http://localhost:8899/agents/agent_10Sample.json/engines | python3 -m json.tool --no-ensure-ascii

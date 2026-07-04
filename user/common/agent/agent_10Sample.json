@@ -419,7 +419,8 @@
         "EXTRACT_DATE": "agent_55ExtractDate.json",
         "RAG_QUERY_GENERATOR": "agent_56RAGQueryGenerator.json",
         "THINKING": "agent_58Thinking.json",
-        "KNOWLEDGE_INTERPRET": "agent_63KnowledgeInterpret.json"
+        "KNOWLEDGE_INTERPRET": "agent_63KnowledgeInterpret.json",
+        "SESSION_SUMMARY": "agent_65SessionSummary.json"
     },
     "BOOK": [
         {

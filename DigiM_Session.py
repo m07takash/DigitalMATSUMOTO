@@ -752,6 +752,44 @@ class DigiMSession:
     def save_user_id(self, user_id):
         self._update_status_yaml({"user_id": user_id})
 
+    # ── Session Summary (user-defined session dossier, cf. sessionsummary) ──
+    # Optional per-session structured document. Distinct from `memory_digest`
+    # (which the LLM auto-generates for context compression) — the summary
+    # follows a user-picked template and is updated deliberately after each
+    # turn so the operator can watch key facts accumulate.
+    #
+    #   session_summary_enabled   : bool  — feature toggle for this session
+    #   session_summary_template  : str   — Markdown skeleton (preset or edited)
+    #   session_summary_content   : str   — current filled-in summary
+    #   session_summary_updated_at: str   — ISO timestamp of last write
+    def get_session_summary(self):
+        """Return the tuple (enabled, template, content, updated_at). Any
+        missing keys fall back to sensible defaults (False / '' / '' / '')."""
+        status_dict = dmu.read_yaml_file(self.session_status_path) or {}
+        return (
+            bool(status_dict.get("session_summary_enabled", False)),
+            str(status_dict.get("session_summary_template", "") or ""),
+            str(status_dict.get("session_summary_content",  "") or ""),
+            str(status_dict.get("session_summary_updated_at", "") or ""),
+        )
+
+    def save_session_summary_settings(self, enabled: bool, template: str):
+        """Write the operator-controlled bits (feature toggle + template).
+        Called from the WebUI's summary settings expander."""
+        self._update_status_yaml({
+            "session_summary_enabled":  bool(enabled),
+            "session_summary_template": str(template or ""),
+        })
+
+    def save_session_summary_content(self, content: str):
+        """Write the LLM-generated body + bump the updated_at timestamp.
+        Called from the auto-update background task after each turn."""
+        from datetime import datetime as _dt
+        self._update_status_yaml({
+            "session_summary_content":    str(content or ""),
+            "session_summary_updated_at": _dt.now().strftime("%Y-%m-%d %H:%M:%S"),
+        })
+
     # Save the session service ID
     def save_agent_file(self, agent_file):
         self._update_status_yaml({"agent": agent_file})

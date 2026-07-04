@@ -464,6 +464,15 @@ def _render_llm_input_tab(v2: dict):
     _prompt_dict = v2.get("prompt") or {}
     _q = _prompt_dict.get("query") or {}
 
+    # Session Summary block (opt-in). When the operator has enabled the
+    # session summary feature, the content is prepended to the prompt above
+    # the memory / knowledge blocks — expose it here so the LLM Input tab
+    # actually reflects what the LLM saw.
+    _ss_ctx = _prompt_dict.get("session_summary_context") or ""
+    if _ss_ctx.strip():
+        st.markdown("**Session Summary (context block)**")
+        st.code(_ss_ctx, language="markdown")
+
     # ---- 1. Retrieved Knowledge — HEADER + per-chunk CHUNK template ----
     _km_refs = ((v2.get("response") or {}).get("reference", {}) or {}).get("knowledge_rag") or []
     _km_settings = (_prompt_dict.get("knowledge_rag") or {}).get("setting") or []
@@ -1087,6 +1096,200 @@ def render_copy_button(text, key):
     """, height=32)
 
 # Display the uploaded file
+def _load_session_summary_presets():
+    """Read the shipped preset templates from
+    `user/common/mst/session_summary_presets.json`. Returns a dict
+    {name: {description, template}}. Missing file → empty dict (UI still
+    renders with a `Custom` fallback so the operator can hand-write one)."""
+    try:
+        return dmu.read_json_file("session_summary_presets.json", mst_folder_path) or {}
+    except Exception:
+        return {}
+
+
+def _render_session_summary_settings():
+    """Chat-screen expander with the 3-line configuration:
+
+      ☐ Enable session summary   (default OFF per spec)
+      Preset [ ... ▼ ]           (populates the template textarea)
+      Template  (Markdown textarea, freely editable)
+
+    Values are persisted to `status.yaml` via
+    `DigiMSession.save_session_summary_settings` so they survive reloads
+    and are visible to `DigiMatsuExecute_Practice` for injection.
+    """
+    if "session" not in st.session_state:
+        return
+    _sess = st.session_state.session
+    try:
+        _enabled, _template, _content, _updated_at = _sess.get_session_summary()
+    except Exception:
+        _enabled, _template, _content, _updated_at = False, "", "", ""
+
+    _sid = _sess.session_id
+    _presets = _load_session_summary_presets()
+    _preset_names = ["Custom (free edit)"] + list(_presets.keys())
+
+    with st.expander("Session Summary Setting", expanded=False):
+        # Enable toggle
+        _new_enabled = st.checkbox(
+            "Enable session summary",
+            value=bool(_enabled),
+            key=f"session_summary_enable_{_sid}",
+            help=("When ON, an LLM updates the session summary against your "
+                  "template after each turn, and injects the current summary "
+                  "into subsequent prompts."),
+        )
+
+        # Preset selector — writes into the template textarea when picked.
+        # We use a separate 'stage' session_state key so picking the same
+        # preset again re-loads the template (useful if the user edited it
+        # and wants to reset).
+        _preset_key = f"session_summary_preset_{_sid}"
+        _template_key = f"session_summary_tpl_{_sid}"
+        if _template_key not in st.session_state:
+            st.session_state[_template_key] = _template
+
+        _preset_choice = st.selectbox(
+            "Preset:", _preset_names, index=0,
+            key=_preset_key,
+            help="Pick a preset to expand it into the template textarea below (freely editable).",
+        )
+        _c_apply, _c_desc = st.columns([1, 4])
+        if _c_apply.button("Apply preset", key=f"session_summary_apply_{_sid}"):
+            if _preset_choice != "Custom (free edit)" and _preset_choice in _presets:
+                st.session_state[_template_key] = _presets[_preset_choice].get("template", "")
+                st.rerun()
+        if _preset_choice in _presets:
+            _c_desc.caption(_presets[_preset_choice].get("description", ""))
+
+        # Free-edit template
+        _new_template = st.text_area(
+            "Template (Markdown):",
+            value=st.session_state[_template_key],
+            height=180,
+            key=f"session_summary_tpl_area_{_sid}",
+            help="Structure the summary in Markdown. Headings (## ...) are preserved across LLM updates.",
+        )
+
+        # Save button — persist enabled + template to status.yaml
+        if st.button("Save summary settings", key=f"session_summary_save_{_sid}"):
+            try:
+                _sess.save_session_summary_settings(_new_enabled, _new_template)
+                st.session_state[_template_key] = _new_template
+                st.success(
+                    f"Saved. Enabled: {_new_enabled} / template length: {len(_new_template)} chars"
+                )
+                st.rerun()
+            except Exception as _e:
+                st.error(f"Save failed: {_e}")
+
+        # Peek at the current stored summary content (so the operator can
+        # see "what the LLM will inject next turn"). Same content the
+        # Detail Information tab shows, but colocated for quick glance.
+        if _content:
+            st.caption(f"Latest summary (updated: {_updated_at or '-'})")
+            with st.expander("Current summary body", expanded=False):
+                st.markdown(_content)
+
+
+def _render_session_summary_tab(seq_k, sub_seq_k):
+    """Detail Information → Session Summary tab.
+
+    Shows the session-scoped structured summary that the operator maintains
+    via the Chat-top settings. Same content across turns (it's session-
+    scoped, not turn-scoped); `seq_k` / `sub_seq_k` are threaded through
+    only to keep widget keys unique."""
+    if "session" not in st.session_state:
+        st.caption("(No active session)")
+        return
+    _sess = st.session_state.session
+    try:
+        _enabled, _template, _content, _updated_at = _sess.get_session_summary()
+    except Exception:
+        st.caption("(Failed to load session summary)")
+        return
+
+    if not _enabled:
+        st.info(
+            "Session Summary is disabled. "
+            "Enable it via **Session Summary Setting** at the top of the Chat "
+            "screen and it will auto-update every turn and appear here."
+        )
+        return
+
+    # Header — status + timestamp
+    _cols = st.columns([3, 2])
+    _cols[0].markdown("**Session Summary** (LLM auto-updated)")
+    _cols[1].caption(f"Last updated: {_updated_at or '(not yet)'}")
+
+    if not _content:
+        st.caption(
+            "No summary body yet. It will be generated automatically after the next chat turn."
+        )
+    else:
+        st.markdown(_content)
+
+    # Copy convenience — same button pattern used in the Detail tab
+    try:
+        if _content:
+            render_copy_button(_content, f"session_summary_copy_{seq_k}_{sub_seq_k}")
+    except Exception:
+        pass
+
+    with st.expander("Active template", expanded=False):
+        st.code(_template or "(empty)", language="markdown")
+
+
+def _render_attachment_link_row(seq_key, uploaded_file_path, file_name, file_type):
+    """Render a compact link row for an attachment: `📎 name (size) — 🔗 Open · ⬇ Download`.
+
+    Both links use a `data:` URI so the file is served entirely from the
+    already-loaded page (no server-side URL needed). "Open" opens a new tab;
+    "Download" triggers a save via the `download` HTML attribute.
+
+    Guarded against huge files (>25 MB) — base64 data URIs get very slow
+    in browsers past that, so we fall back to a `st.download_button` in
+    that case."""
+    import base64, mimetypes, html
+    from pathlib import Path as _P
+    try:
+        _bytes = _P(uploaded_file_path).read_bytes()
+    except Exception as _e:
+        st.caption(f"⚠ Attachment `{file_name}` not readable ({_e}).")
+        return
+
+    _mime = file_type or mimetypes.guess_type(file_name)[0] or "application/octet-stream"
+    _size = len(_bytes)
+    _size_str = (f"{_size} B"       if _size < 1024
+                  else f"{_size/1024:.1f} KB" if _size < 1024*1024
+                  else f"{_size/1024/1024:.1f} MB")
+    _safe_name = html.escape(file_name)
+
+    # Big files → skip the data-URI links (browser slowdown / URL bar bloat)
+    # and hand out a standard Streamlit download button instead.
+    if _size > 25 * 1024 * 1024:
+        st.caption(f"📎 **{_safe_name}** ({_size_str}) — using download button (large file)")
+        st.download_button(f"⬇ Download {file_name}", data=_bytes,
+                            file_name=file_name, mime=_mime,
+                            key=f"dl_{seq_key}_{file_name}")
+        return
+
+    _b64 = base64.b64encode(_bytes).decode("ascii")
+    _href = f"data:{_mime};base64,{_b64}"
+    # `target="_blank"` — Open in a new tab. `download="..."` — force save
+    # dialog for the second link.
+    st.markdown(
+        f'<div style="font-size:0.85em; margin-top:4px; margin-bottom:2px;">'
+        f'📎 <b>{_safe_name}</b> '
+        f'<span style="color:#888;">({_size_str} · {html.escape(_mime)})</span> — '
+        f'<a href="{_href}" target="_blank" rel="noopener noreferrer">🔗 ブラウザで開く</a> · '
+        f'<a href="{_href}" download="{_safe_name}">⬇ ダウンロード</a>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
+
+
 def show_uploaded_files_memory(seq_key, file_path, file_name, file_type):
     uploaded_file = file_path+file_name
     if "text" in file_type:
@@ -1112,6 +1315,11 @@ def show_uploaded_files_memory(seq_key, file_path, file_name, file_type):
         st.video(uploaded_file)
     elif "audio" in file_type:
         st.audio(uploaded_file)
+    # Regardless of whether we rendered an inline preview, add the compact
+    # "open / download" link row so the user can always fetch the original
+    # bytes (e.g. re-open a PDF, save an image with the same filename,
+    # inspect a file type we can't preview like `.zip` or `.docx`).
+    _render_attachment_link_row(seq_key, uploaded_file, file_name, file_type)
 
 # Display files attached via the file-uploader widget
 def show_uploaded_files_widget(uploaded_files):
@@ -5413,9 +5621,16 @@ def _evaluation_screen():
         if _sample:
             _sample_p = Path(_sample)
             _sc1, _sc2 = st.columns([3, 1])
-            _sc1.caption(f"📎 Sample input: `{_sample}`")
+            # Show only the filename (not the absolute path) — the full server
+            # path is sensitive and shouldn't leak into the UI.
+            _sc1.caption(f"📎 Sample input: `{_sample_p.name}`")
             if _sample_p.exists() and _sample_p.is_file():
                 try:
+                    # `read_bytes()` gives a byte-for-byte copy of the source
+                    # xlsx (verified: SHA256 identical). No pandas / openpyxl
+                    # round-trip, so column widths / fills / fonts / freeze
+                    # panes / merged cells / formulas / non-touched sheets
+                    # are all preserved in the downloaded file.
                     _sc2.download_button(
                         "Download template (.xlsx)",
                         data=_sample_p.read_bytes(),
@@ -5477,6 +5692,26 @@ def _evaluation_screen():
                           if st.session_state.get(_cat_cb_prefix + c, True)]
                        if _plugin_cats else None)
 
+    # ---------- Dedicated evaluation agent (fixed, not user-selectable) ----
+    # Reproducibility over flexibility: the plugin declares which agent to
+    # use so the same input always routes to the same model. Both Run
+    # analysis (per-category LLM structured extraction via `llm_augment`)
+    # and the LLM Evaluation button below read this via session_state.
+    if hasattr(_plugin, "default_agent"):
+        _eval_agent_pre = _plugin.default_agent()
+    else:
+        # Backward compat: plugin didn't declare a dedicated agent — fall
+        # back to the first registered agent (or None if there are none).
+        _agent_files_pre = [a["FILE"] for a in st.session_state.agents]
+        _eval_agent_pre = _agent_files_pre[0] if _agent_files_pre else None
+    if _eval_agent_pre:
+        # Pin into session_state so the LLM Evaluation section can read it.
+        st.session_state[f"eval_llm_agent_{_meta['folder']}"] = _eval_agent_pre
+        st.caption(
+            f"🔒 Evaluation agent: `{_eval_agent_pre}` "
+            "(専用エージェント固定 — 評価の再現性のため選択不可)"
+        )
+
     _bc1, _bc2 = st.columns([1, 3])
     _run_disabled = (not bool(_input_path)
                       or bool(st.session_state._bg_task)
@@ -5489,6 +5724,32 @@ def _evaluation_screen():
                 st.session_state[_state_pfx + "_result"] = _res
                 st.session_state.pop(_state_pfx + "_llm", None)
                 st.session_state.pop(_state_pfx + "_report", None)
+                # Auto-fire per-category LLM structured analysis (人格形成
+                # rubric / 目標 structure) so the operator doesn't need to
+                # click per-category buttons. Skipped when no agent is
+                # selected or the plugin doesn't expose the hook.
+                if _eval_agent_pre and hasattr(_plugin, "llm_augment"):
+                    try:
+                        _aug = _plugin.llm_augment(
+                            _res, _eval_agent_pre,
+                            dict(st.session_state.web_service),
+                            dict(st.session_state.web_user),
+                            categories=_selected_cats,
+                        ) or {}
+                        # Per-category errors are surfaced via the special
+                        # `_llm_augment_errors` slot (see llm_augment docs).
+                        _aug_errs = _aug.pop("_llm_augment_errors", None)
+                        for _k, _v in _aug.items():
+                            st.session_state[_k] = _v
+                        if _aug_errs:
+                            for _cat_err, _msg_err in _aug_errs.items():
+                                st.error(
+                                    f"LLM 構造化分析 ({_cat_err}) 失敗: {_msg_err}"
+                                )
+                    except Exception as _e_aug:
+                        # Non-fatal — the render layer falls back to a
+                        # "not yet analyzed" placeholder when no cache.
+                        st.warning(f"LLM 構造化分析 skip: {_e_aug}")
             except Exception as _e:
                 st.error(f"Analysis failed: {_e}")
         st.rerun()
@@ -5523,18 +5784,51 @@ def _evaluation_screen():
     # ---------- LLM evaluation ----------
     st.markdown("---")
     st.subheader("LLM Evaluation")
-    _agent_files = [a["FILE"] for a in st.session_state.agents]
-    if _agent_files:
-        _default_af = (st.session_state.agent_file
-                        if st.session_state.agent_file in _agent_files
-                        else _agent_files[0])
+    # LLM Evaluation is the aggregate overview commentary — unlike Run
+    # analysis's structured extractions (which need a fixed dedicated agent
+    # for scoring reproducibility), the commentary here benefits from
+    # letting the operator swap in a stronger writer model on demand.
+    # Default falls back to the plugin's dedicated agent.
+    _agent_files_llm = [a["FILE"] for a in st.session_state.agents]
+    if _agent_files_llm:
+        _default_llm_agent = _eval_agent_pre if _eval_agent_pre in _agent_files_llm \
+                              else _agent_files_llm[0]
+        _sel_key = f"eval_llm_writer_agent_{_meta['folder']}"
         _eval_agent = st.selectbox(
-            "Agent for evaluation:", _agent_files,
-            index=_agent_files.index(_default_af),
-            key=f"eval_llm_agent_{_meta['folder']}",
+            "Agent for commentary:",
+            _agent_files_llm,
+            index=_agent_files_llm.index(_default_llm_agent),
+            key=_sel_key,
+            help=(
+                "LLM Evaluation は総評コメント生成用の別枠エージェント選択です。"
+                "上部の Run analysis (構造化スコアリング) は引き続き "
+                f"`{_eval_agent_pre or '(none)'}` で固定されています。"
+            ),
         )
+        # Free-form question box. When left empty the button falls back to
+        # the default strengths/weaknesses commentary. When filled, the LLM
+        # answers the question grounded in the analysis report.
+        _q_key = f"eval_llm_question_{_meta['folder']}"
+        _user_question = st.text_area(
+            "質問 (任意)",
+            key=_q_key,
+            height=90,
+            placeholder=(
+                "分析結果について聞きたいことがあれば入力してください。\n"
+                "例: 「Answer(AI) と Ground Truth で最も乖離が大きい軸はどれで、"
+                "その原因として考えられることは?」\n"
+                "空欄のままだと 全体評価 / 強み / 弱み / 改善提案 の定型講評を出します。"
+            ),
+            help=(
+                "分析結果 (report_md) をコンテキストとして LLM に渡し、"
+                "この質問に対する回答を Markdown で返します。"
+            ),
+        )
+        _btn_label = ("この質問に回答"
+                       if (_user_question or "").strip()
+                       else "Evaluate with LLM (定型講評)")
         _le_c1, _le_c2 = st.columns([1, 3])
-        if _le_c1.button("Evaluate with LLM", key="eval_llm_run",
+        if _le_c1.button(_btn_label, key="eval_llm_run",
                           disabled=bool(st.session_state._bg_task)):
             with st.spinner("Asking agent…"):
                 try:
@@ -5545,10 +5839,12 @@ def _evaluation_screen():
                         _plugin, _view_result, _eval_agent,
                         dict(st.session_state.web_service),
                         dict(st.session_state.web_user),
+                        user_question=(_user_question or "").strip(),
                     )
                     st.session_state[_state_pfx + "_llm"] = {
-                        "text": _txt, "model": _model,
-                        "agent": _eval_agent,
+                        "text":     _txt, "model": _model,
+                        "agent":    _eval_agent,
+                        "question": (_user_question or "").strip(),
                         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     }
                 except Exception as _e:
@@ -5557,10 +5853,15 @@ def _evaluation_screen():
 
         _llm = st.session_state.get(_state_pfx + "_llm")
         if _llm:
+            _q_shown = _llm.get("question") or ""
+            _mode = "Q&A" if _q_shown else "定型講評"
             st.caption(
-                f"Agent: `{_llm['agent']}`  /  Model: `{_llm['model']}`  /  "
-                f"Generated: {_llm['timestamp']}"
+                f"Mode: `{_mode}`  /  Agent: `{_llm['agent']}`  /  "
+                f"Model: `{_llm['model']}`  /  Generated: {_llm['timestamp']}"
             )
+            if _q_shown:
+                with st.expander("📝 送信した質問", expanded=False):
+                    st.markdown(_q_shown)
             st.markdown(_llm.get("text", ""))
     else:
         st.caption("No agents available.")
@@ -5597,8 +5898,11 @@ def _evaluation_screen():
                         "input":             _input_path,
                     },
                 )
+                # Show just the folder name (basename) — the full server path
+                # is sensitive and shouldn't leak into the UI.
                 _bcr2.success(
-                    f"Generated report and saved the session: {_saved_folder}"
+                    f"Generated report and saved the session: "
+                    f"{Path(_saved_folder).name}"
                 )
             except Exception as _e_save:
                 _bcr2.warning(f"Report generated but save failed: {_e_save}")
@@ -6115,6 +6419,14 @@ def main():
             api_expander = st.expander("Web API")
             with api_expander:
                 import subprocess
+                # Port comes from system.env (API_PORT); never hardcoded. If
+                # missing/malformed, fall back to 8899 so the button still
+                # works out of the box.
+                try:
+                    _api_port = int(os.getenv("API_PORT") or 8899)
+                except (TypeError, ValueError):
+                    _api_port = 8899
+
                 # Check FastAPI process status
                 _api_check = subprocess.run(
                     ["pgrep", "-f", "uvicorn DigiM_API:app"],
@@ -6123,7 +6435,7 @@ def main():
                 _api_running = _api_check.returncode == 0
 
                 if _api_running:
-                    st.success("FastAPI: Running (port 8899)")
+                    st.success(f"FastAPI: Running (port {_api_port})")
                     if st.button("Stop API Server", key="stop_api"):
                         subprocess.run(["pkill", "-f", "uvicorn DigiM_API:app"])
                         st.session_state.sidebar_message = "Stopped FastAPI"
@@ -6132,7 +6444,7 @@ def main():
                     st.warning("FastAPI: Stopped")
                     if st.button("Start API Server", key="start_api"):
                         subprocess.Popen(
-                            ["uvicorn", "DigiM_API:app", "--host", "0.0.0.0", "--port", "8899"],
+                            ["uvicorn", "DigiM_API:app", "--host", "0.0.0.0", "--port", str(_api_port)],
                             stdout=open("/var/log/digim_api.log", "a"),
                             stderr=subprocess.STDOUT,
                             start_new_session=True
@@ -6147,13 +6459,13 @@ def main():
                         for _ in range(30):
                             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
                                 _s.settimeout(0.5)
-                                if _s.connect_ex(("127.0.0.1", 8899)) == 0:
+                                if _s.connect_ex(("127.0.0.1", _api_port)) == 0:
                                     _ready = True
                                     break
                             time.sleep(1)
                         st.session_state.sidebar_message = (
                             "Started FastAPI" if _ready
-                            else "FastAPI process launched but port 8899 not "
+                            else f"FastAPI process launched but port {_api_port} not "
                                   "accepting connections after 30 s — check "
                                   "/var/log/digim_api.log"
                         )
@@ -6164,7 +6476,7 @@ def main():
                     if st.button("Health Check", key="api_health"):
                         try:
                             import urllib.request
-                            with urllib.request.urlopen("http://localhost:8899/health", timeout=5) as resp:
+                            with urllib.request.urlopen(f"http://localhost:{_api_port}/health", timeout=5) as resp:
                                 _health = resp.read().decode()
                             st.code(_health)
                         except Exception as e:
@@ -6355,12 +6667,29 @@ def main():
                     reverse=True)
                 for _sf in _ev_folders[:10]:
                     _meta_p = os.path.join(_ev_base, _sf, "meta.json")
-                    if os.path.exists(_meta_p):
-                        _m = dmu.read_json_file(_meta_p)
-                        _label = f"{_m.get('created_at', '')[:10]} {_m.get('display_name', '')}"[:24]
-                        if st.button(_label, key=f"eval_load_{_sf}"):
-                            st.session_state._eval_load_folder = os.path.join(_ev_base, _sf)
-                            st.rerun()
+                    if not os.path.exists(_meta_p):
+                        continue
+                    _m = dmu.read_json_file(_meta_p)
+                    _label = f"{_m.get('created_at', '')[:10]} {_m.get('display_name', '')}"[:24]
+                    # Load button and Del button STACKED (Del directly below
+                    # the session it targets) — mirrors the Chat session
+                    # sidebar pattern so operators can prune noisy runs
+                    # individually without a Reset-all sweep.
+                    if st.button(_label, key=f"eval_load_{_sf}"):
+                        st.session_state._eval_load_folder = os.path.join(_ev_base, _sf)
+                        st.rerun()
+                    if st.button("Del", key=f"eval_del_{_sf}"):
+                        import shutil as _shutil
+                        try:
+                            _shutil.rmtree(os.path.join(_ev_base, _sf))
+                            st.session_state.sidebar_message = (
+                                f"Deleted saved Evaluation: {_sf}"
+                            )
+                        except Exception as _e:
+                            st.session_state.sidebar_message = (
+                                f"Delete failed ({_sf}): {_e}"
+                            )
+                        st.rerun()
 
     # Switch main-area screens
     if st.session_state.get("main_view") == "Knowledge Explorer":
@@ -6390,6 +6719,10 @@ def main():
                 st.session_state.session.chg_session_name(session_name)
                 st.session_state.sidebar_message = "Changed the session name"
                 st.rerun()
+
+    # Session Summary settings + Situation Setting are rendered further down
+    # the page, right below the User Memory expander (see search for
+    # `_render_session_summary_settings()` below).
 
     # Web component layout
     header_col1, header_col2, header_col3, header_col4 = st.columns(4)
@@ -6504,8 +6837,11 @@ def main():
             st.session_state.seq_memory = []
             st.rerun()
 
-    # Situation setup
-    situation_setting = st.text_input("Situation Setting:", value=st.session_state.situation_setting)
+    # Situation Setting has moved below the User Memory expander (see the
+    # placement search for the new `situation_setting = st.text_input(...)`
+    # line below). We keep a placeholder here so the variable is defined
+    # regardless of whether allowed_user_memory is False — updated later.
+    situation_setting = st.session_state.situation_setting
 
     # Configure Chat history row count
     max_seq = dms.max_seq_dict(st.session_state.chat_history_visible_dict)
@@ -6604,7 +6940,9 @@ def main():
                                 download_data.append({"role": "detail", "content": st.session_state.session.get_detail_info(k, k2)})
                                 chat_expander = st.expander("Detail Information")
                                 with chat_expander:
-                                    _dt_t1, _dt_t2, _dt_t3 = st.tabs(["LLM Input", "Token Usage", "Detail"])
+                                    _dt_t1, _dt_t2, _dt_t3, _dt_t4 = st.tabs(
+                                        ["LLM Input", "Token Usage", "Detail", "Session Summary"]
+                                    )
                                     with _dt_t1:
                                         _render_llm_input_tab(v2)
                                     with _dt_t2:
@@ -6620,6 +6958,8 @@ def main():
                                             if _block_stripped:
                                                 render_copy_button(_block_stripped, f"detail_copy_{k}_{k2}_{_bi}")
                                                 st.markdown(_block_stripped.replace("\n", "<br>"), unsafe_allow_html=True)
+                                    with _dt_t4:
+                                        _render_session_summary_tab(k, k2)
 
                         # Analytics
                         if st.session_state.allowed_analytics_knowledge or st.session_state.allowed_analytics_compare:
@@ -7216,6 +7556,14 @@ def main():
                 # Reviewing/editing Persona/Nowaday/History has moved
                 # to the User Memory Explorer's tab 3 (Edit My Memory).
 
+    # Session Summary settings + Situation Setting live here (right below the
+    # User Memory expander) so all context-related knobs cluster in one place.
+    # Chat Name / Time / Exec / RAG live above the chat log because they change
+    # per-turn behaviour; the context knobs below tune the per-session dossier.
+    _render_session_summary_settings()
+    situation_setting = st.text_input("Situation Setting:",
+                                        value=st.session_state.situation_setting)
+
     # File downloader
     if st.session_state.allowed_download_md:
         footer_col1, footer_col2, footer_col3 = st.columns(3)
@@ -7466,6 +7814,14 @@ def main():
             bg_status_path = params.get("bg_status_path")
             bt_personas = params.get("personas") or []
             bt_org = params.get("org")
+            # Eval-only mode: skip the agent invocation entirely and just re-run
+            # `eval_answer_vs_groundtruth` on the pre-filled Answer + Ground
+            # Truth columns of the uploaded xlsx. Cheap and fast when the user
+            # only wants to refresh the Verdict / Score / Match / Eval columns.
+            eval_only = bool(params.get("eval_only"))
+
+            def _status_label():
+                return "Re-evaluating Answer vs GT" if eval_only else "Running batch Q&A"
 
             def _bump_status(_done, _total):
                 """Update the bg-task status file the sidebar monitor polls."""
@@ -7474,25 +7830,35 @@ def main():
                 try:
                     _write_bg_task_status_to(bg_status_path, {
                         "status": "running",
-                        "message": f"({_done}/{_total}) Running batch Q&A...",
+                        "message": f"({_done}/{_total}) {_status_label()}...",
                         "error": "",
                     })
                 except Exception:
                     pass
 
-            # Discover all sheets with a `Question` column. Multi-sheet xlsx
-            # is fine — each sheet is processed independently and written back
-            # to a same-named sheet in the result xlsx.
+            # Discover sheets to process. In normal mode we need a `Question`
+            # column (the agent has to be given something to answer). In
+            # Eval-only mode we only need `Answer` + `Ground Truth` — Question
+            # isn't required because nothing is generated.
             xls = pd.ExcelFile(xlsx_path)
             sheets_to_run = []
             for _sn in xls.sheet_names:
                 try:
                     _head = pd.read_excel(xlsx_path, sheet_name=_sn, nrows=0)
-                    if "Question" in _head.columns:
-                        sheets_to_run.append(_sn)
+                    if eval_only:
+                        if "Answer" in _head.columns and "Ground Truth" in _head.columns:
+                            sheets_to_run.append(_sn)
+                    else:
+                        if "Question" in _head.columns:
+                            sheets_to_run.append(_sn)
                 except Exception:
                     continue
             if not sheets_to_run:
+                if eval_only:
+                    raise ValueError(
+                        "No sheet with both 'Answer' and 'Ground Truth' columns found "
+                        "in the uploaded xlsx (Eval-only mode requires both)."
+                    )
                 raise ValueError("No sheet with a 'Question' column found in the uploaded xlsx")
             if target_sheet != "__ALL__":
                 if target_sheet not in sheets_to_run:
@@ -7528,21 +7894,31 @@ def main():
                 return False
 
             # Pre-read every sheet once so we can compute the total processable
-            # rows (Question is non-empty / non-"nan") and tick the bg-task
-            # status from `(0/total)` to `(total/total)` as work completes.
-            # Each non-empty Question is expanded by N (number of selected
-            # personas) when in multi-persona mode, so the bg-task counter
-            # ticks once per persona-completion, not once per row.
+            # rows and tick the bg-task status from `(0/total)` to
+            # `(total/total)` as work completes.
+            # - Normal mode: count rows where `Question` is non-empty; each is
+            #   expanded by N (number of selected personas) when in multi-
+            #   persona mode (bg-task counter ticks once per persona-completion).
+            # - Eval-only mode: count rows where BOTH `Answer` and `Ground
+            #   Truth` are non-empty (only those get re-evaluated).
             n_personas_eff = max(1, len(bt_personas))
             sheet_dfs = {}
             total_processable = 0
             for _sn in sheets_to_run:
                 _pre_df = pd.read_excel(xlsx_path, sheet_name=_sn)
                 sheet_dfs[_sn] = _pre_df
-                for _pi in _pre_df.index:
-                    _pq = str(_pre_df.at[_pi, "Question"]).strip()
-                    if _pq and _pq.lower() != "nan":
-                        total_processable += n_personas_eff
+                if eval_only:
+                    for _pi in _pre_df.index:
+                        _pa = str(_pre_df.at[_pi, "Answer"]).strip()
+                        _pg = str(_pre_df.at[_pi, "Ground Truth"]).strip()
+                        if (_pa and _pa.lower() != "nan"
+                                and _pg and _pg.lower() != "nan"):
+                            total_processable += 1
+                else:
+                    for _pi in _pre_df.index:
+                        _pq = str(_pre_df.at[_pi, "Question"]).strip()
+                        if _pq and _pq.lower() != "nan":
+                            total_processable += n_personas_eff
             _bump_status(0, total_processable)
 
             # Multi-persona (2+) only streams [STATUS] chunks; the real per-persona
@@ -7574,15 +7950,185 @@ def main():
             import re as _re_no_to_seqs
 
             _eval_cols = ("Verdict", "Score", "Match", "Seq Ratio", "Token F1", "Eval")
+            # Columns that are preserved from the input Excel verbatim and are
+            # NEVER overwritten or evaluated per row. Baseline / BaselineModel
+            # carry a benchmark-model reference answer + its model name that
+            # downstream evaluators (e.g. Personal Evaluation) consume in
+            # aggregate — running a per-row LLM Verdict on them here is
+            # deliberately skipped to avoid double-billing.
+            _preserved_cols = ("Baseline", "BaselineModel")
             result_dfs = {}
             _done = 0
+
+            def _write_output_xlsx(src_xlsx: str, sheet_dfs_input: dict,
+                                    result_dfs_out: dict, out_path) -> None:
+                """Write result_dfs_out to out_path while preserving the source
+                xlsx's cell formatting (column widths, fills, fonts, freeze
+                panes, non-touched sheets like Category) whenever possible.
+
+                Strategy:
+                  1. If every result-sheet has row-count parity with its input
+                     sheet, copy the source file byte-for-byte and overlay just
+                     the changed / added cell values via openpyxl. All existing
+                     formatting stays intact.
+                  2. Otherwise (row expansion or shrinkage on any sheet), fall
+                     back to a fresh pandas write for correctness — the
+                     one-to-one row mapping openpyxl needs would be lost.
+                """
+                import shutil
+                try:
+                    from openpyxl import load_workbook
+                except Exception:
+                    load_workbook = None
+
+                _can_overlay = load_workbook is not None
+                _src_sheets: set = set()
+                if _can_overlay:
+                    try:
+                        _wb_probe = load_workbook(src_xlsx, read_only=True,
+                                                    data_only=True)
+                        _src_sheets = set(_wb_probe.sheetnames)
+                        _wb_probe.close()
+                    except Exception:
+                        _can_overlay = False
+                if _can_overlay:
+                    for _sn, _df_out in result_dfs_out.items():
+                        _df_in = sheet_dfs_input.get(_sn)
+                        if (_df_in is None or _sn not in _src_sheets
+                                or len(_df_out) != len(_df_in)):
+                            _can_overlay = False
+                            break
+
+                if not _can_overlay:
+                    with pd.ExcelWriter(out_path) as _w:
+                        for _sn, _df in result_dfs_out.items():
+                            _df.to_excel(_w, sheet_name=_sn, index=False)
+                    return
+
+                shutil.copy(src_xlsx, out_path)
+                try:
+                    wb = load_workbook(out_path)
+                except Exception:
+                    with pd.ExcelWriter(out_path) as _w:
+                        for _sn, _df in result_dfs_out.items():
+                            _df.to_excel(_w, sheet_name=_sn, index=False)
+                    return
+
+                for sheet_name, df_out in result_dfs_out.items():
+                    ws = wb[sheet_name]
+                    _existing: dict = {}
+                    for c in range(1, ws.max_column + 1):
+                        v = ws.cell(row=1, column=c).value
+                        if v is not None:
+                            _existing[str(v).strip()] = c
+                    _next_col = ws.max_column + 1
+                    for col_name in df_out.columns:
+                        if col_name not in _existing:
+                            ws.cell(row=1, column=_next_col, value=col_name)
+                            _existing[col_name] = _next_col
+                            _next_col += 1
+                    for r_i, (_, row) in enumerate(df_out.iterrows(), start=2):
+                        for col_name, val in row.items():
+                            c_i = _existing.get(col_name)
+                            if c_i is None:
+                                continue
+                            _cell = ws.cell(row=r_i, column=c_i)
+                            if pd.isna(val):
+                                _cell.value = None
+                            else:
+                                _cell.value = val
+                try:
+                    wb.save(out_path)
+                except Exception:
+                    with pd.ExcelWriter(out_path) as _w:
+                        for _sn, _df in result_dfs_out.items():
+                            _df.to_excel(_w, sheet_name=_sn, index=False)
+
+            # -----------------------------------------------------------------
+            # Eval-only branch: skip the whole agent-run pipeline and just
+            # re-evaluate every row's existing (Answer, Ground Truth) pair.
+            # Runs `eval_answer_vs_groundtruth` per row and writes fresh
+            # Verdict / Score / Match / Seq Ratio / Token F1 / Eval values
+            # back into a new xlsx. All non-eval columns (including Answer,
+            # Ground Truth, Baseline, BaselineModel, Persona) pass through
+            # unchanged. Uses Question when present as evaluation context,
+            # falls back to empty string when the sheet has no Question column.
+            # -----------------------------------------------------------------
+            if eval_only:
+                for sheet_name, df_in in sheet_dfs.items():
+                    input_cols = list(df_in.columns)
+                    _out_cols = list(input_cols)
+                    for _c in _eval_cols:
+                        if _c not in _out_cols:
+                            _out_cols.append(_c)
+                    output_rows = []
+                    for idx in df_in.index:
+                        row = {c: df_in.at[idx, c] for c in input_cols}
+                        _a  = df_in.at[idx, "Answer"]
+                        _g  = df_in.at[idx, "Ground Truth"]
+                        _a_str = "" if pd.isna(_a) else str(_a).strip()
+                        _g_str = "" if pd.isna(_g) else str(_g).strip()
+                        # Question is optional context for the LLM verdict —
+                        # eval-only mode intentionally does not require it.
+                        _q_str = ""
+                        if "Question" in df_in.columns:
+                            _q_raw = df_in.at[idx, "Question"]
+                            if not pd.isna(_q_raw):
+                                _q_str = str(_q_raw).strip()
+                                if _q_str.lower() == "nan":
+                                    _q_str = ""
+                        # Skip rows missing either side — nothing to evaluate.
+                        # Preserve the row's other columns as-is so the user
+                        # doesn't lose data; blank out just the eval columns.
+                        if not _a_str or not _g_str or _a_str.lower() == "nan" or _g_str.lower() == "nan":
+                            for _c in _eval_cols:
+                                if _c not in row:
+                                    row[_c] = ""
+                            output_rows.append(row)
+                            continue
+                        verdict = score = match = seq_ratio = token_f1 = ""
+                        eval_summary = ""
+                        try:
+                            _, _, _ev, _, _, _ = dmt.eval_answer_vs_groundtruth(
+                                svc, usr, _q_str, _a_str, _g_str
+                            )
+                            verdict      = _ev.get("verdict", "")
+                            score        = _ev.get("score", "")
+                            match        = "Y" if _ev.get("exact_match") else "N"
+                            seq_ratio    = _ev.get("seq_ratio", "")
+                            token_f1     = _ev.get("token_f1", "")
+                            eval_summary = _ev.get("summary", "")
+                        except Exception as e:
+                            eval_summary = f"[Eval error] {type(e).__name__}: {e}"
+                        row["Verdict"]   = verdict
+                        row["Score"]     = score
+                        row["Match"]     = match
+                        row["Seq Ratio"] = seq_ratio
+                        row["Token F1"]  = token_f1
+                        row["Eval"]      = eval_summary
+                        output_rows.append(row)
+                        _done += 1
+                        _bump_status(_done, total_processable)
+                    result_dfs[sheet_name] = pd.DataFrame(output_rows, columns=_out_cols)
+
+                # Persist and return early — the agent-run loop below is
+                # skipped entirely in eval-only mode. Preserve the source
+                # xlsx's cell formatting via openpyxl overlay.
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                sess = dms.DigiMSession(sid, sname)
+                out_path = Path(sess.session_folder_path) / f"batch_results_evalonly_{ts}.xlsx"
+                _write_output_xlsx(xlsx_path, sheet_dfs, result_dfs, out_path)
+                return
+
             for sheet_name, df_in in sheet_dfs.items():
                 input_cols = list(df_in.columns)
                 has_gt = "Ground Truth" in input_cols
                 n_total = len(df_in)
 
-                # Final output column order — input cols first, then Persona/
-                # Answer/eval cols (each appended only if not already in input).
+                # Final output column order — input cols first (which includes
+                # Baseline / BaselineModel when supplied by the user), then
+                # Persona / Answer / eval cols (each appended only if not
+                # already in input).
                 _out_cols = list(input_cols)
                 for _c in ("Persona", "Answer") + _eval_cols:
                     if _c not in _out_cols:
@@ -7824,6 +8370,9 @@ def main():
                             pass
 
                     for _pname, _resp_text in persona_responses:
+                        # Every input column (including Baseline / BaselineModel
+                        # in `_preserved_cols`) is copied verbatim; only
+                        # Persona / Answer / eval cols below are overwritten.
                         row = {c: df_in.at[idx, c] for c in input_cols}
                         row["Persona"] = _pname
                         row["Answer"] = _resp_text
@@ -7860,13 +8409,13 @@ def main():
                 result_dfs[sheet_name] = pd.DataFrame(output_rows, columns=_out_cols)
 
             # Save completed xlsx into the session folder. One sheet per input
-            # sheet, preserving the original sheet name.
+            # sheet, preserving the original sheet name AND (best-effort) the
+            # source xlsx's cell formatting — falls back to a fresh pandas
+            # write when row counts don't match (e.g. multi-persona expansion).
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             sess = dms.DigiMSession(sid, sname)
             out_path = Path(sess.session_folder_path) / f"batch_results_{ts}.xlsx"
-            with pd.ExcelWriter(out_path) as _writer:
-                for _sn, _df in result_dfs.items():
-                    _df.to_excel(_writer, sheet_name=_sn, index=False)
+            _write_output_xlsx(xlsx_path, sheet_dfs, result_dfs, out_path)
 
         with st.expander("Batch Test (upload Q&A xlsx)", expanded=False):
             st.markdown(
@@ -7882,6 +8431,15 @@ def main():
                 "completed Excel (with `Answer`, `Verdict`, `Score`, `Match`, "
                 "`Seq Ratio`, `Token F1`, `Eval` columns filled) is saved to the "
                 "session folder and downloadable below.\n\n"
+                "**`Baseline` / `BaselineModel` columns** — if present in the input, "
+                "they are preserved verbatim in the output. No per-row evaluation is "
+                "run on the Baseline text (downstream evaluators such as Personal "
+                "Evaluation consume them in aggregate).\n\n"
+                "**Eval only mode** — check `Eval only (Answer(AI) ↔ Ground Truth を再評価)` "
+                "to skip the agent invocation and just re-run `eval_answer_vs_groundtruth` on "
+                "the existing `Answer` + `Ground Truth` columns. Requires both columns to be "
+                "filled; the `Question` column is used as evaluation context when present but "
+                "isn't required. Fast/cheap when you only want to refresh Verdict / Score / Match / Eval.\n\n"
                 "**Memory control (per-row)** — add an optional `No` column (row id) and "
                 "`MemoryNo` column to drive memory access per row: `All` = full history (default "
                 "memory pipeline), comma-separated ids (e.g. `1,3`) = load ONLY the prior rows with "
@@ -7897,8 +8455,26 @@ def main():
                 label_visibility="collapsed",
             )
 
+            # Eval-only toggle — decided BEFORE we pick sheets so the sheet
+            # detector can look for the correct required columns.
+            st.checkbox(
+                "Eval only (Answer(AI) ↔ Ground Truth を再評価)",
+                value=False,
+                key="batch_eval_only",
+                help=(
+                    "ON にすると、アップロードした Excel の既存 `Answer` と "
+                    "`Ground Truth` 列だけを使って `eval_answer_vs_groundtruth` を再実行し、"
+                    "Verdict / Score / Match / Seq Ratio / Token F1 / Eval 列を上書きします。"
+                    "エージェント呼び出しはスキップされるため、`Question` 列は評価時の "
+                    "コンテキストとして参照される (無くても実行可)。"
+                ),
+            )
+            _eval_only = bool(st.session_state.get("batch_eval_only"))
+
             # Sheet picker: when a file is uploaded, list every sheet that has
-            # a `Question` column. Default = `(全シート)` (run all of them).
+            # the required columns for the chosen mode.
+            #   - Normal:    Question 必須
+            #   - Eval only: Answer + Ground Truth 必須
             _target_sheet = "__ALL__"
             _q_sheets = []
             if _batch_file is not None:
@@ -7911,22 +8487,34 @@ def main():
                             _head = pd.read_excel(
                                 _io.BytesIO(_bytes), sheet_name=_sn, nrows=0
                             )
-                            if "Question" in _head.columns:
-                                _q_sheets.append(_sn)
+                            if _eval_only:
+                                if ("Answer" in _head.columns
+                                        and "Ground Truth" in _head.columns):
+                                    _q_sheets.append(_sn)
+                            else:
+                                if "Question" in _head.columns:
+                                    _q_sheets.append(_sn)
                         except Exception:
                             continue
                 except Exception as _e:
                     st.warning(f"シート一覧の読み込みに失敗しました: {_e}")
                 if _q_sheets:
                     _opts = ["(全シート)"] + _q_sheets
+                    _picker_label = (
+                        f"対象シート (Answer + Ground Truth のあるシート: {len(_q_sheets)})"
+                        if _eval_only else
+                        f"対象シート (Question列のあるシート: {len(_q_sheets)})"
+                    )
                     _picked = st.selectbox(
-                        f"対象シート (Question列のあるシート: {len(_q_sheets)})",
+                        _picker_label,
                         options=_opts,
                         key=f"batch_sheet_pick_{_batch_uploader_key}",
                     )
                     _target_sheet = "__ALL__" if _picked == "(全シート)" else _picked
                 else:
                     st.warning(
+                        "`Answer` と `Ground Truth` 列のあるシートが見つかりませんでした。"
+                        if _eval_only else
                         "`Question` 列のあるシートが見つかりませんでした。"
                     )
             _bc1, _bc2 = st.columns([1, 1])
@@ -7934,17 +8522,22 @@ def main():
                 "Save Digest (BatchTest only)",
                 value=False,
                 key="batch_save_digest",
+                disabled=_eval_only,
                 help=(
                     "バッチテストにのみ有効な独立トグル。OFF で各行の digest 生成を "
                     "抑止 — 大量実行のコスト/時間を節約。Chat ヘッダーの "
                     "Save Digest とは独立。"
+                    " (Eval only モードでは digest 生成は発生しないため無効)"
                 ),
             )
             _can_run_batch = (
                 bool(_batch_file) and bool(_q_sheets)
                 and not bool(st.session_state._bg_task)
             )
-            if _bc1.button("Run Batch Test", key="batch_test_run", disabled=not _can_run_batch):
+            _run_label = (
+                "Run Eval Only (Re-evaluate)" if _eval_only else "Run Batch Test"
+            )
+            if _bc1.button(_run_label, key="batch_test_run", disabled=not _can_run_batch):
                 _ts_in = datetime.now().strftime("%Y%m%d_%H%M%S")
                 _saved_path = Path(temp_folder_path) / f"batch_input_{_ts_in}_{_batch_file.name}"
                 _saved_path.write_bytes(_batch_file.getbuffer())
@@ -8007,11 +8600,18 @@ def main():
                     "execution": _bt_execution,
                     "personas": _bt_resolved_personas,
                     "org": _bt_selected_org,
+                    # Eval-only mode: _run_batch_bg branches early and only
+                    # re-evaluates existing Answer/Ground Truth pairs.
+                    "eval_only": _eval_only,
                 }
                 st.session_state["batch_test_uploader_counter"] = (
                     st.session_state.get("batch_test_uploader_counter", 0) + 1
                 )
-                _run_bg_task("batch_test", "Running batch Q&A...", _run_batch_bg, _bt_params)
+                _bg_label = (
+                    "Re-evaluating Answer vs Ground Truth..."
+                    if _eval_only else "Running batch Q&A..."
+                )
+                _run_bg_task("batch_test", _bg_label, _run_batch_bg, _bt_params)
                 st.rerun()
 
             # Results — pick a past run from the session folder (default = newest),

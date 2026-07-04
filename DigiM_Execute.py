@@ -541,9 +541,36 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     # Set up the prompt template and query
     timestamp_log += "[12.Prompt template setup]" + str(datetime.now()) + "<br>"
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
+
+    # Session-summary context block. Optional per-session dossier that the
+    # operator maintains via the WebUI. Only injected when the feature is
+    # enabled AND content exists — behaviour is identical to the previous
+    # release for sessions without the toggle turned on.
+    session_summary_context = ""
+    try:
+        _ss_enabled, _ss_template, _ss_content, _ss_updated_at = (
+            session.get_session_summary()
+        )
+    except Exception:
+        _ss_enabled, _ss_template, _ss_content, _ss_updated_at = False, "", "", ""
+    if _ss_enabled and _ss_content:
+        session_summary_context = (
+            "\n[Current Session Summary]\n"
+            "(Confirmed facts about this session so far. Prefer these values "
+            "when they conflict with other retrieved context.)\n\n"
+            f"{_ss_content}\n\n"
+            "---\n"
+        )
+
     if model_type == "LLM":
-        # Order: Dialogue partner info -> Knowledge -> Template -> User query -> Situation
-        query = f'{user_memory_context}{knowledge_context}{prompt_template}{user_query}{situation_prompt}'
+        # Order: Session summary -> Dialogue partner info -> Knowledge ->
+        #        Template -> User query -> Situation
+        # Summary sits above user_memory because it captures session-scoped
+        # confirmed facts that should override generic memory retrieval.
+        query = (
+            f'{session_summary_context}{user_memory_context}{knowledge_context}'
+            f'{prompt_template}{user_query}{situation_prompt}'
+        )
     else:
         query = f'{prompt_template}{user_query}{situation_prompt}'
     output_reference["prompt"] = {
@@ -554,6 +581,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         "user_memory_context": user_memory_context,
         "user_memory_used": user_memory_used,
         "user_memory_meta": user_memory_meta,
+        "session_summary_context": session_summary_context,
+        "session_summary_enabled": _ss_enabled,
     }
 
     # Execute the LLM
@@ -830,7 +859,132 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             _digest_thread.start()
             output_reference["_digest_bg_started"] = True
 
+        # ── Session Summary background update ────────────────────────────
+        # Distinct from memory digest — this one fills a user-defined
+        # template (see DigiM_Session.get_session_summary) that the operator
+        # can read in the Detail Information → Session Summary tab. Runs in
+        # its own background thread so the chat return path stays fast.
+        try:
+            _summary_enabled, _summary_tpl, _summary_prev, _ = (
+                session.get_session_summary()
+            )
+        except Exception:
+            _summary_enabled, _summary_tpl, _summary_prev = False, "", ""
+        if _summary_enabled and _summary_tpl:
+            _summ_job_id = djr.new_job_id()
+            _summ_agent_file = _get_session_summary_agent_file(agent, in_agent_file)
+            def _summary_wrapper():
+                try:
+                    _new_summary, _ = update_session_summary(
+                        template=_summary_tpl,
+                        prev_summary=_summary_prev,
+                        user_input=user_query,
+                        agent_response=response,
+                        agent_file=_summ_agent_file,
+                        service_info=service_info,
+                        user_info=user_info,
+                    )
+                    if _new_summary:
+                        session.save_session_summary_content(_new_summary)
+                except Exception:
+                    pass
+                finally:
+                    djr.unregister_job(_summ_job_id)
+            _summary_thread = threading.Thread(target=_summary_wrapper, daemon=True)
+            djr.register_job(_summ_job_id, _summary_thread, "session_summary",
+                              f"Session Summary update: {session_name}",
+                              session_id=session_id,
+                              user_id=user_info.get("USER_ID") if isinstance(user_info, dict) else None)
+            _summary_thread.start()
+            output_reference["_session_summary_bg_started"] = True
+
     yield response_service_info, user_info, "", export_files, output_reference
+
+# ── Session Summary — user-defined session dossier ────────────────────────
+# The prompt sits in DigiM_Execute (not DigiM_Tool) because it operates on the
+# same session state — this way the background hook right above stays local.
+
+def _get_session_summary_agent_file(agent_obj, fallback_agent_file):
+    """Return the agent file to use for summary updates.
+
+    Priority:
+      1. Chat agent's SUPPORT_AGENT.SESSION_SUMMARY slot (per-agent override)
+      2. The generic lightweight agent (`agent_65SessionSummary.json`)
+         — shipped default, uses Gemini-2.5-Flash for cheap/fast updates
+      3. The chat agent itself (ultimate fallback so the feature always works
+         even if the lightweight agent file was removed)
+    """
+    try:
+        _sa = agent_obj.agent.get("SUPPORT_AGENT", {}) or {}
+        _sess_sa = _sa.get("SESSION_SUMMARY")
+        if _sess_sa:
+            return _sess_sa
+    except Exception:
+        pass
+    # Global default — the shipped lightweight generic agent. Kept as a
+    # data-file lookup (not a hardcoded import) so operators can swap it
+    # by dropping in a different `agent_65*.json`.
+    try:
+        _generic_name = "agent_65SessionSummary.json"
+        _generic_path = os.path.join(dma.agent_folder_path, _generic_name)
+        if os.path.exists(_generic_path):
+            return _generic_name
+    except Exception:
+        pass
+    return fallback_agent_file
+
+
+def update_session_summary(template: str, prev_summary: str,
+                            user_input: str, agent_response: str,
+                            agent_file: str, service_info: dict,
+                            user_info: dict):
+    """Regenerate the session summary after a turn.
+
+    Prompts the LLM with:
+      - the template (structure to fill in)
+      - the previous summary (starting point — LLM should preserve confirmed facts)
+      - the latest user_input + agent_response (new information)
+    and expects an updated Markdown document that conforms to the template.
+    Returns (new_summary, model_name). Returns (prev_summary, "") on error so
+    the stored content never regresses to empty on transient LLM failures.
+    """
+    try:
+        agent = dma.DigiM_Agent(agent_file)
+    except Exception:
+        return prev_summary, ""
+    model_type = "LLM"
+    model_name = agent.agent.get("ENGINE", {}).get(model_type, {}).get("MODEL", "")
+    prompt = (
+        "あなたはセッション状態を管理するエージェントです。\n"
+        "以下のフォーマットに従い、これまでのサマリーと最新の対話を統合して更新版を出力してください。\n\n"
+        "【フォーマット (このヘッダー構造を維持)】\n"
+        f"{template}\n\n"
+        "【現在のサマリー】\n"
+        f"{prev_summary or '(まだサマリーはありません)'}\n\n"
+        "【最新の対話】\n"
+        f"User: {user_input}\n"
+        f"Agent: {agent_response}\n\n"
+        "【指示】\n"
+        "- フォーマットの見出し (## ...) はそのまま維持\n"
+        "- これまでの対話と最新の対話を踏まえて各項目を更新\n"
+        "- 前ターンで確定済みの情報は消さない (最新情報で上書きされない限り保持)\n"
+        "- 情報がない項目は空のまま (「未確認」等の埋め草を書かない)\n"
+        "- Markdown 形式で出力し、前後に説明文をつけない (コードフェンスも不要)\n"
+    )
+    try:
+        raw = ""
+        for _p, chunk, _c in agent.generate_response(model_type, prompt):
+            if chunk:
+                raw += chunk
+        _out = raw.strip()
+        # Strip stray fences if the LLM ignored the instruction.
+        if _out.startswith("```"):
+            import re as _re
+            _out = _re.sub(r"^```(?:markdown|md)?\s*", "", _out)
+            _out = _re.sub(r"\s*```\s*$", "", _out)
+        return _out or prev_summary, model_name
+    except Exception:
+        return prev_summary, model_name
 
 # Run via a practice
 def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name, in_agent_file, user_query, in_contents=[], in_situation={}, in_overwrite_items={}, in_add_knowledge=[], in_execution={}, in_persona=None, in_rag_query_text="", in_personas=None, in_org=None):
