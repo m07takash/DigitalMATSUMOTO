@@ -1,0 +1,94 @@
+{
+  "DISPLAY": false,
+  "DISPLAY_NAME": "Evaluation (Dedicated)",
+  "NAME": "Evaluation Judge",
+  "ACT": "Evaluation プラグイン (Personal Evaluation 等) から Run analysis / LLM Evaluation で呼び出される専用エージェント。再現性を最優先とし、同一入力に対しては常に同一のスコアと講評を返すよう安定した判定を行う。",
+  "PERSONALITY": {
+    "LANGUAGE": "日本語",
+    "SPEAKING_STYLE": "Polite"
+  },
+  "ENGINE": {
+    "LLM": {
+      "DEFAULT": "GPT-5-mini",
+      "GPT-5-mini": {
+        "NAME": "GPT-5-mini",
+        "FUNC_NAME": "generate_response_T_gpt",
+        "MODEL": "gpt-5-mini-2025-08-07",
+        "PARAMETER": {},
+        "TOKENIZER": "tiktoken",
+        "MEMORY": {
+          "limit": 8000,
+          "role": "both",
+          "priority": "latest",
+          "similarity_logic": "cosine",
+          "digest": "Y"
+        }
+      },
+      "GPT-5-nano": {
+        "NAME": "GPT-5-nano",
+        "FUNC_NAME": "generate_response_T_gpt",
+        "MODEL": "gpt-5-nano-2025-08-07",
+        "PARAMETER": {},
+        "TOKENIZER": "tiktoken",
+        "MEMORY": {
+          "limit": 8000,
+          "role": "both",
+          "priority": "latest",
+          "similarity_logic": "cosine",
+          "digest": "Y"
+        }
+      },
+      "Gemini-2.5-Flash": {
+        "NAME": "Gemini-2.5-Flash",
+        "FUNC_NAME": "generate_response_T_gemini",
+        "MODEL": "gemini-2.5-flash",
+        "PARAMETER": {},
+        "TOKENIZER": "tiktoken",
+        "MEMORY": {
+          "limit": 8000,
+          "role": "both",
+          "priority": "latest",
+          "similarity_logic": "cosine",
+          "digest": "Y"
+        }
+      },
+      "Claude-Haiku-4.5": {
+        "NAME": "Claude-Haiku-4.5",
+        "FUNC_NAME": "generate_response_T_claude",
+        "MODEL": "claude-haiku-4-5",
+        "PARAMETER": {
+          "max_tokens": 20000
+        },
+        "TOKENIZER": "tiktoken",
+        "MEMORY": {
+          "limit": 8000,
+          "role": "both",
+          "priority": "latest",
+          "similarity_logic": "cosine",
+          "digest": "Y"
+        }
+      },
+      "GPT-Azure": {
+        "NAME": "GPT-Azure",
+        "FUNC_NAME": "generate_response_T_azure_openai",
+        "MODEL": "gpt-5-nano",
+        "PARAMETER": {"max_completion_tokens": 20000},
+        "TOKENIZER": "tiktoken",
+        "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+      }
+    }
+  },
+  "HABIT": {
+    "DEFAULT": {
+      "MAGIC_WORDS": [
+        ""
+      ],
+      "PRACTICE": "",
+      "ADD_KNOWLEDGE": []
+    }
+  },
+  "KNOWLEDGE": [],
+  "SKILL": {},
+  "FEEDBACK": {},
+  "SUPPORT_AGENT": {}
+}

@@ -105,6 +105,17 @@ class InputData(BaseModel):
     attachments: List[Attachment] = []
     attachment_urls: List[str] = []
     fetch_urls_from_input: Optional[bool] = None
+    # Session Summary — optional per-session dossier maintained across turns.
+    # When either field is set, the API writes it to `status.yaml` BEFORE
+    # dispatching the run, so the injection + background-update paths in
+    # DigiMatsuExecute_Practice pick it up on the very same turn. Leave both
+    # None to inherit whatever is already saved for this session (WebUI or
+    # a prior API call). See:
+    #   GET  /sessions/{id}/summary          → read enabled/template/content
+    #   POST /sessions/{id}/summary          → change enabled/template
+    #   GET  /session_summary_presets        → list shipped preset templates
+    session_summary_enabled: Optional[bool] = None
+    session_summary_template: Optional[str] = None
     # Other execution settings (when passing fields not covered above)
     execution: Dict[str, Any] = {}
 
@@ -313,12 +324,30 @@ def _shape_references(output_reference: dict) -> Dict[str, Any]:
 # ---------- Execution function ----------
 def exec_function(service_info: dict, user_info: dict, session_id: str, session_name: str,
                   user_input: str, situation: dict, agent_file: str, engine: str, execution: dict,
-                  uploaded_contents: Optional[List[str]] = None) -> dict:
+                  uploaded_contents: Optional[List[str]] = None,
+                  session_summary_enabled: Optional[bool] = None,
+                  session_summary_template: Optional[str] = None) -> dict:
     uploaded_contents = list(uploaded_contents or [])
 
     # Set up the session (issue a new ID if not specified)
     if not session_id:
         session_id = "API" + dms.set_new_session_id()
+
+    # Session Summary inline configuration. When either field is set, persist
+    # it to status.yaml BEFORE dispatch so the same turn benefits from
+    # injection + background auto-update. Missing values (None) keep the
+    # existing session-scoped state untouched.
+    if session_summary_enabled is not None or session_summary_template is not None:
+        try:
+            _sess_cfg = dms.DigiMSession(session_id, session_name)
+            _cur_enabled, _cur_template, _, _ = _sess_cfg.get_session_summary()
+            _new_enabled = (_cur_enabled if session_summary_enabled is None
+                              else bool(session_summary_enabled))
+            _new_template = (_cur_template if session_summary_template is None
+                              else str(session_summary_template))
+            _sess_cfg.save_session_summary_settings(_new_enabled, _new_template)
+        except Exception:
+            pass  # Non-fatal — the run still proceeds without the summary.
 
     # Wait for the session lock
     waited = 0
@@ -477,6 +506,8 @@ async def _execute_shared(
             data.user_input, data.situation, agent_file,
             data.engine or "", execution,
             uploaded_contents=uploaded_contents,
+            session_summary_enabled=data.session_summary_enabled,
+            session_summary_template=data.session_summary_template,
         )
         result["attachments_processed"] = processed
         return result
@@ -575,6 +606,85 @@ async def get_session_history(session_id: str):
     if not data:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"session_id": session_id, "history": data}
+
+
+# ---------- Session Summary endpoints ----------
+# Read the current session summary (settings + generated content) for a session.
+# Returns the same tuple DigiMSession.get_session_summary() produces, plus
+# session_id echoed for client convenience.
+@app.get("/sessions/{session_id}/summary")
+async def get_session_summary(session_id: str):
+    try:
+        _sess = dms.DigiMSession(session_id, "")
+        _enabled, _template, _content, _updated_at = _sess.get_session_summary()
+    except Exception as e:
+        raise HTTPException(status_code=404,
+                             detail=f"Session not found or unreadable: {e}")
+    return {
+        "session_id": session_id,
+        "enabled":    _enabled,
+        "template":   _template,
+        "content":    _content,
+        "updated_at": _updated_at,
+    }
+
+
+class SessionSummarySettings(BaseModel):
+    """Payload for `POST /sessions/{id}/summary`. Fields are optional so
+    callers can flip the toggle without resupplying the template (and
+    vice-versa)."""
+    enabled:  Optional[bool] = None
+    template: Optional[str]  = None
+
+
+# Update the session summary settings (toggle + template). The generated
+# `content` is NOT settable here — it's owned by the background updater in
+# DigiMatsuExecute_Practice. To clear the content, POST with a new template
+# (which resets on the next turn) or just leave it alone.
+@app.post("/sessions/{session_id}/summary")
+async def set_session_summary(session_id: str, data: SessionSummarySettings):
+    try:
+        _sess = dms.DigiMSession(session_id, "")
+        _cur_enabled, _cur_template, _content, _updated_at = _sess.get_session_summary()
+        _new_enabled  = _cur_enabled  if data.enabled  is None else bool(data.enabled)
+        _new_template = _cur_template if data.template is None else str(data.template)
+        _sess.save_session_summary_settings(_new_enabled, _new_template)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return {
+        "session_id": session_id,
+        "enabled":    _new_enabled,
+        "template":   _new_template,
+        "content":    _content,
+        "updated_at": _updated_at,
+    }
+
+
+# Return the shipped preset templates (same file the WebUI reads).
+@app.get("/session_summary_presets")
+async def get_session_summary_presets():
+    """List shipped preset templates that clients can use as starting points.
+
+    Backed by `user/common/mst/session_summary_presets.json`. Operators can
+    edit that file to add/remove presets; both the WebUI and any API client
+    pick up changes on the next call.
+    """
+    try:
+        _presets = dmu.read_json_file(
+            "session_summary_presets.json",
+            dmu.read_yaml_file("setting.yaml").get("MST_FOLDER", "user/common/mst/"),
+        ) or {}
+    except Exception:
+        _presets = {}
+    return {
+        "presets": [
+            {"name": _name,
+             "description": (_meta or {}).get("description", ""),
+             "template":    (_meta or {}).get("template", "")}
+            for _name, _meta in _presets.items()
+        ]
+    }
+
 
 # Agent list
 @app.get("/agents")

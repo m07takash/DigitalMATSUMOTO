@@ -1,0 +1,108 @@
+{
+  "DISPLAY": false,
+  "DISPLAY_NAME": "Session Summary (Generic)",
+  "NAME": "Session Summary Updater",
+  "ACT": "セッション毎のサマリー (ユーザー定義テンプレート) を対話ごとに軽量LLMで更新する汎用エージェント (任意のチャットエージェントが SUPPORT_AGENT.SESSION_SUMMARY スロット経由で呼び出せる)",
+  "PERSONALITY": {
+    "LANGUAGE": "日本語",
+    "SPEAKING_STYLE": "Polite"
+  },
+  "ENGINE": {
+    "LLM": {
+      "DEFAULT": "Gemini-2.5-Flash",
+      "GPT-5-mini": {
+        "NAME": "GPT-5-mini",
+        "FUNC_NAME": "generate_response_T_gpt",
+        "MODEL": "gpt-5-mini-2025-08-07",
+        "PARAMETER": {},
+        "TOKENIZER": "tiktoken",
+        "MEMORY": {
+          "limit": 8000,
+          "role": "both",
+          "priority": "latest",
+          "similarity_logic": "cosine",
+          "digest": "Y"
+        }
+      },
+      "GPT-5-nano": {
+        "NAME": "GPT-5-nano",
+        "FUNC_NAME": "generate_response_T_gpt",
+        "MODEL": "gpt-5-nano-2025-08-07",
+        "PARAMETER": {},
+        "TOKENIZER": "tiktoken",
+        "MEMORY": {
+          "limit": 8000,
+          "role": "both",
+          "priority": "latest",
+          "similarity_logic": "cosine",
+          "digest": "Y"
+        }
+      },
+      "Gemini-2.5-Flash": {
+        "NAME": "Gemini-2.5-Flash",
+        "FUNC_NAME": "generate_response_T_gemini",
+        "MODEL": "gemini-2.5-flash",
+        "PARAMETER": {},
+        "TOKENIZER": "tiktoken",
+        "MEMORY": {
+          "limit": 8000,
+          "role": "both",
+          "priority": "latest",
+          "similarity_logic": "cosine",
+          "digest": "Y"
+        }
+      },
+      "Gemini-2.5-Flash-Lite": {
+        "NAME": "Gemini-2.5-Flash-Lite",
+        "FUNC_NAME": "generate_response_T_gemini",
+        "MODEL": "gemini-2.5-flash-lite",
+        "PARAMETER": {},
+        "TOKENIZER": "tiktoken",
+        "MEMORY": {
+          "limit": 8000,
+          "role": "both",
+          "priority": "latest",
+          "similarity_logic": "cosine",
+          "digest": "Y"
+        }
+      },
+      "Claude-Haiku-4.5": {
+        "NAME": "Claude-Haiku-4.5",
+        "FUNC_NAME": "generate_response_T_claude",
+        "MODEL": "claude-haiku-4-5",
+        "PARAMETER": {
+          "max_tokens": 20000
+        },
+        "TOKENIZER": "tiktoken",
+        "MEMORY": {
+          "limit": 8000,
+          "role": "both",
+          "priority": "latest",
+          "similarity_logic": "cosine",
+          "digest": "Y"
+        }
+      },
+      "GPT-Azure": {
+        "NAME": "GPT-Azure",
+        "FUNC_NAME": "generate_response_T_azure_openai",
+        "MODEL": "gpt-5-nano",
+        "PARAMETER": {"max_completion_tokens": 20000},
+        "TOKENIZER": "tiktoken",
+        "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+      }
+    }
+  },
+  "HABIT": {
+    "DEFAULT": {
+      "MAGIC_WORDS": [
+        ""
+      ],
+      "PRACTICE": "",
+      "ADD_KNOWLEDGE": []
+    }
+  },
+  "KNOWLEDGE": [],
+  "SKILL": {},
+  "FEEDBACK": {},
+  "SUPPORT_AGENT": {}
+}
