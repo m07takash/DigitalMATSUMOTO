@@ -116,7 +116,10 @@ if 'service_id' not in st.session_state:
 if 'user_id' not in st.session_state:
     st.session_state.user_id = web_default_user_id
 if 'user_admin_flg' not in st.session_state:
-    st.session_state.user_admin_flg = "Y"
+    # Default to NON-admin so the pre-login session_list can't accidentally
+    # leak sessions across users. `set_login_user_to_session` promotes this
+    # to "Y" only when the logged-in user's group actually includes Admin.
+    st.session_state.user_admin_flg = "N"
 if 'group_cd' not in st.session_state:
     st.session_state.group_cd = "All"
 if 'allowed_rag_management' not in st.session_state:
@@ -311,7 +314,15 @@ def ensure_login():
             if user_info:
                 set_login_user_to_session(cookie_user_id, user_info)
                 refresh_session_states()
-                return
+                # Force a fresh render pass so every widget (session list
+                # buttons, agent picker, sidebar filters) sees a fully
+                # populated session_state. Without this rerun the FIRST
+                # render after cookie restore proceeds on the same pass
+                # that just seeded session_state, and some downstream
+                # widgets (notably the Chat sidebar's session name buttons)
+                # read stale/empty values. Manual login already does this
+                # explicitly further down; parity here.
+                st.rerun()
 
     st.title(web_title)
     st.subheader("Login:")
@@ -878,9 +889,17 @@ def initialize_session_states():
     if 'rag_data_list_selected' not in st.session_state:
         st.session_state.rag_data_list_selected = []
     if 'session_list' not in st.session_state:
-        st.session_state.session_list = dms.get_session_list_visible(st.session_state.service_id, st.session_state.user_id, "Y")
+        # Use the actual user_admin_flg (defaults to "N" pre-login) so we
+        # don't briefly render an admin-view session list to a non-admin
+        # user during the fraction-of-a-second before cookie auto-login
+        # promotes them.
+        st.session_state.session_list = dms.get_session_list_visible(
+            st.session_state.service_id, st.session_state.user_id,
+            st.session_state.user_admin_flg)
     if 'session_inactive_list' not in st.session_state:
-        st.session_state.session_inactive_list = dms.get_session_list_inactive_visible(st.session_state.service_id, st.session_state.user_id, "Y")
+        st.session_state.session_inactive_list = dms.get_session_list_inactive_visible(
+            st.session_state.service_id, st.session_state.user_id,
+            st.session_state.user_admin_flg)
     if 'session_inactive_list_selected' not in st.session_state:
         st.session_state.session_inactive_list_selected = []
     if 'session' not in st.session_state:
@@ -1048,7 +1067,14 @@ def refresh_session(session_id, session_name, situation, new_session_flg=False):
         st.session_state.imagegen_engine_name = st.session_state.agent_data.get("ENGINE", {}).get("IMAGEGEN", {}).get("DEFAULT", "")
     else:
         session_agent_file = dms.get_agent_file(st.session_state.session.session_id)
-        _agent_display = dma.get_agent_item(session_agent_file, "DISPLAY_NAME") if os.path.exists(agent_folder_path + session_agent_file) else ""
+        # `os.path.exists` reports True for the folder path when
+        # `session_agent_file` is empty. Guard on truthiness AND require the
+        # target to be a regular file so we don't try to open a directory.
+        _agent_display = (
+            dma.get_agent_item(session_agent_file, "DISPLAY_NAME")
+            if session_agent_file and os.path.isfile(agent_folder_path + session_agent_file)
+            else ""
+        )
         if _agent_display and _agent_display in st.session_state.agent_list:
             st.session_state.display_name = _agent_display
             _idx = st.session_state.agent_list.index(_agent_display)
@@ -6600,6 +6626,15 @@ def main():
                             else:
                                 session_name_btn = session_name_list
                             session_name_btn = session_name_btn[:15]
+                            # `session_name` can be empty right after login
+                            # (status.yaml `name` field not yet populated for
+                            # freshly-created sessions or before the first
+                            # refresh). Fall back to the session_id so the
+                            # button always has a visible label — otherwise
+                            # Streamlit renders an empty button that reads
+                            # as "session name missing".
+                            if not session_name_btn.strip():
+                                session_name_btn = session_id_list[:15]
                             situation = dms.get_situation(session_id_list)
                             if not situation:
                                 situation["TIME"] = now_time.strftime("%Y/%m/%d %H:%M:%S")
