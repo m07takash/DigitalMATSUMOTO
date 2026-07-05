@@ -451,8 +451,15 @@ def read_pptx_file(file_path, temp_folder):
 def read_json_file(file_name, folder_path=""):
     import time as _time
     data = {}
+    # Reject empty file names — otherwise `folder_path + ""` returns the
+    # folder itself, `os.path.exists` reports True, and the subsequent
+    # `open()` raises IsADirectoryError. Callers that pass an empty name
+    # (rare, but happens when a session has no agent set) should get an
+    # empty dict back, matching the missing-file semantics.
+    if not file_name:
+        return data
     file_path = folder_path + file_name
-    if not os.path.exists(file_path):
+    if not os.path.exists(file_path) or os.path.isdir(file_path):
         return data
     for _attempt in range(2):
         try:
@@ -497,8 +504,12 @@ def read_yaml_file(file_name, folder_path=""):
     # temp + rename, very rare partial reads can still occur on edge-case filesystems.
     import time as _time
     data = {}
+    # Same guard as `read_json_file`: reject empty file names so
+    # `folder_path + ""` doesn't accidentally open a directory.
+    if not file_name:
+        return data
     file_path = folder_path + file_name
-    if not os.path.exists(file_path):
+    if not os.path.exists(file_path) or os.path.isdir(file_path):
         return data
     for _attempt in range(2):
         try:

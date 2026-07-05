@@ -1441,31 +1441,38 @@ def _render_attachment_style_dashboard(data: dict) -> None:
         " 両得点それぞれ 4 未満 (低) か 4 以上 (高) かで 4 型に分類します。"
     )
 
-    # ---- Style illustration cards side by side (A vs GT) ------------------
-    _c1, _c2 = st.columns(2)
-    for _col, _who, _style_id in [(_c1, "Answer(AI)", _style_a),
-                                     (_c2, "Ground Truth", _style_g)]:
-        if _style_id is None:
-            _col.caption(f"**{_who}**: (未分類)")
-            continue
-        _meta = _ATTACHMENT_STYLES[_style_id]
-        _svg  = _ATTACHMENT_STYLE_SVG[_style_id]
-        _card = (
-            f'<div style="background:{_meta["bg"]};'
-            f'border:1px solid {_meta["border"]};padding:12px 14px;'
-            f'border-radius:8px;">'
-            f'<div style="font-size:0.8em;color:{_meta["text"]};'
-            f'font-weight:600;margin-bottom:4px;">{_who}</div>'
-            f'<div style="font-size:1.1em;color:{_meta["text"]};'
-            f'font-weight:700;">{_meta["jp"]} '
-            f'<span style="font-size:0.85em;font-weight:500;">'
-            f'({_meta["en"]})</span></div>'
-            f'<div style="text-align:center;margin:10px 0;">{_svg}</div>'
-            f'<div style="font-size:0.85em;color:#333;line-height:1.5;">'
-            f'{_meta["description"]}</div>'
-            f'</div>'
-        )
-        _col.markdown(_card, unsafe_allow_html=True)
+    # ---- Style illustration cards side by side (A / GT / Baseline) --------
+    # Include a Baseline card whenever any Baseline signal is present — the
+    # MD preview / export path already shows Baseline's illustration, so the
+    # main dashboard must too for parity.
+    _card_specs = [("Answer(AI)", _style_a, _has_a),
+                    ("Ground Truth", _style_g, _has_g),
+                    ("Baseline", _style_b, _has_b)]
+    _visible = [(w, s) for w, s, present in _card_specs if present]
+    if _visible:
+        _cols = st.columns(len(_visible))
+        for _col, (_who, _style_id) in zip(_cols, _visible):
+            if _style_id is None:
+                _col.caption(f"**{_who}**: (未分類)")
+                continue
+            _meta = _ATTACHMENT_STYLES[_style_id]
+            _svg  = _ATTACHMENT_STYLE_SVG[_style_id]
+            _card = (
+                f'<div style="background:{_meta["bg"]};'
+                f'border:1px solid {_meta["border"]};padding:12px 14px;'
+                f'border-radius:8px;">'
+                f'<div style="font-size:0.8em;color:{_meta["text"]};'
+                f'font-weight:600;margin-bottom:4px;">{_who}</div>'
+                f'<div style="font-size:1.1em;color:{_meta["text"]};'
+                f'font-weight:700;">{_meta["jp"]} '
+                f'<span style="font-size:0.85em;font-weight:500;">'
+                f'({_meta["en"]})</span></div>'
+                f'<div style="text-align:center;margin:10px 0;">{_svg}</div>'
+                f'<div style="font-size:0.85em;color:#333;line-height:1.5;">'
+                f'{_meta["description"]}</div>'
+                f'</div>'
+            )
+            _col.markdown(_card, unsafe_allow_html=True)
 
     # ---- Agreement summary (if GT present) --------------------------------
     # Only surface an affirmative match ("✓ ... いずれも 〜 に分類") — the
@@ -2380,7 +2387,7 @@ def _render_goals_listing(common: list, answer_only: list, gt_only: list) -> Non
     import streamlit as st
 
     if common:
-        st.markdown("#### 共通する目標")
+        st.markdown("#### 認識できた目標")
         for g in common:
             st.markdown(
                 f"**【{g.get('label', '?')}】**", unsafe_allow_html=False
@@ -2657,9 +2664,9 @@ def _render_goals_grid(raw: dict, adj: dict, overrides_key: str) -> None:
     """
     import streamlit as st
 
-    st.markdown("#### 目標の 2×2 マトリクス (共通 / 共通しない × Answer(AI) / Ground Truth)")
+    st.markdown("#### 目標の 2×2 マトリクス (認識できた目標 / 認識誤り × Answer(AI) / Ground Truth)")
     st.caption(
-        "各目標の分類は LLM の推定です。共通/共通しないの判断が違う場合は、"
+        "各目標の分類は LLM の推定です。認識できた/認識誤りの判断が違う場合は、"
         "各目標のコントロールから手動で修正できます。修正内容は「変更を適用」で下部の F/P/R に反映されます。"
     )
 
@@ -2761,7 +2768,7 @@ def _render_goals_grid(raw: dict, adj: dict, overrides_key: str) -> None:
     _n_common_g = len(_display_common_g)
 
     st.markdown(
-        f"##### 共通する目標  (Answer: {_n_common_a} 件 / GT: {_n_common_g} 件)"
+        f"##### 認識できた目標  (Answer: {_n_common_a} 件 / GT: {_n_common_g} 件)"
     )
     _c1, _c2 = st.columns(2)
     with _c1:
@@ -2784,7 +2791,7 @@ def _render_goals_grid(raw: dict, adj: dict, overrides_key: str) -> None:
 
     # Edit controls — folded away by default; collapsed reveals only the
     # 2×2 above so a large goal list stays scannable.
-    with st.expander("✏️ 共通する目標の分類を編集", expanded=False):
+    with st.expander("✏️ 認識できた目標の分類を編集", expanded=False):
         # Per-goal split controls — pending until "変更を適用" is clicked.
         # Widget state persists via `key`; the apply handler below reads it.
         for i, g in _common_orig_kept:
@@ -2818,7 +2825,7 @@ def _render_goals_grid(raw: dict, adj: dict, overrides_key: str) -> None:
     _adj_g_orig  = [g for g in _adj_g if "_from_split_common_idx" not in g]
 
     st.markdown(
-        f"##### 共通しない目標  (Answer: {len(_adj_a)} 件 / GT: {len(_adj_g)} 件)"
+        f"##### 認識誤り  (Answer: {len(_adj_a)} 件 / GT: {len(_adj_g)} 件)"
     )
     _c3, _c4 = st.columns(2)
     with _c3:
@@ -2836,7 +2843,7 @@ def _render_goals_grid(raw: dict, adj: dict, overrides_key: str) -> None:
             + "".join(_goal_row_html(g, "gt") for g in _adj_g_split)
             + "</ul>" + _cell_close, unsafe_allow_html=True)
 
-    with st.expander("✏️ 共通しない目標の分類を編集 (統合 / 分割を戻す)", expanded=False):
+    with st.expander("✏️ 認識誤りの分類を編集 (統合 / 分割を戻す)", expanded=False):
         # Per-goal pair-with-GT selectbox (only for LLM's original own-only).
         # First option is 「共通していない (このまま)」 — the explicit "leave
         # as answer-only" choice. Following options are ALL GT goals so the
@@ -2891,7 +2898,7 @@ def _render_goals_grid(raw: dict, adj: dict, overrides_key: str) -> None:
                 _ov["split_common"] = _split_set
                 st.rerun()
         if not _any_edit_row:
-            st.caption("_(編集対象の共通しない目標がありません)_")
+            st.caption("_(編集対象の認識誤りがありません)_")
 
     # -----------------------------------------------------------------
     # Batch apply — collect every pending selectbox / checkbox state and
@@ -3213,13 +3220,22 @@ def _render_overall_llm_commentary(result: dict) -> None:
                 import DigiM_Evaluation as _de
                 from datetime import datetime as _dt
                 # Assemble sections in the order they appear on screen:
-                # summary first, then every category.
+                # summary first, then every category. Strip inline base64
+                # PNG images and SVG blocks — the downloadable report_md
+                # embeds them for a self-contained .md file, but shipping
+                # them to the LLM blows past the context window (each
+                # radar is ~60–240 KB of base64 = tens of thousands of
+                # tokens per image).
                 _sections = [{"name": "サマリー",
-                                "md": "\n".join(_summary_md(result))}]
+                                "md":  _strip_embedded_media(
+                                            "\n".join(_summary_md(result))
+                                        )}]
                 for _cat in result.get("category_order", []):
                     _sections.append({
                         "name": _cat,
-                        "md":   _category_to_md(_cat, result["categories"][_cat]),
+                        "md":   _strip_embedded_media(
+                                    _category_to_md(_cat, result["categories"][_cat])
+                                ),
                     })
                 text, model = _de.llm_compare_overall(
                     sections=_sections,
@@ -4601,11 +4617,32 @@ def _render_summary(result: dict) -> None:
 
 
 def _summary_md(result: dict) -> list[str]:
-    """Markdown mirror of `_render_summary` — used by report_md."""
+    """Markdown mirror of `_render_summary` — used by report_md. Includes
+    the summary Cos/MAE radar (2 panels × 3 comparison traces) as an
+    inline base64 PNG so the downloaded .md is self-contained, plus the
+    per-category tile detail with Baseline-pair scores when applicable.
+    """
     out: list[str] = ["", "## サマリー (7カテゴリ横断)", ""]
-    _cats = list(result.get("category_order") or [])
+    _cats_present = set((result.get("categories") or {}).keys())
+    _cats = [c for c in _SUMMARY_CATEGORY_ORDER if c in _cats_present]
+    _cats += [c for c in (result.get("category_order") or [])
+                if c in _cats_present and c not in _cats]
     if not _cats:
         return out
+
+    # Section ordering (per operator spec):
+    #   1. Category-tile grid  (mirrors on-screen tiles)
+    #   2. Compact overview table
+    #   3. Cos / MAE summary radar
+    # --- 1. Per-category tile grid ---------------------------------------
+    out.append("### カテゴリー別スコアタイル")
+    out.append("")
+    out.extend(_summary_tile_grid_html(result, _cats))
+    out.append("")
+
+    # --- 2. Compact overview table ---------------------------------------
+    out.append("### カテゴリー別スコア一覧")
+    out.append("")
     out.append("| Category | Type | n | Cos 類似度 (A↔GT) | MAE (各項目誤差) | Memo |")
     out.append("|------|------|---:|---:|---:|------|")
     for cat in _cats:
@@ -4622,7 +4659,299 @@ def _summary_md(result: dict) -> list[str]:
         )
     out.append("")
     out.append("_Ground Truth = 1.0 基準_ · Cos: ベクトル方向の一致 / MAE: 各項目の絶対誤差の平均")
+
+    # --- 3. Cos / MAE summary radar --------------------------------------
+    _rows = []
+    for cat in _cats:
+        _d   = result["categories"].get(cat) or {}
+        _cos = _cat_cos_similarity(cat, _d)
+        _rows.append({"category": cat,
+                       "cos": _cos.get("overall"),
+                       "mae": _cos.get("mae"),
+                       "extra": _cos.get("extra") or {}})
+    _radar_uri = _summary_radar_data_uri(_rows)
+    if _radar_uri:
+        out.append("")
+        out.append("### レーダーチャート (Cos & MAE)")
+        out.append("")
+        out.append(f"![Summary radar (Cos & MAE, 3 traces)]({_radar_uri})")
     return out
+
+
+def _summary_tile_grid_html(result: dict, cats: list[str]) -> list[str]:
+    """Return the 3×4 category-tile grid as an inline PNG image so the .md
+    export renders identically to the on-screen "サマリー (7カテゴリ横断)"
+    view in every Markdown viewer (raw HTML would render as literal text
+    in strict-CommonMark viewers). Falls back to a plain markdown table if
+    the PNG can't be built."""
+    _cats_data = (result or {}).get("categories") or {}
+
+    def _fmt(v):
+        return f"{v:.3f}" if isinstance(v, (int, float)) else "-"
+
+    _cats_set = set(cats)
+    _grid_map = {(r, c): (cat, meta) for cat, meta in _SUMMARY_GRID.items()
+                  if cat in _cats_set for r, c, *_ in [meta]}
+
+    # Precompute per-cell payload once.
+    _payload: dict[tuple[int, int], dict] = {}
+    for (_r, _c), (_cat, _meta) in _grid_map.items():
+        _row_idx, _col_idx, _group, _sub_jp, _sub_en = _meta
+        _d   = _cats_data.get(_cat) or {}
+        _cos = _cat_cos_similarity(_cat, _d)
+        _payload[(_r, _c)] = {
+            "cat": _cat, "group": _group, "sub_jp": _sub_jp, "sub_en": _sub_en,
+            "cos": _cos.get("overall"), "mae": _cos.get("mae"),
+            "extra": _cos.get("extra") or {}, "data": _d,
+        }
+
+    _uri = _summary_tile_grid_data_uri(_payload)
+    if _uri:
+        return [f"![サマリー タイル (7カテゴリ × 3群)]({_uri})"]
+
+    # Fallback: plain markdown table when matplotlib is unavailable.
+    out = [
+        "| Group | Category | サブ質問 | Cos / F1 | MAE |",
+        "|------|------|------|---:|---:|",
+    ]
+    for (_r, _c), p in sorted(_payload.items()):
+        _headline = "F1" if p["cat"] == "目標" else "Cos"
+        out.append(
+            f"| {p['group'].capitalize()} | **{p['cat']}** | "
+            f"{p['sub_jp']} ({p['sub_en']}) | "
+            f"{_headline}={_fmt(p['cos'])} | {_fmt(p['mae'])} |"
+        )
+    return out
+
+
+def _summary_tile_grid_data_uri(payload: dict[tuple[int, int], dict]) -> str | None:
+    """Draw the 3×4 (rows × cols) tile grid as a matplotlib figure and
+    return an inline PNG data URI. Colors mirror `_GROUP_STYLE` (Inside /
+    Flow / Outside tints) and cell font-sizes mirror the on-screen tile."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import FancyBboxPatch, Rectangle
+    except Exception:
+        return None
+
+    _FP = _get_jp_font_prop()
+
+    def _fmt(v):
+        return f"{v:.3f}" if isinstance(v, (int, float)) else "-"
+
+    ROWS, COLS = 4, 3
+    CELL_W, CELL_H = 3.4, 1.7   # inches per cell in axes units
+    LEGEND_H = 0.32              # legend row height in axes units
+    fig_w = COLS * CELL_W
+    fig_h = ROWS * CELL_H + LEGEND_H + 0.2
+
+    try:
+        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+        ax.set_xlim(0, COLS * CELL_W)
+        ax.set_ylim(0, ROWS * CELL_H + LEGEND_H + 0.2)
+        ax.set_axis_off()
+
+        # --- Legend chips (Inside / Flow / Outside) at the top ---------
+        _legend_y = ROWS * CELL_H + 0.1
+        _legend_items = [
+            ("inside",  "Inside — ジブンの内側を形づくるモノ"),
+            ("flow",    "Flow — ジブンの過去から未来の流れ"),
+            ("outside", "Outside — ジブンの外側との関わり方"),
+        ]
+        for _idx, (_g, _label) in enumerate(_legend_items):
+            _s = _GROUP_STYLE[_g]
+            _x = _idx * CELL_W + 0.10
+            ax.add_patch(FancyBboxPatch(
+                (_x, _legend_y), CELL_W - 0.20, LEGEND_H,
+                boxstyle="round,pad=0.02,rounding_size=0.06",
+                facecolor=_s["bg"], edgecolor=_s["border"], linewidth=0.8,
+            ))
+            ax.text(_x + (CELL_W - 0.20) / 2, _legend_y + LEGEND_H / 2,
+                     _label, ha="center", va="center", fontsize=8,
+                     fontproperties=_FP)
+
+        # --- 4×3 tile grid ---------------------------------------------
+        # Row 0 is at the top → y_top = ROWS * CELL_H, cells grow downward.
+        for (_r, _c), p in payload.items():
+            _s = _GROUP_STYLE[p["group"]]
+            _x = _c * CELL_W + 0.10
+            _y = (ROWS - 1 - _r) * CELL_H + 0.10
+            _w = CELL_W - 0.20
+            _h = CELL_H - 0.20
+            ax.add_patch(FancyBboxPatch(
+                (_x, _y), _w, _h,
+                boxstyle="round,pad=0.02,rounding_size=0.08",
+                facecolor=_s["bg"], edgecolor=_s["border"], linewidth=1.0,
+            ))
+            _cx = _x + _w / 2
+            # Category name (top of cell)
+            ax.text(_x + 0.12, _y + _h - 0.15, p["cat"],
+                     ha="left", va="top", fontsize=13, fontweight="bold",
+                     color="#111", fontproperties=_FP)
+            # Subtitle (JP / EN)
+            _sub = f"{p['sub_jp']}  -{p['sub_en']}-"
+            ax.text(_x + 0.12, _y + _h - 0.35, _sub,
+                     ha="left", va="top", fontsize=8, style="italic",
+                     color="#555", fontproperties=_FP)
+            # Headline Cos/F1 + MAE  (Cos color-coded)
+            _cv = p["cos"]; _mv = p["mae"]
+            if isinstance(_cv, (int, float)):
+                _cos_color = ("#2E7D32" if _cv >= 0.9
+                                else "#EF6C00" if _cv >= 0.7 else "#C62828")
+            else:
+                _cos_color = "#888"
+            _headline = "F1" if p["cat"] == "目標" else "Cos"
+            # Left-aligned label + value
+            ax.text(_x + 0.12, _y + _h - 0.70, _headline,
+                     fontsize=8, color="#666", fontproperties=_FP)
+            ax.text(_x + 0.42, _y + _h - 0.72, _fmt(_cv),
+                     fontsize=17, fontweight="bold", color=_cos_color,
+                     fontproperties=_FP)
+            ax.text(_cx + 0.55, _y + _h - 0.70, "MAE",
+                     fontsize=8, color="#666", fontproperties=_FP)
+            ax.text(_cx + 0.90, _y + _h - 0.72, _fmt(_mv),
+                     fontsize=12, color="#333", fontproperties=_FP)
+            # Baseline sub-lines (skip 人格形成 / 目標)
+            _ex = p["extra"] or {}
+            _bl_lines = []
+            if p["cat"] not in ("人格形成", "目標"):
+                if _ex.get("ab_cos") is not None or _ex.get("ab_mae") is not None:
+                    _bl_lines.append(
+                        f"A↔B: Cos {_fmt(_ex.get('ab_cos'))} · MAE {_fmt(_ex.get('ab_mae'))}"
+                    )
+                if _ex.get("gb_cos") is not None or _ex.get("gb_mae") is not None:
+                    _bl_lines.append(
+                        f"GT↔B: Cos {_fmt(_ex.get('gb_cos'))} · MAE {_fmt(_ex.get('gb_mae'))}"
+                    )
+            _by = _y + _h - 1.05
+            for _line in _bl_lines:
+                ax.text(_x + 0.12, _by, _line, fontsize=7, color="#555",
+                         fontproperties=_FP)
+                _by -= 0.18
+
+        fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+        return _fig_to_data_uri(fig, dpi=140)
+    except Exception:
+        try:
+            plt.close(fig)
+        except Exception:
+            pass
+        return None
+
+
+_JP_FONT_PROP_CACHE = None
+def _get_jp_font_prop():
+    """Return a matplotlib FontProperties suitable for Japanese text so
+    tile labels don't render as tofu boxes. Scans installed font files
+    for common CJK fonts and constructs a FontProperties by absolute
+    path so matplotlib actually uses it (rather than silently falling
+    back to DejaVu). Cached after first successful lookup."""
+    global _JP_FONT_PROP_CACHE
+    if _JP_FONT_PROP_CACHE is not None:
+        return _JP_FONT_PROP_CACHE
+    try:
+        from matplotlib import font_manager as _fm
+        from matplotlib.font_manager import FontProperties
+        _fonts = _fm.findSystemFonts()
+        # Priority order — prefer sans-serif CJK, then generic Japanese fonts.
+        _prefer = ("notosanscjk", "notosansjp", "ipaexg", "ipag",
+                    "takao", "vlgothic", "hirakakuprosans",
+                    "hiraginosansgb", "yugothic", "meiryo",
+                    "notoserifcjk")
+        _found: list[tuple[int, str]] = []
+        for _fp in _fonts:
+            _low = _fp.lower().replace(" ", "").replace("-", "").replace("_", "")
+            for _idx, _key in enumerate(_prefer):
+                if _key in _low:
+                    _found.append((_idx, _fp))
+                    break
+        _found.sort(key=lambda x: x[0])
+        for _, _path in _found:
+            try:
+                _prop = FontProperties(fname=_path)
+                _JP_FONT_PROP_CACHE = _prop
+                return _prop
+            except Exception:
+                continue
+        _JP_FONT_PROP_CACHE = FontProperties()
+        return _JP_FONT_PROP_CACHE
+    except Exception:
+        return None
+
+
+def _summary_radar_data_uri(rows: list[dict]) -> str | None:
+    """Build the 2-panel summary radar (Cos on the left, MAE on the right,
+    each overlaying A↔GT/A↔Baseline/GT↔Baseline) and return an inline PNG
+    data URI. Mirrors the layout `_render_summary` draws in the UI."""
+    if not rows:
+        return None
+    _labels = [r["category"] for r in rows]
+    _ag_cos = [r["cos"] if r["cos"] is not None else 0.0 for r in rows]
+    _ag_mae = [r["mae"] if r["mae"] is not None else 0.0 for r in rows]
+    _ab_cos = [(r.get("extra") or {}).get("ab_cos") for r in rows]
+    _ab_mae = [(r.get("extra") or {}).get("ab_mae") for r in rows]
+    _gb_cos = [(r.get("extra") or {}).get("gb_cos") for r in rows]
+    _gb_mae = [(r.get("extra") or {}).get("gb_mae") for r in rows]
+    _has_ab = any(v is not None for v in _ab_cos + _ab_mae)
+    _has_gb = any(v is not None for v in _gb_cos + _gb_mae)
+
+    def _s(vs):
+        return [float(v) if isinstance(v, (int, float)) else 0.0 for v in vs]
+
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import numpy as np
+        fig = plt.figure(figsize=(13, 5.5))
+        for _panel_i, (_title, _ag, _ab, _gb) in enumerate([
+            ("Cos 類似度 (高いほど良)", _ag_cos, _ab_cos, _gb_cos),
+            ("MAE (低いほど良)",         _ag_mae, _ab_mae, _gb_mae),
+        ]):
+            ax = fig.add_subplot(1, 2, _panel_i + 1, projection="polar")
+            ax.set_theta_offset(np.pi / 2)
+            ax.set_theta_direction(-1)
+            _angles = np.linspace(0, 2 * np.pi, len(_labels) + 1)
+            _agc = _s(_ag) + [_s(_ag)[0]]
+            ax.plot(_angles, _agc, color="#1565C0", linewidth=2.0,
+                     label="Answer(AI) ↔ Ground Truth")
+            ax.fill(_angles, _agc, color="#1565C0", alpha=0.18)
+            if _has_ab:
+                _abc = _s(_ab) + [_s(_ab)[0]]
+                ax.plot(_angles, _abc, color="#EF6C00", linewidth=1.6,
+                         linestyle="--", label="Answer(AI) ↔ Baseline")
+                ax.fill(_angles, _abc, color="#EF6C00", alpha=0.10)
+            if _has_gb:
+                _gbc = _s(_gb) + [_s(_gb)[0]]
+                ax.plot(_angles, _gbc, color="#6D4C41", linewidth=1.6,
+                         linestyle="-.", label="Ground Truth ↔ Baseline")
+                ax.fill(_angles, _gbc, color="#6D4C41", alpha=0.08)
+            ax.plot(_angles, [1.0] * len(_angles), color="#888",
+                     linestyle=":", linewidth=1.0, alpha=0.6)
+            ax.set_xticks(_angles[:-1])
+            try:
+                ax.set_xticklabels(_labels, fontfamily="IPAexGothic", fontsize=8.5)
+            except Exception:
+                ax.set_xticklabels(_labels, fontsize=8.5)
+            ax.set_ylim(0, 1.0)
+            ax.set_yticks([0.25, 0.5, 0.75])
+            try:
+                ax.set_title(_title, fontfamily="IPAexGothic", fontsize=11, pad=14)
+            except Exception:
+                ax.set_title(_title, fontsize=11, pad=14)
+            try:
+                ax.legend(loc="upper right", bbox_to_anchor=(1.32, 1.14),
+                           fontsize=7.5,
+                           prop={"family": "IPAexGothic", "size": 7.5},
+                           frameon=False)
+            except Exception:
+                pass
+        plt.tight_layout()
+        return _fig_to_data_uri(fig)
+    except Exception:
+        return None
 
 
 def _render_narrative_category(cat: str, data: dict) -> None:
@@ -4720,13 +5049,381 @@ def _render_narrative_category(cat: str, data: dict) -> None:
             st.markdown("---")
 
 
+def _strip_embedded_media(md: str) -> str:
+    """Remove inline PNG data URIs and large inline SVG blocks from a
+    Markdown string. Used before shipping the report body to an LLM so the
+    embedded chart images (which are ~640KB total, ~480K tokens) don't
+    blow past the model's context window.
+
+    Replaces each stripped element with a short caption so the reader can
+    still tell where a chart lived when they check the shortened text.
+    """
+    if not md or not isinstance(md, str):
+        return md or ""
+    import re as _re
+    # 1. ![alt](data:image/...;base64,...)  → keep the alt, drop the URI.
+    md = _re.sub(
+        r'!\[([^\]]*)\]\(data:image/[^)]+\)',
+        lambda m: f"_(chart embedded: {m.group(1) or 'image'})_",
+        md,
+    )
+    # 2. Inline HTML <img src="data:..."> tags → drop.
+    md = _re.sub(
+        r'<img[^>]*src="data:image/[^"]+"[^>]*/?>',
+        "_(chart embedded)_",
+        md,
+        flags=_re.DOTALL,
+    )
+    # 3. Inline <svg>...</svg> blocks — attachment-style illustrations are
+    #    a few KB each but not billable-token-scale; still, they're noise
+    #    for the commentary LLM, so collapse to a placeholder.
+    md = _re.sub(
+        r'<svg[^>]*>.*?</svg>',
+        "_(svg illustration)_",
+        md,
+        flags=_re.DOTALL,
+    )
+    return md
+
+
+def _fig_to_data_uri(fig, dpi: int = 110) -> str | None:
+    """Encode a matplotlib Figure as an inline base64 PNG data URI, closing
+    the figure afterwards. Suitable for embedding in downloadable Markdown
+    (`![](data:image/png;base64,...)`) so the exported .md is self-contained
+    and previews correctly in any Markdown viewer.
+    Returns None if `fig` is None or serialisation fails.
+    """
+    if fig is None:
+        return None
+    try:
+        import io as _io
+        import base64 as _b64
+        import matplotlib.pyplot as _plt
+        _buf = _io.BytesIO()
+        fig.savefig(_buf, format="png", dpi=dpi, bbox_inches="tight")
+        _plt.close(fig)
+        _buf.seek(0)
+        _enc = _b64.b64encode(_buf.getvalue()).decode("ascii")
+        return f"data:image/png;base64,{_enc}"
+    except Exception:
+        try:
+            import matplotlib.pyplot as _plt
+            _plt.close(fig)
+        except Exception:
+            pass
+        return None
+
+
+def _md_image(fig, alt: str = "") -> str:
+    """Render a matplotlib figure as a Markdown image line. Empty string
+    when embedding fails so callers can silently skip."""
+    _uri = _fig_to_data_uri(fig)
+    if not _uri:
+        return ""
+    return f"![{alt}]({_uri})"
+
+
+def _md_category_radar(cat: str, data: dict) -> str:
+    """Build a per-category radar chart (as inline PNG) for the Markdown
+    export. Uses the same axis order the on-screen renderer uses so the
+    downloaded report visually matches the WebUI."""
+    if cat == "価値観":
+        _axes    = data.get("axes_avg")    or {}
+        _axes_gt = data.get("axes_avg_gt") or {}
+        _axes_bl = data.get("axes_avg_baseline") or {}
+        if not _axes and not _axes_gt:
+            return ""
+        _labels = [f"{v}\n({_SCHWARTZ_JP[v]})" for v in _SCHWARTZ_10]
+        _base   = _axes or _axes_gt
+        _vals    = [_base.get(v, 0.0) for v in _SCHWARTZ_10]
+        _vals_gt = [_axes_gt.get(v, 0.0) for v in _SCHWARTZ_10] if (_axes and _axes_gt) else None
+        _vals_bl = [_axes_bl.get(v, 0.0) for v in _SCHWARTZ_10] if _axes_bl else None
+        _fig = _radar(_labels, _vals, "価値観 (10値)",
+                        values_gt=_vals_gt, values_baseline=_vals_bl)
+        return _md_image(_fig, alt="Values radar (Schwartz 10)")
+    if cat == "動機":
+        # Two side-by-side radars would need a custom figure — for now emit
+        # BPNSFS and MWMS as separate images (they're both meaningful alone).
+        _out = []
+        for _title, _axes_key, _gt_key, _bl_key, _axis_list, _jp_map in [
+            ("BPNSFS", "bpnsfs_avg", "bpnsfs_avg_gt", "bpnsfs_avg_baseline",
+             _BPNSFS_AXES, _BPNSFS_JP),
+            ("MWMS",   "mwms_avg",    "mwms_avg_gt",   "mwms_avg_baseline",
+             _MWMS_AXES,   _MWMS_JP),
+        ]:
+            _a  = data.get(_axes_key) or {}
+            _g  = data.get(_gt_key)   or {}
+            _b  = data.get(_bl_key)   or {}
+            if not (_a or _g or _b):
+                continue
+            _lbls = [f"{x}\n({_jp_map.get(x,'')})" for x in _axis_list]
+            _base = _a or _g or _b
+            _vals    = [_base.get(x, 0.0) for x in _axis_list]
+            _vals_gt = [_g.get(x, 0.0) for x in _axis_list] if (_a and _g) else None
+            _vals_bl = [_b.get(x, 0.0) for x in _axis_list] if _b else None
+            _fig = _radar(_lbls, _vals, _title,
+                            values_gt=_vals_gt, values_baseline=_vals_bl)
+            _img = _md_image(_fig, alt=f"{_title} radar")
+            if _img:
+                _out.append(_img)
+        return "\n\n".join(_out)
+    if cat in _NARRATIVE_CATEGORIES:
+        # 目標 / 人格形成 — no default radar (episode-comparison categories).
+        return ""
+    if cat == "愛着":
+        # 愛着 has only 2 dimensions — a radar isn't useful. Skip.
+        return ""
+    # Default path (特性 / 社会性): use canonical axis order if registered.
+    _axes    = data.get("axes_avg") or {}
+    _axes_gt = data.get("axes_avg_gt") or {}
+    _axes_bl = data.get("axes_avg_baseline") or {}
+    if not (_axes or _axes_gt or _axes_bl):
+        return ""
+    _canonical = _CATEGORY_AXIS_ORDER.get(cat)
+    _seen = set(_axes.keys()) | set(_axes_gt.keys()) | set(_axes_bl.keys())
+    if _canonical:
+        _labels = ([k for k in _canonical if k in _seen]
+                    + [k for k in _seen if k not in _canonical])
+    else:
+        _labels = list(_axes.keys()) or list(_axes_gt.keys()) or list(_axes_bl.keys())
+    if len(_labels) < 3:
+        return ""
+    _base = _axes or _axes_gt or _axes_bl
+    _vals    = [_base.get(k, 0.0) for k in _labels]
+    _vals_gt = [_axes_gt.get(k, 0.0) for k in _labels] if (_axes and _axes_gt) else None
+    _vals_bl = [_axes_bl.get(k, 0.0) for k in _labels] if _axes_bl else None
+    _fig = _radar(_labels, _vals, cat,
+                    values_gt=_vals_gt, values_baseline=_vals_bl)
+    return _md_image(_fig, alt=f"{cat} radar")
+
+
+def _md_attachment_illustrations(data: dict) -> str:
+    """PNG illustration of the classified attachment styles for the
+    Markdown export. Draws A / GT / Baseline cards side by side, each
+    with the abstract 4-style symbol + score row + description, so the
+    downloaded .md matches the on-screen `_render_attachment_style_dashboard`
+    Attachment Style card block."""
+    _axes    = data.get("axes_avg") or {}
+    _axes_gt = data.get("axes_avg_gt") or {}
+    _axes_bl = data.get("axes_avg_baseline") or {}
+    _av_a, _an_a = _attachment_raw_scores(_axes)
+    _av_g, _an_g = _attachment_raw_scores(_axes_gt)
+    _av_b, _an_b = _attachment_raw_scores(_axes_bl)
+    _style_a = _classify_attachment_style(_av_a, _an_a)
+    _style_g = _classify_attachment_style(_av_g, _an_g)
+    _style_b = _classify_attachment_style(_av_b, _an_b)
+    _specs = [
+        ("Answer(AI)",   _av_a, _an_a, _style_a),
+        ("Ground Truth", _av_g, _an_g, _style_g),
+        ("Baseline",     _av_b, _an_b, _style_b),
+    ]
+    _visible = [s for s in _specs if s[3] is not None]
+    if not _visible:
+        return ""
+    _uri = _attachment_illustration_data_uri(_visible)
+    if not _uri:
+        return ""
+    return f"\n**Attachment Style**\n\n![Attachment Style illustration]({_uri})"
+
+
+def _attachment_illustration_data_uri(specs: list) -> str | None:
+    """Draw a horizontal strip of attachment-style cards (one per side)
+    with the same colored background + abstract symbol + label + raw
+    scores that `_render_attachment_style_dashboard` shows on screen."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import FancyBboxPatch
+    except Exception:
+        return None
+
+    _FP = _get_jp_font_prop()
+
+    CARD_W, CARD_H = 3.6, 4.2
+    GAP = 0.15
+    fig_w = CARD_W * len(specs) + GAP * (len(specs) - 1) + 0.3
+    fig_h = CARD_H + 0.3
+
+    try:
+        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+        ax.set_xlim(0, fig_w)
+        ax.set_ylim(0, fig_h)
+        ax.set_axis_off()
+
+        for _idx, (_who, _av, _an, _sid) in enumerate(specs):
+            _meta = _ATTACHMENT_STYLES[_sid]
+            _x = 0.15 + _idx * (CARD_W + GAP)
+            _y = 0.15
+            # Colored card background
+            ax.add_patch(FancyBboxPatch(
+                (_x, _y), CARD_W, CARD_H,
+                boxstyle="round,pad=0.02,rounding_size=0.10",
+                facecolor=_meta["bg"], edgecolor=_meta["border"], linewidth=1.4,
+            ))
+            _cx = _x + CARD_W / 2
+
+            # Header (who)
+            ax.text(_x + 0.20, _y + CARD_H - 0.15, _who,
+                     fontsize=10, fontweight="bold", color=_meta["text"],
+                     va="top", fontproperties=_FP)
+            # Title (JP + EN)
+            ax.text(_x + 0.20, _y + CARD_H - 0.42,
+                     f'{_meta["jp"]} ({_meta["en"]})',
+                     fontsize=13, fontweight="bold", color=_meta["text"],
+                     va="top", fontproperties=_FP)
+
+            # Illustration area — bounds (in axes coords):
+            #   x: [_x + 0.30 .. _x + CARD_W - 0.30]
+            #   y: [_y + 1.35 .. _y + CARD_H - 0.85]
+            _ill_x0 = _x + 0.30
+            _ill_x1 = _x + CARD_W - 0.30
+            _ill_y0 = _y + 1.35
+            _ill_y1 = _y + CARD_H - 0.85
+            _ill_cx = (_ill_x0 + _ill_x1) / 2
+            _ill_cy = (_ill_y0 + _ill_y1) / 2
+            _ill_w  = _ill_x1 - _ill_x0
+            _ill_h  = _ill_y1 - _ill_y0
+            _draw_attachment_symbol(ax, _sid, _ill_x0, _ill_y0, _ill_w, _ill_h,
+                                       _meta["text"], _FP)
+
+            # Score row + description at the bottom of the card
+            _fmt = lambda v: f"{v:.2f}" if isinstance(v, (int, float)) else "-"
+            ax.text(_x + 0.20, _y + 1.05,
+                     f"回避 {_fmt(_av)}  /  不安 {_fmt(_an)}",
+                     fontsize=10, color="#333", va="top", fontproperties=_FP)
+            _desc = _wrap_jp(_meta["description"], 18)
+            ax.text(_x + 0.20, _y + 0.80, _desc,
+                     fontsize=8, color="#333", va="top",
+                     fontproperties=_FP)
+
+        fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+        return _fig_to_data_uri(fig, dpi=140)
+    except Exception:
+        try:
+            plt.close(fig)
+        except Exception:
+            pass
+        return None
+
+
+def _draw_attachment_symbol(ax, style_id: str, x0: float, y0: float,
+                              w: float, h: float, accent: str, font_prop) -> None:
+    """Draw the abstract symbol for one of the 4 attachment styles inside
+    the bounding box (x0, y0) → (x0+w, y0+h). Mirrors the on-screen SVG
+    metaphors: secure = two figures + heart, anxious = reaching + '?',
+    dismissive = wall + figure inside, fearful = center + two-way arrows."""
+    import matplotlib.patches as _mp
+    _cx = x0 + w / 2
+    _cy = y0 + h / 2
+    _R = min(w, h) * 0.20   # base circle radius
+
+    def _circle(x, y, r, fill, edge, alpha=0.30):
+        ax.add_patch(_mp.Circle((x, y), r, facecolor=fill, edgecolor=edge,
+                                  linewidth=2, alpha=alpha))
+
+    def _arrow(x1, y1, x2, y2, color, width=2.5):
+        ax.annotate("", xy=(x2, y2), xytext=(x1, y1),
+                     arrowprops=dict(arrowstyle="->", color=color, lw=width))
+
+    if style_id == "secure":
+        _fill = "#4CAF50"; _edge = "#1B5E20"
+        _circle(_cx - w * 0.20, _cy, _R, _fill, _edge, 0.25)
+        _circle(_cx + w * 0.20, _cy, _R, _fill, _edge, 0.25)
+        # Heart-ish diamond in the middle
+        ax.add_patch(_mp.RegularPolygon((_cx, _cy + _R * 0.15), 3, radius=_R * 0.55,
+                                          orientation=3.14159,
+                                          facecolor="#E91E63", edgecolor="none"))
+        ax.plot([_cx - _R * 0.55, _cx + _R * 0.55], [_cy, _cy],
+                 color=_edge, linewidth=1.5, linestyle="--")
+        ax.text(_cx, y0 + h * 0.05, "親密 + 自立", ha="center", va="bottom",
+                 color=_edge, fontsize=11, fontweight="bold",
+                 fontproperties=font_prop)
+    elif style_id == "anxious":
+        _warm = "#FFA000"; _warm_edge = "#E65100"; _cool = "#BDBDBD"; _cool_edge = "#616161"
+        _circle(_cx - w * 0.22, _cy, _R * 1.05, _warm, _warm_edge, 0.30)
+        _circle(_cx + w * 0.22, _cy, _R * 0.90, _cool, _cool_edge, 0.35)
+        _arrow(_cx - w * 0.10, _cy, _cx + w * 0.10, _cy, _warm_edge)
+        ax.text(_cx - w * 0.32, _cy + _R * 1.10, "?", color=_warm_edge,
+                 fontsize=22, fontweight="bold", ha="center", va="center",
+                 fontproperties=font_prop)
+        ax.text(_cx - w * 0.15, _cy + _R * 1.20, "?", color=_warm_edge,
+                 fontsize=16, ha="center", va="center", fontproperties=font_prop)
+        ax.text(_cx, y0 + h * 0.05, "求める · 不安", ha="center", va="bottom",
+                 color=_warm_edge, fontsize=11, fontweight="bold",
+                 fontproperties=font_prop)
+    elif style_id == "dismissive":
+        _fill = "#1976D2"; _edge = "#0D47A1"
+        # Wall around the self
+        ax.add_patch(_mp.Rectangle((x0 + w * 0.05, _cy - _R * 1.4),
+                                     w * 0.45, _R * 2.8,
+                                     facecolor="#E3F2FD", edgecolor=_edge,
+                                     linewidth=2.2, linestyle="--"))
+        _circle(x0 + w * 0.22, _cy, _R * 0.85, _fill, _edge, 0.35)
+        _circle(x0 + w * 0.82, _cy, _R * 0.65, "#BDBDBD", "#616161", 0.35)
+        ax.plot([x0 + w * 0.55, x0 + w * 0.55],
+                 [_cy - _R * 1.4, _cy + _R * 1.4],
+                 color=_edge, linewidth=1.5, linestyle=":")
+        ax.text(_cx, y0 + h * 0.05, "自立 · 距離", ha="center", va="bottom",
+                 color=_edge, fontsize=11, fontweight="bold",
+                 fontproperties=font_prop)
+    elif style_id == "fearful":
+        _fill = "#7B1FA2"; _edge = "#4A148C"
+        _circle(_cx, _cy, _R * 1.15, _fill, _edge, 0.25)
+        _arrow(x0 + w * 0.10, _cy, _cx - _R * 1.4, _cy, _edge)
+        _arrow(_cx + _R * 1.4, _cy, x0 + w * 0.90, _cy, _edge)
+        ax.text(_cx - w * 0.05, _cy + _R * 1.8, "?", color=_edge,
+                 fontsize=18, fontweight="bold", ha="center", va="center",
+                 fontproperties=font_prop)
+        ax.text(_cx + w * 0.05, _cy + _R * 1.8, "!", color=_edge,
+                 fontsize=18, fontweight="bold", ha="center", va="center",
+                 fontproperties=font_prop)
+        ax.text(_cx, y0 + h * 0.05, "近づきたい · 距離を取りたい",
+                 ha="center", va="bottom", color=_edge, fontsize=10,
+                 fontweight="bold", fontproperties=font_prop)
+
+
 def _category_to_md(cat: str, data: dict) -> str:
     lines = []
     meta = data.get("meta") or {}
     if meta.get("theory"):
         lines.append(f"- 理論: **{meta['theory']}**")
-    if meta.get("items"):
-        lines.append(f"- 評価項目: {meta['items'][:300]}")
+
+    # --- Top metric strip -----------------------------------------------
+    # Same values the WebUI shows above each category via
+    # `_render_cos_metric_strip`. For 目標 the headline metric is F1 and
+    # the strip also carries Precision / Recall / edge F1. For everything
+    # else the pair is Cos / MAE. Baseline-pair scores follow when present.
+    _cos = _cat_cos_similarity(cat, data)
+    _ex  = _cos.get("extra") or {}
+    def _f(x): return f"{x:.3f}" if isinstance(x, (int, float)) else "-"
+    if cat == "目標":
+        _strip = (f"**F1 (目標):** {_f(_cos.get('overall'))}  ·  "
+                    f"**MAE:** {_f(_cos.get('mae'))}  ·  "
+                    f"**Precision:** {_f(_ex.get('precision'))}  ·  "
+                    f"**Recall:** {_f(_ex.get('recall'))}  ·  "
+                    f"**関係 F1:** {_f(_ex.get('edge_f1'))}  ·  "
+                    f"**関係 P/R:** {_f(_ex.get('edge_precision'))} / "
+                    f"{_f(_ex.get('edge_recall'))}")
+    else:
+        _strip = (f"**Cos 類似度 (A↔GT):** {_f(_cos.get('overall'))}  ·  "
+                    f"**MAE:** {_f(_cos.get('mae'))}")
+    lines.append("")
+    lines.append(_strip)
+    # A↔Baseline / GT↔Baseline pair scores (skip for episode-only cats).
+    if cat not in ("人格形成", "目標") and (
+            _ex.get("ab_cos") is not None or _ex.get("ab_mae") is not None
+            or _ex.get("gb_cos") is not None or _ex.get("gb_mae") is not None):
+        lines.append(
+            f"- _A↔B: Cos {_f(_ex.get('ab_cos'))} · MAE {_f(_ex.get('ab_mae'))}"
+            f"   ·   GT↔B: Cos {_f(_ex.get('gb_cos'))} · MAE {_f(_ex.get('gb_mae'))}_"
+        )
+
+    # --- Category radar (embedded PNG when meaningful) -------------------
+    _radar_md = _md_category_radar(cat, data)
+    if _radar_md:
+        lines.append("")
+        lines.append(_radar_md)
 
     if cat == "価値観":
         lines.extend(_values_md(data))
@@ -4734,30 +5431,210 @@ def _category_to_md(cat: str, data: dict) -> str:
         lines.extend(_motivation_md(data))
     elif cat in _NARRATIVE_CATEGORIES:
         lines.extend(_narrative_md(cat, data))
+    elif cat == "愛着":
+        # Attachment has just 2 dimensions (Avoidance / Anxiety) — the raw
+        # 1-7 scale is more informative than the n/7-normalised axes_avg
+        # values the default path would show. Also includes the classified
+        # 4-style label per side.
+        lines.extend(_attachment_md(data))
     else:
         axes = data.get("axes_avg") or {}
         axes_gt = data.get("axes_avg_gt") or {}
-        if axes:
+        axes_bl = data.get("axes_avg_baseline") or {}
+        if axes or axes_gt or axes_bl:
             lines.append("")
             _hdr = f"**Scores ({data['scored']} scored / {data['unscored']} unscored"
             if data.get("scored_gt"):
                 _hdr += f" / GT {data['scored_gt']} scored"
             lines.append(_hdr + "):**")
             lines.append("")
-            if axes_gt:
-                lines.append("| Axis | Answer(AI) | Ground Truth |")
-                lines.append("|------|------:|------:|")
-                for k in sorted(axes.keys(), key=lambda x: -axes[x]):
-                    _gt = axes_gt.get(k)
-                    lines.append(f"| {k} | {axes[k]:.2f} | {(_gt is not None) and f'{_gt:.2f}' or '-'} |")
+            _canon = _CATEGORY_AXIS_ORDER.get(cat)
+            _all_axes = set(axes.keys()) | set(axes_gt.keys()) | set(axes_bl.keys())
+            if _canon:
+                _order = [k for k in _canon if k in _all_axes]
+                _order += [k for k in _all_axes if k not in _order]
             else:
-                lines.append("| Axis | Answer(AI) |")
-                lines.append("|------|------:|")
-                for k, v in sorted(axes.items(), key=lambda x: -x[1]):
-                    lines.append(f"| {k} | {v:.2f} |")
+                _order = sorted(_all_axes,
+                                 key=lambda x: -(axes.get(x) or axes_gt.get(x) or 0))
+            _cols = ["Axis", "Answer(AI)"]
+            if axes_gt: _cols.append("Ground Truth")
+            if axes and axes_gt: _cols.append("Diff (A - GT)")
+            if axes_bl: _cols.append("Baseline")
+            if axes and axes_bl: _cols.append("Diff (A - B)")
+            if axes_gt and axes_bl: _cols.append("Diff (GT - B)")
+            lines.append("| " + " | ".join(_cols) + " |")
+            lines.append("|" + "|".join(["------"] * (len(_cols) - 1) + ["------:"]) + "|")
+            for k in _order:
+                _a = axes.get(k); _g = axes_gt.get(k); _b = axes_bl.get(k)
+                def _c(v): return f"{v:.2f}" if isinstance(v, (int, float)) else "-"
+                def _cs(v): return f"{v:+.2f}" if isinstance(v, (int, float)) else "-"
+                _row = [k, _c(_a)]
+                if axes_gt: _row.append(_c(_g))
+                if axes and axes_gt:
+                    _d = (_a - _g) if isinstance(_a, (int, float)) and isinstance(_g, (int, float)) else None
+                    _row.append(_cs(_d))
+                if axes_bl: _row.append(_c(_b))
+                if axes and axes_bl:
+                    _d = (_a - _b) if isinstance(_a, (int, float)) and isinstance(_b, (int, float)) else None
+                    _row.append(_cs(_d))
+                if axes_gt and axes_bl:
+                    _d = (_g - _b) if isinstance(_g, (int, float)) and isinstance(_b, (int, float)) else None
+                    _row.append(_cs(_d))
+                lines.append("| " + " | ".join(_row) + " |")
+        # 社会性 gets the Leach 2-group aggregation below the axis table.
+        if cat == "社会性":
+            lines.extend(_sociability_group_md(data))
 
-    lines.extend(_narratives_md(data))
+    # 愛着 SVG illustration cards.
+    if cat == "愛着":
+        _att = _md_attachment_illustrations(data)
+        if _att:
+            lines.append("")
+            lines.append(_att)
+
+    # Per-operator spec: exclude the "Answers" tab-like detail block from
+    # the Markdown export — the graphics + score tables above already
+    # convey the substantive result, and the per-row Q/A dump would bloat
+    # the file substantially.
     return "\n".join(lines)
+
+
+def _attachment_md(data: dict) -> list[str]:
+    """愛着 category — raw 1-7 Avoidance/Anxiety comparison table, matches
+    the on-screen `_render_attachment_style_dashboard` scoring block."""
+    out: list[str] = []
+    _axes    = data.get("axes_avg") or {}
+    _axes_gt = data.get("axes_avg_gt") or {}
+    _axes_bl = data.get("axes_avg_baseline") or {}
+    _av_a, _an_a = _attachment_raw_scores(_axes)
+    _av_g, _an_g = _attachment_raw_scores(_axes_gt)
+    _av_b, _an_b = _attachment_raw_scores(_axes_bl)
+    _style_a = _classify_attachment_style(_av_a, _an_a)
+    _style_g = _classify_attachment_style(_av_g, _an_g)
+    _style_b = _classify_attachment_style(_av_b, _an_b)
+
+    def _fmt(v): return f"{v:.2f}" if isinstance(v, (int, float)) else "-"
+    def _sdiff(a, g):
+        if isinstance(a, (int, float)) and isinstance(g, (int, float)):
+            return f"{a - g:+.2f}"
+        return "-"
+    def _hilo(v):
+        if not isinstance(v, (int, float)): return "-"
+        return "高 (≥4)" if v >= 4.0 else "低 (<4)"
+    def _style(s):
+        return (f"{_ATTACHMENT_STYLES[s]['jp']} ({_ATTACHMENT_STYLES[s]['en']})"
+                if s else "-")
+
+    _has_a = _av_a is not None or _an_a is not None
+    _has_g = _av_g is not None or _an_g is not None
+    _has_b = _av_b is not None or _an_b is not None
+
+    if not (_has_a or _has_g or _has_b):
+        return out
+
+    out.append("")
+    out.append("**回避 / 不安 スコアと Attachment Style (raw 1-7 平均):**")
+    out.append("")
+    out.append("|  | 回避 (Avoidance) | 回避 高低 | 不安 (Anxiety) | 不安 高低 | Attachment Style |")
+    out.append("|------|---:|:---:|---:|:---:|------|")
+    if _has_a:
+        out.append(f"| Answer(AI) | {_fmt(_av_a)} | {_hilo(_av_a)} | {_fmt(_an_a)} | {_hilo(_an_a)} | {_style(_style_a)} |")
+    if _has_g:
+        out.append(f"| Ground Truth | {_fmt(_av_g)} | {_hilo(_av_g)} | {_fmt(_an_g)} | {_hilo(_an_g)} | {_style(_style_g)} |")
+    if _has_a and _has_g:
+        out.append(f"| Diff (A - GT) | {_sdiff(_av_a, _av_g)} | - | {_sdiff(_an_a, _an_g)} | - | - |")
+    if _has_b:
+        out.append(f"| Baseline | {_fmt(_av_b)} | {_hilo(_av_b)} | {_fmt(_an_b)} | {_hilo(_an_b)} | {_style(_style_b)} |")
+        if _has_a:
+            out.append(f"| Diff (A - B) | {_sdiff(_av_a, _av_b)} | - | {_sdiff(_an_a, _an_b)} | - | - |")
+        if _has_g:
+            out.append(f"| Diff (GT - B) | {_sdiff(_av_g, _av_b)} | - | {_sdiff(_an_g, _an_b)} | - | - |")
+    out.append("")
+    out.append(
+        "- 回避 = Q1〜Q6 の平均 (1〜7)、不安 = Q7〜Q9 の平均 (1〜7)。"
+        " 両得点それぞれ 4 未満 (低) か 4 以上 (高) かで 4 型に分類します。"
+    )
+    return out
+
+
+def _sociability_group_md(data: dict) -> list[str]:
+    """社会性 category — Leach's Hierarchical Multicomponent Model 2-group
+    aggregation table. Mirrors `_render_sociability_group_section`."""
+    out: list[str] = []
+    _axes    = data.get("axes_avg")    or {}
+    _axes_gt = data.get("axes_avg_gt") or {}
+    _axes_bl = data.get("axes_avg_baseline") or {}
+    if not (_axes or _axes_gt or _axes_bl):
+        return out
+    _has_a = bool(_axes); _has_g = bool(_axes_gt); _has_b = bool(_axes_bl)
+
+    def _f(v):
+        return f"{v:.3f}" if isinstance(v, (int, float)) else "-"
+    def _diff(x, y):
+        if isinstance(x, (int, float)) and isinstance(y, (int, float)):
+            return round(x - y, 3)
+        return None
+
+    out.append("")
+    out.append("### 2グループ集約 (Leach's Hierarchical Multicomponent Model)")
+    out.append("")
+    _cols = ["Group", "Members"]
+    if _has_a: _cols.append("Answer(AI)")
+    if _has_g: _cols.append("Ground Truth")
+    if _has_a and _has_g:
+        _cols.extend(["Diff (A - GT)", "Cos 類似度 (A↔GT)", "MAE"])
+    if _has_b: _cols.append("Baseline")
+    if _has_a and _has_b: _cols.append("Diff (A - B)")
+    if _has_g and _has_b: _cols.append("Diff (GT - B)")
+    out.append("| " + " | ".join(_cols) + " |")
+    out.append("|" + "|".join(["------"] * len(_cols)) + "|")
+
+    _rows = []
+    for _label, _members, _desc in _SOCIABILITY_GROUPS:
+        _va = [_axes.get(m)    for m in _members if m in _axes]
+        _vg = [_axes_gt.get(m) for m in _members if m in _axes_gt]
+        _vb = [_axes_bl.get(m) for m in _members if m in _axes_bl]
+        _avg_a = round(sum(_va) / len(_va), 3) if _va else None
+        _avg_g = round(sum(_vg) / len(_vg), 3) if _vg else None
+        _avg_b = round(sum(_vb) / len(_vb), 3) if _vb else None
+        _sub_a = {m: _axes.get(m, 0.0)    for m in _members} if _has_a else {}
+        _sub_g = {m: _axes_gt.get(m, 0.0) for m in _members} if _has_g else {}
+        _cos = _dict_cos(_sub_a, _sub_g) if _sub_a and _sub_g else None
+        _mae = _mean_abs_err(_sub_a, _sub_g) if _sub_a and _sub_g else None
+        _row = [_label, " / ".join(_members)]
+        if _has_a: _row.append(_f(_avg_a))
+        if _has_g: _row.append(_f(_avg_g))
+        if _has_a and _has_g:
+            _row.append(_f(_diff(_avg_a, _avg_g)))
+            _row.append(_f(_cos))
+            _row.append(_f(_mae))
+        if _has_b: _row.append(_f(_avg_b))
+        if _has_a and _has_b: _row.append(_f(_diff(_avg_a, _avg_b)))
+        if _has_g and _has_b: _row.append(_f(_diff(_avg_g, _avg_b)))
+        out.append("| " + " | ".join(_row) + " |")
+        _rows.append({"label": _label, "members": _members, "desc": _desc,
+                       "answer": _avg_a, "gt": _avg_g})
+
+    out.append("")
+    out.append("**各グループの解説:**")
+    for i, r in enumerate(_rows):
+        _delta = ""
+        if isinstance(r["answer"], (int, float)) and isinstance(r["gt"], (int, float)):
+            _d = r["answer"] - r["gt"]
+            if abs(_d) >= 0.1:
+                _delta = f"  *(GT との差: {_d:+.2f})*"
+        _member_line = " / ".join(
+            f"{_SOCIABILITY_JP.get(m, m)}({m})" for m in r["members"]
+        )
+        _ans_s = ""
+        if isinstance(r["answer"], (int, float)):
+            _ans_s = f" — score={r['answer']:.2f}"
+        elif isinstance(r["gt"], (int, float)):
+            _ans_s = f" — GT score={r['gt']:.2f}"
+        out.append(f"{i+1}. **{r['label']}**{_ans_s}{_delta}  \n"
+                     f"   {r['desc']}  \n"
+                     f"   *{_member_line}が該当*")
+    return out
 
 
 def _values_md(data: dict) -> list[str]:
@@ -4846,8 +5723,13 @@ def _motivation_md(data: dict) -> list[str]:
 
 
 def _narrative_md(cat: str, data: dict) -> list[str]:
-    """Markdown for narrative categories: per-row similarity table + dim
-    aggregate (社会性 / 愛着) + the side-by-side text in a collapsed details."""
+    """Markdown for narrative categories: high-level metrics + optional
+    per-dimension aggregate (社会性 / 愛着) and — when the operator has run
+    the LLM structured analysis — the LLM's per-axis A / GT / Diff scores.
+    For 目標 also includes the 2×2 matrix (認識できた / 認識誤り); for
+    人格形成 includes the LLM rubric radar + per-axis notes.
+    Excludes the per-row similarity table and the side-by-side Q/A dump
+    (per operator spec)."""
     out: list[str] = []
     items: list[dict] = data.get("narrative_items") or []
     if not items:
@@ -4875,30 +5757,346 @@ def _narrative_md(cat: str, data: dict) -> list[str]:
             x = dim_agg[d]
             out.append(f"| {d} | {x['n']} | {x['seq']:.2f} | {x['f1']:.2f} |")
 
-    # Per-row similarity table
-    out.append("")
-    out.append("### 質問別 類似度")
-    out.append("")
-    out.append("| No | Memo | Seq Ratio | Token F1 | Answer(AI) 文字数 | GT 文字数 |")
-    out.append("|----|------|---:|---:|---:|---:|")
-    for it in items:
-        out.append(
-            f"| {it['no']} | {it['memo']} | {it['seq']:.2f} | {it['f1']:.2f} | "
-            f"{it['len_a']} | {it['len_b']} |"
-        )
+    # --- 目標: 2×2 マトリクス (認識できた / 認識誤り × A / GT) ------------
+    if cat == "目標":
+        try:
+            import streamlit as _st
+            _plugin = _PLUGIN_DIR.name
+            _goals = _st.session_state.get(f"_pe_goals_struct_{_plugin}")
+            _goals_data = (_goals or {}).get("data") or {}
+            _ovkey = f"_pe_goals_overrides_{_plugin}"
+            _ov = _st.session_state.get(_ovkey) or {"split_common": set(), "promote_pairs": []}
+        except Exception:
+            _goals_data, _ov = {}, {}
+        if _goals_data:
+            out.extend(_goals_matrix_md(_goals_data, _ov))
 
-    # Side-by-side text (collapsed)
-    out.append("")
-    out.append(f"<details><summary>Answer / Ground Truth 比較 ({len(items)} rows)</summary>")
-    out.append("")
-    for it in items:
-        out.append(f"**[{it['no']}] {it['axis'] or '(unmapped)'}** — Seq={it['seq']:.2f} / F1={it['f1']:.2f}")
-        if it["question"]:
-            out.append(f"- Q: {it['question']}")
-        out.append(f"- Answer(AI):\n  > {it['answer'][:1500]}".replace("\n", "\n  > "))
-        out.append(f"- Ground Truth:\n  > {it['ground_truth'][:1500]}".replace("\n", "\n  > "))
-    out.append("</details>")
+    # --- 人格形成: LLM 4軸ルーブリック レーダー + 軸別スコア + 講評 -------
+    if cat == "人格形成":
+        try:
+            import streamlit as _st
+            _plugin = _PLUGIN_DIR.name
+            _llm = _st.session_state.get(f"_pe_narr_scored_{_plugin}_人格形成")
+            _llm_data = (_llm or {}).get("data") or {}
+        except Exception:
+            _llm_data = {}
+        _ans = _llm_data.get("answer_scores") or {}
+        _gt  = _llm_data.get("gt_scores")     or {}
+        _notes = _llm_data.get("per_axis_notes") or {}
+        if _ans or _gt:
+            _axes_cfg = _NARRATIVE_SCORED_AXES.get("人格形成") or []
+            # Embed the LLM rubric radar (dual-layer A vs GT)
+            _labels = [a[0] for a in _axes_cfg]
+            _vals_a  = [float(_ans.get(lbl, 0.0)) for lbl in _labels]
+            _vals_gt = [float(_gt.get(lbl,  0.0)) for lbl in _labels]
+            if len(_labels) >= 3:
+                _short = [re.split(r"[ \(（]", lbl, maxsplit=1)[0] for lbl in _labels]
+                _fig = _radar(_short, _vals_a,
+                                "人格形成 (LLM 連続 0-1 採点)",
+                                values_gt=_vals_gt)
+                _img = _md_image(_fig, alt="人格形成 LLM rubric radar")
+                if _img:
+                    out.append("")
+                    out.append(_img)
+            out.append("")
+            out.append("### 軸別スコア (LLM 連続 0-1 採点)")
+            out.append("")
+            out.append("| Axis | Answer(AI) | Ground Truth | Diff (A - GT) |")
+            out.append("|------|------:|------:|------:|")
+            for _jp, _en, _ in _axes_cfg:
+                if _jp not in _ans and _jp not in _gt:
+                    continue
+                _av = float(_ans.get(_jp, 0.0))
+                _gv = float(_gt.get(_jp,  0.0))
+                _d  = _av - _gv
+                out.append(f"| {_jp} ({_en}) | {_av:.2f} | {_gv:.2f} | {_d:+.2f} |")
+            # Per-axis A / GT / Comparison notes (100-200 chars each)
+            if _notes and any(
+                (n or {}).get("answer_note") or (n or {}).get("gt_note")
+                or (n or {}).get("comparison") for n in _notes.values()
+            ):
+                out.append("")
+                out.append("### 軸別の講評")
+                for _jp, _en, _ in _axes_cfg:
+                    _n = _notes.get(_jp) or {}
+                    _a  = (_n.get("answer_note") or "").strip() or "_(なし)_"
+                    _g  = (_n.get("gt_note")     or "").strip() or "_(なし)_"
+                    _cmp = (_n.get("comparison") or "").strip() or "_(なし)_"
+                    out.append("")
+                    out.append(f"**{_jp} ({_en})**")
+                    out.append(f"- Answer(AI) の回答: {_a}")
+                    out.append(f"- Ground Truth の回答: {_g}")
+                    out.append(f"- 比較: {_cmp}")
     return out
+
+
+def _goals_matrix_md(goals_data: dict, overrides: dict) -> list[str]:
+    """Goals 2×2 matrix export — visual mirror of the on-screen
+    `_render_goals_grid`. Rendered as an inline PNG so the download
+    matches the main-screen report in every Markdown viewer (raw HTML
+    would render as literal text in strict-CommonMark viewers). Applies
+    the operator's manual overrides; omits edit controls."""
+    out: list[str] = []
+    _adj = _apply_goal_overrides(goals_data, overrides or {})
+    _common      = _adj.get("common")      or []
+    _answer_only = _adj.get("answer_only") or []
+    _gt_only     = _adj.get("gt_only")     or []
+    if not (_common or _answer_only or _gt_only):
+        return out
+
+    def _dedup_by(entries, key):
+        _seen = set(); _o = []
+        for _e in entries:
+            _t = ((_e.get(key) or _e.get("text") or "")).strip()
+            if _t and _t in _seen: continue
+            if _t: _seen.add(_t)
+            _o.append(_e)
+        return _o
+    _common_gt_new = [g for g in _common if "_shared_gt_with_common" not in g]
+    _display_common_a = _dedup_by(_common, "answer_text")
+    _display_common_g = _dedup_by(_common_gt_new, "gt_text")
+
+    _uri = _goals_matrix_data_uri(
+        _display_common_a, _display_common_g, _answer_only, _gt_only
+    )
+    out.append("")
+    out.append("### 目標の 2×2 マトリクス (認識できた目標 / 認識誤り × Answer(AI) / Ground Truth)")
+    out.append("")
+    if _uri:
+        out.append(f"![目標 2×2 マトリクス]({_uri})")
+    else:
+        # Plain-markdown fallback when matplotlib is unavailable — plain
+        # bullet lists with H/M/L badges as text tokens (no raw HTML).
+        out.extend(_goals_matrix_md_fallback(
+            _display_common_a, _display_common_g, _answer_only, _gt_only))
+    if len(_display_common_a) != len(_display_common_g):
+        out.append("")
+        out.append(f"_※ N:N: Answer(AI) 側 {len(_display_common_a)} 件が Ground Truth 側 "
+                     f"{len(_display_common_g)} 件に対応 (重複はまとめて 1 件で表示)_")
+    out.append("")
+    out.append(
+        "_評点: **大**=大切さ · **本**=本気度 · **見**=達成見込 · **達**=達成度   "
+        "／ 色: **赤**=High · **緑**=Medium · **青**=Low_"
+    )
+    return out
+
+
+def _goals_matrix_md_fallback(common_a: list[dict], common_g: list[dict],
+                                answer_only: list[dict], gt_only: list[dict]
+                                ) -> list[str]:
+    """Plain-Markdown fallback for the 2×2 matrix — no raw HTML."""
+    def _line(g, side):
+        _prefix_keys = [f"{side}_{k}" for k in
+                          ("importance", "commitment", "feasibility", "achievement")]
+        _use_prefix = any(k in g for k in _prefix_keys)
+        _rates = []
+        for _k, _jp in [("importance", "大"), ("commitment", "本"),
+                          ("feasibility", "見"), ("achievement", "達")]:
+            _val = g.get(f"{side}_{_k}" if _use_prefix else _k, "M") or "M"
+            _rates.append(f"{_jp}:{_val.upper()}")
+        _body = ((g.get(f"{side}_text") or g.get("text")
+                    or g.get("answer_text") or g.get("gt_text") or "").strip()
+                    or "_(原文なし)_")
+        return f"- {_body} (#{g.get('label', '?')}) — [{' / '.join(_rates)}]"
+
+    out = [
+        "",
+        f"##### 認識できた目標 (Answer: {len(common_a)} 件 / GT: {len(common_g)} 件)",
+        "",
+        "**Answer(AI) 視点:**",
+    ]
+    out.extend(_line(g, "answer") for g in common_a) or out.append("- _(該当なし)_")
+    if not common_a: out.append("- _(該当なし)_")
+    out.append("")
+    out.append("**Ground Truth 視点:**")
+    if common_g:
+        out.extend(_line(g, "gt") for g in common_g)
+    else:
+        out.append("- _(該当なし)_")
+    out.append("")
+    out.append(f"##### 認識誤り (Answer: {len(answer_only)} 件 / GT: {len(gt_only)} 件)")
+    out.append("")
+    out.append("**Answer(AI) のみ:**")
+    if answer_only:
+        out.extend(_line(g, "answer") for g in answer_only)
+    else:
+        out.append("- _(該当なし)_")
+    out.append("")
+    out.append("**Ground Truth のみ:**")
+    if gt_only:
+        out.extend(_line(g, "gt") for g in gt_only)
+    else:
+        out.append("- _(該当なし)_")
+    return out
+
+
+def _goals_matrix_data_uri(common_a: list[dict], common_g: list[dict],
+                              answer_only: list[dict], gt_only: list[dict]
+                              ) -> str | None:
+    """Render the 2×2 goals grid as an inline PNG. Rows: 認識できた目標
+    (blue / green cells) then 認識誤り (orange cells). Each cell lists the
+    goals with 4 colored H/M/L rating badges. Cell height is computed from
+    actual wrapped text so long goal sentences never overflow the box."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import FancyBboxPatch
+    except Exception:
+        return None
+
+    _FP = _get_jp_font_prop()
+
+    _COL = {"H": "#D32F2F", "M": "#2E7D32", "L": "#1565C0"}
+
+    # Text-wrap width in characters. 24 is conservative for a ~5-inch cell
+    # at 9pt Japanese; leaves margin for the bullet + label suffix.
+    WRAP_W        = 24
+    LINE_H        = 0.22   # body text line height (inches)
+    RATING_ROW_H  = 0.30   # badge row height (inches)
+    ROW_GAP       = 0.14   # gap between goal entries
+    HEADER_H      = 0.55   # header text + margin above rows
+    CELL_PAD      = 0.20   # cell inner padding (bottom)
+    EMPTY_H       = 0.35   # (該当なし) placeholder
+
+    def _entries_rows(entries, side):
+        _rows = []
+        for g in entries:
+            _prefix_keys = [f"{side}_{k}" for k in
+                              ("importance", "commitment", "feasibility", "achievement")]
+            _use_prefix = any(k in g for k in _prefix_keys)
+            _rates = []
+            for _k, _jp in [("importance", "大"), ("commitment", "本"),
+                              ("feasibility", "見"), ("achievement", "達")]:
+                _val = (g.get(f"{side}_{_k}" if _use_prefix else _k, "M") or "M").upper()
+                _rates.append((_jp, _val))
+            _body = ((g.get(f"{side}_text") or g.get("text")
+                        or g.get("answer_text") or g.get("gt_text") or "").strip()
+                        or "(原文なし)")
+            _label = str(g.get("label", "?"))
+            _wrapped = _wrap_jp(f"• {_body}  (#{_label})", WRAP_W)
+            _lines = _wrapped.split("\n")
+            _rows.append({"lines": _lines, "rates": _rates,
+                            "row_h": LINE_H * len(_lines) + RATING_ROW_H + ROW_GAP})
+        return _rows
+
+    _cells = [
+        {"pos": (0, 0), "hdr": f"Answer(AI) 視点 ({len(common_a)})",
+         "hdr_col": "#1565C0", "bg": "#EBF4FF", "border": "#B8D0EA",
+         "rows": _entries_rows(common_a, "answer")},
+        {"pos": (0, 1), "hdr": f"Ground Truth 視点 ({len(common_g)})",
+         "hdr_col": "#2E7D32", "bg": "#EBFBEE", "border": "#B0DAB8",
+         "rows": _entries_rows(common_g, "gt")},
+        {"pos": (1, 0), "hdr": f"Answer(AI) のみ ({len(answer_only)})",
+         "hdr_col": "#1565C0", "bg": "#FFF3E0", "border": "#EFC48A",
+         "rows": _entries_rows(answer_only, "answer")},
+        {"pos": (1, 1), "hdr": f"Ground Truth のみ ({len(gt_only)})",
+         "hdr_col": "#2E7D32", "bg": "#FFF3E0", "border": "#EFC48A",
+         "rows": _entries_rows(gt_only, "gt")},
+    ]
+
+    def _cell_h(rows):
+        _content = (sum(r["row_h"] for r in rows) if rows else EMPTY_H)
+        return HEADER_H + _content + CELL_PAD
+
+    _h_top = max(_cell_h(_cells[0]["rows"]), _cell_h(_cells[1]["rows"]))
+    _h_bot = max(_cell_h(_cells[2]["rows"]), _cell_h(_cells[3]["rows"]))
+    _cell_w = 5.5
+    SECTION_TITLE_H = 0.45
+    fig_w = _cell_w * 2 + 0.4
+    fig_h = SECTION_TITLE_H + _h_top + 0.3 + SECTION_TITLE_H + _h_bot + 0.2
+
+    try:
+        fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+        ax.set_xlim(0, fig_w)
+        ax.set_ylim(0, fig_h)
+        ax.set_axis_off()
+
+        _y_top_title  = fig_h - 0.15
+        _y_top_cell   = _y_top_title - SECTION_TITLE_H
+        _y_bot_title  = _y_top_cell - _h_top - 0.15
+        _y_bot_cell   = _y_bot_title - SECTION_TITLE_H
+
+        ax.text(0.15, _y_top_title,
+                 f"認識できた目標  (Answer: {len(common_a)} 件 / GT: {len(common_g)} 件)",
+                 fontsize=12, fontweight="bold", color="#111", va="top",
+                 fontproperties=_FP)
+        ax.text(0.15, _y_bot_title,
+                 f"認識誤り  (Answer: {len(answer_only)} 件 / GT: {len(gt_only)} 件)",
+                 fontsize=12, fontweight="bold", color="#111", va="top",
+                 fontproperties=_FP)
+
+        for c in _cells:
+            _r, _col = c["pos"]
+            _h = _h_top if _r == 0 else _h_bot
+            _y_top = _y_top_cell if _r == 0 else _y_bot_cell
+            _y = _y_top - _h
+            _x = 0.15 + _col * _cell_w
+            _w = _cell_w - 0.2
+
+            ax.add_patch(FancyBboxPatch(
+                (_x, _y), _w, _h,
+                boxstyle="round,pad=0.02,rounding_size=0.10",
+                facecolor=c["bg"], edgecolor=c["border"], linewidth=1.2,
+            ))
+            ax.text(_x + 0.15, _y + _h - 0.15, c["hdr"],
+                     fontsize=10, fontweight="bold", color=c["hdr_col"],
+                     va="top", fontproperties=_FP)
+
+            _cursor_y = _y + _h - HEADER_H
+            if not c["rows"]:
+                ax.text(_x + 0.30, _cursor_y - 0.05, "(該当なし)",
+                         fontsize=9, color="#888", style="italic", va="top",
+                         fontproperties=_FP)
+                continue
+
+            for _row in c["rows"]:
+                _txt = "\n".join(_row["lines"])
+                ax.text(_x + 0.20, _cursor_y, _txt,
+                         fontsize=9, color="#111", va="top",
+                         fontproperties=_FP)
+                _cursor_y -= LINE_H * len(_row["lines"])
+                _bx = _x + 0.30
+                for _jp, _val in _row["rates"]:
+                    _col_hex = _COL.get(_val, "#666")
+                    ax.text(_bx, _cursor_y - 0.02, f"{_jp}:{_val}",
+                             fontsize=7.5, fontweight="bold", color="white",
+                             va="top", ha="left",
+                             bbox=dict(facecolor=_col_hex, edgecolor="none",
+                                         boxstyle="round,pad=0.15"),
+                             fontproperties=_FP)
+                    _bx += 0.55
+                _cursor_y -= (RATING_ROW_H + ROW_GAP)
+
+        fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+        return _fig_to_data_uri(fig, dpi=140)
+    except Exception:
+        try:
+            plt.close(fig)
+        except Exception:
+            pass
+        return None
+
+
+def _wrap_jp(s: str, width: int) -> str:
+    """Wrap text at `width` display cells per line — CJK chars count as 2
+    cells, ASCII as 1 (approximates the visual width matplotlib renders
+    with a proportional Japanese font)."""
+    def _w(ch): return 2 if ord(ch) > 0x2E80 else 1
+    _lines: list[str] = []
+    _buf = ""
+    _len = 0
+    for ch in s:
+        _cw = _w(ch)
+        if _len + _cw > width and _buf:
+            _lines.append(_buf)
+            _buf = ""
+            _len = 0
+        _buf += ch
+        _len += _cw
+    if _buf:
+        _lines.append(_buf)
+    return "\n".join(_lines) if _lines else s
 
 
 def _narratives_md(data: dict) -> list[str]:

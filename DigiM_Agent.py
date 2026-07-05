@@ -23,8 +23,15 @@ _agent_cache = {}
 
 def _read_agent_json(agent_file):
     """Load the agent JSON with caching (return a deep copy so caller mutations do not pollute the cache)."""
+    # Guard against empty / whitespace-only agent_file: `Path(folder) / ""`
+    # yields the folder path itself, which passes `os.path.exists` (it's a
+    # real directory) — but subsequent open() would raise IsADirectoryError.
+    # Convert that to a clean FileNotFoundError so callers can handle it
+    # uniformly.
+    if not agent_file or not str(agent_file).strip():
+        raise FileNotFoundError("Agent file name is empty")
     path = str(Path(agent_folder_path) / agent_file)
-    if not os.path.exists(path):
+    if not os.path.exists(path) or os.path.isdir(path):
         raise FileNotFoundError(f"Agent file not found: {path}")
     mtime = os.path.getmtime(path)
     cached = _agent_cache.get(agent_file)
