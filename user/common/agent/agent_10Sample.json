@@ -59,18 +59,18 @@
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
             },
-            "Claude-4.5": {
-                "NAME": "Claude-Sonnet-4.5",
+            "Claude-Sonnet-5": {
+                "NAME": "Claude-Sonnet-5",
                 "FUNC_NAME": "generate_response_T_claude",
-                "MODEL": "claude-sonnet-4-5",
+                "MODEL": "claude-sonnet-5",
                 "PARAMETER": {"max_tokens": 64000},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
             },
-            "Claude-4.6": {
-                "NAME": "Claude-Sonnet-4.6",
+            "Claude-Opus-4.8": {
+                "NAME": "Claude-Opus-4.8",
                 "FUNC_NAME": "generate_response_T_claude",
-                "MODEL": "claude-sonnet-4-6",
+                "MODEL": "claude-opus-4-8",
                 "PARAMETER": {"max_tokens": 64000},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}

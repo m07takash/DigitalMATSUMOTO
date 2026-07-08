@@ -3413,6 +3413,30 @@ def _user_memory_explorer():
         plt.title(title, fontfamily="IPAexGothic", fontsize=11)
         return fig
 
+    def _fig_uri(fig, dpi: int = 110) -> str:
+        """Encode a matplotlib Figure as an inline base64 PNG data URI so
+        it embeds directly into the exported Markdown report and renders
+        in every MD viewer. Closes the figure regardless of outcome.
+        Returns "" on failure so callers can skip silently."""
+        if fig is None:
+            return ""
+        try:
+            import io as _io
+            import base64 as _b64
+            import matplotlib.pyplot as _plt
+            _buf = _io.BytesIO()
+            fig.savefig(_buf, format="png", dpi=dpi, bbox_inches="tight")
+            _plt.close(fig)
+            _buf.seek(0)
+            return "data:image/png;base64," + _b64.b64encode(_buf.getvalue()).decode("ascii")
+        except Exception:
+            try:
+                import matplotlib.pyplot as _plt
+                _plt.close(fig)
+            except Exception:
+                pass
+            return ""
+
     def _um_ask(context_text, key_prefix):
         """Chat with the memory-grounded agent. Saved into a dedicated session."""
         st.markdown("---")
@@ -4932,12 +4956,118 @@ def _user_memory_explorer():
                     _r.append(f"- **Summary:** {_pp.get('summary_text')}")
                 _b5 = _pp.get("big5") or {}
                 _b5lines = []
+                _b5_radar_pairs = []
                 for _t in ux.BIG5_TRAITS:
                     _it = _b5.get(_t) or {}
                     if isinstance(_it, dict) and (_it.get("status") or "").lower() != "deleted":
-                        _b5lines.append(f"{ux.BIG5_JA.get(_t,_t)}={float(_it.get('score',0.5) or 0.5):.2f}({_it.get('status','')})")
+                        _score = float(_it.get('score', 0.5) or 0.5)
+                        _b5lines.append(f"{ux.BIG5_JA.get(_t,_t)}={_score:.2f}({_it.get('status','')})")
+                        _b5_radar_pairs.append((ux.BIG5_JA.get(_t, _t), _score))
                 if _b5lines:
                     _r.append("- **Big5:** " + "、".join(_b5lines))
+                # Embed the same Big5 radar chart shown on-screen
+                if len(_b5_radar_pairs) >= 3:
+                    try:
+                        _b5_uri = _fig_uri(_radar(
+                            [l for l, _ in _b5_radar_pairs],
+                            [v for _, v in _b5_radar_pairs],
+                            "Big5 (approved+pending)"))
+                        if _b5_uri:
+                            _r.append("")
+                            _r.append(f"![Big5 radar]({_b5_uri})")
+                    except Exception:
+                        pass
+                # Persona 6-attribute treemap — mirrors the on-screen chart
+                # when at least one item exists across the 6 fields.
+                try:
+                    _pfld_colors = {
+                        "expertise": "#2E86AB", "recurring_interests": "#A23B72",
+                        "values_principles": "#F18F01", "constraints": "#C73E1D",
+                        "communication_style": "#3CB371", "avoid_topics": "#7B68EE",
+                    }
+                    _pfld_ja = {
+                        "expertise": "Expertise", "recurring_interests": "Interests",
+                        "values_principles": "Values", "constraints": "Constraints",
+                        "communication_style": "Tone", "avoid_topics": "Topics to avoid",
+                    }
+                    _stat_norm = {s.lower() for s in
+                                    (st.session_state.get("ume_deep_pfield_status")
+                                       or ["approved", "pending"])}
+                    _by_pfield = {pf: [] for pf in _pfld_colors}
+                    for _pf in _pfld_colors:
+                        for _it in (_pp.get(_pf) or []):
+                            if not isinstance(_it, dict):
+                                continue
+                            _stx_ = (_it.get("status") or "pending").lower()
+                            if _stx_ not in _stat_norm:
+                                continue
+                            _lbl_ = (_it.get("label") or "").strip()
+                            if not _lbl_:
+                                continue
+                            _by_pfield[_pf].append({
+                                "label": _lbl_,
+                                "confidence": float(_it.get("confidence") or 0.0),
+                                "status": _stx_,
+                            })
+                    if sum(len(v) for v in _by_pfield.values()) > 0:
+                        import matplotlib
+                        matplotlib.use("Agg")
+                        import matplotlib.pyplot as _plt_pt
+                        import matplotlib.patches as _mpp
+                        import textwrap as _twp
+                        _ftot = {pf: sum(x["confidence"] for x in its)
+                                    for pf, its in _by_pfield.items() if its}
+                        _grand = sum(_ftot.values())
+                        if _grand > 0:
+                            _fig_pt, _ax_pt = _plt_pt.subplots(figsize=(11, 6))
+                            _cw, _ch = 100.0, 100.0
+                            _cur_y = 0.0
+                            for _pf, _its in _by_pfield.items():
+                                if not _its:
+                                    continue
+                                _strip_h = _ch * _ftot[_pf] / _grand
+                                _items_sorted = sorted(_its, key=lambda x: x["confidence"], reverse=True)
+                                _ft = max(_ftot[_pf], 1e-9)
+                                _cur_x = 0.0
+                                for _x in _items_sorted:
+                                    _wr = _cw * _x["confidence"] / _ft
+                                    _rect = _mpp.Rectangle(
+                                        (_cur_x, _cur_y), _wr, _strip_h,
+                                        facecolor=_pfld_colors[_pf],
+                                        edgecolor="white", linewidth=1.5)
+                                    _ax_pt.add_patch(_rect)
+                                    if _wr > 5 and _strip_h > 4:
+                                        _cpl = max(3, int(_wr * 0.50))
+                                        _mln = max(1, int(_strip_h / 4.5))
+                                        _bud = max(1, _cpl * _mln - 1)
+                                        _lb = _x["label"]
+                                        if len(_lb) > min(32, _bud):
+                                            _lb = _lb[:max(1, min(32, _bud))] + "…"
+                                        _wrp = _twp.fill(_lb, width=_cpl,
+                                                          break_long_words=True, break_on_hyphens=False)
+                                        _ax_pt.text(_cur_x + _wr / 2, _cur_y + _strip_h * 0.42,
+                                                     _wrp, ha="center", va="center", fontsize=11,
+                                                     color="white", fontfamily="IPAexGothic", linespacing=1.1)
+                                        _ax_pt.text(_cur_x + _wr / 2, _cur_y + _strip_h * 0.85,
+                                                     f"({_x['confidence']:.2f})", ha="center",
+                                                     va="center", fontsize=9, color="white",
+                                                     fontfamily="IPAexGothic")
+                                    _cur_x += _wr
+                                _cur_y += _strip_h
+                            _ax_pt.set_xlim(0, _cw)
+                            _ax_pt.set_ylim(_ch, 0)
+                            _ax_pt.axis("off")
+                            _plt_pt.tight_layout()
+                            _pt_uri = _fig_uri(_fig_pt)
+                            if _pt_uri:
+                                _r.append("")
+                                _r.append("#### Persona attributes (treemap)")
+                                _r.append(f"![Persona attribute treemap]({_pt_uri})")
+                                _r.append("")
+                                _r.append("_Legend: " + " · ".join(
+                                    f"■ {_pfld_ja[_k]}" for _k in _pfld_colors) + "_")
+                except Exception:
+                    pass
             if _bd["nowaday"]:
                 _nw = _bd["nowaday"][0]
                 _r.append("")
@@ -4947,6 +5077,18 @@ def _user_memory_explorer():
                 _be = _nw.get("basic_emotions") or {}
                 _r.append("- **Basic emotions:** " + ", ".join(
                     f"{ux.PLUTCHIK_JA.get(e,e)}={float(_be.get(e,0) or 0):.2f}" for e in ux.PLUTCHIK_PRIMARY))
+                # Embed the same emotion radar shown on-screen
+                _be_vals = [float(_be.get(e, 0) or 0) for e in ux.PLUTCHIK_PRIMARY]
+                if any(v > 0 for v in _be_vals):
+                    try:
+                        _be_uri = _fig_uri(_radar(
+                            [ux.PLUTCHIK_JA.get(e, e) for e in ux.PLUTCHIK_PRIMARY],
+                            _be_vals, "Basic emotions (intensity)"))
+                        if _be_uri:
+                            _r.append("")
+                            _r.append(f"![Basic emotions radar]({_be_uri})")
+                    except Exception:
+                        pass
                 if _nw.get("secondary_emotions"):
                     _r.append("- **Secondary emotions:** " + ", ".join(
                         ux.PLUTCHIK_JA.get(s,s) for s in _nw["secondary_emotions"]))
@@ -4972,6 +5114,38 @@ def _user_memory_explorer():
                 _r.append(f"### History emotion trajectory ({_s or 'all'} - {_e or 'now'}, {len(_tj)} / total {len(_traj_all)})")
                 if _ct:
                     _r.append("- **Aggregate:** " + ", ".join(f"{k}={v}" for k, v in _ct.most_common()))
+                # Embed the same daily area chart shown on-screen
+                if _tj:
+                    try:
+                        _rows_tr = []
+                        for _d, _t, _emos in _tj:
+                            _row = {"date": _d}
+                            for _e2 in _emos:
+                                _jp = ux.PLUTCHIK_JA.get(_e2, _e2)
+                                _row[_jp] = _row.get(_jp, 0) + 1
+                            _rows_tr.append(_row)
+                        _df_tr = pd.DataFrame(_rows_tr).fillna(0)
+                        if not _df_tr.empty and len(_df_tr.columns) > 1:
+                            import matplotlib
+                            matplotlib.use("Agg")
+                            import matplotlib.pyplot as _plt_tr
+                            _agg_tr = _df_tr.groupby("date").sum(numeric_only=True).sort_index()
+                            _fig_tr, _ax_tr = _plt_tr.subplots(figsize=(10, 3.5))
+                            _agg_tr.plot.area(ax=_ax_tr, alpha=0.70, linewidth=0.6)
+                            _ax_tr.set_xlabel("")
+                            _ax_tr.set_ylabel("counts")
+                            _ax_tr.grid(True, alpha=0.3)
+                            _ax_tr.legend(loc="upper left", bbox_to_anchor=(1.02, 1),
+                                            fontsize=8, prop={"family": "IPAexGothic"})
+                            _plt_tr.setp(_ax_tr.get_xticklabels(), rotation=45,
+                                          ha="right", fontsize=8)
+                            _plt_tr.tight_layout()
+                            _tr_uri = _fig_uri(_fig_tr)
+                            if _tr_uri:
+                                _r.append("")
+                                _r.append(f"![History emotion trajectory]({_tr_uri})")
+                    except Exception:
+                        pass
             _dh = st.session_state.get(f"_ume_deep_hist__{_ud}") or []
             if _dh:
                 _r.append("")
@@ -5052,12 +5226,71 @@ def _user_memory_explorer():
                 _r.append("#### Compatibility score")
                 _r.append("| Axis | Score (0-1) |")
                 _r.append("|---|---|")
-                for _lbl_x, _v_x in [
+                _comp_pairs = [
                     ("Continuity", _continuity), ("Frequency", _frequency),
                     ("Focus", _focus_x), ("Richness", _richness_x),
                     ("Engagement", _engagement_x), ("Knowledge use", _knowuse_x),
-                ]:
+                ]
+                for _lbl_x, _v_x in _comp_pairs:
                     _r.append(f"| {_lbl_x} | {_v_x:.2f} |")
+                # Embed the same Compatibility radar shown on-screen
+                try:
+                    _comp_uri = _fig_uri(_radar(
+                        [l for l, _ in _comp_pairs],
+                        [v for _, v in _comp_pairs],
+                        "Compatibility score", vmax=1.0))
+                    if _comp_uri:
+                        _r.append("")
+                        _r.append(f"![Compatibility radar]({_comp_uri})")
+                except Exception:
+                    pass
+                # Activity trend chart — mirrors the on-screen bar+line panel,
+                # honoring the granularity currently selected in the UI.
+                try:
+                    from collections import Counter as _C_act
+                    _gran_r = st.session_state.get("ume_deep_ua_actgran", "月")
+                    def _gk(_ts, _g):
+                        if not _ts: return "Unset"
+                        if _g == "月": return _ts[:7]
+                        if _g == "日": return _ts[:10]
+                        try:
+                            _tt = pd.Timestamp(_ts[:10])
+                            _ws = (_tt - pd.Timedelta(days=int(_tt.weekday()))).date()
+                            return f"{_ws.year}-{_ws.month}-{_ws.day}+w"
+                        except Exception:
+                            return _ts[:7]
+                    _by_s = _C_act(); _by_t = _C_act(); _first = {}
+                    for s in _seqs_x:
+                        _kk = _gk(s["timestamp"], _gran_r)
+                        _by_t[_kk] += 1
+                        if s["session_id"] not in _first:
+                            _first[s["session_id"]] = _kk
+                    for _sid_z, _kk in _first.items():
+                        _by_s[_kk] += 1
+                    _keys_r = sorted(set(_by_s.keys()) | set(_by_t.keys()))
+                    if _keys_r:
+                        import matplotlib
+                        matplotlib.use("Agg")
+                        import matplotlib.pyplot as _plt_at
+                        _fig_at, _ax_at = _plt_at.subplots(figsize=(10, 3.6))
+                        _ax_at.bar(_keys_r, [_by_s[k] for k in _keys_r],
+                                    color="#4A90D9", alpha=0.75, label="Sessions")
+                        _ax2 = _ax_at.twinx()
+                        _ax2.plot(_keys_r, [_by_t[k] for k in _keys_r],
+                                    color="#E74C3C", marker="o", label="Turns")
+                        _ax_at.set_ylabel("Sessions", color="#4A90D9")
+                        _ax2.set_ylabel("Turns", color="#E74C3C")
+                        _ax_at.set_xticks(range(len(_keys_r)))
+                        _ax_at.set_xticklabels(_keys_r, rotation=45, ha="right", fontsize=9)
+                        _ax_at.grid(True, alpha=0.3)
+                        _plt_at.tight_layout()
+                        _at_uri = _fig_uri(_fig_at)
+                        if _at_uri:
+                            _r.append("")
+                            _r.append(f"#### Activity trend ({_gran_r})")
+                            _r.append(f"![Activity trend]({_at_uri})")
+                except Exception:
+                    pass
                 _verdict_x = []
                 _verdict_x.append("Long-term" if _continuity >= 0.5
                                   else ("Ongoing" if _continuity >= 0.2 else "Short-term"))
