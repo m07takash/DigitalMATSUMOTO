@@ -3,6 +3,9 @@
     "CHAINS": [
         {
             "TYPE": "LLM",
+            "PERSONAS": "WEB_UI",
+            "PERSONA_MERGE": "include_query",
+            "PERSONA_MERGE_LEVEL": "medium",
             "SETTING": {
                 "AGENT_FILE": "USER",
                 "OVERWRITE_ITEMS": "USER",
