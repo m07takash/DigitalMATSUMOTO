@@ -104,7 +104,18 @@ def call_function_by_name(func_name, *args, **kwargs):
     else:
         return "Function not found"
 
-# Run GPT
+# Run GPT (OpenAI Chat Completions).
+#
+# Model-agnostic: `model["MODEL"]` is the model id string and `model["PARAMETER"]`
+# is forwarded verbatim as kwargs to `openai_client.chat.completions.create`.
+# That means new GPT-family models slot in with an ENGINE-block entry alone —
+# no code change here. Currently exercised by (non-exhaustive):
+#   gpt-5.6                              → reasoning_effort low/medium/high
+#   gpt-5.5, gpt-5.4                     → default reasoning
+#   gpt-5-mini-2025-08-07, gpt-5-nano-2025-08-07
+#   gpt-4o family (image input supported below via image_paths)
+# For GPT-5.6 the caller controls the reasoning tier by passing e.g.
+# PARAMETER: {"reasoning_effort": "high"} in the agent JSON's ENGINE.LLM entry.
 def generate_response_T_gpt(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
     openai_client = _get_openai_client()
 
