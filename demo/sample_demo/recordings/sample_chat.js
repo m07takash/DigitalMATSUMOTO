@@ -135,6 +135,38 @@ window.Recorder && window.Recorder.register({
             last_update_date: "2026-06-30 09:00:10" }
         ]
       }
+    },
+    {
+      t: 12000, type: "api", method: "GET", path: "/session_summary_presets", status: 200,
+      request: null,
+      response: {
+        presets: [
+          { name: "Basic",
+            description: "会話の要点と決定事項を淡々と記録",
+            template: "## 目的\n\n## 決定事項\n\n## Next Action\n\n## 参考\n" },
+          { name: "Sales Meeting",
+            description: "顧客商談の議事録テンプレ",
+            template: "## 顧客\n\n## ヒアリング内容\n\n## 提案\n\n## 次回アクション\n" },
+          { name: "Debug Log",
+            description: "エンジニアリング調査ログ",
+            template: "## 症状\n\n## 検証\n\n## 原因\n\n## 対応策\n" }
+        ]
+      }
+    },
+    {
+      t: 13000, type: "api", method: "GET",
+      path: "/sessions/APIDEMO2026063000001/summary", status: 200,
+      request: null,
+      response: {
+        session_id: "APIDEMO2026063000001",
+        enabled: true,
+        template: "## 目的\n\n## 決定事項\n\n## Next Action\n\n## 参考\n",
+        content: "## 目的\nサンプルエージェントの動作確認\n\n" +
+                 "## 決定事項\n- セッション管理・ユーザーメモリ・RAG・Web検索を活用する方針\n\n" +
+                 "## Next Action\n- 顧客Aへのデモで本UIを使う\n\n" +
+                 "## 参考\n- MIT Tech Review: Agents in 2026\n",
+        updated_at: "2026-06-30 09:00:12"
+      }
     }
   ]
 });

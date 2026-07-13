@@ -204,6 +204,17 @@
       private_mode:    $("#flag-private_mode").checked,
     };
 
+    // Session Summary — send both fields only when the operator opted in for
+    // this turn. Sending them null-null preserves whatever was saved earlier.
+    if ($("#chat-summary-enabled").checked) {
+      body.session_summary_enabled = true;
+      const _presetName = $("#chat-summary-preset").value;
+      if (_presetName) {
+        const _tpl = (summaryState.presets || []).find(p => p.name === _presetName);
+        if (_tpl) body.session_summary_template = _tpl.template;
+      }
+    }
+
     const files = chatAttachments.slice();
     const useBase64 = $("#chat-attach-base64").checked;
 
@@ -455,6 +466,90 @@
     } catch (e) { $("#fb-result").textContent = "Error: " + e.message; }
   });
 
+  // ---------- Session Summary --------------------------------------------
+  // Shared state so the Chat sidebar dropdown and the Summary tab dropdown
+  // stay in sync from a single GET /session_summary_presets call.
+  const summaryState = { presets: [] };
+
+  function populateSummaryPresetDropdowns() {
+    for (const sel of ["#chat-summary-preset", "#summary-preset-select"]) {
+      const el = $(sel);
+      if (!el) continue;
+      const prev = el.value;
+      // Keep the first empty option to allow "no change" / "none loaded".
+      el.innerHTML = el.querySelector('option[value=""]').outerHTML;
+      for (const p of summaryState.presets) {
+        const opt = document.createElement("option");
+        opt.value = p.name;
+        opt.textContent = p.description ? `${p.name} — ${p.description}` : p.name;
+        el.appendChild(opt);
+      }
+      if (prev) el.value = prev;
+    }
+  }
+
+  async function loadSummaryPresets(silent) {
+    try {
+      const r = await Api.listSummaryPresets();
+      summaryState.presets = Array.isArray(r && r.presets) ? r.presets : [];
+      populateSummaryPresetDropdowns();
+      if (!silent) setStatus(`Loaded ${summaryState.presets.length} summary preset(s).`);
+    } catch (e) {
+      if (!silent) setStatus("Summary presets load failed: " + e.message);
+    }
+  }
+
+  $("#btn-summary-presets").addEventListener("click", () => loadSummaryPresets(false));
+
+  $("#btn-summary-load").addEventListener("click", async () => {
+    const id = $("#summary-session-id").value.trim();
+    if (!id) { setStatus("Enter a session ID first."); return; }
+    try {
+      const r = await Api.getSessionSummary(id);
+      $("#summary-enabled").checked   = !!r.enabled;
+      $("#summary-template").value    = r.template || "";
+      $("#summary-content").textContent = r.content || "(no summary generated yet)";
+      $("#summary-updated").textContent  = r.updated_at || "—";
+    } catch (e) {
+      $("#summary-content").textContent = "Error: " + e.message;
+    }
+  });
+
+  $("#btn-summary-apply-preset").addEventListener("click", () => {
+    const name = $("#summary-preset-select").value;
+    if (!name) { setStatus("Pick a preset first."); return; }
+    const p = summaryState.presets.find(x => x.name === name);
+    if (!p) return;
+    $("#summary-template").value = p.template || "";
+  });
+
+  $("#btn-summary-save").addEventListener("click", async () => {
+    const id = $("#summary-session-id").value.trim();
+    if (!id) { setStatus("Enter a session ID first."); return; }
+    try {
+      const r = await Api.setSessionSummary(id, {
+        enabled:  $("#summary-enabled").checked,
+        template: $("#summary-template").value,
+      });
+      $("#summary-content").textContent = r.content || "(no summary generated yet)";
+      $("#summary-updated").textContent  = r.updated_at || "—";
+      setStatus("Summary settings saved.");
+    } catch (e) { setStatus("Save failed: " + e.message); }
+  });
+
+  // Convenience: when the Chat panel picks up a session_id from a /run
+  // response, mirror it into the Summary tab's session_id field so operators
+  // can jump straight from a live turn to the summary editor.
+  const _chatSessionInput = $("#chat-session-id");
+  const _mirrorSessionId = () => {
+    const v = _chatSessionInput.value.trim();
+    if (v && !$("#summary-session-id").value.trim()) {
+      $("#summary-session-id").value = v;
+    }
+  };
+  _chatSessionInput.addEventListener("input",  _mirrorSessionId);
+  _chatSessionInput.addEventListener("change", _mirrorSessionId);
+
   // ---------- Health / Raw fetch ----------------------------------------
   $("#btn-raw-health").addEventListener("click", async () => {
     try {
@@ -582,7 +677,11 @@
     if (evt.type !== "api") return;
     // Switch to the relevant tab so the operator sees the update.
     const path = evt.path || "";
-    if      (path === "/run" || path === "/run_function") switchTab("chat");
+    if      (path === "/run" || path === "/run_function" ||
+             path === "/run_multipart")                   switchTab("chat");
+    else if (path === "/session_summary_presets" ||
+             (path.startsWith("/sessions/") && path.endsWith("/summary")))
+                                                          switchTab("summary");
     else if (path.startsWith("/sessions"))                switchTab("sessions");
     else if (path.startsWith("/agents") &&
              path.endsWith("/feedback"))                  switchTab("feedback");
@@ -617,6 +716,18 @@
                        `<td>${esc(a.description || "")}</td>`;
         tbody.appendChild(tr);
       }
+    } else if (path.startsWith("/sessions/") && path.endsWith("/summary")) {
+      // Summary sub-path must be checked BEFORE the generic /sessions/{id}
+      // renderer below, otherwise the summary payload leaks into #sess-detail.
+      const r = evt.response || {};
+      $("#summary-enabled").checked   = !!r.enabled;
+      $("#summary-template").value    = r.template || "";
+      $("#summary-content").textContent = r.content || "(no summary generated yet)";
+      $("#summary-updated").textContent  = r.updated_at || "—";
+      const _sid = (path.match(/^\/sessions\/([^/]+)\/summary$/) || [])[1] || "";
+      if (_sid && !$("#summary-session-id").value.trim()) {
+        $("#summary-session-id").value = decodeURIComponent(_sid);
+      }
     } else if (path.startsWith("/sessions/")) {
       $("#sess-detail").textContent = JSON.stringify(evt.response, null, 2);
     } else if (path === "/sessions") {
@@ -632,6 +743,11 @@
       $("#fb-config").textContent = JSON.stringify(evt.response, null, 2);
     } else if (path === "/feedback" && evt.method === "POST") {
       $("#fb-result").textContent = JSON.stringify(evt.response, null, 2);
+    } else if (path === "/session_summary_presets") {
+      // Update in-memory registry so both dropdowns refresh in sync.
+      summaryState.presets = Array.isArray(evt.response && evt.response.presets)
+                              ? evt.response.presets : [];
+      populateSummaryPresetDropdowns();
     }
   }
 
@@ -651,6 +767,7 @@
 
   // ---------- Boot -------------------------------------------------------
   refreshRecordingList();
-  loadAgents();   // best-effort; falls back on network error
+  loadAgents();            // best-effort; falls back on network error
+  loadSummaryPresets(true); // populate summary preset dropdowns silently
   setStatus(`Ready. Backend: ${Api.getBackendUrl() || "(unset)"}`);
 })();

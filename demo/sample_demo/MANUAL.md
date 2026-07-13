@@ -19,6 +19,7 @@
    - 6-5. Feedback
    - 6-6. Health / Raw API
    - 6-7. Recording Editor
+   - 6-8. Summary — セッションサマリの編集
    - 6-8. Video (MP4)
 7. [録画 & 再生（Record & Play）](#7-録画--再生record--play)
 8. [オフラインでのデモ運用](#8-オフラインでのデモ運用)
@@ -192,6 +193,11 @@ location /demo/ {
 - サーバ側は WebUI と同じ経路（`in_contents` として `DigiMatsuExecute_Practice` に渡す）で処理
 - レスポンスの `attachments_processed` に受理されたファイル名一覧が返り、吹き出し下のメタ欄に `attached=N` として表示
 
+**セッションサマリの操作（左サイドバー "Session Summary" 欄）**:
+- `Enable for this session` チェックを ON にすると、この Send で `session_summary_enabled: true` が `/run` の body に同梱されます
+- `Preset` セレクタでテンプレートを選ぶと、その `template` も同送されて次のターンから使われます
+- テンプレの中身を確認・編集したり、生成済みのサマリ内容を見るのは **6-8. Summary タブ** から
+
 **参照情報の閲覧（References ドロワー）**:
 - エージェントの応答吹き出しをクリックすると、右側に **References** ドロワーがスライドインします
 - 右上の **×** ボタンで閉じます
@@ -330,9 +336,25 @@ location /demo/ {
 - キャプチャ中は**このタブを前面に保って**ください（バックグラウンドだと描画が間引かれます）。
 - 追加ライブラリ不要・完全クライアント処理なので、`file://` で開いた状態でも動作します。
 
----
+### 6-8. Summary — セッションサマリの編集
 
-## 7. 録画 & 再生（Record & Play）
+**やりたいこと**: セッションごとに維持される Markdown サマリの **有効化 / テンプレート編集 / 生成内容の確認** を、`/session_summary_presets` `/sessions/{id}/summary` (GET/POST) を叩いて行う。
+
+**画面構成**:
+- 上部ツールバー: プリセット取得 / セッションID / GET でロード
+- 左: 現在の状態（enabled トグル / updated_at）＋ プリセット選択 → Apply preset → で `#summary-template` に流し込み → **POST** で保存
+- 右: 生成された `content`（読み取り専用プレビュー）
+
+**基本操作**:
+1. **GET /session_summary_presets** でプリセット一覧をロード（プリセットセレクタが Chat タブの Sidebar と共用される）
+2. **Session ID** を入力（Chat タブで会話中の Session ID は自動でここに転記される）
+3. **GET /sessions/{id}/summary** で現在の設定＋生成内容を読み込み
+4. **Preset** から選んで **Apply preset →** でテンプレートを流し込み、もしくは Textarea で手編集
+5. **POST /sessions/{id}/summary** で保存 → 次のターンから新テンプレで再生成される
+
+**注意**: `content` は `DigiMatsuExecute_Practice` のバックグラウンド更新が所有します。ここで編集はできません（テンプレートを直せば次のターンから反映）。
+
+
 
 ### 7-1. なぜ録画するのか
 

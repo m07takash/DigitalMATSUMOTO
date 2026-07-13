@@ -43,6 +43,7 @@
     <button class="tab" data-tab="agents">Agents & Engines</button>
     <button class="tab" data-tab="websearch">Web Search Engines</button>
     <button class="tab" data-tab="feedback">Feedback</button>
+    <button class="tab" data-tab="summary">Summary</button>
     <button class="tab" data-tab="health">Health / Raw API</button>
     <button class="tab" data-tab="editor">Recording Editor</button>
     <button class="tab" data-tab="video">Video (MP4)</button>
@@ -73,6 +74,17 @@
           <label><input type="checkbox" id="flag-thinking_mode" /> thinking_mode</label>
           <label><input type="checkbox" id="flag-private_mode" /> private_mode</label>
         </div>
+
+        <h3>Session Summary</h3>
+        <label class="summary-toggle">
+          <input type="checkbox" id="chat-summary-enabled" />
+          Enable for this session
+        </label>
+        <label>Preset (optional)</label>
+        <select id="chat-summary-preset" class="select">
+          <option value="">— unchanged —</option>
+        </select>
+        <p class="summary-note">Sends <code>session_summary_enabled</code> / <code>session_summary_template</code> with the next <code>/run</code>. Full editing lives in the Summary tab.</p>
       </aside>
 
       <div class="main-col">
@@ -189,6 +201,56 @@
 }</textarea>
           <button id="btn-fb-send" class="btn primary">Submit</button>
           <pre id="fb-result" class="json-box"></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========== SESSION SUMMARY ========== -->
+    <section class="panel" data-panel="summary">
+      <div class="toolbar">
+        <button id="btn-summary-presets" class="btn">GET /session_summary_presets</button>
+        <label>Session ID</label>
+        <input type="text" id="summary-session-id" placeholder="paste from Chat tab" />
+        <button id="btn-summary-load" class="btn">GET /sessions/{id}/summary</button>
+      </div>
+
+      <div class="split">
+        <div class="split-left">
+          <h3>Current state</h3>
+          <div class="summary-state">
+            <label class="summary-toggle">
+              <input type="checkbox" id="summary-enabled" />
+              enabled
+            </label>
+            <div class="summary-updated">
+              <span class="k">updated_at:</span>
+              <span id="summary-updated" class="v">—</span>
+            </div>
+          </div>
+
+          <h3 style="margin-top:12px">Template</h3>
+          <div class="summary-preset-row">
+            <label>Preset</label>
+            <select id="summary-preset-select" class="select">
+              <option value="">— none loaded —</option>
+            </select>
+            <button id="btn-summary-apply-preset" class="btn ghost">Apply preset →</button>
+          </div>
+          <textarea id="summary-template" rows="10" spellcheck="false"
+            placeholder="Markdown template for this session's summary"></textarea>
+
+          <button id="btn-summary-save" class="btn primary" style="margin-top:8px">
+            POST /sessions/{id}/summary
+          </button>
+        </div>
+
+        <div class="split-right">
+          <h3>Generated content</h3>
+          <p class="summary-hint">
+            Written by the background updater in <code>DigiMatsuExecute_Practice</code>.
+            Read-only here — save a new template and continue the chat to regenerate.
+          </p>
+          <pre id="summary-content" class="summary-content-box">(not loaded)</pre>
         </div>
       </div>
     </section>
