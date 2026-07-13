@@ -133,6 +133,14 @@
     submitFeedback(body)   { return this.call("POST", "/feedback", body); },
     run(body)              { return this.call("POST", "/run", body); },
     runMultipart(body, files) { return this.callMultipart("/run_multipart", body, files); },
+    // Session Summary — the per-session dossier maintained by the background
+    // updater in DigiMatsuExecute_Practice. Read/write settings here; the
+    // generated `content` is read-only from the client's perspective.
+    listSummaryPresets()   { return this.call("GET",  "/session_summary_presets"); },
+    getSessionSummary(id)  { return this.call("GET",  `/sessions/${encodeURIComponent(id)}/summary`); },
+    setSessionSummary(id, body) {
+      return this.call("POST", `/sessions/${encodeURIComponent(id)}/summary`, body);
+    },
     // Legacy alias kept intentionally so demos targeting older backends work.
     runLegacy(body)        { return this.call("POST", "/run_function", body); },
   };

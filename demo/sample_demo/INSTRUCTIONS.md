@@ -54,6 +54,10 @@
 | `POST /run`                          | `chat`            | `#chat-input`, `#btn-send`, `#chat-log`, `#chat-agent`, `#chat-engine`, `#flag-*`, `#chat-files`, `#chat-files-list`, `#chat-attach-base64` |
 | `POST /run_multipart`                | `chat`            | Same as `/run` (fires when files are attached and "Send as base64" is OFF) |
 | References drawer                    | `chat`            | `#refs-drawer`, `#refs-body`, `#refs-turn`, `#btn-refs-close`, `.msg.agent`（クリックで開く） |
+| Session summary (chat sidebar)       | `chat`            | `#chat-summary-enabled`, `#chat-summary-preset` |
+| `GET /session_summary_presets`       | `summary`         | `#btn-summary-presets`, `#chat-summary-preset`, `#summary-preset-select` |
+| `GET /sessions/{id}/summary`         | `summary`         | `#btn-summary-load`, `#summary-session-id`, `#summary-enabled`, `#summary-template`, `#summary-content`, `#summary-updated` |
+| `POST /sessions/{id}/summary`        | `summary`         | `#btn-summary-save` |
 | `GET /sessions`                      | `sessions`        | `#sess-user-id`, `#sess-service-id`, `#btn-sess-load`, `#sess-table` |
 | `GET /sessions/{id}`                 | `sessions`        | `#sess-detail`（行クリックで発火） |
 | `GET /agents`                        | `agents`          | `#agents-table`, `#btn-agents-load` |
