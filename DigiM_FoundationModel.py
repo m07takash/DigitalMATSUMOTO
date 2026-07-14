@@ -114,8 +114,14 @@ def call_function_by_name(func_name, *args, **kwargs):
 #   gpt-5.5, gpt-5.4                     → default reasoning
 #   gpt-5-mini-2025-08-07, gpt-5-nano-2025-08-07
 #   gpt-4o family (image input supported below via image_paths)
-# For GPT-5.6 the caller controls the reasoning tier by passing e.g.
-# PARAMETER: {"reasoning_effort": "high"} in the agent JSON's ENGINE.LLM entry.
+# For GPT-5.6 the caller controls the reasoning tier through PARAMETER —
+# in agent_10Sample.json the three named modes map as:
+#   Sol   → {"reasoning_effort": "high"}   (太陽: 最大出力)
+#   Terra → {"reasoning_effort": "medium"} (地球: 標準)
+#   Luna  → {"reasoning_effort": "low"}    (月:   最小/最速)
+# If the installed OpenAI SDK is too old to accept `reasoning_effort`, the call
+# raises TypeError on unknown kwarg — bump `openai>=1.55` or higher, or drop
+# the PARAMETER key in the agent JSON.
 def generate_response_T_gpt(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
     openai_client = _get_openai_client()
 
