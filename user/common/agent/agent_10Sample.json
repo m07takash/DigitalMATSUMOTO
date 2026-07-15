@@ -59,18 +59,10 @@
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {"limit": 10000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
             },
-            "GPT-5.4": {
-                "NAME": "GPT-5.4",
-                "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5.4",
-                "PARAMETER": {},
-                "TOKENIZER": "tiktoken",
-                "MEMORY": {"limit": 10000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
-            },
-            "Gemini-2.5": {
-                "NAME": "Gemini-2.5",
+            "Gemini-3.5-Flash": {
+                "NAME": "Gemini-3.5-Flash",
                 "FUNC_NAME": "generate_response_T_gemini",
-                "MODEL": "gemini-2.5-pro",
+                "MODEL": "gemini-3.5-flash",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
@@ -123,18 +115,10 @@
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
             },
-            "Gemini-2.5-Flash": {
-                "NAME": "Gemini-2.5-Flash",
+            "Gemini-3.5-Flash-Lite": {
+                "NAME": "Gemini-3.5-Flash-Lite",
                 "FUNC_NAME": "generate_response_T_gemini",
-                "MODEL": "gemini-2.5-flash",
-                "PARAMETER": {},
-                "TOKENIZER": "tiktoken",
-                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
-            },
-            "Gemini-2.5-Flash-Lite": {
-                "NAME": "Gemini-2.5-Flash-Lite",
-                "FUNC_NAME": "generate_response_T_gemini",
-                "MODEL": "gemini-2.5-flash-lite",
+                "MODEL": "gemini-3.5-flash-lite",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
