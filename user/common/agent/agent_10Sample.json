@@ -30,24 +30,24 @@
             "GPT-5.6-Sol": {
                 "NAME": "GPT-5.6-Sol",
                 "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5.6",
-                "PARAMETER": {"reasoning_effort": "high"},
+                "MODEL": "gpt-5.6-sol",
+                "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {"limit": 10000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
             },
             "GPT-5.6-Terra": {
                 "NAME": "GPT-5.6-Terra",
                 "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5.6",
-                "PARAMETER": {"reasoning_effort": "medium"},
+                "MODEL": "gpt-5.6-terra",
+                "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {"limit": 10000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
             },
             "GPT-5.6-Luna": {
                 "NAME": "GPT-5.6-Luna",
                 "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5.6",
-                "PARAMETER": {"reasoning_effort": "low"},
+                "MODEL": "gpt-5.6-luna",
+                "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {"limit": 10000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
             },
