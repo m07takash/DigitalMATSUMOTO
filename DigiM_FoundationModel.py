@@ -34,7 +34,7 @@ xai_api_key = os.getenv("XAI_API_KEY")
 # Azure OpenAI Service (for chat/image)
 azure_openai_api_key = os.getenv("AZURE_OPENAI_API_KEY")
 azure_openai_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
-azure_openai_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
+azure_openai_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-01-preview")
 
 # Singleton LLM clients
 _clients = {}
@@ -123,6 +123,85 @@ def call_function_by_name(func_name, *args, **kwargs):
 # raises TypeError on unknown kwarg — bump `openai>=1.55` or higher, or drop
 # the PARAMETER key in the agent JSON.
 def generate_response_T_gpt(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
+    # Migrated to the Responses API (`openai_client.responses.create`).
+    # The upstream 3-tuple yield contract `(prompt, response_chunk, event)`
+    # is preserved so every caller through `agent.generate_response()` is
+    # unaffected. Legacy behavior remains reachable via
+    # `generate_response_T_gpt_chatcompletion` (set `FUNC_NAME` in agent JSON).
+    openai_client = _get_openai_client(timeout=600)
+
+    # System prompt lives in `instructions` (top-level Responses field)
+    instructions = system_prompt
+
+    # Chat history → Responses input items (typed content parts).
+    # Responses restricts content types by role: user/system/developer take
+    # `input_text`, assistant takes `output_text` (mirrors the input/output
+    # split of the Responses object model). Getting this wrong yields
+    #   "Invalid value: 'input_text'. Supported values are: 'output_text' ..."
+    memory_items = [
+        {"role": memory["role"],
+         "content": [{
+             "type": ("output_text" if memory["role"] == "assistant"
+                        else "input_text"),
+             "text": memory["text"],
+         }]}
+        for memory in memories
+    ]
+
+    # Current-turn images: `input_image` with `image_url` as a bare string
+    # (data URI or hosted URL) — different from Chat Completions' dict form.
+    image_parts = []
+    for image_path in image_paths:
+        image_base64 = dmu.encode_image_file(image_path)
+        image_parts.append({
+            "type": "input_image",
+            "image_url": f"data:{_get_image_mime(image_path)};base64,{image_base64}",
+        })
+
+    user_item = {
+        "role": "user",
+        "content": [{"type": "input_text", "text": query}] + image_parts,
+    }
+
+    input_items = _sanitize_messages(memory_items + [user_item])
+
+    # Chat Completions → Responses param compatibility:
+    # `max_tokens` was renamed to `max_output_tokens`. Auto-rename so agent
+    # JSONs written for the old API continue to work unchanged.
+    params = dict(model.get("PARAMETER") or {})
+    if "max_tokens" in params and "max_output_tokens" not in params:
+        params["max_output_tokens"] = params.pop("max_tokens")
+
+    # Prompt dump for the caller's token counter (includes instructions so
+    # the count reflects everything actually sent to the model).
+    prompt_dump = str(
+        [{"role": "system", "content": instructions}] + input_items
+    )
+
+    completion = openai_client.responses.create(
+        model=model["MODEL"],
+        instructions=instructions,
+        input=input_items,
+        stream=stream_mode,
+        **params,
+    )
+
+    if stream_mode:
+        for event in completion:
+            _t = getattr(event, "type", "")
+            if _t == "response.output_text.delta":
+                # Incremental token — mirrors Chat Completions' delta.content
+                yield prompt_dump, event.delta, event
+            elif _t in ("response.completed", "response.error"):
+                # Emit an empty chunk so the caller's stream loop sees the
+                # terminal event without appending stray text.
+                yield prompt_dump, "", event
+    else:
+        # `output_text` is the top-level convenience string that assembles
+        # every output_text part in the response.
+        yield prompt_dump, completion.output_text, completion
+
+def generate_response_T_gpt_chatcompletion(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
     openai_client = _get_openai_client()
 
     # Build the system prompt
@@ -167,6 +246,69 @@ def generate_response_T_gpt(query, system_prompt, model, memories=[], image_path
 # MODEL must contain the Azure deployment name.
 # Setting "api_version" inside PARAMETER overrides the API version per agent.
 def generate_response_T_azure_openai(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
+    # Migrated to the Responses API. Requires Azure OpenAI api-version
+    # `2025-04-01-preview` or later — set `AZURE_OPENAI_API_VERSION` in
+    # system.env, or override per agent via PARAMETER.api_version.
+    # Legacy path preserved as `generate_response_T_azure_openai_chatcompletion`.
+    params = dict(model.get("PARAMETER") or {})
+    _api_version = params.pop("api_version", None)
+    azure_client = _get_azure_openai_client(api_version=_api_version)
+
+    instructions = system_prompt
+
+    # See `generate_response_T_gpt` for the rationale — Responses gates the
+    # content type on the role (assistant → output_text).
+    memory_items = [
+        {"role": memory["role"],
+         "content": [{
+             "type": ("output_text" if memory["role"] == "assistant"
+                        else "input_text"),
+             "text": memory["text"],
+         }]}
+        for memory in memories
+    ]
+
+    image_parts = []
+    for image_path in image_paths:
+        image_base64 = dmu.encode_image_file(image_path)
+        image_parts.append({
+            "type": "input_image",
+            "image_url": f"data:{_get_image_mime(image_path)};base64,{image_base64}",
+        })
+
+    user_item = {
+        "role": "user",
+        "content": [{"type": "input_text", "text": query}] + image_parts,
+    }
+
+    input_items = _sanitize_messages(memory_items + [user_item])
+
+    if "max_tokens" in params and "max_output_tokens" not in params:
+        params["max_output_tokens"] = params.pop("max_tokens")
+
+    prompt_dump = str(
+        [{"role": "system", "content": instructions}] + input_items
+    )
+
+    completion = azure_client.responses.create(
+        model=model["MODEL"],   # Azure: this is the deployment name
+        instructions=instructions,
+        input=input_items,
+        stream=stream_mode,
+        **params,
+    )
+
+    if stream_mode:
+        for event in completion:
+            _t = getattr(event, "type", "")
+            if _t == "response.output_text.delta":
+                yield prompt_dump, event.delta, event
+            elif _t in ("response.completed", "response.error"):
+                yield prompt_dump, "", event
+    else:
+        yield prompt_dump, completion.output_text, completion
+
+def generate_response_T_azure_openai_chatcompletion(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
     params = dict(model.get("PARAMETER") or {})
     _api_version = params.pop("api_version", None)
     azure_client = _get_azure_openai_client(api_version=_api_version)
@@ -201,7 +343,6 @@ def generate_response_T_azure_openai(query, system_prompt, model, memories=[], i
     else:
         response = completion.choices[0].message.content
         yield str(prompt), response, completion
-
 
 # Run the OpenAI Responses API
 def generate_response_T_gpt_response(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=False):
