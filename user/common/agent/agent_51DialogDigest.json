@@ -21,7 +21,7 @@
     },
     "ENGINE": {
         "LLM": {
-            "DEFAULT": "GPT-5-nano",
+            "DEFAULT": "Gemini-3.5-Flash-Lite",
             "GPT-5-nano": {
                 "NAME": "GPT-5-nano",
                 "FUNC_NAME": "generate_response_T_gpt",
@@ -35,6 +35,22 @@
                     "similarity_logic": "cosine",
                     "digest": "Y"
                 }
+            },
+            "Gemini-3.5-Flash": {
+                "NAME": "Gemini-3.5-Flash",
+                "FUNC_NAME": "generate_response_T_gemini",
+                "MODEL": "gemini-3.5-flash",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+            },
+            "Gemini-3.5-Flash-Lite": {
+                "NAME": "Gemini-3.5-Flash-Lite",
+                "FUNC_NAME": "generate_response_T_gemini",
+                "MODEL": "gemini-3.5-flash-lite",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
             },
             "GPT-Azure": {
                 "NAME": "GPT-Azure",

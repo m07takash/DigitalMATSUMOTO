@@ -607,14 +607,18 @@ class DigiMSession:
         memories_list_final = []
         total_tokens = 0
 
-        # Speaker-name prefix (fall back to USER_ID when NAME is missing in chat history;
-        # the user master is not consulted)
+        # Speaker-name prefix for user turns only. Assistant turns are
+        # identified by the API's role field itself; the "[Agent: NAME] "
+        # prefix used to be added here as well, but the Responses API
+        # feeds prior assistant turns back to the model as its OWN prior
+        # output — the model then mimicked the prefix, leaking a literal
+        # "[Agent: NAME]" into every visible reply. Suppressing the
+        # assistant prefix stops the echo; user prefix stays useful for
+        # multi-user context.
         def _prefix(role, name):
             _n = (name or "").strip() or ("(unknown)" if role == "user" else "AI")
             if role == "user":
                 return f"[User: {_n}] "
-            if role == "assistant":
-                return f"[Agent: {_n}] "
             return ""
 
         # Pick history items to inject into memory from the active chat history
