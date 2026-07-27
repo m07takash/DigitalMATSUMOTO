@@ -97,7 +97,7 @@ Digital MATSUMOTO lab LLC
 
 ## Reference documents
 
-- [Overview and architecture description(JPN)](https://github.com/m07takash/DigitalMATSUMOTO/blob/main/docs/%E3%83%87%E3%82%B8%E3%82%BF%E3%83%ABMATSUMOTO%E3%81%AE%E6%A6%82%E8%A6%81%E3%81%A8%E3%82%A2%E3%83%BC%E3%82%AD%E3%83%86%E3%82%AF%E3%83%81%E3%83%A3.pdf)
+- [Overview and architecture description(JPN)](docs/Overview_of_DigitalMATSUMOTO.pdf)
 - [Feature list (conceptual level)](docs/FEATURE_LIST.md)
 
 ## Architecture overview
