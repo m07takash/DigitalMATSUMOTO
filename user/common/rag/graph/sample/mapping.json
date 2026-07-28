@@ -1,0 +1,98 @@
+{
+  "_comment": "GraphRAG取込のソース定義サンプル。SOURCE_TYPE=CSV|NOTION|RDB。MULTI_VALUE_SEPARATOR で複数値セルを分割。",
+  "GRAPH_NAME": "sample_governance",
+  "MULTI_VALUE_SEPARATOR": ";",
+  "SOURCES": [
+    {
+      "SOURCE_TYPE": "CSV",
+      "FILE": "source/SampleGraph01_Person.csv",
+      "LANE": "STRUCTURED",
+      "MAPPING": {
+        "ENTITY": {
+          "name": "name",
+          "type": "人物",
+          "aliases": "alias"
+        },
+        "PROPS": {
+          "生年月日": "birth_date",
+          "性別": "sex",
+          "国籍": "nationality",
+          "居住地": "address"
+        },
+        "RELATIONS": [
+          {
+            "target_col": "org",
+            "relation": "所属",
+            "props": {
+              "役職": "role",
+              "期間": "join_period"
+            }
+          }
+        ],
+        "DOMAINS": "category",
+        "AS_OF": "create_date"
+      }
+    },
+    {
+      "SOURCE_TYPE": "CSV",
+      "FILE": "source/SampleGraph02_Organization.csv",
+      "LANE": "STRUCTURED",
+      "MAPPING": {
+        "ENTITY": {
+          "name": "name",
+          "type": "組織",
+          "aliases": "alias"
+        },
+        "PROPS": {
+          "設立": "founded",
+          "所在地": "location",
+          "管轄": "jurisdiction"
+        },
+        "RELATIONS": [],
+        "DOMAINS": "category",
+        "AS_OF": "create_date"
+      }
+    },
+    {
+      "SOURCE_TYPE": "CSV",
+      "FILE": "source/SampleGraph03_Initiative.csv",
+      "LANE": "STRUCTURED",
+      "MAPPING": {
+        "ENTITY": {
+          "name": "name",
+          "type": "type",
+          "aliases": "alias"
+        },
+        "PROPS": {
+          "公表日": "published"
+        },
+        "RELATIONS": [
+          {
+            "target_col": "formulated_by",
+            "relation": "策定",
+            "direction": "IN"
+          },
+          {
+            "target_col": "related_org",
+            "relation": "関与",
+            "direction": "IN"
+          }
+        ],
+        "DOMAINS": "category",
+        "AS_OF": "create_date"
+      }
+    },
+    {
+      "SOURCE_TYPE": "CSV",
+      "FILE": "source/SampleGraph04_Insight.csv",
+      "LANE": "TEXT",
+      "MAPPING": {
+        "TEXT": "text",
+        "TITLE": "title",
+        "DOMAINS": "category",
+        "AS_OF": "create_date",
+        "SOURCE_ID": "source"
+      }
+    }
+  ]
+}
