@@ -412,6 +412,23 @@ def create_rag_context(query, query_vecs=[], rags=[], exec_info={}, meta_searche
             rag_final_selected += rag_selected
             continue
 
+        # Graph type: pure-structure GraphRAG (paths between seed entities +
+        # neighborhoods). Body text stays on the Vector side; this branch
+        # injects structure only. Policy knobs (HOPS / EDGE_LIMIT / …) live
+        # on the agent's KNOWLEDGE/BOOK entry itself.
+        if rag.get("RETRIEVER") == "Graph":
+            import DigiM_Graph as dmg
+            try:
+                rag_context, rag_selected = dmg.build_graph_context(
+                    query, rag, exec_info=exec_info,
+                    query_vecs=query_vecs, meta_searches=meta_searches)
+            except Exception as _ge:
+                logger.warning(f"Graph retrieval failed ({rag.get('RAG_NAME','')}): {_ge}")
+                rag_context, rag_selected = "", []
+            rag_final_context += rag_context
+            rag_final_selected += rag_selected
+            continue
+
         # AgentSearch type: invoke another agent (incl. self), bounded by a
         # shared recursion counter seeded by DigiMatsuExecute.
         if rag.get("RETRIEVER") == "AgentSearch":

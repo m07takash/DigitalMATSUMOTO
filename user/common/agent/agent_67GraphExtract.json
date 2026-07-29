@@ -1,0 +1,41 @@
+{
+    "DISPLAY": false,
+    "DISPLAY_NAME": "グラフ抽出(サポート)",
+    "NAME": "GraphExtract",
+    "ACT": "知識グラフの三つ組・状態抽出器",
+    "PERSONALITY": {
+        "LANGUAGE": "日本語",
+        "SPEAKING_STYLE": "JSON"
+    },
+    "ENGINE": {
+        "LLM": {
+            "DEFAULT": "Gemini-3.5-Flash",
+            "Gemini-3.5-Flash": {
+                "NAME": "Gemini-3.5-Flash",
+                "FUNC_NAME": "generate_response_T_gemini",
+                "MODEL": "gemini-3.5-flash",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "N"}
+            },
+            "GPT-5-mini": {
+                "NAME": "GPT-5-mini",
+                "FUNC_NAME": "generate_response_T_gpt",
+                "MODEL": "gpt-5-mini-2025-08-07",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "N"}
+            }
+        }
+    },
+    "HABIT": {
+        "DEFAULT": {
+            "PRACTICE": "practice_00Default.json",
+            "PROMPT_TEMPLATE": "No Template"
+        }
+    },
+    "KNOWLEDGE": [],
+    "SKILL": {},
+    "FEEDBACK": {},
+    "SUPPORT_AGENT": {}
+}
