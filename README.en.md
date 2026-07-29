@@ -139,6 +139,9 @@ and RAG (ChromaDB).
 | `DigiM_API.py` | FastAPI endpoints |
 | `DigiM_DB_Export.py` | PostgreSQL export / vectorization |
 | `DigiM_VAnalytics.py` | Knowledge usage analysis |
+| `DigiM_Graph.py` | GraphRAG (pure-structure knowledge graph: ingestion, entity resolution, path+neighborhood retrieval, usage analysis) |
+| `DigiM_GraphBuilder.py` | Knowledge-graph ingestion batch CLI (builds graph.json from mapping.json / dictionary.json) |
+| `DigiM_GraphUtility.py` | Graph Utility rendering (deterministic-layout SVG, retrieval/generation views, tables) |
 | `DigiM_GeneFeedback.py` | User feedback (CSV/Notion storage) |
 | `DigiM_UserMemory.py` | User Memory (History/Nowaday/Persona) storage abstraction (Excel/Notion/RDB) |
 | `DigiM_UserMemorySetting.py` | User Memory On/Off 2-layer resolution (user master / system). Layers are stored in `Allowed["User Memory Layers"]` of `users.json` |
@@ -1163,6 +1166,56 @@ Page data is placed under `user/common/rag/pages/{DATA_NAME}/` with `_index.json
 
 **Auto breadcrumb**: Each PageIndex page selected for context gets a single line prepended to its body — `[Path] ParentTitle > ChildTitle > SelfTitle` — derived from the dash-separated id hierarchy (e.g. `id=1-1-1` → `[Path] System overview > Architecture > ChromaDB integration`). This lets the LLM understand the page's **position within the broader knowledge base**. Intermediate ids that aren't in `_index.json` are silently skipped.
 
+**Graph-type KNOWLEDGE / BOOK (GraphRAG retrieval):**
+
+Injects **paths between seed entities plus neighborhoods** from a *pure-structure* knowledge graph (Entity nodes + predicate edges only). The graph carries no chunk bodies — body text stays with a Vector RAG (ChromaDB) entry placed **alongside** it, keeping the roles strictly separated. Nodes and edges can carry `props` (states such as birth date / address, or role / period on an edge).
+
+```json
+"KNOWLEDGE": [
+  {
+    "RAG_NAME": "GovernanceGraph",
+    "RETRIEVER": "Graph",
+    "DATA": [ { "DATA_TYPE": "GRAPH", "DATA_NAME": "sample_governance" } ],
+    "HOPS": 2,
+    "EDGE_LIMIT": 30,
+    "FANOUT_LIMIT": 5,
+    "DOMAIN_BONUS": 1.3,
+    "PROPS_LIMIT": 5
+  }
+]
+```
+
+| Item | Description |
+|------|-------------|
+| `RETRIEVER` | Set to `Graph` |
+| `DATA_NAME` | Name of a rags-master entry with `data_type: "graph"` (resolved via its `file_path`); falls back to `user/common/rag/graph/{DATA_NAME}/` |
+| `HOPS` | Neighborhood expansion depth from seeds (default 2) |
+| `EDGE_LIMIT` | Cap on total edges injected into context (default 30). Path edges get a protected allocation |
+| `FANOUT_LIMIT` | Per-node expansion cap = hub pruning (default 5) |
+| `DOMAIN_BONUS` | Score multiplier for edges whose domain the query names explicitly (default 1.3) |
+| `PROPS_LIMIT` | Max number of seed-node states (props) shown in context (default 5) |
+
+Context is injected as three blocks: `paths` (oriented chains), `relations` (edge props inlined in the predicate), and `seed-entity states`. Reference logs are recorded with `query_mode="(GRAPH:local+domain:...)"` and flow into the existing References / Detail Information pipeline.
+
+**Data ingestion (two lanes):**
+
+Place `mapping.json` (source definitions) and `dictionary.json` (alias normalization / seeds / prop_schema) in the graph folder (e.g. `user/common/rag/graph/sample/`) and run the ingestion batch to build `graph.json`.
+
+- **Lane A (STRUCTURED)**: CSV columns / Notion properties / RDB columns convert **deterministically** through column mapping (no LLM). Supports props, relation columns with edge props, multi-value cells (`;`), and IN/OUT direction
+- **Lane B (TEXT)**: free-text columns go through `agent_67GraphExtract.json` LLM extraction of triples and state candidates (predicates as concrete verbs: 評価/懸念/参画/策定 …)
+- Conflict precedence: **STRUCTURED > dictionary seeds > TEXT**, ties broken by newer `AS_OF`
+- A prop whose value matches an existing node name is **auto-promoted to an edge** (e.g. `居住地: 東京` → `--[居住地]--> (東京)`)
+
+```bash
+# Lane A only (no LLM / API key required)
+python3 DigiM_GraphBuilder.py user/common/rag/graph/sample
+
+# With Lane B (LLM extraction) + node embeddings
+python3 DigiM_GraphBuilder.py user/common/rag/graph/sample --use-llm --embed
+```
+
+A complete sample (person/org/initiative master CSVs, insight columns, mapping/dictionary, prebuilt graph.json) ships under `user/common/rag/graph/sample/`.
+
 #### AgentSearch / FunctionSearch (dynamic retrieval, KNOWLEDGE / BOOK)
 
 Beyond vector search and PageIndex, two more retriever types can be placed in either `KNOWLEDGE` or `BOOK`: **AgentSearch** (invokes another agent) and **FunctionSearch** (invokes a registered tool function). Output is formatted via `CHUNK_TEMPLATE` and injected like any other RAG chunk.
@@ -1933,7 +1986,9 @@ The screen consists of four sections stacked vertically: **Overall -> Trend -> T
 
 ### Selecting a data source
 
-Switch between **Collection (VectorDB)** and **PageIndex** via radio button. The list of collections is filtered based on the KNOWLEDGE and BOOK settings of the selected agent. When PageIndex is selected, it becomes a dedicated screen for tree-structure display / page sensitivity analysis.
+Switch between **Collection (VectorDB)** / **PageIndex** / **Graph** via radio button. The list of collections is filtered based on the KNOWLEDGE and BOOK settings of the selected agent. When PageIndex is selected, it becomes a dedicated screen for tree-structure display / page sensitivity analysis.
+
+> **Graph (Graph Utility):** Shows the whole GraphRAG knowledge graph and overlays per-turn usage for a selected turn of the current session. **Retrieval view** = grey whole graph / blue = nodes & edges selected by this turn's retrieval / skyblue = query-linked seed nodes. **Generation view** = elements actually used in the AI output on a blue→skyblue gradient by mention frequency, and **red = present in the output but NOT retrieved this turn (coverage gap)** — a warning suggests revisiting HOPS / EDGE_LIMIT / seeding when red elements appear. Node and edge text tables (frequency / predicate match / also-retrieved) sit under the figure. The analysis is recomputed on demand from the session log's (query, response) pair — no runtime recording involved.
 
 > **Persona filtering:** When a Persona is selected in the sidebar, that persona's `define_code` is used to narrow chunks according to the **per-DATA `FILTER` (mapping in `DEFINE_CODE.CODES`)** of each KNOWLEDGE entry (same logic as the runtime RAG path `_build_where_limitation`). When multiple personas are selected, results are the **union** (e.g., `user_name in [Reika, Mone]`). If DATA has no `FILTER` or no persona is selected, no narrowing is applied (all chunks).
 
