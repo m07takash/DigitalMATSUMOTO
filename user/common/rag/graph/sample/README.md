@@ -38,9 +38,37 @@ sample/
 - **スタンス抽出** — レーンBの「〜と評価する」「〜と懸念を示している」から
   `--[評価]-->` / `--[懸念]-->` エッジが抽出される（述語の具体化）
 
+## ビルドと利用
+
+```bash
+# レーンAのみ（決定的・LLM/APIキー不要）
+python3 DigiM_GraphBuilder.py user/common/rag/graph/sample
+
+# レーンB込み（agent_67GraphExtract.json でLLM抽出）
+python3 DigiM_GraphBuilder.py user/common/rag/graph/sample --use-llm
+
+# ノード埋め込みも生成（埋め込みベースのエンティティリンキング用）
+python3 DigiM_GraphBuilder.py user/common/rag/graph/sample --use-llm --embed
+```
+
+エージェントの KNOWLEDGE / BOOK への設定例（ポリシーはここに置く）:
+
+```json
+{
+  "RAG_NAME": "GovernanceGraph",
+  "RETRIEVER": "Graph",
+  "DATA": [ { "DATA_TYPE": "GRAPH", "DATA_NAME": "sample_governance" } ],
+  "HOPS": 2, "EDGE_LIMIT": 30, "FANOUT_LIMIT": 5,
+  "DOMAIN_BONUS": 1.3, "PROPS_LIMIT": 5
+}
+```
+
+`DATA_NAME` は rags マスタ（`sample_rags.json` の `data_type: "graph"` エントリ）で
+フォルダに解決されます。
+
 ## 備考
 
 - CSVは既存サンプル（`user/common/csv/Sample*.csv`）と同じ UTF-8(BOM付き)・
   英小文字ヘッダー・日本語値の規約
-- グラフ本体（graph.json）は取込バッチ（DigiM_GraphBuilder / Phase 1 実装予定）が
-  この定義から生成する
+- 同梱の `graph.json` はビルド済みサンプル（レーンA + レーンB相当の抽出結果を含む）。
+  `RETRIEVER: "Graph"` の動作確認にそのまま使えます。再ビルドすると上書きされます

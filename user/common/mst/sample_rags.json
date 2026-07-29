@@ -1,74 +1,163 @@
 {
-    "Sample01_Quote":{
+    "Sample01_Quote": {
         "active": "Y",
-        "input" : "csv",
-        "data_type" : "chromadb",
+        "input": "csv",
+        "data_type": "chromadb",
         "bucket": "Sample01_Quote",
         "file_path": "user/common/csv/",
         "file_name": "Sample01_Quote.csv",
-        "field_items": ["speaker", "situation", "quote"],
+        "field_items": [
+            "speaker",
+            "situation",
+            "quote"
+        ],
         "category_items": [],
-        "title": ["speaker", "quote"],
-        "key_text": ["speaker", "situation", "quote"],
-        "value_text": ["quote"]
+        "title": [
+            "speaker",
+            "quote"
+        ],
+        "key_text": [
+            "speaker",
+            "situation",
+            "quote"
+        ],
+        "value_text": [
+            "quote"
+        ]
     },
-    "Sample02_Memo":{
+    "Sample02_Memo": {
         "active": "Y",
-        "input" : "csv",
-        "data_type" : "chromadb",
+        "input": "csv",
+        "data_type": "chromadb",
         "bucket": "Sample02_Memo",
         "file_path": "user/common/csv/",
         "file_name": "Sample02_Memo.csv",
-        "field_items": ["create_date", "memo"],
+        "field_items": [
+            "create_date",
+            "memo"
+        ],
         "category_items": [],
-        "title": ["create_date"],
-        "key_text": ["memo"],
-        "value_text": ["memo"]
+        "title": [
+            "create_date"
+        ],
+        "key_text": [
+            "memo"
+        ],
+        "value_text": [
+            "memo"
+        ]
     },
-    "Sample03_Feedback":{
+    "Sample03_Feedback": {
         "active": "Y",
-        "input" : "csv",
-        "data_type" : "chromadb",
+        "input": "csv",
+        "data_type": "chromadb",
         "bucket": "Sample03_Feedback",
         "file_path": "user/common/csv/",
         "file_name": "Sample03_Feedback.csv",
-        "field_items": ["emp_code", "speaker", "create_date", "feedback"],
+        "field_items": [
+            "emp_code",
+            "speaker",
+            "create_date",
+            "feedback"
+        ],
         "category_items": [],
-        "title": ["speaker", "create_date"],
-        "key_text": ["speaker", "feedback"],
-        "value_text": ["feedback"]
+        "title": [
+            "speaker",
+            "create_date"
+        ],
+        "key_text": [
+            "speaker",
+            "feedback"
+        ],
+        "value_text": [
+            "feedback"
+        ]
     },
-    "Communication_Memo":{
+    "Communication_Memo": {
         "active": "N",
-        "input" : "csv",
-        "data_type" : "chromadb",
+        "input": "csv",
+        "data_type": "chromadb",
         "bucket": "Communication_Memo",
         "file_path": "user/common/csv/",
         "file_name": "Sample00_Feedback.csv",
-        "field_items": ["title", "RAG_Category", "category", "create_date", "memo", "service_id", "user_id", "session_name", "seq", "sub_seq", "query", "response"],
-        "category_items": [
-            {"RAG_Category":["memo"]},
-            {"category":["Feedback"]}
+        "field_items": [
+            "title",
+            "RAG_Category",
+            "category",
+            "create_date",
+            "memo",
+            "service_id",
+            "user_id",
+            "session_name",
+            "seq",
+            "sub_seq",
+            "query",
+            "response"
         ],
-        "title": ["title"],
-        "key_text": ["memo"],
-        "value_text": ["memo"]
+        "category_items": [
+            {
+                "RAG_Category": [
+                    "memo"
+                ]
+            },
+            {
+                "category": [
+                    "Feedback"
+                ]
+            }
+        ],
+        "title": [
+            "title"
+        ],
+        "key_text": [
+            "memo"
+        ],
+        "value_text": [
+            "memo"
+        ]
     },
-    "Communication_Comment":{
+    "Communication_Comment": {
         "active": "N",
-        "input" : "csv",
-        "data_type" : "chromadb",
+        "input": "csv",
+        "data_type": "chromadb",
         "bucket": "Communication_Comment",
         "file_path": "user/common/csv/",
         "file_name": "Sample00_Feedback.csv",
-        "field_items": ["title", "RAG_Category", "category", "create_date", "memo", "service_id", "user_id", "session_name", "seq", "sub_seq", "query", "response"],
-        "category_items": [
-            {"RAG_Category":["comment"]},
-            {"category":["Feedback"]}
+        "field_items": [
+            "title",
+            "RAG_Category",
+            "category",
+            "create_date",
+            "memo",
+            "service_id",
+            "user_id",
+            "session_name",
+            "seq",
+            "sub_seq",
+            "query",
+            "response"
         ],
-        "title": ["title"],
-        "key_text": ["memo"],
-        "value_text": ["memo"]
+        "category_items": [
+            {
+                "RAG_Category": [
+                    "comment"
+                ]
+            },
+            {
+                "category": [
+                    "Feedback"
+                ]
+            }
+        ],
+        "title": [
+            "title"
+        ],
+        "key_text": [
+            "memo"
+        ],
+        "value_text": [
+            "memo"
+        ]
     },
     "DigiMPGSystemGuide": {
         "active": "Y",
@@ -88,5 +177,12 @@
             "category": "カテゴリ",
             "body": "本文"
         }
+    },
+    "sample_governance": {
+        "active": "Y",
+        "input": "graph",
+        "data_type": "graph",
+        "file_path": "user/common/rag/graph/sample/",
+        "embedding_model": "text-embedding-3-large"
     }
 }
