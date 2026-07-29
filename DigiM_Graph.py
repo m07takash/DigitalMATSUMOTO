@@ -57,6 +57,28 @@ def resolve_graph_dir(data_name):
     return str(Path(rag_folder_graph_path) / data_name) + os.sep
 
 
+def get_graph_list():
+    """List available graphs for UI selectors: active rags-master entries
+    (data_type='graph') plus RAG_FOLDER_GRAPH subfolders holding a graph.json
+    that no master entry already covers."""
+    names, covered = [], set()
+    try:
+        rags_file = _setting.get("RAG_MST_FILE", "sample_rags.json")
+        rags = dmu.read_json_file(rags_file, mst_folder_path) or {}
+        for k, v in rags.items():
+            if v.get("data_type") == "graph" and v.get("active", "Y") == "Y":
+                names.append(k)
+                covered.add(os.path.normpath(v.get("file_path", "")))
+    except Exception:
+        pass
+    if os.path.isdir(rag_folder_graph_path):
+        for d in sorted(os.listdir(rag_folder_graph_path)):
+            p = os.path.join(rag_folder_graph_path, d)
+            if os.path.exists(os.path.join(p, "graph.json")) and os.path.normpath(p) not in covered:
+                names.append(d)
+    return names
+
+
 def load_graph(graph_dir):
     path = str(Path(graph_dir) / "graph.json")
     if os.path.exists(path):

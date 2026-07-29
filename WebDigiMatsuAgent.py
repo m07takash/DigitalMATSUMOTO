@@ -1577,6 +1577,94 @@ def _explanation_block(state_base, template_name, fallback_agent, ctx_builder, l
     return _h[_sel]["response"]
 
 
+def _graph_utility_pane(graph_names, agent_graph_rags):
+    """Graph view inside Knowledge Explorer (Knowledge Utility for GraphRAG).
+
+    Whole-graph SVG with per-turn usage overlays, computed on demand from the
+    current session's (query, response) pairs — no runtime recording needed.
+      検索ビュー: grey graph / blue retrieved / skyblue query seeds
+      生成ビュー: blue→skyblue gradient by output-mention frequency /
+                  red = in the output but NOT retrieved (coverage gap)
+    """
+    import DigiM_Graph as dmg_graph
+    import DigiM_GraphUtility as dgu
+
+    _gname = st.selectbox("Graph:", graph_names, key="rag_graph_select")
+
+    # Retrieval policy: prefer the agent's own KNOWLEDGE/BOOK entry for this
+    # graph (HOPS / EDGE_LIMIT / ... live there); fall back to defaults.
+    _rag_entry = next((r for r in agent_graph_rags
+                       if any(d.get("DATA_NAME") == _gname for d in r.get("DATA", []))), None)
+    if _rag_entry is None:
+        _rag_entry = {"RAG_NAME": _gname, "RETRIEVER": "Graph",
+                      "DATA": [{"DATA_TYPE": "GRAPH", "DATA_NAME": _gname}],
+                      "HOPS": 2, "EDGE_LIMIT": 30, "FANOUT_LIMIT": 5, "DOMAIN_BONUS": 1.3}
+
+    _gdir = dmg_graph.resolve_graph_dir(_gname)
+    _graph = dmg_graph.load_graph(_gdir)
+    if not _graph["nodes"]:
+        st.info(f"グラフが空です。先に取込バッチを実行してください: python3 DigiM_GraphBuilder.py {_gdir}")
+        return
+    st.caption(f"ノード: {len(_graph['nodes'])} / エッジ: {len(_graph['edges'])} / "
+               f"HOPS={_rag_entry.get('HOPS', 2)} EDGE_LIMIT={_rag_entry.get('EDGE_LIMIT', 30)} "
+               f"FANOUT_LIMIT={_rag_entry.get('FANOUT_LIMIT', 5)}")
+
+    # Collect analyzable turns (query + response) from the current session.
+    _hist = {}
+    if st.session_state.get("session"):
+        _hist = st.session_state.session.chat_history_active_dict or {}
+    _turns = []
+    for _seq in sorted([k for k in _hist if str(k).isdigit()], key=int):
+        _blk = _hist[_seq]
+        for _ss in sorted([k for k in _blk if str(k).isdigit()], key=int):
+            _v2 = _blk[_ss]
+            try:
+                _q = _v2["prompt"]["query"]["input"]
+                _r = (_v2.get("response") or {}).get("text", "")
+            except (KeyError, TypeError):
+                continue
+            if _q and _r:
+                _turns.append((f"{_seq}-{_ss}: {_q[:40]}", _q, _r))
+
+    if not _turns:
+        st.info("現在のセッションに分析対象の会話がありません。全体グラフのみ表示します。")
+        _usage = {"graph": _graph, "seeds": [], "retrieved_nodes": [], "retrieved_edges": [],
+                  "output_nodes": {}, "output_edges": [], "missed_nodes": [], "missed_edges": []}
+        st.markdown(dgu.render_usage_svg(_usage, view="retrieval"), unsafe_allow_html=True)
+        return
+
+    _sel = st.selectbox("分析するターン:", [t[0] for t in _turns],
+                        index=len(_turns) - 1, key="rag_graph_turn")
+    _query, _resp = next((t[1], t[2]) for t in _turns if t[0] == _sel)
+
+    _view = st.radio("ビュー:", ["検索ビュー", "生成ビュー"], horizontal=True, key="rag_graph_view")
+    _vkey = "retrieval" if _view == "検索ビュー" else "generation"
+
+    try:
+        _usage = dmg_graph.analyze_graph_usage(_query, _resp, _rag_entry)
+    except Exception as _e:
+        st.error(f"グラフ利用分析に失敗しました: {_e}")
+        return
+    if _usage is None:
+        st.info("このターンではグラフが参照されていません。")
+        return
+
+    st.markdown(dgu.render_usage_svg(_usage, view=_vkey), unsafe_allow_html=True)
+    if _vkey == "generation" and (_usage["missed_nodes"] or _usage["missed_edges"]):
+        st.warning(f"カバレッジギャップ（赤）: ノード{len(_usage['missed_nodes'])}件 / "
+                   f"エッジ{len(_usage['missed_edges'])}件 — 出力に含まれるが今回の検索では"
+                   f"選択されていません（HOPS / EDGE_LIMIT / シード起点の見直し材料）")
+
+    _tables = dgu.usage_tables(_usage, view=_vkey)
+    _c1, _c2 = st.columns(2)
+    with _c1:
+        st.markdown("**ノード**")
+        st.dataframe(_tables["nodes"], use_container_width=True, hide_index=True)
+    with _c2:
+        st.markdown("**エッジ**")
+        st.dataframe(_tables["edges"], use_container_width=True, hide_index=True)
+
+
 def _knowledge_explorer():
     import fnmatch
 
@@ -1999,11 +2087,18 @@ def _knowledge_explorer():
     _agent_data = st.session_state.get("agent_data", {})
     _agent_db_names = set()
     _agent_pi_names = set()
+    _agent_graph_names = set()
+    _agent_graph_rags = []
     for _k in _agent_data.get("KNOWLEDGE", []) + _agent_data.get("BOOK", []):
         if _k.get("RETRIEVER") == "PageIndex":
             for _d in _k.get("DATA", []):
                 if _d.get("DATA_TYPE") == "PAGE_INDEX":
                     _agent_pi_names.add(_d["DATA_NAME"])
+        elif _k.get("RETRIEVER") == "Graph":
+            _agent_graph_rags.append(_k)
+            for _d in _k.get("DATA", []):
+                if _d.get("DATA_TYPE") == "GRAPH":
+                    _agent_graph_names.add(_d["DATA_NAME"])
         else:
             for _d in _k.get("DATA", []):
                 _agent_db_names.add(_d.get("DATA_NAME", ""))
@@ -2014,20 +2109,35 @@ def _knowledge_explorer():
     _chroma_list = [c for c in _all_chroma if c in _agent_db_names] if _agent_db_names else _all_chroma
     _page_index_names = [p for p in _all_page_index.keys() if p in _agent_pi_names] if _agent_pi_names else list(_all_page_index.keys())
     _page_index_dict = {k: v for k, v in _all_page_index.items() if k in _page_index_names} if _agent_pi_names else _all_page_index
+    try:
+        import DigiM_Graph as _dmg_list
+        _all_graphs = _dmg_list.get_graph_list()
+    except Exception:
+        _all_graphs = []
+    _graph_names = [g for g in _all_graphs if g in _agent_graph_names] if _agent_graph_names else _all_graphs
 
-    # Toggle radio-button display based on whether both data-source types are present
+    # Toggle radio-button display based on which data-source types are present
     _has_vectordb = bool(_chroma_list)
     _has_pageindex = bool(_page_index_names)
+    _has_graph = bool(_graph_names)
     _source_options = []
     if _has_vectordb:
         _source_options.append("Collection (VectorDB)")
     if _has_pageindex:
         _source_options.append("PageIndex")
+    if _has_graph:
+        _source_options.append("Graph")
     if not _source_options:
         st.info("The selected agent has no RAG data configured")
         return
 
     _source_type = st.radio("Data Source:", _source_options, horizontal=True, key="rag_source_type") if len(_source_options) > 1 else _source_options[0]
+
+    # Graph view is a self-contained pane (usage overlays + tables) — render and exit.
+    if _source_type == "Graph":
+        _graph_utility_pane(_graph_names, _agent_graph_rags)
+        return
+
     _is_page_index = (_source_type == "PageIndex")
 
     if _is_page_index:
