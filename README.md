@@ -140,6 +140,9 @@ RAG（ChromaDB）を組み合わせて動的に生成します。
 | `DigiM_API.py` | FastAPI エンドポイント |
 | `DigiM_DB_Export.py` | PostgreSQLエクスポート・ベクトル化 |
 | `DigiM_VAnalytics.py` | 知識活用分析 |
+| `DigiM_Graph.py` | GraphRAG（純構造の知識グラフ: 取込・エンティティ解決・経路+近傍検索・利用分析） |
+| `DigiM_GraphBuilder.py` | 知識グラフの取込バッチCLI（mapping.json / dictionary.json から graph.json を生成） |
+| `DigiM_GraphUtility.py` | Graph Utility の描画（決定的レイアウトのSVG・検索/生成ビュー・テーブル） |
 | `DigiM_GeneFeedback.py` | ユーザーフィードバック（CSV/Notion保存） |
 | `DigiM_UserMemory.py` | ユーザーメモリ（History/Nowaday/Persona）のストレージ抽象化（Excel/Notion/RDB） |
 | `DigiM_UserMemorySetting.py` | ユーザーメモリのOn/Off2階層解決（ユーザーマスタ/システム）。Layersは `users.json` の `Allowed["User Memory Layers"]` に保存 |
@@ -1164,6 +1167,56 @@ Notion保存時は `notion_name` でプロパティ名を個別に指定でき�
 
 **位置パンくず（自動付与）**: PageIndex で選択された各ページの本文先頭に、ID階層から逆引きした `[Path] 親タイトル > 子タイトル > 自タイトル` という1行が自動的に差し込まれます（例：`id=1-1-1` → `[Path] システム概要 > アーキテクチャ > ChromaDB連携`）。これにより LLM がページの **知識全体における位置づけ** を把握できます。中間IDが `_index.json` に存在しない場合はそのセグメントを黙ってスキップ。
 
+**Graph型 KNOWLEDGE / BOOK（GraphRAG検索）：**
+
+エンティティ（実体）と述語付きエッジだけを持つ**純構造の知識グラフ**から、クエリに関わる**経路（シードエンティティ間のつながり）と近傍**を取得してコンテキストに注入します。チャンク本文はグラフに持たず、本文知識は従来どおり Vector RAG（ChromaDB）を**併置**して担当させる役割分離の設計です。ノード・エッジには `props`（状態: 生年月日/居住地、役職/期間など）を持てます。
+
+```json
+"KNOWLEDGE": [
+  {
+    "RAG_NAME": "GovernanceGraph",
+    "RETRIEVER": "Graph",
+    "DATA": [ { "DATA_TYPE": "GRAPH", "DATA_NAME": "sample_governance" } ],
+    "HOPS": 2,
+    "EDGE_LIMIT": 30,
+    "FANOUT_LIMIT": 5,
+    "DOMAIN_BONUS": 1.3,
+    "PROPS_LIMIT": 5
+  }
+]
+```
+
+| 項目 | 説明 |
+|------|------|
+| `RETRIEVER` | `Graph` を指定 |
+| `DATA_NAME` | rags マスタの `data_type: "graph"` エントリ名（`file_path` でグラフフォルダに解決）。未登録なら `user/common/rag/graph/{DATA_NAME}/` |
+| `HOPS` | シードからの近傍展開の深さ（既定2） |
+| `EDGE_LIMIT` | コンテキストに入れるエッジ総数の上限（既定30）。経路エッジは保護枠として最優先 |
+| `FANOUT_LIMIT` | 1ノードあたりの展開エッジ上限＝ハブの枝刈り（既定5） |
+| `DOMAIN_BONUS` | クエリがドメイン名（例:「海外動向」）を含むとき、一致ドメインのエッジに掛けるスコア倍率（既定1.3） |
+| `PROPS_LIMIT` | シードノードの状態（props）をコンテキストに出す最大件数（既定5） |
+
+コンテキストは `■経路`（向き付きチェーン）・`■関係`（述語の括弧内に props をインライン表示）・`■主要エンティティの状態` の3ブロックで注入されます。参照ログは `query_mode="(GRAPH:local+domain:…)"` として既存の References / Detail Information に記録されます。
+
+**データ取込（2レーン方式）：**
+
+グラフフォルダ（例: `user/common/rag/graph/sample/`）に `mapping.json`（ソース定義）と `dictionary.json`（エイリアス正規化・シード・prop_schema）を置き、取込バッチで `graph.json` を生成します。
+
+- **レーンA（STRUCTURED）**: CSV列 / Notionプロパティ / RDBカラムを列マッピングで**決定的に**変換（LLM不要）。状態（props）・関係列・複数値セル（`;`区切り）・方向指定に対応
+- **レーンB（TEXT）**: 自由文列から `agent_67GraphExtract.json` が三つ組・状態候補をLLM抽出（述語は「評価/懸念/参画/策定」等の具体動詞）
+- 競合時の優先順位: **STRUCTURED > 辞書シード > TEXT**、同順位は `AS_OF` の新しい方
+- props の値が既存ノード名に一致するとエッジへ**自動昇格**（例: `居住地: 東京` → `--[居住地]--> (東京)`）
+
+```bash
+# レーンAのみ（LLM/APIキー不要）
+python3 DigiM_GraphBuilder.py user/common/rag/graph/sample
+
+# レーンB（LLM抽出）+ ノード埋め込みも生成
+python3 DigiM_GraphBuilder.py user/common/rag/graph/sample --use-llm --embed
+```
+
+サンプル一式（人物/組織/取り組みマスタCSV・考察コラム・mapping/dictionary・ビルド済み graph.json）は `user/common/rag/graph/sample/` に同梱しています。
+
 #### AgentSearch / FunctionSearch（KNOWLEDGE / BOOK 共通の動的検索）
 
 ベクトル検索や PageIndex に加えて、**別エージェントを呼び出す** AgentSearch と **登録済みツール関数を呼び出す** FunctionSearch を `KNOWLEDGE` / `BOOK` どちらにも配置できます。出力結果は通常の RAG チャンクと同じく `CHUNK_TEMPLATE` で整形してコンテキストに注入されます。
@@ -1934,7 +1987,9 @@ Knowledge Explorerは、RAGデータの分析画面です。サイドバーの�
 
 ### データソースの選択
 
-ラジオボタンで **Collection（VectorDB）** と **PageIndex** を切り替えます。コレクション一覧は、選択中のエージェントの KNOWLEDGE および BOOK 設定に基づいてフィルタリングされます。PageIndex 選択時はツリー構造表示・ページ感度分析の専用画面になります。
+ラジオボタンで **Collection（VectorDB）** / **PageIndex** / **Graph** を切り替えます。コレクション一覧は、選択中のエージェントの KNOWLEDGE および BOOK 設定に基づいてフィルタリングされます。PageIndex 選択時はツリー構造表示・ページ感度分析の専用画面になります。
+
+> **Graph（Graph Utility）：** GraphRAG の知識グラフ全体を表示し、現在セッションのターンを選んで利用状況をオーバーレイします。**検索ビュー**＝グレー全体 / ブルー＝今回抽出されたノード・エッジ / スカイブルー＝クエリのシードノード。**生成ビュー**＝出力に用いられた要素を言及頻度でブルー→スカイブルーのグラデーション表示、**赤＝出力に含まれるが今回の検索では選択されなかった要素（カバレッジギャップ）**。赤が出た場合は HOPS / EDGE_LIMIT / シード起点の見直し材料になる警告が表示されます。図の下にノード・エッジのテキスト一覧（頻度・述語一致・検索でも抽出）を併記。分析はセッションログの (クエリ, 応答) からオンデマンドに再計算されるため、実行時の記録は不要です。
 
 > **ペルソナ絞り込み：** サイドバーで Persona を選択している場合、そのペルソナの `define_code` を使い、各 KNOWLEDGE の **DATA単位 `FILTER`（`DEFINE_CODE.CODES` のマッピング）** に従ってチャンクを絞り込みます（実RAGと同一ロジック `_build_where_limitation`）。複数ペルソナ選択時は **和集合**（例: `user_name in [Reika, Mone]`）。DATA に `FILTER` が無い／ペルソナ未選択の場合は絞り込みなし（全件）。
 
