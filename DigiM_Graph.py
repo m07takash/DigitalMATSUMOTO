@@ -521,6 +521,102 @@ def _render_edge(graph, edge, template):
                            object=dst, description="", date=date)
 
 
+# ------------------------------------------------------- usage analysis ----
+def link_output(text, graph, dictionary, min_mention_len=2):
+    """Match a *generated response* back onto the graph (lexical, zero-API).
+
+    Returns:
+      nodes : {node_id: mention_count}   (name + alias occurrences summed)
+      edges : [{"index": i, "freq": n, "predicate_match": bool}]
+              An edge counts as "used in the output" when BOTH endpoint
+              nodes are mentioned (co-occurrence rule). freq is the weaker
+              endpoint's count; predicate_match flags when the relation
+              string itself also appears in the text.
+    """
+    text = text or ""
+    node_counts = {}
+    mention_map = {}  # mention string -> node_id
+    for n in graph["nodes"].values():
+        mention_map[n["name"]] = n["id"]
+        for a in n.get("aliases", []):
+            mention_map.setdefault(a, n["id"])
+    for mention, cname in dictionary.get("aliases", {}).items():
+        nid = node_id_for(cname)
+        if nid in graph["nodes"]:
+            mention_map.setdefault(mention, nid)
+
+    for mention, nid in mention_map.items():
+        if len(mention) < min_mention_len:
+            continue
+        c = text.count(mention)
+        if c:
+            node_counts[nid] = node_counts.get(nid, 0) + c
+
+    edge_hits = []
+    for i, e in enumerate(graph["edges"]):
+        cs = node_counts.get(e["source"], 0)
+        ct = node_counts.get(e["target"], 0)
+        if cs and ct:
+            edge_hits.append({
+                "index": i,
+                "freq": min(cs, ct),
+                "predicate_match": bool(e.get("relation")) and e["relation"] in text,
+            })
+    return {"nodes": node_counts, "edges": edge_hits}
+
+
+def analyze_graph_usage(query, response_text, rag, query_vecs=None):
+    """On-demand per-turn usage analysis for Knowledge Utility.
+
+    Recomputes the (deterministic, lexical) retrieval for `query` and links
+    `response_text` back onto the graph, then diffs the two:
+
+      seeds           : query-linked seed node ids
+      retrieved_nodes : node ids touched by the retrieval (seeds + endpoints)
+      retrieved_edges : edge indexes selected by the retrieval
+      output_nodes    : {node_id: mention count in the response}
+      output_edges    : [{"index", "freq", "predicate_match"}]
+      missed_nodes    : in the output but NOT retrieved  (coverage gap = red)
+      missed_edges    : same, for edges
+
+    Needs only the session log's (query, response) pair — no runtime
+    recording. Note: results reflect the *current* graph; if the graph was
+    rebuilt since the turn, the replayed retrieval may differ slightly.
+    """
+    data_list = [d for d in rag.get("DATA", []) if d.get("DATA_TYPE") == "GRAPH"]
+    if not data_list:
+        return None
+    graph_dir = resolve_graph_dir(data_list[0]["DATA_NAME"])
+    result = search_graph(query, graph_dir, rag, query_vecs=query_vecs)
+    graph = result["graph"]
+    dictionary = load_dictionary(graph_dir)
+
+    retrieved_edges = {ei for ei, _hop, _kind in result["selected"]}
+    retrieved_nodes = set(result["seeds"].keys())
+    for ei in retrieved_edges:
+        e = graph["edges"][ei]
+        retrieved_nodes.add(e["source"])
+        retrieved_nodes.add(e["target"])
+
+    out = link_output(response_text, graph, dictionary)
+    missed_nodes = [nid for nid in out["nodes"] if nid not in retrieved_nodes]
+    missed_edges = [h for h in out["edges"] if h["index"] not in retrieved_edges]
+
+    return {
+        "graph": graph,
+        "graph_dir": graph_dir,
+        "seeds": list(result["seeds"].keys()),
+        "paths": result["paths"],
+        "retrieved_nodes": sorted(retrieved_nodes),
+        "retrieved_edges": sorted(retrieved_edges),
+        "output_nodes": out["nodes"],
+        "output_edges": out["edges"],
+        "missed_nodes": missed_nodes,
+        "missed_edges": missed_edges,
+        "boost_domains": sorted(result["boost_domains"]),
+    }
+
+
 def build_graph_context(query, rag, exec_info=None, query_vecs=None, meta_searches=None):
     """Entry point used by DigiM_Context.create_rag_context (RETRIEVER='Graph').
     Returns (rag_context, rag_selected) in the same shape the Vector /
