@@ -272,7 +272,8 @@ def set_login_user_to_session(user_id: str, user_info: dict):
         "Name": user_info.get("Name", ""),
         "Group": groups,
         "Agent": user_info.get("Agent", ""),
-        "Allowed": user_info.get("Allowed", {})
+        "Allowed": user_info.get("Allowed", {}),
+        "Defaults": user_info.get("Defaults", {})
     }
     st.session_state.user_id = user_id
     st.session_state.session_user_id = st.session_state.user_id
@@ -287,6 +288,10 @@ def set_login_user_to_session(user_id: str, user_info: dict):
         st.session_state.default_agent = default_agent_data["DISPLAY_NAME"]
     if st.session_state.login_user["Allowed"]:
         user_allowed_parameter(st.session_state.login_user["Allowed"])
+    # Per-user session defaults (users.json → Defaults). Applied *after* the
+    # general session_state init so a logged-in user's preferred toggles
+    # override the app-wide defaults (which run on first render before login).
+    user_default_parameter(st.session_state.login_user.get("Defaults", {}))
 
 # Login flow
 def ensure_login():
@@ -405,6 +410,20 @@ def ensure_login():
     st.stop()
 
 # Configure which UI features are available to the user
+def user_default_parameter(defaults_dict):
+    # Per-user initial toggles from users.json → Defaults.
+    # Only override when the key is present, so partial dicts don't reset
+    # unrelated toggles to their factory defaults.
+    if "Thinking Mode" in defaults_dict:
+        st.session_state.thinking_mode = bool(defaults_dict["Thinking Mode"])
+    if "Thinking Targets" in defaults_dict:
+        _t = defaults_dict["Thinking Targets"]
+        if isinstance(_t, list):
+            # Invalid values (agent without the option, typos) are filtered at
+            # render time — no need to validate here.
+            st.session_state.thinking_targets = list(_t)
+
+
 def user_allowed_parameter(allowded_dict):
     st.session_state.allowed_rag_management = allowded_dict.get("RAG Management", True)
     st.session_state.allowed_knowledge_explorer = allowded_dict.get("Knowledge Explorer", True)

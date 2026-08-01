@@ -37,6 +37,10 @@
       "Web API": true,
       "User Memory": true,
       "User Memory Layers": ["persona", "nowaday", "history"]
+    },
+    "Defaults": {
+      "Thinking Mode": true,
+      "Thinking Targets": ["Habit", "Web Search", "RAG Query", "Books"]
     }
   }
 }

@@ -508,6 +508,10 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
       "Scheduler": false,
       "User Memory": true,
       "User Memory Layers": ["persona", "nowaday", "history"]
+    },
+    "Defaults": {
+      "Thinking Mode": true,
+      "Thinking Targets": ["Habit", "Web Search", "RAG Query", "Books"]
     }
   }
 }
@@ -520,6 +524,7 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
 | `Group` | ユーザーグループ（配列。後述） |
 | `Agent` | デフォルトで使用するエージェントファイル名 |
 | `Allowed` | 各機能の表示/非表示を制御（`true`/`false`） |
+| `Defaults` | ログイン時にセッションへ適用される初期値（後述、任意） |
 
 **Allowedの設定項目：**
 
@@ -543,6 +548,17 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
 | `User Memory Layers` | （bool以外。配列）このユーザーが有効化する層 `["persona","nowaday","history"]` のサブセット。未設定なら `USER_MEMORY_DEFAULT_LAYERS` |
 
 > Adminグループのユーザーは `Allowed` の設定に関わらず全機能にアクセスできます。
+
+**Defaultsの設定項目：**
+
+`Defaults` はログイン時にセッションへ適用される初期値です。ユーザーごとに好みの立ち上がり状態を保存できます。指定しなかったキーはアプリ全体のデフォルトが使われます。
+
+| キー | 型 | 説明 |
+|------|----|------|
+| `Thinking Mode` | bool | Thinking Mode（思考ステップ）の初期ON/OFF。既定 `false` |
+| `Thinking Targets` | 配列 | Thinking Mode 有効時の対象リスト初期値。`"Habit"` / `"Web Search"` / `"RAG Query"` / `"Books"` / `"Personas"` から選ぶ（`Personas` はエージェントに `ORG` が定義されている場合のみ有効。無効な値はレンダリング時に自動で除外）。既定 `["Habit", "Web Search", "RAG Query", "Books"]` |
+
+> WebUI 上でチェックを変更すれば、そのセッションの間はユーザー操作が優先されます。次回ログイン時にまた `Defaults` の値から始まります。
 
 **パスワードについて：**
 - 初回ログイン時にパスワードが平文の場合、自動的にbcryptハッシュ値に変換されて保存されます
@@ -1061,10 +1077,12 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/{DATA_NAME} --use-llm --embe
     "PRACTICE": "practice_00Default.json"
   },
   "Chat": {
+    "PURPOSE": "短く簡潔に応答してほしい／挨拶や軽い雑談などカジュアルなやり取り。",
     "MAGIC_WORD": ["簡潔に回答して", "簡潔に答えて"],
     "PRACTICE": "practice_01Chat.json"
   },
   "SENRYU_SENSEI": {
+    "PURPOSE": "川柳を詠んでほしい／川柳形式で応答してほしいという依頼。",
     "MAGIC_WORD": ["川柳を詠んでください。"],
     "PRACTICE": "practice_05Senryu.json",
     "KNOWLEDGE": [
@@ -1082,6 +1100,7 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/{DATA_NAME} --use-llm --embe
 - `MAGIC_WORD`: トリガーワードのリスト（空文字はデフォルト動作）
 - `PRACTICE`: 実行するプラクティスファイル
 - `KNOWLEDGE`: **HABITごとに固有のRAGデータソースを設定可能**。指定するとそのHABIT発動時のみ該当RAGを参照します
+- `PURPOSE`（任意）: **Thinking Mode でのHABIT選択根拠**。Thinking Mode ON かつ Thinking Targets に `Habit` を含めているとき、Thinking Agent は各HABITの `PURPOSE`（この項目）を見て「この質問にこのHABITを使うか」を判定します。`PURPOSE` が無いHABITは `MAGIC_WORD` から推測されます。`DEFAULT` HABIT には基本的に不要（他に該当しなかったときのフォールバック）。Thinking Mode OFF の場合、`PURPOSE` は判定に使われません（MAGIC_WORD の一致だけで発動する従来動作）。
 
 #### KNOWLEDGE（知識設定）
 
@@ -1177,7 +1196,11 @@ Notion保存時は `notion_name` でプロパティ名を個別に指定でき�
 | `RAG_QUERY_GENERATOR` | ユーザー入力からRAG検索用の補助クエリを生成 |
 | `THINKING` | ユーザーの質問を分析し、Habit選択・Web検索・RAGクエリ生成・Book追加を動的に判定（Thinking Mode有効時） |
 | `KNOWLEDGE_INTERPRET` | Analytics Results - Knowledge Utility の「LLM解釈」ボタンが押されたときに、CSV/類似度ランク（+任意で散布図画像）を読んで「全体構成と今回の選択傾向」「貢献度分析（回答距離−質問距離）」「注目点・改善示唆」を返す（バックデータ中心・Vision任意） |
-| `CITATION_INJECT` | 本回答生成後、Web検索URLとBOOKチャンクを引用ソースとして `[N]` マーカーを本文末文に挿入し、末尾に `## References` セクションを付与する。Web検索URL or BOOKチャンクのどちらかが使われていれば自動発火（KNOWLEDGE は対象外）。デフォルトは Claude-Haiku-4.5 等の軽量モデル。LLM失敗時は本文不変で References のみ追加するフォールバックあり |
+| `CITATION_INJECT` | 本回答生成後、Web検索URLとBOOKチャンクを引用ソースとして `[N]` マーカーを本文末文に挿入し、末尾に `## References` セクションを付与する。Web検索URL or BOOKチャンクのどちらかが使われていれば自動発火（KNOWLEDGE は対象外）。デフォルトは Claude-Haiku-4.5 等の軽量モデル。LLM失敗時は本文不変で References のみ追加するフォールバックあり。**LLM出力に `[N]` マーカーも `## References` も含まれない場合は「対応関係なし」とみなして元の本文をそのまま維持**（LLMが弁解文を返しても元回答が守られる） |
+
+**サポートエージェントの Date 参照**: `THINKING` / `RAG_QUERY_GENERATOR` / `EXTRACT_DATE` などのサポートエージェントは、親エージェント（メインチャット）の Date 設定（Real Date / Custom Date）をそのまま引き継ぎます。ただし親が **No Date** モードのときは、サポートエージェントだけは**現在の実時刻に自動フォールバック**します（「最近」「今の」等の相対表現や `EXTRACT_DATE` の日付範囲解決を成立させるため）。メインの応答（ユーザー向け）は No Date のままなので、ロールプレイやペルソナ設定は壊れません。
+
+**Thinking Mode と Web検索エンジンの関係**: Thinking Agent は原則としてエンジンを指定せず、`setting.yaml` の `WEB_SEARCH_DEFAULT` を尊重します（特定エンジンを推す明確な理由がある場合のみ Thinking が上書き）。ユーザーが WebUI で Web Search を明示的にONにしている場合、Thinking はそれを弱めることはなく、必要に応じてエンジン推奨を追加するだけです。
 
 #### BOOK（参考情報）
 
@@ -1187,6 +1210,7 @@ Notion保存時は `notion_name` でプロパティ名を個別に指定でき�
 "BOOK": [
   {
     "RAG_NAME": "Quote",
+    "PURPOSE": "会話の中で著名人の名言を引きたい／格言や含蓄のある一言で締めくくりたいときに参照する。",
     "RAG_DATA": [{"DATA_NAME": "Sample01_Quote", "BUCKET": "Sample01_Quote"}],
     "HEADER_TEMPLATE": "以下はあなたが気に入っている著名人による名言です。\n",
     "CHUNK_TEMPLATE": "・{speaker}「{value_text}」\n\n",
@@ -1197,6 +1221,8 @@ Notion保存時は `notion_name` でプロパティ名を個別に指定でき�
 ```
 
 `HEADER_TEMPLATE` と `CHUNK_TEMPLATE` でRAGデータの表示フォーマットをカスタマイズできます。`{フィールド名}` でRAGデータの値を埋め込めます。
+
+**PURPOSE（Thinking Mode でのBook選択根拠）**: Thinking Mode ON かつ Thinking Targets に `Books` を含めているとき、Thinking Agent は各BOOKの `RAG_NAME` と `PURPOSE`（この項目）を見て「この質問にこのBookを使うか」を判定します。`PURPOSE` を書いていないBOOKは `RAG_NAME` からの推測になるため、意図した通りに選ばれないことがあります。`Thinking Mode OFF` の場合、`PURPOSE` は判定に使われません（BOOKはUIで選択したものがそのまま使われる従来動作）。
 
 **PageIndex型 BOOK（ページインデックス検索）：**
 
@@ -1788,6 +1814,7 @@ BOOK と KNOWLEDGE の区別は `agent.agent["BOOK"]` 内の `RAG_NAME` でフ�
 | Support agent 読込み失敗 | プラグイン内で fallback → 本文 + 自動生成 `## References` |
 | LLM 呼出し例外 | 同上 → 本文 + 自動生成 `## References` |
 | LLM 戻り値が元の本文より極端に短い | 同上 → 本文そのまま |
+| LLM 戻り値に `[N]` マーカーも `## References` も無い（弁解文が返った等） | Execute 側で採用せず本文そのまま維持（`[citation_inject] kept original (no markers or length)` を出力） |
 | Execute 側で予期せぬ例外 | 本文そのまま保存 + `_bg_errors.log` / `<session>/errors.log` に traceback 記録 |
 
 #### 出力例

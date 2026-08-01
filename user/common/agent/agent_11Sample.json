@@ -33,7 +33,13 @@
                 "MODEL": "gpt-5-mini-2025-08-07",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
-                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+                "MEMORY": {
+                    "limit": 8000,
+                    "role": "both",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "Y"
+                }
             },
             "GPT-5-nano": {
                 "NAME": "GPT-5-nano",
@@ -41,7 +47,13 @@
                 "MODEL": "gpt-5-nano-2025-08-07",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
-                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+                "MEMORY": {
+                    "limit": 8000,
+                    "role": "both",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "Y"
+                }
             }
         }
     },
@@ -54,6 +66,7 @@
             "ADD_KNOWLEDGE": []
         },
         "Chat": {
+            "PURPOSE": "短く簡潔に応答してほしい／挨拶や軽い雑談などカジュアルなやり取り。",
             "MAGIC_WORDS": [
                 "簡潔に回答して",
                 "簡潔に答えて"
@@ -62,6 +75,7 @@
             "ADD_KNOWLEDGE": []
         },
         "FORGET_HISTORY": {
+            "PURPOSE": "過去の会話履歴を消去してほしい／リセットしてほしいという明示的な依頼。",
             "MAGIC_WORDS": [
                 "までの会話を忘れて",
                 "会話履歴を削除して"
@@ -69,6 +83,7 @@
             "PRACTICE": "practice_02ForgetHistory.json"
         },
         "REMEMBER_HISTORY": {
+            "PURPOSE": "直前に忘れた会話履歴を復元してほしいという明示的な依頼。",
             "MAGIC_WORDS": [
                 "までの会話を思い出して",
                 "会話履歴を回復して"
@@ -120,7 +135,10 @@
                     },
                     "OVERWRITE_ITEMS": {},
                     "ADD_KNOWLEDGE": [],
-                    "SITUATION": {"TIME": "", "SITUATION": ""}
+                    "SITUATION": {
+                        "TIME": "",
+                        "SITUATION": ""
+                    }
                 }
             ],
             "HEADER_TEMPLATE": "【別エージェントの所見】以下は別のコンサルタントエージェントの見解です。参考にしてください。\n",
