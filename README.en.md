@@ -507,6 +507,10 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
       "Scheduler": false,
       "User Memory": true,
       "User Memory Layers": ["persona", "nowaday", "history"]
+    },
+    "Defaults": {
+      "Thinking Mode": true,
+      "Thinking Targets": ["Habit", "Web Search", "RAG Query", "Books"]
     }
   }
 }
@@ -519,6 +523,7 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
 | `Group` | User groups (array; see below) |
 | `Agent` | Agent file name used by default |
 | `Allowed` | Controls show/hide for each feature (`true`/`false`) |
+| `Defaults` | Initial session values applied at login (see below, optional) |
 
 **Allowed setting items:**
 
@@ -542,6 +547,17 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
 | `User Memory Layers` | (Non-bool; array.) Subset of `["persona","nowaday","history"]` enabled for this user. If unset, falls back to `USER_MEMORY_DEFAULT_LAYERS` |
 
 > Users in the Admin group can access all features regardless of the `Allowed` settings.
+
+**Defaults setting items:**
+
+`Defaults` are initial session values applied at login. Each user can pin their preferred startup state. Any key you omit falls back to the app-wide default.
+
+| Key | Type | Description |
+|------|------|------|
+| `Thinking Mode` | bool | Whether Thinking Mode (reasoning step) starts ON. Default `false` |
+| `Thinking Targets` | array | Initial target list when Thinking Mode is ON. Pick from `"Habit"` / `"Web Search"` / `"RAG Query"` / `"Books"` / `"Personas"` (`Personas` requires an agent with `ORG` defined; invalid values are filtered at render time). Default `["Habit", "Web Search", "RAG Query", "Books"]` |
+
+> When the user toggles a checkbox in the WebUI, that runtime choice wins for the rest of the session. On the next login the session restarts from the `Defaults` values again.
 
 **About passwords:**
 - If the password is in plain text on first login, it is automatically converted to a bcrypt hash and saved
@@ -1050,10 +1066,12 @@ When a specific trigger word (`MAGIC_WORD`) is included in the user's input, the
     "PRACTICE": "practice_00Default.json"
   },
   "Chat": {
+    "PURPOSE": "Reply short and concisely / casual greeting-style exchange.",
     "MAGIC_WORD": ["Answer concisely", "Reply briefly"],
     "PRACTICE": "practice_01Chat.json"
   },
   "SENRYU_SENSEI": {
+    "PURPOSE": "The user wants a senryu (5-7-5 verse) or a reply in that form.",
     "MAGIC_WORD": ["Compose a senryu."],
     "PRACTICE": "practice_05Senryu.json",
     "KNOWLEDGE": [
@@ -1071,6 +1089,7 @@ When a specific trigger word (`MAGIC_WORD`) is included in the user's input, the
 - `MAGIC_WORD`: A list of trigger words (an empty string represents the default behavior)
 - `PRACTICE`: The Practice file to execute
 - `KNOWLEDGE`: **A HABIT-specific RAG data source can be configured**. When specified, the relevant RAG is referenced only when that HABIT fires
+- `PURPOSE` (optional): **Basis for HABIT selection under Thinking Mode.** When Thinking Mode is ON and `Habit` is one of the Thinking Targets, the Thinking Agent judges "use this HABIT for this question or not" from each HABIT's `PURPOSE`. A HABIT without `PURPOSE` is judged from `MAGIC_WORD` alone. `DEFAULT` HABIT normally needs no `PURPOSE` (it is the fallback when nothing else matches). When Thinking Mode is OFF, `PURPOSE` is not consulted — HABITs fire only on `MAGIC_WORD` matches (previous behavior).
 
 #### KNOWLEDGE (knowledge settings)
 
@@ -1166,7 +1185,11 @@ Specifies Support Agents that assist the main dialogue. Each Support Agent is de
 | `RAG_QUERY_GENERATOR` | Generates auxiliary queries for RAG search from user input |
 | `THINKING` | Analyzes the user's question and dynamically decides on Habit selection / Web search / RAG query generation / Book addition (when Thinking Mode is enabled) |
 | `KNOWLEDGE_INTERPRET` | Invoked by the "Interpret with LLM" buttons under Analytics Results - Knowledge Utility. Reads the inventory CSV / similarity rank (+ optional scatter / bar images) and returns three sections: overall composition vs. this-query selection, contribution analysis using delta = response_sim − question_sim, and notable / improvement points. Back-data centric; images are optional for vision-capable models. |
-| `CITATION_INJECT` | After the main response is generated, this agent inserts `[N]` markers at sentences grounded in web URLs or BOOK chunks and appends a `## References` section. Fires automatically whenever a web URL or a BOOK chunk was used (KNOWLEDGE entries are not cited — they are treated as the agent's internalised knowledge). Defaults to a lightweight model (Claude-Haiku-4.5 / Gemini Flash Lite / GPT-5-mini). On LLM failure, falls back to leaving the body untouched and appending only the References list. |
+| `CITATION_INJECT` | After the main response is generated, this agent inserts `[N]` markers at sentences grounded in web URLs or BOOK chunks and appends a `## References` section. Fires automatically whenever a web URL or a BOOK chunk was used (KNOWLEDGE entries are not cited — they are treated as the agent's internalised knowledge). Defaults to a lightweight model (Claude-Haiku-4.5 / Gemini Flash Lite / GPT-5-mini). On LLM failure, falls back to leaving the body untouched and appending only the References list. **If the LLM output contains neither `[N]` markers nor a `## References` section, it is treated as "no correspondence" and the original body is kept verbatim** (protects the real answer when the LLM returns an apology instead of citations). |
+
+**Support-agent Date inheritance**: Support agents such as `THINKING` / `RAG_QUERY_GENERATOR` / `EXTRACT_DATE` inherit the parent (main chat) agent's Date setting (Real Date / Custom Date) as-is. However, when the parent is in **No Date** mode, support agents alone **fall back to the current real clock** (so relative expressions like "recently" / "just now" and `EXTRACT_DATE` date-range resolution keep working). The user-facing main response stays No Date — roleplay and persona settings are not affected.
+
+**Thinking Mode and web-search engine**: The Thinking Agent normally does NOT specify an engine and defers to `setting.yaml` `WEB_SEARCH_DEFAULT` (only overrides when it has a clear reason to prefer a specific engine). When the user has already turned Web Search ON in the WebUI, Thinking never weakens that choice — it can only add an engine hint on top.
 
 #### BOOK (reference information)
 
@@ -1176,6 +1199,7 @@ The agent obtains information from RAG data as "books and quotes it knows" and d
 "BOOK": [
   {
     "RAG_NAME": "Quote",
+    "PURPOSE": "Consult when you want to invoke a famous person's quote, close a reply with a maxim, or lean on a proverb.",
     "RAG_DATA": [{"DATA_NAME": "Sample01_Quote", "BUCKET": "Sample01_Quote"}],
     "HEADER_TEMPLATE": "The following are quotes by famous people you appreciate.\n",
     "CHUNK_TEMPLATE": "- {speaker}: \"{value_text}\"\n\n",
@@ -1186,6 +1210,8 @@ The agent obtains information from RAG data as "books and quotes it knows" and d
 ```
 
 You can customize the display format of the RAG data with `HEADER_TEMPLATE` and `CHUNK_TEMPLATE`. RAG data values can be embedded with `{field_name}`.
+
+**PURPOSE (basis for Book selection under Thinking Mode)**: When Thinking Mode is ON and `Books` is one of the Thinking Targets, the Thinking Agent judges "use this Book for this question or not" from each BOOK's `RAG_NAME` and its `PURPOSE`. A BOOK without `PURPOSE` is judged from `RAG_NAME` alone, which may not match your intent. When Thinking Mode is OFF, `PURPOSE` is not consulted — BOOKs selected in the UI are used as-is (previous behavior).
 
 **PageIndex-type BOOK (page index search):**
 
@@ -1776,6 +1802,7 @@ BOOK is distinguished from KNOWLEDGE by filtering on `agent.agent["BOOK"]` `RAG_
 | Support agent load failure | Tool-internal fallback → body + auto-generated `## References` |
 | LLM call exception | Same → body + auto-generated `## References` |
 | LLM output extremely short vs. original | Same → body unchanged |
+| LLM output contains neither `[N]` markers nor `## References` (apology/meta only) | Execute side rejects the output and keeps the original body (`[citation_inject] kept original (no markers or length)` logged) |
 | Unexpected exception on the Execute side | Body unchanged; traceback recorded in `_bg_errors.log` / `<session>/errors.log` |
 
 #### Output example

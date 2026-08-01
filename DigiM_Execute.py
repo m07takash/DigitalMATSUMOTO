@@ -143,16 +143,32 @@ def _run_thinking_agent(service_info, user_info, session_id, session_name,
         return {}, {}
     t_start = datetime.now()
 
-    # Format the habit list
+    # Format the habit list. When a HABIT entry defines PURPOSE (short prose
+    # describing when to choose it), pass that to Thinking as the primary
+    # signal — MAGIC_WORDS remain the user-facing trigger phrases but they
+    # are terse and don't describe when the habit is appropriate. Fall back
+    # to MAGIC_WORDS so HABIT entries authored before PURPOSE existed keep
+    # working unchanged.
     habit_info = ""
     for habit_key, habit_val in agent.habit.items():
-        desc = ", ".join(habit_val.get("MAGIC_WORDS", []))
-        habit_info += f"- {habit_key}: {desc}\n"
+        _purpose = (habit_val.get("PURPOSE") or "").strip()
+        if _purpose:
+            habit_info += f"- {habit_key}: {_purpose}\n"
+        else:
+            desc = ", ".join(habit_val.get("MAGIC_WORDS", []))
+            habit_info += f"- {habit_key}: {desc}\n"
 
-    # Format the book list
+    # Format the book list. When a BOOK entry defines PURPOSE (short prose
+    # describing when to consult it), pass that to Thinking so RAG_NAME alone
+    # isn't the only judgement signal — otherwise fall back to the name only
+    # so BOOK entries authored before PURPOSE existed keep working unchanged.
     book_info = ""
     for book in agent.agent.get("BOOK", []):
-        book_info += f"- {book['RAG_NAME']}\n"
+        _purpose = (book.get("PURPOSE") or "").strip()
+        if _purpose:
+            book_info += f"- {book['RAG_NAME']}: {_purpose}\n"
+        else:
+            book_info += f"- {book['RAG_NAME']}\n"
 
     add_info = {
         "Situation": situation_prompt,
@@ -379,6 +395,23 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         elif situation_setting.strip():
             situation_prompt = f"\n【状況】\n{situation_setting}"
 
+    # Support-agent situation (Thinking / RAG Query Generator / Extract Date,
+    # ...). Falls back to the current real date when the parent's TIME is
+    # empty ("No Date"). Support agents need date awareness to judge
+    # freshness ("最近" / "今の") and generate meta-search date ranges even
+    # when the main-response persona intentionally omits date grounding.
+    _sup_sit = dict(situation or {})
+    if not _sup_sit.get("TIME"):
+        _sup_sit["TIME"] = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+    _sup_setting = _sup_sit.get("SITUATION", "")
+    _sup_setting = _sup_setting + "\n" if _sup_setting else ""
+    _sup_time = _sup_sit["TIME"]
+    try:
+        datetime.strptime(_sup_time, "%Y/%m/%d %H:%M:%S")
+        situation_prompt_support = f"\n【状況】\n{_sup_setting}現在は「{_sup_time}」です。"
+    except (ValueError, TypeError):
+        situation_prompt_support = f"\n【重要な状況設定】\n{_sup_setting}この会話では、現在の日時は「{_sup_time}」として設定されています。会話履歴やシステム上の実際の日時に関わらず、必ずこの設定に従ってください。実際の日時には一切言及しないでください。"
+
     # Read the conversation digest
     if cfg["memory_use"]:
         timestamp_log += "[05.Conversation-digest loading start]" + str(datetime.now()) + "<br>"
@@ -495,12 +528,12 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         _rag_query_hint = _thinking_result.get("rag_query_hint", "")
         future_intent = executor.submit(
             _build_intent_queries, service_info, user_info, session_id, session_name,
-            support_agent, _rag_input_text, [], situation_prompt, query_vec, cfg["RAG_query_gene"],
+            support_agent, _rag_input_text, [], situation_prompt_support, query_vec, cfg["RAG_query_gene"],
             _rag_query_hint, user_memory_context, cfg["memory_use"])
         # Kick off meta search in parallel
         future_meta = executor.submit(
             _build_meta_searches, service_info, user_info, session_id, session_name,
-            support_agent, _rag_input_text, [], situation_prompt, query_vec, cfg["meta_search"])
+            support_agent, _rag_input_text, [], situation_prompt_support, query_vec, cfg["meta_search"])
 
         memories_selected = future_memory.result() if future_memory else []
         intent_queries, intent_vecs, RAG_query_gene_log = future_intent.result()
@@ -771,7 +804,17 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                     session_id, session_name, citation_agent_file,
                     response, [], {"Sources": _ci_sources}
                 )
-                if _cited and len(_cited) >= max(0.5 * len(response), 50):
+                # Accept the injected output only when it actually inserted
+                # citation markers or a References section. Otherwise the LLM
+                # returned meta commentary ("no matches found, so I'm not
+                # citing") that would replace the real answer with an apology
+                # — even if the length passes the sanity check. Falling back
+                # to the original body is the safe move: the user asked for
+                # citations to be added, not for the response to be replaced
+                # with an explanation of why they couldn't be.
+                import re as _re_ci
+                _has_marker = bool(_cited and (_re_ci.search(r"\[\d+\]", _cited) or "## References" in _cited))
+                if _cited and _has_marker and len(_cited) >= max(0.5 * len(response), 50):
                     response = _cited
                     response_chat_dict["text"] = response
                     _lg_ci.getLogger(__name__).info(
@@ -781,8 +824,9 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                     )
                 else:
                     _lg_ci.getLogger(__name__).warning(
-                        f"[citation_inject] kept original (length sanity failed): "
-                        f"cited_len={len(_cited) if _cited else 0}, body_len={len(response)}"
+                        f"[citation_inject] kept original (no markers or length): "
+                        f"cited_len={len(_cited) if _cited else 0}, body_len={len(response)}, "
+                        f"has_marker={_has_marker}"
                     )
             except Exception as _ce:
                 import logging as _lg
@@ -1050,10 +1094,13 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 if _digest_dict:
                     _thinking_digest = _digest_dict["text"]
 
-            # Read the situation
-            _thinking_situation = ""
-            if in_situation:
-                _thinking_situation = in_situation.get("SITUATION", "") + " " + in_situation.get("TIME", "")
+            # Read the situation. Falls back to the current real date when
+            # the parent's TIME is empty ("No Date") so Thinking can still
+            # judge freshness signals ("最近", "今の", 年号を含むクエリ etc.)
+            # instead of asking the LLM to reason without a clock.
+            _sit = in_situation or {}
+            _thinking_time = _sit.get("TIME") or datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+            _thinking_situation = (_sit.get("SITUATION", "") + " " + _thinking_time).strip()
 
             thinking_result, thinking_log = _run_thinking_agent(
                 service_info, user_info, session_id, session_name,
