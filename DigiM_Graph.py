@@ -47,7 +47,7 @@ def resolve_graph_dir(data_name):
     """DATA_NAME -> graph folder. Prefer the rags master (data_type='graph'),
     fall back to RAG_FOLDER_GRAPH/<data_name>/."""
     try:
-        rags_file = _setting.get("RAG_MST_FILE", "sample_rags.json")
+        rags_file = os.getenv("RAG_MST_FILE") or _setting.get("RAG_MST_FILE", "sample_rags.json")
         rags = dmu.read_json_file(rags_file, mst_folder_path) or {}
         entry = rags.get(data_name) or {}
         if entry.get("data_type") == "graph" and entry.get("file_path"):
@@ -63,7 +63,7 @@ def get_graph_list():
     that no master entry already covers."""
     names, covered = [], set()
     try:
-        rags_file = _setting.get("RAG_MST_FILE", "sample_rags.json")
+        rags_file = os.getenv("RAG_MST_FILE") or _setting.get("RAG_MST_FILE", "sample_rags.json")
         rags = dmu.read_json_file(rags_file, mst_folder_path) or {}
         for k, v in rags.items():
             if v.get("data_type") == "graph" and v.get("active", "Y") == "Y":
@@ -96,6 +96,147 @@ def save_graph(graph_dir, graph):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(graph, f, ensure_ascii=False, indent=1)
     return path
+
+
+def save_graph_atomic(graph_dir, graph):
+    """Same as save_graph but writes to a temp file first and atomically
+    renames — protects against a crash mid-write leaving a truncated
+    graph.json on disk. Used by the Knowledge Explorer edit UI."""
+    os.makedirs(graph_dir, exist_ok=True)
+    path = str(Path(graph_dir) / "graph.json")
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(graph, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, path)
+    return path
+
+
+def delete_graph(graph_dir):
+    """Delete a graph's persisted state — removes `graph.json` only.
+    `mapping.json` / `dictionary.json` / `source/` CSVs are preserved so
+    the graph can be re-ingested from scratch via DigiM_GraphBuilder or
+    generate_rag(). Returns True if the file was removed."""
+    path = str(Path(graph_dir) / "graph.json")
+    if os.path.exists(path):
+        os.remove(path)
+        return True
+    return False
+
+
+def filter_active(graph):
+    """Return a shallow view of `graph` with nodes/edges marked
+    `active == "N"` removed. Missing "active" is treated as active ("Y"),
+    so pre-flag graphs work unchanged. Dangling edges (whose endpoints
+    got deactivated) are also dropped."""
+    _nodes = {nid: n for nid, n in (graph.get("nodes") or {}).items()
+              if str(n.get("active", "Y")).upper() != "N"}
+    _edges = [e for e in (graph.get("edges") or [])
+              if str(e.get("active", "Y")).upper() != "N"
+              and e.get("source") in _nodes
+              and e.get("target") in _nodes]
+    return {"nodes": _nodes, "edges": _edges}
+
+
+# --------------------------------------------------- CRUD (edit UI helpers) --
+def set_node_active(graph, node_id, active=True):
+    """Set/clear the logical-delete flag on a node."""
+    n = (graph.get("nodes") or {}).get(node_id)
+    if n is None:
+        return False
+    n["active"] = "Y" if active else "N"
+    return True
+
+
+def set_edge_active(graph, edge_index, active=True):
+    """Set/clear the logical-delete flag on an edge (by position)."""
+    edges = graph.get("edges") or []
+    if not (0 <= edge_index < len(edges)):
+        return False
+    edges[edge_index]["active"] = "Y" if active else "N"
+    return True
+
+
+def update_node(graph, node_id, *, name=None, node_type=None,
+                aliases=None, domains=None, active=None):
+    """Patch node fields in place. Name change is handled as a rename that
+    updates the node dict's `name` field only — the node ID (md5 of the
+    ORIGINAL canonical name) stays put so incident edges keep pointing at
+    it. Returns True on success, False if the id doesn't exist."""
+    n = (graph.get("nodes") or {}).get(node_id)
+    if n is None:
+        return False
+    if name is not None:
+        n["name"] = (name or "").strip()
+    if node_type is not None:
+        n["type"] = node_type
+    if aliases is not None:
+        n["aliases"] = list(aliases)
+    if domains is not None:
+        n["domains"] = list(domains)
+    if active is not None:
+        n["active"] = "Y" if active else "N"
+    return True
+
+
+def update_edge(graph, edge_index, *, relation=None, domains=None,
+                source=None, target=None, active=None):
+    """Patch edge fields in place. source / target take node ids."""
+    edges = graph.get("edges") or []
+    if not (0 <= edge_index < len(edges)):
+        return False
+    e = edges[edge_index]
+    if relation is not None:
+        e["relation"] = relation
+    if domains is not None:
+        e["domains"] = list(domains)
+    if source is not None:
+        e["source"] = source
+    if target is not None:
+        e["target"] = target
+    if active is not None:
+        e["active"] = "Y" if active else "N"
+    return True
+
+
+def add_node(graph, name, node_type="", aliases=None, domains=None,
+             active=True):
+    """Add a brand-new node keyed by md5(name) — like upsert_node but does
+    not merge with an existing entry (returns the existing node dict if
+    one already exists at that id)."""
+    name = (name or "").strip()
+    if not name:
+        return None
+    nid = node_id_for(name)
+    if nid in graph.setdefault("nodes", {}):
+        return graph["nodes"][nid]
+    graph["nodes"][nid] = {
+        "id": nid,
+        "name": name,
+        "type": node_type or "",
+        "aliases": list(aliases or []),
+        "domains": list(domains or []),
+        "props": {},
+        "active": "Y" if active else "N",
+    }
+    return graph["nodes"][nid]
+
+
+def add_edge(graph, src_id, dst_id, relation, domains=None, props=None,
+             create_date="", active=True):
+    """Add a brand-new edge (no dedup vs existing edges — the caller
+    decides whether duplicate triples are allowed)."""
+    if not (src_id in (graph.get("nodes") or {}) and dst_id in (graph.get("nodes") or {})):
+        return None
+    edge = {
+        "source": src_id, "target": dst_id, "relation": relation or "",
+        "domains": list(domains or []),
+        "props": props or {},
+        "source_ids": [],
+        "create_date": create_date or "",
+        "active": "Y" if active else "N",
+    }
+    graph.setdefault("edges", []).append(edge)
+    return edge
 
 
 def load_dictionary(graph_dir):
@@ -366,7 +507,12 @@ def build_graph(graph_dir, use_llm=False, embed=False, llm_agent_file="agent_67G
     if use_llm:
         import DigiM_Agent as dma
         def llm_extractor(prompt):
-            return dma.ext_generate_pureLLM(llm_agent_file, prompt)
+            # ext_generate_pureLLM returns (response, model_name, prompt_tokens,
+            # response_tokens); ingest_text_source expects the raw JSON string.
+            _ret = dma.ext_generate_pureLLM(llm_agent_file, prompt)
+            if isinstance(_ret, tuple) and _ret:
+                return _ret[0]
+            return _ret
 
     for source in mapping.get("SOURCES", []):
         lane = source.get("LANE", "STRUCTURED")
@@ -394,10 +540,17 @@ def _adjacency(graph):
     return adj
 
 
-def link_entities(query, graph, dictionary, query_vecs=None, top_k=4, sim_threshold=0.45):
+def link_entities(query, graph, dictionary, query_vecs=None, top_k=4,
+                    sim_threshold=0.45, trace=None):
     """Seed selection: lexical first (aliases + names as substrings of the
     query), then embedding similarity when node embeddings and query vectors
-    are both available."""
+    are both available.
+
+    If `trace` is passed (a mutable dict), the function records:
+      trace["matches_raw"]        : [{mention, mapped_to_name}] before alias resolution
+      trace["matches_normalized"] : [{node_id, node_name}] after alias resolution
+      trace["source"]             : "lexical" | "embedding"
+    Used by the seed-provenance display in Detail Information / Analytics."""
     seeds = {}
     mentions = dict(dictionary.get("aliases", {}))
     for n in graph["nodes"].values():
@@ -406,9 +559,18 @@ def link_entities(query, graph, dictionary, query_vecs=None, top_k=4, sim_thresh
             mentions.setdefault(a, n["name"])
     for mention, cname in mentions.items():
         if mention and mention in query:
-            nid = node_id_for(canonical_name(cname, dictionary))
+            cn = canonical_name(cname, dictionary)
+            nid = node_id_for(cn)
             if nid in graph["nodes"]:
-                seeds[nid] = max(seeds.get(nid, 0.0), 1.0)  # lexical hit = full confidence
+                _prev = seeds.get(nid, 0.0)
+                seeds[nid] = max(_prev, 1.0)
+                if trace is not None:
+                    trace.setdefault("matches_raw", []).append(
+                        {"mention": mention, "mapped_to_name": cn})
+                    if _prev == 0.0:
+                        trace.setdefault("matches_normalized", []).append(
+                            {"node_id": nid,
+                             "node_name": graph["nodes"][nid]["name"]})
 
     if query_vecs:
         scored = []
@@ -422,6 +584,28 @@ def link_entities(query, graph, dictionary, query_vecs=None, top_k=4, sim_thresh
         for best, nid in sorted(scored, reverse=True)[:top_k]:
             seeds[nid] = max(seeds.get(nid, 0.0), round(best, 3))
     return seeds  # {node_id: confidence}
+
+
+def link_entities_multi(queries, graph, dictionary, query_vecs=None,
+                          top_k=4, sim_threshold=0.45):
+    """Union `link_entities` results across multiple queries. Returns
+    (seeds_dict, seed_trace) where seed_trace lists per-query provenance
+    (raw substring match → normalized node) suitable for the Detail /
+    Analytics seed-provenance panels. queries may be a single string or
+    an iterable of strings."""
+    if isinstance(queries, str):
+        queries = [queries]
+    queries = [str(q) for q in (queries or []) if str(q).strip()]
+    seeds = {}
+    seed_trace = []
+    for q in queries:
+        trace = {"query": q, "matches_raw": [], "matches_normalized": []}
+        _s = link_entities(q, graph, dictionary, query_vecs=query_vecs,
+                             top_k=top_k, sim_threshold=sim_threshold, trace=trace)
+        for _nid, _conf in _s.items():
+            seeds[_nid] = max(seeds.get(_nid, 0.0), _conf)
+        seed_trace.append(trace)
+    return seeds, seed_trace
 
 
 def detect_domains(query, graph):
@@ -468,11 +652,19 @@ def _edge_score(edge, boost_domains, domain_bonus):
     return score
 
 
-def search_graph(query, graph_dir, policy, query_vecs=None, meta_dates=None):
+def search_graph(query, graph_dir, policy, query_vecs=None, meta_dates=None,
+                   queries=None):
     """Core retrieval: paths between seeds (protected) + hop-ascending
     neighborhoods, capped by EDGE_LIMIT / FANOUT_LIMIT.
-    Returns dict with seeds / paths / edges (selected) / domains."""
-    graph = load_graph(graph_dir)
+    Returns dict with seeds / paths / edges (selected) / domains / seed_trace.
+    Logically-deleted entries (active="N") are filtered out up-front.
+
+    When `queries` (list of str) is provided, seed detection runs on ALL
+    queries and the results are unioned — used when the caller has an
+    LLM-expanded / digest-augmented query alongside the raw user query.
+    Falls back to `[query]` when queries is omitted."""
+    raw = load_graph(graph_dir)
+    graph = filter_active(raw)
     dictionary = load_dictionary(graph_dir)
     adj = _adjacency(graph)
 
@@ -481,8 +673,11 @@ def search_graph(query, graph_dir, policy, query_vecs=None, meta_dates=None):
     fanout_limit = int(policy.get("FANOUT_LIMIT", 5))
     domain_bonus = float(policy.get("DOMAIN_BONUS", 1.3))
 
-    seeds = link_entities(query, graph, dictionary, query_vecs)
-    boost_domains = detect_domains(query, graph)
+    _all_queries = list(queries) if queries else [query]
+    seeds, seed_trace = link_entities_multi(_all_queries, graph, dictionary, query_vecs)
+    boost_domains = set()
+    for _q in _all_queries:
+        boost_domains |= detect_domains(_q, graph)
 
     selected = []          # [(edge_index, hop, kind)]
     selected_set = set()
@@ -507,10 +702,15 @@ def search_graph(query, graph_dir, policy, query_vecs=None, meta_dates=None):
         next_frontier = set()
         for nid in frontier:
             incident = adj.get(nid, [])
+            # Rank: highest edge_score first (domain-boosted); tie -> NEWEST
+            # create_date first (recent memos usually reflect the current
+            # question better than aged ones). Empty create_date is treated
+            # as very old ("") so it sorts last after real dates.
             ranked = sorted(
                 incident,
-                key=lambda ei: (-_edge_score(graph["edges"][ei], boost_domains, domain_bonus),
+                key=lambda ei: (_edge_score(graph["edges"][ei], boost_domains, domain_bonus),
                                 graph["edges"][ei].get("create_date", "")),
+                reverse=True,
             )[:fanout_limit]
             for ei in ranked:
                 e = graph["edges"][ei]
@@ -526,7 +726,8 @@ def search_graph(query, graph_dir, policy, query_vecs=None, meta_dates=None):
             break
 
     return {"graph": graph, "seeds": seeds, "paths": paths,
-            "selected": selected, "boost_domains": boost_domains}
+            "selected": selected, "boost_domains": boost_domains,
+            "seed_trace": seed_trace, "queries": _all_queries}
 
 
 # ----------------------------------------------------- context assembly ----
@@ -587,7 +788,7 @@ def link_output(text, graph, dictionary, min_mention_len=2):
     return {"nodes": node_counts, "edges": edge_hits}
 
 
-def analyze_graph_usage(query, response_text, rag, query_vecs=None):
+def analyze_graph_usage(query, response_text, rag, query_vecs=None, queries=None):
     """On-demand per-turn usage analysis for Knowledge Utility.
 
     Recomputes the (deterministic, lexical) retrieval for `query` and links
@@ -609,7 +810,8 @@ def analyze_graph_usage(query, response_text, rag, query_vecs=None):
     if not data_list:
         return None
     graph_dir = resolve_graph_dir(data_list[0]["DATA_NAME"])
-    result = search_graph(query, graph_dir, rag, query_vecs=query_vecs)
+    result = search_graph(query, graph_dir, rag, query_vecs=query_vecs,
+                           queries=queries)
     graph = result["graph"]
     dictionary = load_dictionary(graph_dir)
 
@@ -628,6 +830,12 @@ def analyze_graph_usage(query, response_text, rag, query_vecs=None):
         "graph": graph,
         "graph_dir": graph_dir,
         "seeds": list(result["seeds"].keys()),
+        "seed_names": [
+            graph["nodes"].get(nid, {}).get("name", nid)
+            for nid in result["seeds"].keys()
+        ],
+        "seed_trace": result.get("seed_trace", []),
+        "queries": result.get("queries", [query]),
         "paths": result["paths"],
         "retrieved_nodes": sorted(retrieved_nodes),
         "retrieved_edges": sorted(retrieved_edges),
@@ -642,7 +850,14 @@ def analyze_graph_usage(query, response_text, rag, query_vecs=None):
 def build_graph_context(query, rag, exec_info=None, query_vecs=None, meta_searches=None):
     """Entry point used by DigiM_Context.create_rag_context (RETRIEVER='Graph').
     Returns (rag_context, rag_selected) in the same shape the Vector /
-    PageIndex paths produce: context string + list of log-format strings."""
+    PageIndex paths produce: context string + list of log-format strings.
+
+    When `exec_info["_QUERIES"]` is a list of strings (see the multi-query
+    RAG generator path), seed detection runs on ALL queries and unions the
+    result. The full seed trace (pre/post alias mapping, per query) is
+    stashed back into `exec_info["_GRAPH_SEED_TRACES"]` (keyed by RAG_NAME)
+    so downstream Detail Information / Analytics can display seed
+    provenance without re-running the retrieval."""
     data_list = [d for d in rag.get("DATA", []) if d.get("DATA_TYPE") == "GRAPH"]
     if not data_list:
         return "", []
@@ -656,12 +871,30 @@ def build_graph_context(query, rag, exec_info=None, query_vecs=None, meta_search
         "'relation': '{relation}', 'text_short': '{text_short}'")
     props_limit = int(rag.get("PROPS_LIMIT", 5))
 
+    _exec = exec_info if isinstance(exec_info, dict) else {}
+    _multi_queries = _exec.get("_QUERIES") or [query]
+    if isinstance(_multi_queries, str):
+        _multi_queries = [_multi_queries]
+
     rag_context = ""
     rag_selected = []
 
     for rd in data_list:
         graph_dir = resolve_graph_dir(rd["DATA_NAME"])
-        result = search_graph(query, graph_dir, rag, query_vecs=query_vecs)
+        result = search_graph(query, graph_dir, rag, query_vecs=query_vecs,
+                                queries=_multi_queries)
+        # Stash seed trace for downstream Detail / Analytics rendering.
+        if isinstance(exec_info, dict):
+            _traces = exec_info.setdefault("_GRAPH_SEED_TRACES", {})
+            _traces[rag.get("RAG_NAME", "")] = {
+                "data_name": rd.get("DATA_NAME", ""),
+                "queries": _multi_queries,
+                "seed_trace": result.get("seed_trace", []),
+                "final_seed_names": [
+                    result["graph"]["nodes"].get(nid, {}).get("name", nid)
+                    for nid in (result.get("seeds") or {}).keys()
+                ],
+            }
         graph = result["graph"]
         if not result["selected"]:
             continue

@@ -873,6 +873,65 @@ From the WebUI sidebar **RAG Management -> Page Index Export**, you can download
 - ZIP structure: `{bucket}/{bucket}.xlsx` + `{bucket}/{id}.md`
 - Useful for an offline editing workflow: edit Excel locally -> re-extract under `user/common/csv/pageindex/{bucket}/` -> re-import
 
+#### Graph RAG (graph type)
+
+Build a **pure-structure knowledge graph** (Entity nodes + predicate edges only, no chunk bodies) under a dedicated folder (`user/common/rag/graph/{DATA_NAME}/graph.json`) and reference it from a KNOWLEDGE / BOOK entry that sets `RETRIEVER: "Graph"`. Body-text retrieval stays on the Vector RAG (ChromaDB) side placed **alongside** the graph — the two split roles cleanly.
+
+**rags.json example (Notion incremental build):**
+
+```json
+"DigiMATSU_Identity_Graph": {
+  "active": "Y",
+  "input": "notion",
+  "data_type": "graph",
+  "data_name": "DigiMATSU_Memo",
+  "bucket": "DigiMATSU_Identity_Graph",
+  "file_path": "user/common/rag/graph/digimatsu_identity/",
+  "extractor_agent": "agent_67GraphExtract.json",
+  "item_dict": {
+    "db": "DigiMATSU_Identity_Graph",
+    "title":       {"名前": "title"},
+    "create_date": {"タイムスタンプ": "date"},
+    "key_text":    [{"メモ": "rich_text"}],
+    "value_text":  {"メモ": "rich_text"},
+    "category":    {"カテゴリ": "select"},
+    "private":     {"プライベートChk": "chk"}
+  },
+  "chk_dict":      { "確定Chk": true },
+  "date_dict":     {},
+  "category_dict": { "RAGカテゴリ": "identity" },
+  "fin_flg":       {}
+}
+```
+
+| Field | Description |
+|------|------|
+| `data_type` | `graph`. `resolve_graph_dir()` on the retriever side reads this to locate the folder |
+| `file_path` | Graph folder (parent of `graph.json` / `mapping.json` / `dictionary.json` / `source/`) |
+| `extractor_agent` | Support agent used by Lane B (LLM extraction). Default: `agent_67GraphExtract.json` |
+| `chk_dict` | Notion pull filter. Do NOT share `RAGChk` with the sibling ChromaDB entry — whichever runs first flips it and starves the other. Use `確定Chk` only on the graph side, or add a separate Notion column (e.g. `GraphChk`) to fully isolate |
+| `fin_flg` | Notion-side completion flag write-back. Graph is idempotent via `graph.json.edge.source_ids` self-dedup, so `{}` is safe |
+
+**Step 1: Folder setup** — For Lane A (structured CSV), place source CSVs under `user/common/rag/graph/{DATA_NAME}/source/` and describe the column → entity/relation/prop mapping in `mapping.json`. For Notion-only, `source/` is unnecessary — the rags.json entry above plus `dictionary.json` (alias / seed / prop_schema) suffices. A ready-made sample lives at `user/common/rag/graph/sample/`.
+
+**Step 2: Initial build (CLI)** — for a first-time or large-scale build:
+
+```bash
+# Lane A only (no LLM required — deterministic from CSVs)
+python3 DigiM_GraphBuilder.py user/common/rag/graph/{DATA_NAME}
+
+# With Lane B (LLM extraction) + node embeddings
+python3 DigiM_GraphBuilder.py user/common/rag/graph/{DATA_NAME} --use-llm --embed
+```
+
+**Step 3: Incremental sync** — the sidebar **`Update RAG data`** button performs **incremental Notion → graph upsert** for `data_type: "graph"` + `input: "notion"` entries:
+- Each Notion page's `page_id` is compared against `graph.json`'s `edge.source_ids`
+- **Already-ingested pages skip LLM extraction** — only new ones are extracted
+- Results are appended via `upsert_node` / `upsert_edge` and saved with `save_graph_atomic`
+- If `fin_flg` is populated, the flag is written back to Notion too; otherwise the source-id dedup above is authoritative
+
+**Step 4: Deletion** — the sidebar **`Delete Graph DB`** multiselect + button removes only `graph.json` (mapping / dictionary / source are preserved for rebuild). Logical deletion (per-node/edge `active=N` flag) is available in the Knowledge Explorer's 概要・メンテ tab.
+
 ### Agent configuration
 
 Place agent definition JSON files under `user/common/agent/`. It is recommended to copy `agent_10Sample.json` and customize it.
@@ -1215,6 +1274,29 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/sample --use-llm --embed
 ```
 
 A complete sample (person/org/initiative master CSVs, insight columns, mapping/dictionary, prebuilt graph.json) ships under `user/common/rag/graph/sample/`.
+
+**Notion direct ingestion (incremental via `Update RAG data`):**
+
+Write a `rags.json` entry in the same shape as ChromaDB and the sidebar **`Update RAG data`** button syncs Notion → graph.json incrementally (no full LLM re-build).
+
+```json
+"DigiMATSU_Identity_Graph": {
+    "active": "Y",
+    "input": "notion",
+    "data_type": "graph",
+    "data_name": "DigiMATSU_Memo",
+    "file_path": "user/common/rag/graph/digimatsu_identity/",
+    "extractor_agent": "agent_67GraphExtract.json",
+    "item_dict": { ... Notion property → chunk field map ... },
+    "chk_dict": { "確定Chk": true },
+    "category_dict": { "RAGカテゴリ": "identity" },
+    "fin_flg": {}
+}
+```
+
+- **Dedup logic**: each page's `page_id` is checked against the existing `graph.json`'s `edge.source_ids` — **already-ingested pages skip LLM extraction**; only new pages go through `agent_67GraphExtract` (`extractor_agent` overridable), get upserted into the existing graph, and are saved via `save_graph_atomic`
+- **Sharing `RAGChk` with ChromaDB**: when the same Notion DB feeds both a ChromaDB entry and a Graph entry, using `fin_flg: {"RAGChk": true}` on both causes a sibling conflict (whichever runs first flips RAGChk and starves the other). Recommended: leave `fin_flg: {}` on the Graph side and rely on the source-id dedup above. If you want independent Notion-side flags, add a separate column (e.g. `GraphChk`) to Notion and point `chk_dict` / `fin_flg` at it
+- **Deletion**: the sidebar **`Delete Graph DB`** button removes only `graph.json` (`mapping.json` / `dictionary.json` / `source/` CSVs are preserved so re-ingestion can rebuild)
 
 #### AgentSearch / FunctionSearch (dynamic retrieval, KNOWLEDGE / BOOK)
 
@@ -1986,9 +2068,14 @@ The screen consists of four sections stacked vertically: **Overall -> Trend -> T
 
 ### Selecting a data source
 
-Switch between **Collection (VectorDB)** / **PageIndex** / **Graph** via radio button. The list of collections is filtered based on the KNOWLEDGE and BOOK settings of the selected agent. When PageIndex is selected, it becomes a dedicated screen for tree-structure display / page sensitivity analysis.
+Switch between **Collection (VectorDB)** / **Graph** / **PageIndex** via radio button. The list of collections is filtered based on the KNOWLEDGE and BOOK settings of the selected agent. When PageIndex is selected, it becomes a dedicated screen for tree-structure display / page sensitivity analysis.
 
-> **Graph (Graph Utility):** Shows the whole GraphRAG knowledge graph and overlays per-turn usage for a selected turn of the current session. **Retrieval view** = grey whole graph / blue = nodes & edges selected by this turn's retrieval / skyblue = query-linked seed nodes. **Generation view** = elements actually used in the AI output on a blue→skyblue gradient by mention frequency, and **red = present in the output but NOT retrieved this turn (coverage gap)** — a warning suggests revisiting HOPS / EDGE_LIMIT / seeding when red elements appear. Node and edge text tables (frequency / predicate match / also-retrieved) sit under the figure. The analysis is recomputed on demand from the session log's (query, response) pair — no runtime recording involved.
+> **Graph (knowledge-graph browser):** A 2-tab view of the graph's **static state**:
+>
+> - **概要・メンテ (Overview & Maintenance) tab**: totals, per-type / per-domain / hub / predicate distributions, **data-quality** checks (isolated nodes / missing type or domain / duplicate-name candidates / predicate variants), and **Node / Edge editing** via `st.data_editor` (inline edit of name / type / domains / aliases / **active** — the `active=Y/N` logical-delete flag), plus **Add-new node / Add-new edge** forms and a **Show deleted** toggle for restoring `active=N` rows. Edits are persisted atomically via `save_graph_atomic`; retrieval afterwards filters `active=N` out via `filter_active`
+> - **ナレッジグラフ (Knowledge Graph) tab**: node multiselect (empty = whole graph) + hops + label top-N hubs + color-by-type, wrapped in an `st.form` so the screen only re-renders on the **「検索」button** click (avoids expensive redraws on every widget change). The selected nodes' ego networks are unioned using BFS-traversal edges only (excludes induced back-edges — no "phantom" lines missing from the adjacency list); picked nodes get a skyblue ring highlight; **hovering a node** dims all edges except those incident to it (blue) and reveals its label. Legend is rendered as external HTML chips above the SVG
+>
+> Per-turn retrieval/generation overlays moved to the Chat sidebar's **Analytics Results - Knowledge Utility** button (see below).
 
 > **Persona filtering:** When a Persona is selected in the sidebar, that persona's `define_code` is used to narrow chunks according to the **per-DATA `FILTER` (mapping in `DEFINE_CODE.CODES`)** of each KNOWLEDGE entry (same logic as the runtime RAG path `_build_where_limitation`). When multiple personas are selected, results are the **union** (e.g., `user_name in [Reika, Mone]`). If DATA has no `FILTER` or no persona is selected, no narrowing is applied (all chunks).
 
@@ -2156,6 +2243,15 @@ Cumulative reference profile per KNOWLEDGE / BOOK / PageIndex entry:
 The Chat tab's **"Analytics Results - Knowledge Utility"** button also renders a **Page Tree** when the referenced RAGs include any PageIndex (referenced pages in blue with ref counts). Both surfaces share the same `_render_ape_pageindex_tree` helper.
 
 The Knowledge Utility scatter's **background dots** ("all chunks") are now scoped to the **persona-accessible subset** of the Chroma collection — the `where` filter is built from the persona's `define_code` at chat time so each persona sees its own knowledge space.
+
+**Additional GraphRAG per-turn analysis (when the turn's refs include Graph):** on button click, the button now inspects the turn's `knowledge_rag` refs for `'DB': 'Graph'` and, when present, renders the **two Graph views** alongside the Vector scatter inside the same expander:
+
+- **Retrieval view**: grey whole graph / blue = this turn's retrieved nodes & edges / skyblue = query-linked seeds
+- **Generation view**: elements actually mentioned in the response painted with a blue→skyblue gradient by mention frequency + **red = present in the output but NOT retrieved this turn** (coverage gap)
+- Below each figure: **unified node/edge table** with view flags (retrieved / generated), frequency, predicate-match, and unretrieved flags — red rows first
+- The analysis is `DigiM_Graph.analyze_graph_usage(query, response, rag)` — on-demand replay from the session log's (query, response), no runtime recording. `link_output` uses **exact-substring lexical matching** against node.name / node.aliases / dictionary.json aliases, so response wording variations (e.g. "松本" for a node named "松本敬史") need to be captured either in `dictionary.json` `aliases` or in the per-node `aliases` field (editable via the 概要・メンテ tab)
+
+**Ordered by the agent JSON's KNOWLEDGE array**: both Vector and Graph sections render in the order defined by the running agent's `KNOWLEDGE` (+ `BOOK`) list — not alphabetical.
 
 ---
 

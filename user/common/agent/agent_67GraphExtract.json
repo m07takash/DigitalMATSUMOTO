@@ -5,7 +5,7 @@
     "ACT": "知識グラフの三つ組・状態抽出器",
     "PERSONALITY": {
         "LANGUAGE": "日本語",
-        "SPEAKING_STYLE": "JSON"
+        "SPEAKING_STYLE": "No"
     },
     "ENGINE": {
         "LLM": {

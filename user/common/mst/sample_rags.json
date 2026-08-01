@@ -177,12 +177,5 @@
             "category": "カテゴリ",
             "body": "本文"
         }
-    },
-    "sample_governance": {
-        "active": "Y",
-        "input": "graph",
-        "data_type": "graph",
-        "file_path": "user/common/rag/graph/sample/",
-        "embedding_model": "text-embedding-3-large"
     }
 }

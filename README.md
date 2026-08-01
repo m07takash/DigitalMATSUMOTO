@@ -874,6 +874,75 @@ WebUIのサイドバー **RAG Management → Page Index Export** から、既存
 - ZIP内構造: `{bucket}/{bucket}.xlsx` + `{bucket}/{id}.md`
 - ローカルでExcel編集 → `user/common/csv/pageindex/{bucket}/` に展開し直して再インポート、というオフライン編集ワークフローに使える
 
+#### グラフRAG（graph型）
+
+エンティティ（実体）と述語付きエッジだけを持つ**純構造の知識グラフ**を専用フォルダ (`user/common/rag/graph/{DATA_NAME}/graph.json`) にビルドし、`RETRIEVER: "Graph"` を指定した KNOWLEDGE / BOOK から参照します。本文チャンクはグラフに持たず、Vector RAG (ChromaDB) を**併置**して役割分担する設計 (→ 詳細は [Graph型 KNOWLEDGE / BOOK](#graph型-knowledge--bookgraphrag検索) 章)。
+
+**rags.json での定義例（Notion 増分ビルド）：**
+
+同じ Notion DB を ChromaDB 側と graph 側の両方に接続する典型パターン。graph 側は **`data_type: "graph"`** と **`file_path`** (graph フォルダの絶対 or リポジトリ相対パス) が必須。
+
+```json
+"DigiMATSU_Identity_Graph": {
+  "active": "Y",
+  "input": "notion",
+  "data_type": "graph",
+  "data_name": "DigiMATSU_Memo",
+  "bucket": "DigiMATSU_Identity_Graph",
+  "file_path": "user/common/rag/graph/digimatsu_identity/",
+  "extractor_agent": "agent_67GraphExtract.json",
+  "item_dict": {
+    "db": "DigiMATSU_Identity_Graph",
+    "title":       {"名前": "title"},
+    "create_date": {"タイムスタンプ": "date"},
+    "key_text":    [{"メモ": "rich_text"}],
+    "value_text":  {"メモ": "rich_text"},
+    "category":    {"カテゴリ": "select"},
+    "private":     {"プライベートChk": "chk"}
+  },
+  "chk_dict":     { "確定Chk": true },
+  "date_dict":    {},
+  "category_dict":{ "RAGカテゴリ": "identity" },
+  "fin_flg":      {}
+}
+```
+
+| 項目 | 説明 |
+|------|------|
+| `data_type` | `graph` を指定。retriever 側は `resolve_graph_dir()` がここを見て graph フォルダを解決 |
+| `file_path` | graph フォルダ (`graph.json`/`mapping.json`/`dictionary.json`/`source/` の親) |
+| `extractor_agent` | Lane B (LLM 抽出) で使うサポートエージェント (既定: `agent_67GraphExtract.json`) |
+| `chk_dict` | Notion 側のプル条件。ChromaDB エントリと **RAGChk を共有しない** ため graph 側は `確定Chk` のみ、または Notion に別カラム (例: `GraphChk`) を作って分離 |
+| `fin_flg` | 完了フラグの Notion 側書き戻し。graph は `graph.json.edge.source_ids` を突合キーに **自己 dedup** するため空 `{}` でも冪等 |
+
+**Step 1: フォルダ準備**
+
+CSV バッチ (Lane A) を使う場合は `user/common/rag/graph/{DATA_NAME}/source/` に構造化 CSV を置き、`mapping.json` に列 → entity/relation/prop のマッピングを書きます。Notion 直接取り込みだけなら `source/` は不要 (上記 rags.json + `dictionary.json` (エイリアス正規化 + シード + prop_schema) を用意)。サンプル一式は `user/common/rag/graph/sample/` に同梱。
+
+**Step 2: 初回ビルド (CLI)**
+
+Notion 直接 or 大規模データからの初回ビルドはバッチ実行が推奨:
+
+```bash
+# Lane A のみ (LLM 不要、CSV から決定的に構築)
+python3 DigiM_GraphBuilder.py user/common/rag/graph/{DATA_NAME}
+
+# Lane B (LLM 抽出) 込み + ノード埋め込み生成
+python3 DigiM_GraphBuilder.py user/common/rag/graph/{DATA_NAME} --use-llm --embed
+```
+
+**Step 3: 以降の増分同期**
+
+サイドバーの **`Update RAG data`** ボタンで、`data_type: "graph"` + `input: "notion"` のエントリは Notion → graph への **増分 upsert** が実行されます:
+- 各 Notion ページの `page_id` を `graph.json` の `edge.source_ids` に既出かどうか照合
+- **既 ingested はスキップ** (LLM 呼び出しなし) → 新規ページのみ抽出
+- 抽出結果を既存 graph に `upsert_node` / `upsert_edge` で追記 → `save_graph_atomic` で原子的保存
+- `fin_flg` を指定していれば Notion 側にも書き戻し (省略時は上記 dedup に任せる)
+
+**Step 4: 削除**
+
+サイドバー **`Delete Graph DB`** multiselect + ボタンで `graph.json` のみ削除 (mapping/dictionary/source は残るのでリビルド可)。UI 上の論理削除（各ノード/エッジの `active=N` フラグ）は Knowledge Explorer の「概要・メンテ」タブから編集できます。
+
 ### エージェントの設定
 
 `user/common/agent/` 配下にエージェント定義JSONを配置します。`agent_10Sample.json` をコピーしてカスタマイズするのが推奨です。
@@ -1216,6 +1285,29 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/sample --use-llm --embed
 ```
 
 サンプル一式（人物/組織/取り組みマスタCSV・考察コラム・mapping/dictionary・ビルド済み graph.json）は `user/common/rag/graph/sample/` に同梱しています。
+
+**Notion 直接取り込み（`Update RAG data` の増分ビルド）：**
+
+`rags.json` エントリを ChromaDB と同じ shape で書けば、サイドバーの **`Update RAG data`** ボタンで Notion → graph.json を増分同期できます（毎回全 LLM 呼び出しの再ビルドを避けられます）。
+
+```json
+"DigiMATSU_Identity_Graph": {
+    "active": "Y",
+    "input": "notion",
+    "data_type": "graph",
+    "data_name": "DigiMATSU_Memo",
+    "file_path": "user/common/rag/graph/digimatsu_identity/",
+    "extractor_agent": "agent_67GraphExtract.json",
+    "item_dict": { ... Notion カラム → chunk フィールドのマップ ... },
+    "chk_dict": { "確定Chk": true },
+    "category_dict": { "RAGカテゴリ": "identity" },
+    "fin_flg": {}
+}
+```
+
+- **dedup ロジック**: 各ページの `page_id` が `graph.json` の `edge.source_ids` に既出なら **LLM 抽出をスキップ**、新規ページのみ `agent_67GraphExtract`（`extractor_agent` で上書き可）で triple 抽出 → 既存 graph に upsert → `save_graph_atomic` で原子的保存
+- **RAGChk との使い分け**: 同じ Notion DB を ChromaDB (`data_type: "chromadb"`) と graph (`data_type: "graph"`) 双方に接続する場合、`fin_flg: {"RAGChk": true}` を両方で使うと sibling 衝突するため、graph 側は `fin_flg: {}`（無効化）+ 上記 dedup に任せる構成を推奨。Notion 側に別カラム（例: `GraphChk`）を作れば `chk_dict` / `fin_flg` を独立させることも可
+- **削除**: サイドバーの **`Delete Graph DB`** ボタンで graph.json のみ削除（`mapping.json` / `dictionary.json` / `source/` CSV は残り、再ビルド可）
 
 #### AgentSearch / FunctionSearch（KNOWLEDGE / BOOK 共通の動的検索）
 
@@ -1987,9 +2079,14 @@ Knowledge Explorerは、RAGデータの分析画面です。サイドバーの�
 
 ### データソースの選択
 
-ラジオボタンで **Collection（VectorDB）** / **PageIndex** / **Graph** を切り替えます。コレクション一覧は、選択中のエージェントの KNOWLEDGE および BOOK 設定に基づいてフィルタリングされます。PageIndex 選択時はツリー構造表示・ページ感度分析の専用画面になります。
+ラジオボタンで **Collection（VectorDB）** / **Graph** / **PageIndex** を切り替えます。コレクション一覧は、選択中のエージェントの KNOWLEDGE および BOOK 設定に基づいてフィルタリングされます。PageIndex 選択時はツリー構造表示・ページ感度分析の専用画面になります。
 
-> **Graph（Graph Utility）：** GraphRAG の知識グラフ全体を表示し、現在セッションのターンを選んで利用状況をオーバーレイします。**検索ビュー**＝グレー全体 / ブルー＝今回抽出されたノード・エッジ / スカイブルー＝クエリのシードノード。**生成ビュー**＝出力に用いられた要素を言及頻度でブルー→スカイブルーのグラデーション表示、**赤＝出力に含まれるが今回の検索では選択されなかった要素（カバレッジギャップ）**。赤が出た場合は HOPS / EDGE_LIMIT / シード起点の見直し材料になる警告が表示されます。図の下にノード・エッジのテキスト一覧（頻度・述語一致・検索でも抽出）を併記。分析はセッションログの (クエリ, 応答) からオンデマンドに再計算されるため、実行時の記録は不要です。
+> **Graph（ナレッジグラフ ブラウザ）：** GraphRAG の知識グラフ自体の**静的な状態**を眺めるための 2 タブ構成:
+>
+> - **概要・メンテ タブ**: 総ノード/エッジ数・型別分布・ドメイン別分布・最ハブノード top10・述語頻度 top20 のメトリクス群 + **データ品質**（孤立ノード / 型/ドメイン未指定 / 重複名候補 / 述語バリアント）+ **ノード / エッジ 編集**（`st.data_editor` で名前・型・ドメイン・エイリアス・**有効**（`active=Y/N` の論理削除フラグ）をインライン編集、**新規ノード追加 / 新規エッジ追加** フォーム、**削除済みも表示** チェックで復活対応）。編集は `save_graph_atomic` で原子的に `graph.json` に保存され、以降の検索は `filter_active` を通して `active=N` を除外
+> - **ナレッジグラフ タブ**: ノード multiselect（複数選択可 / 空 = 全体）+ 周辺展開ホップ + ラベル上位 N ハブ + 型で色分け、を `st.form` にまとめて **「検索」ボタン押下時のみ** 画面更新（ウィジェット操作ごとの重い再描画を回避）。選択ノードのエゴネットワーク（BFS 走査エッジのみ = 「一覧に無い謎の線」を排除）を union で描画、選択ノードはスカイブルー環でハイライト、各ノードに `hover` すると隣接エッジがブルーで強調＆非ハブノードの label も表示。凡例は SVG の外に別 HTML チップで表示
+>
+> ターンごとの検索/生成オーバーレイ分析は Chat サイドバーの **Analytics Results - Knowledge Utility** 側に移動しました（下記）。
 
 > **ペルソナ絞り込み：** サイドバーで Persona を選択している場合、そのペルソナの `define_code` を使い、各 KNOWLEDGE の **DATA単位 `FILTER`（`DEFINE_CODE.CODES` のマッピング）** に従ってチャンクを絞り込みます（実RAGと同一ロジック `_build_where_limitation`）。複数ペルソナ選択時は **和集合**（例: `user_name in [Reika, Mone]`）。DATA に `FILTER` が無い／ペルソナ未選択の場合は絞り込みなし（全件）。
 
@@ -2157,6 +2254,15 @@ session_id でユニオン de-dup (PG 優先)。これにより、すでに arch
 Chat タブの「**Analytics Results - Knowledge Utility**」ボタンも、引用RAGに **PageIndex が含まれていれば Page Tree** をその位置で描画 (参照ページを青、件数表示)。同じツリー描画ヘルパー `_render_ape_pageindex_tree` を共有しています。
 
 Knowledge Utility 散布図の **「全体集合」** ドット (背景の灰色) は、そのターンを動かしたペルソナの `define_code` で **Chroma `where` フィルタを適用** した結果が対象。ペルソナごとに見えていた知識空間に絞り込まれた状態で、参照されたチャンクのハイライト位置を読めるようになっています。
+
+**Graph refs が含まれる場合の追加表示（ターン依存の GraphRAG 分析）：** ボタン押下時に、そのターンの `knowledge_rag` refs から `'DB': 'Graph'` の refs を検出すると、Vector 用の散布図に加えて **Graph 用の 2 ビュー**を同じ expander 内に描画:
+
+- **検索ビュー**: グレー全体グラフ / ブルー = 今回抽出されたノード・エッジ / スカイブルー = クエリで選ばれたシード
+- **生成ビュー**: 出力に用いられた要素をブルー→スカイブルーのグラデーション（言及頻度）で表示 + **赤 = 出力に含まれるが今回の検索では選択されなかった要素**（カバレッジギャップ）
+- 図の下に **統合ノード/エッジ一覧**（検索/生成のフラグ列、生成頻度、述語一致、未検索フラグを 1 テーブルに集約、赤が最上位）
+- 分析は `DigiM_Graph.analyze_graph_usage(query, response, rag)` によりセッションログの (クエリ, 応答) から**オンデマンド再計算** — 実行時の記録は不要。link_output は node.name / node.aliases / dictionary.json aliases を **完全一致サブストリング**で拾う軽量 lexical マッチのため、応答の表記揺れ（例: 「松本」→ ノード名「松本敬史」）を拾うには `dictionary.json` の `aliases` または各ノードの `aliases` フィールド（概要・メンテ タブの編集で追加可）を充実させます
+
+**エージェント JSON の KNOWLEDGE 定義順で表示**: Vector / Graph の両セクションとも、そのターンを動かしたエージェントの `KNOWLEDGE` 配列（+ `BOOK`）の並び順でレンダリングされます（アルファベット順ではなく）。
 
 ---
 
