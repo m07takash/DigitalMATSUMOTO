@@ -911,7 +911,7 @@ def initialize_session_states():
     if 'time_setting' not in st.session_state:
         st.session_state.time_setting = now_time.strftime("%Y/%m/%d %H:%M:%S")
     if 'time_mode' not in st.session_state:
-        st.session_state.time_mode = "No Date"
+        st.session_state.time_mode = "Real Date"
     if 'situation_setting' not in st.session_state:
         st.session_state.situation_setting = ""
     if 'seq_memory' not in st.session_state:
