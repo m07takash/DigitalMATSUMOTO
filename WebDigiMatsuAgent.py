@@ -1916,6 +1916,94 @@ def _graph_utility_pane(graph_names, agent_graph_rags):
                     else:
                         st.error("追加に失敗しました (source / target のノードが見つかりません)")
 
+        # ---- Excel 一括更新 (全件エクスポート → 編集 → 全件インポート) ----
+        # 全件ダウンロード / アップロードによる CRUD を実現。編集不能な列
+        # (id, 次数など) は編集後の差分計算で無視される。アップロードした
+        # xlsx が現状の graph.json より少ないノード/エッジを持っていた場合、
+        # 「Excel に出てこない = 削除希望」とみなして論理削除 (active=N)。
+        with st.expander("Excel 一括更新 (エクスポート / インポート)", expanded=False):
+            st.caption(
+                "全件ダウンロード → 手元で編集 → 全件アップロード の運用。"
+                " 空 `id` 行 = 新規作成 / `active=N` = 論理削除 /"
+                " Excel から消えた行 = 論理削除。"
+            )
+            import io as _io_xl
+            _buf = _io_xl.BytesIO()
+            # Write to a real temp file first because openpyxl can't stream
+            # to BytesIO cleanly under all versions; then read the bytes back.
+            import tempfile as _tf_xl, os as _os_xl
+            _tmp_path = _os_xl.path.join(_tf_xl.gettempdir(), f"{_gname}_graph_export.xlsx")
+            try:
+                dmg_graph.export_graph_to_xlsx(_graph_raw, _tmp_path)
+                with open(_tmp_path, "rb") as _fh_xl:
+                    _buf.write(_fh_xl.read())
+                _buf.seek(0)
+                _dl_ok = True
+            except Exception as _e_dl:
+                st.warning(f"エクスポート準備に失敗: {_e_dl}")
+                _dl_ok = False
+            if _dl_ok:
+                from datetime import datetime as _dt_xl
+                _ts = _dt_xl.now().strftime("%Y%m%d_%H%M%S")
+                st.download_button(
+                    "📥 全件ダウンロード (.xlsx)",
+                    data=_buf.getvalue(),
+                    file_name=f"{_gname}_graph_{_ts}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"gs_xlsx_dl_{_gname}",
+                )
+            st.markdown("---")
+            _uploaded = st.file_uploader(
+                "編集済み .xlsx を選択",
+                type=["xlsx"], key=f"gs_xlsx_up_{_gname}",
+                accept_multiple_files=False,
+            )
+            if _uploaded is not None:
+                # Save the uploaded bytes to a temp file so compute_plan can open
+                _upload_path = _os_xl.path.join(_tf_xl.gettempdir(),
+                                                  f"{_gname}_graph_import.xlsx")
+                with open(_upload_path, "wb") as _fh_up:
+                    _fh_up.write(_uploaded.getvalue())
+                try:
+                    _plan = dmg_graph.compute_graph_import_plan(_graph_raw, _upload_path)
+                except Exception as _e_pl:
+                    st.error(f"インポート計画の計算に失敗: {_e_pl}")
+                    _plan = None
+                if _plan:
+                    _nc = len(_plan["nodes"]["create"])
+                    _nu = len(_plan["nodes"]["update"])
+                    _nd = len(_plan["nodes"]["delete"])
+                    _ec = len(_plan["edges"]["create"])
+                    _eu = len(_plan["edges"]["update"])
+                    _ed = len(_plan["edges"]["delete"])
+                    st.markdown(
+                        f"**差分プレビュー** — "
+                        f"ノード: 新規 {_nc} / 更新 {_nu} / 削除 {_nd}　　"
+                        f"エッジ: 新規 {_ec} / 更新 {_eu} / 削除 {_ed}"
+                    )
+                    if _plan.get("warnings"):
+                        with st.expander(f"警告 ({len(_plan['warnings'])})", expanded=False):
+                            for _w in _plan["warnings"]:
+                                st.caption(_w)
+                    _total = _nc + _nu + _nd + _ec + _eu + _ed
+                    if _total == 0:
+                        st.info("差分はありません。適用不要です。")
+                    else:
+                        if st.button("適用 (graph.json に保存)",
+                                       key=f"gs_xlsx_apply_{_gname}",
+                                       type="primary"):
+                            _counts = dmg_graph.apply_graph_import_plan(_graph_raw, _plan)
+                            dmg_graph.save_graph_atomic(_gdir, _graph_raw)
+                            st.success(
+                                f"適用完了 — ノード: 新規 {_counts['nodes_created']}"
+                                f" / 更新 {_counts['nodes_updated']}"
+                                f" / 削除 {_counts['nodes_deleted']}　　"
+                                f"エッジ: 新規 {_counts['edges_created']}"
+                                f" / 更新 {_counts['edges_updated']}"
+                                f" / 削除 {_counts['edges_deleted']}"
+                            )
+                            st.rerun()
+
     # ---------------------------- Tab 2: ナレッジグラフ -----------------------
     with _tab_full:
         # Filter widgets are wrapped in an st.form so a widget change on its
