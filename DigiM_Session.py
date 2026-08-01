@@ -296,11 +296,29 @@ def archive_old_sessions(days: int = None) -> dict:
 
     ZIP path: archive_folder / sessions_archive_YYYYMMDD_HHMMSS.zip
     Returns: {"zip_path": str, "archived": [folder_name,...], "skipped": [folder_name,...]}
+
+    Age is measured from the newest of `chat_memory.json` / `status.yaml`
+    INSIDE the session folder — not the folder's own mtime — because bulk
+    filesystem operations (git checkout, chmod, rsync) touch the folder
+    mtime while leaving the session's real activity timestamp intact. If
+    neither key file exists (broken/empty session), falls back to folder
+    mtime as a safe last resort.
     """
     now = datetime.now(tz=timezone.utc)
     threshold_days = days if days is not None else archive_days
     archived = []
     skipped = []
+
+    def _session_activity_mtime(folder_path):
+        """Best-effort 'last active' timestamp for a session folder."""
+        for _leaf in ("chat_memory.json", "status.yaml"):
+            _p = os.path.join(folder_path, _leaf)
+            try:
+                if os.path.isfile(_p):
+                    return os.path.getmtime(_p)
+            except OSError:
+                continue
+        return os.path.getmtime(folder_path)  # fallback
 
     # Collect folders to compress
     target_folders = []
@@ -310,8 +328,9 @@ def archive_old_sessions(days: int = None) -> dict:
         if not entry.name.startswith(session_folder_prefix):
             continue
         try:
-            mtime = datetime.fromtimestamp(entry.stat().st_mtime, tz=timezone.utc)
-            elapsed_days = (now - mtime).days
+            _mt = datetime.fromtimestamp(
+                _session_activity_mtime(entry.path), tz=timezone.utc)
+            elapsed_days = (now - _mt).days
             if elapsed_days >= threshold_days:
                 target_folders.append((entry.name, entry.path))
             else:
@@ -1144,6 +1163,36 @@ class DigiMSession:
                     category = ref_dict.get("category", "")
                     summary = ref_dict.get("summary", "")
                     chat_detail_info += f"[{page_id}] {title}（{category}）\n  {summary}\n"
+
+            # [Seed for Graph] — per-RAG_NAME provenance of graph-search
+            # seeds: the list of queries fed to entity linking, the raw
+            # substring matches (mention → node name via aliases), and the
+            # final unioned seed set. Only emitted when a Graph retriever
+            # produced traces this turn.
+            _gseed = ((chat_history_dict_seq["response"] or {}).get("reference") or {}).get("graph_seed_traces") or {}
+            if _gseed:
+                chat_detail_info += "\n[Seed for Graph]\n"
+                for _rag_name, _info in _gseed.items():
+                    chat_detail_info += f"■ {_rag_name}  (graph={_info.get('data_name','')})\n"
+                    for _tr in (_info.get("seed_trace") or []):
+                        _q = str(_tr.get("query", "")).replace("\n", " ")
+                        _raw = _tr.get("matches_raw") or []
+                        chat_detail_info += f"  Query: {_q}\n"
+                        if _raw:
+                            for _m in _raw:
+                                _mention = _m.get("mention", "")
+                                _mapped = _m.get("mapped_to_name", "")
+                                if _mention == _mapped:
+                                    chat_detail_info += f"    - {_mention}  (直接一致)\n"
+                                else:
+                                    chat_detail_info += f"    - {_mention}  →  {_mapped}  (辞書変換)\n"
+                        else:
+                            chat_detail_info += "    (該当なし)\n"
+                    _final = _info.get("final_seed_names") or []
+                    chat_detail_info += (
+                        f"  ⇒ 最終シード ({len(_final)}件): "
+                        + (", ".join(_final) if _final else "(なし)") + "\n"
+                    )
 
             chat_detail_info += "\n[RAG context]\n["
             for rag_set_dict in chat_history_dict_seq["response"]["reference"]["knowledge_rag"]:

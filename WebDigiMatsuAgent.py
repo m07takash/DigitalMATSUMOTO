@@ -1578,91 +1578,445 @@ def _explanation_block(state_base, template_name, fallback_agent, ctx_builder, l
 
 
 def _graph_utility_pane(graph_names, agent_graph_rags):
-    """Graph view inside Knowledge Explorer (Knowledge Utility for GraphRAG).
-
-    Whole-graph SVG with per-turn usage overlays, computed on demand from the
-    current session's (query, response) pairs — no runtime recording needed.
-      検索ビュー: grey graph / blue retrieved / skyblue query seeds
-      生成ビュー: blue→skyblue gradient by output-mention frequency /
-                  red = in the output but NOT retrieved (coverage gap)
-    """
+    """Graph view inside Knowledge Explorer — pure "graph state" browser
+    (not per-turn). 5 tabs:
+      1. 概要        : total counts / type & domain distribution / hubs / predicates
+      2. 全体図      : whole-graph SVG (type-color option, hub labeling)
+      3. フィルタ表   : node / edge tables with type / domain / substring filters
+      4. ノード探索   : select an entity → ego-network SVG + full props
+      5. データ品質   : isolated / missing type or domain / duplicate-name / predicate variants
+    Per-turn retrieval + generation views live under the Chat sidebar's
+    "Analytics Results - Knowledge Utility" button (Graph auto-detected)."""
     import DigiM_Graph as dmg_graph
     import DigiM_GraphUtility as dgu
 
     _gname = st.selectbox("Graph:", graph_names, key="rag_graph_select")
 
-    # Retrieval policy: prefer the agent's own KNOWLEDGE/BOOK entry for this
-    # graph (HOPS / EDGE_LIMIT / ... live there); fall back to defaults.
     _rag_entry = next((r for r in agent_graph_rags
                        if any(d.get("DATA_NAME") == _gname for d in r.get("DATA", []))), None)
-    if _rag_entry is None:
-        _rag_entry = {"RAG_NAME": _gname, "RETRIEVER": "Graph",
-                      "DATA": [{"DATA_TYPE": "GRAPH", "DATA_NAME": _gname}],
-                      "HOPS": 2, "EDGE_LIMIT": 30, "FANOUT_LIMIT": 5, "DOMAIN_BONUS": 1.3}
 
     _gdir = dmg_graph.resolve_graph_dir(_gname)
-    _graph = dmg_graph.load_graph(_gdir)
-    if not _graph["nodes"]:
+    # Two views on the same graph.json:
+    #   _graph_raw = complete file, includes logically-deleted entries; used
+    #                by the edit UI so operators can toggle active back on.
+    #   _graph     = active-only view; used by stats / rendering / overview.
+    _graph_raw = dmg_graph.load_graph(_gdir)
+    if not _graph_raw["nodes"]:
         st.info(f"グラフが空です。先に取込バッチを実行してください: python3 DigiM_GraphBuilder.py {_gdir}")
         return
-    st.caption(f"ノード: {len(_graph['nodes'])} / エッジ: {len(_graph['edges'])} / "
-               f"HOPS={_rag_entry.get('HOPS', 2)} EDGE_LIMIT={_rag_entry.get('EDGE_LIMIT', 30)} "
-               f"FANOUT_LIMIT={_rag_entry.get('FANOUT_LIMIT', 5)}")
+    _graph = dmg_graph.filter_active(_graph_raw)
+    _dic = dmg_graph.load_dictionary(_gdir)
+    _stats = dgu.graph_overview_stats(_graph)
+    _t = _stats["totals"]
+    st.caption(f"📁 `{_gdir}` — ノード:{_t['ノード']} / エッジ:{_t['エッジ']} / "
+               f"型 種類:{_t['型 種類']} / ドメイン 種類:{_t['ドメイン 種類']} / "
+               f"述語 種類:{_t['述語 種類']} / 平均次数:{_t['平均次数']} / 孤立:{_t['孤立ノード']}")
 
-    # Collect analyzable turns (query + response) from the current session.
-    _hist = {}
-    if st.session_state.get("session"):
-        _hist = st.session_state.session.chat_history_active_dict or {}
-    _turns = []
-    for _seq in sorted([k for k in _hist if str(k).isdigit()], key=int):
-        _blk = _hist[_seq]
-        for _ss in sorted([k for k in _blk if str(k).isdigit()], key=int):
-            _v2 = _blk[_ss]
-            try:
-                _q = _v2["prompt"]["query"]["input"]
-                _r = (_v2.get("response") or {}).get("text", "")
-            except (KeyError, TypeError):
+    _tab_ov, _tab_full = st.tabs(["概要・メンテ", "ナレッジグラフ"])
+
+    # ------------------------------- Tab 1: 概要 ------------------------------
+    with _tab_ov:
+        _kc = st.columns(4)
+        _kc[0].metric("ノード", _t["ノード"])
+        _kc[1].metric("エッジ", _t["エッジ"])
+        _kc[2].metric("孤立ノード", _t["孤立ノード"])
+        _kc[3].metric("平均次数", _t["平均次数"])
+        _kc2 = st.columns(3)
+        _kc2[0].metric("型 種類", _t["型 種類"])
+        _kc2[1].metric("ドメイン 種類", _t["ドメイン 種類"])
+        _kc2[2].metric("述語 種類", _t["述語 種類"])
+        _dc1, _dc2 = st.columns(2)
+        with _dc1:
+            st.markdown("**型別分布**")
+            st.dataframe(pd.DataFrame(_stats["types"]), hide_index=True, use_container_width=True)
+        with _dc2:
+            st.markdown("**ドメイン別分布**  <sub>ノード + エッジ合算</sub>", unsafe_allow_html=True)
+            st.dataframe(pd.DataFrame(_stats["domains"]), hide_index=True, use_container_width=True)
+        _dc3, _dc4 = st.columns(2)
+        with _dc3:
+            st.markdown("**最ハブノード top10** <sub>次数降順</sub>", unsafe_allow_html=True)
+            st.dataframe(pd.DataFrame(_stats["hubs"]), hide_index=True, use_container_width=True)
+        with _dc4:
+            st.markdown("**述語頻度 top20**")
+            st.dataframe(pd.DataFrame(_stats["predicates"]), hide_index=True, use_container_width=True)
+        # --- Data quality (folded expanders under Overview) ---
+        st.markdown("---")
+        st.markdown("### データ品質")
+        _qr = dgu.graph_quality_report(_graph, _dic)
+        _kq = st.columns(4)
+        _kq[0].metric("孤立ノード", len(_qr["isolated_nodes"]))
+        _kq[1].metric("型 未指定", len(_qr["missing_type"]))
+        _kq[2].metric("ドメイン 未指定", len(_qr["missing_domain"]))
+        _kq[3].metric("述語バリアント", len(_qr["predicate_variants"]))
+        with st.expander(f"孤立ノード ({len(_qr['isolated_nodes'])})"):
+            if _qr["isolated_nodes"]:
+                st.dataframe(pd.DataFrame(_qr["isolated_nodes"]), hide_index=True, use_container_width=True)
+            else:
+                st.caption("_(該当なし)_")
+        with st.expander(f"型が未指定 ({len(_qr['missing_type'])})"):
+            if _qr["missing_type"]:
+                st.dataframe(pd.DataFrame(_qr["missing_type"]), hide_index=True, use_container_width=True)
+            else:
+                st.caption("_(該当なし)_")
+        with st.expander(f"ドメインが未指定 ({len(_qr['missing_domain'])})"):
+            if _qr["missing_domain"]:
+                st.dataframe(pd.DataFrame(_qr["missing_domain"]), hide_index=True, use_container_width=True)
+            else:
+                st.caption("_(該当なし)_")
+        with st.expander(f"重複名 候補 ({len(_qr['dup_name_candidates'])}) — alias 化候補"):
+            if _qr["dup_name_candidates"]:
+                st.dataframe(pd.DataFrame(_qr["dup_name_candidates"]), hide_index=True, use_container_width=True)
+            else:
+                st.caption("_(該当なし)_")
+        with st.expander(f"述語バリアント ({len(_qr['predicate_variants'])}) — 正規化候補"):
+            if _qr["predicate_variants"]:
+                st.dataframe(pd.DataFrame(_qr["predicate_variants"]), hide_index=True, use_container_width=True)
+            else:
+                st.caption("_(該当なし)_")
+
+        # --- ノード / エッジ 編集 (フィルタ表を data_editor 化) ---
+        # 論理削除フラグ (active=Y/N) を切り替えるチェックボックス列 + 名前・型・
+        # ドメイン・エイリアスをインライン編集。「変更を適用」で graph.json に
+        # 原子的に保存。retrieval / rendering は保存直後の filter_active で
+        # 反映される (Streamlit rerun で再読み込み)。
+        st.markdown("---")
+        st.markdown("### ノード / エッジ 編集")
+        _show_deleted = st.checkbox(
+            "削除済み (active=N) も表示", value=False, key=f"gs_showdel_{_gname}",
+        )
+        from collections import Counter as _Cnt
+        _deg_all = _Cnt()
+        for _e in _graph_raw["edges"]:
+            _deg_all[_e["source"]] += 1
+            _deg_all[_e["target"]] += 1
+        _all_types = sorted({(n.get("type") or "") for n in _graph_raw["nodes"].values()})
+        _all_domains = sorted({d for n in _graph_raw["nodes"].values() for d in (n.get("domains") or [])}
+                                | {d for e in _graph_raw["edges"] for d in (e.get("domains") or [])})
+        _all_preds = sorted({e.get("relation", "") for e in _graph_raw["edges"]})
+
+        # ---- ノード表 (edit) ----
+        st.markdown("#### ノード")
+        _fc1, _fc2, _fc3 = st.columns(3)
+        _f_type = _fc1.multiselect("型:", _all_types, default=[], key=f"gs_ft_{_gname}")
+        _f_dom  = _fc2.multiselect("ドメイン:", _all_domains, default=[], key=f"gs_fd_{_gname}")
+        _f_sub  = _fc3.text_input("名前/エイリアス 部分一致:", "", key=f"gs_fs_{_gname}")
+
+        _rows_n, _orig_n = [], []  # keep parallel original snapshot for diff
+        for _nid, _n in _graph_raw["nodes"].items():
+            _active = str(_n.get("active", "Y")).upper() != "N"
+            if not _show_deleted and not _active:
                 continue
-            if _q and _r:
-                _turns.append((f"{_seq}-{_ss}: {_q[:40]}", _q, _r))
+            _typ = _n.get("type") or ""
+            _doms = _n.get("domains") or []
+            _name = _n.get("name") or ""
+            _aliases = _n.get("aliases") or []
+            if _f_type and _typ not in _f_type: continue
+            if _f_dom and not (set(_doms) & set(_f_dom)): continue
+            if _f_sub:
+                _needle = _f_sub.strip()
+                if _needle and _needle not in _name and not any(_needle in _a for _a in _aliases):
+                    continue
+            _row = {
+                "エンティティ": _name,
+                "型": _typ,
+                "ドメイン": " / ".join(_doms),
+                "エイリアス": " / ".join(_aliases),
+                "有効": _active,
+                "次数": _deg_all.get(_nid, 0),
+            }
+            _rows_n.append(_row)
+            _orig_n.append((_nid, dict(_row)))
+        st.caption(f"表示中 {len(_rows_n)} / 全 {len(_graph_raw['nodes'])} ノード (削除済みを含む)")
+        _edited_n_df = st.data_editor(
+            pd.DataFrame(_rows_n) if _rows_n else pd.DataFrame(
+                columns=["エンティティ", "型", "ドメイン", "エイリアス", "有効", "次数"]),
+            key=f"gs_edit_nodes_{_gname}",
+            column_config={
+                "有効": st.column_config.CheckboxColumn(default=True),
+                "次数": st.column_config.NumberColumn(disabled=True),
+            },
+            disabled=["次数"],
+            hide_index=True,
+            use_container_width=True,
+            num_rows="fixed",
+        )
+        if st.button("ノード変更を保存", key=f"gs_save_nodes_{_gname}",
+                       disabled=not _rows_n):
+            _edited_records = _edited_n_df.to_dict("records") if hasattr(_edited_n_df, "to_dict") else list(_edited_n_df)
+            _n_applied = 0
+            for (_nid, _orig_row), _edited in zip(_orig_n, _edited_records):
+                # Compare after normalizing domains/aliases (str -> list)
+                _new_doms = [d.strip() for d in str(_edited.get("ドメイン", "")).split("/") if d.strip()]
+                _new_alis = [a.strip() for a in str(_edited.get("エイリアス", "")).split("/") if a.strip()]
+                _new_name = str(_edited.get("エンティティ", "")).strip()
+                _new_type = str(_edited.get("型", ""))
+                _new_active = bool(_edited.get("有効", True))
+                _orig_doms = [d.strip() for d in str(_orig_row.get("ドメイン", "")).split("/") if d.strip()]
+                _orig_alis = [a.strip() for a in str(_orig_row.get("エイリアス", "")).split("/") if a.strip()]
+                if (_new_name != _orig_row["エンティティ"]
+                        or _new_type != _orig_row["型"]
+                        or _new_doms != _orig_doms
+                        or _new_alis != _orig_alis
+                        or _new_active != _orig_row["有効"]):
+                    dmg_graph.update_node(
+                        _graph_raw, _nid,
+                        name=_new_name, node_type=_new_type,
+                        aliases=_new_alis, domains=_new_doms,
+                        active=_new_active,
+                    )
+                    _n_applied += 1
+            if _n_applied:
+                dmg_graph.save_graph_atomic(_gdir, _graph_raw)
+                st.success(f"{_n_applied} 件のノードを更新しました。")
+                st.rerun()
+            else:
+                st.caption("変更なし")
 
-    if not _turns:
-        st.info("現在のセッションに分析対象の会話がありません。全体グラフのみ表示します。")
-        _usage = {"graph": _graph, "seeds": [], "retrieved_nodes": [], "retrieved_edges": [],
-                  "output_nodes": {}, "output_edges": [], "missed_nodes": [], "missed_edges": []}
-        st.markdown(dgu.render_usage_svg(_usage, view="retrieval"), unsafe_allow_html=True)
-        return
+        # ---- エッジ表 (edit) ----
+        st.markdown("#### エッジ")
+        _ec1, _ec2, _ec3 = st.columns(3)
+        _e_pred = _ec1.multiselect("述語:", _all_preds, default=[], key=f"gs_ep_{_gname}")
+        _e_dom = _ec2.multiselect("ドメイン:", _all_domains, default=[], key=f"gs_ed_{_gname}")
+        _e_ent = _ec3.text_input("source/target 部分一致:", "", key=f"gs_es_{_gname}")
+        _rows_e, _orig_e = [], []
+        for _ei, _e in enumerate(_graph_raw["edges"]):
+            _e_active = str(_e.get("active", "Y")).upper() != "N"
+            if not _show_deleted and not _e_active:
+                continue
+            _pred = _e.get("relation") or ""
+            _doms = _e.get("domains") or []
+            _sname = (_graph_raw["nodes"].get(_e["source"]) or {}).get("name", "")
+            _tname = (_graph_raw["nodes"].get(_e["target"]) or {}).get("name", "")
+            if _e_pred and _pred not in _e_pred: continue
+            if _e_dom and not (set(_doms) & set(_e_dom)): continue
+            if _e_ent:
+                _nn = _e_ent.strip()
+                if _nn and _nn not in _sname and _nn not in _tname:
+                    continue
+            _row = {
+                "source": _sname,
+                "述語": _pred,
+                "target": _tname,
+                "ドメイン": " / ".join(_doms),
+                "有効": _e_active,
+                "create_date": _e.get("create_date", ""),
+            }
+            _rows_e.append(_row)
+            _orig_e.append((_ei, dict(_row)))
+        st.caption(f"表示中 {len(_rows_e)} / 全 {len(_graph_raw['edges'])} エッジ")
+        _edited_e_df = st.data_editor(
+            pd.DataFrame(_rows_e) if _rows_e else pd.DataFrame(
+                columns=["source", "述語", "target", "ドメイン", "有効", "create_date"]),
+            key=f"gs_edit_edges_{_gname}",
+            column_config={
+                "source": st.column_config.TextColumn(disabled=True),
+                "target": st.column_config.TextColumn(disabled=True),
+                "create_date": st.column_config.TextColumn(disabled=True),
+                "有効": st.column_config.CheckboxColumn(default=True),
+            },
+            disabled=["source", "target", "create_date"],
+            hide_index=True,
+            use_container_width=True,
+            num_rows="fixed",
+        )
+        if st.button("エッジ変更を保存", key=f"gs_save_edges_{_gname}",
+                       disabled=not _rows_e):
+            _edited_e_records = _edited_e_df.to_dict("records") if hasattr(_edited_e_df, "to_dict") else list(_edited_e_df)
+            _e_applied = 0
+            for (_ei, _orig_row), _edited in zip(_orig_e, _edited_e_records):
+                _new_pred = str(_edited.get("述語", ""))
+                _new_doms = [d.strip() for d in str(_edited.get("ドメイン", "")).split("/") if d.strip()]
+                _orig_doms = [d.strip() for d in str(_orig_row.get("ドメイン", "")).split("/") if d.strip()]
+                _new_active = bool(_edited.get("有効", True))
+                if (_new_pred != _orig_row["述語"]
+                        or _new_doms != _orig_doms
+                        or _new_active != _orig_row["有効"]):
+                    dmg_graph.update_edge(
+                        _graph_raw, _ei,
+                        relation=_new_pred, domains=_new_doms,
+                        active=_new_active,
+                    )
+                    _e_applied += 1
+            if _e_applied:
+                dmg_graph.save_graph_atomic(_gdir, _graph_raw)
+                st.success(f"{_e_applied} 件のエッジを更新しました。")
+                st.rerun()
+            else:
+                st.caption("変更なし")
 
-    _sel = st.selectbox("分析するターン:", [t[0] for t in _turns],
-                        index=len(_turns) - 1, key="rag_graph_turn")
-    _query, _resp = next((t[1], t[2]) for t in _turns if t[0] == _sel)
+        # ---- 新規ノード追加 ----
+        with st.expander("新規ノードを追加", expanded=False):
+            _new_name = st.text_input("名前 *", "", key=f"gs_new_n_name_{_gname}")
+            _new_type_ex = st.text_input("型", "", key=f"gs_new_n_type_{_gname}")
+            _new_dom_ex = st.text_input("ドメイン (`/` 区切り)", "", key=f"gs_new_n_dom_{_gname}")
+            _new_ali_ex = st.text_input("エイリアス (`/` 区切り)", "", key=f"gs_new_n_ali_{_gname}")
+            if st.button("追加", key=f"gs_new_n_btn_{_gname}"):
+                if not _new_name.strip():
+                    st.warning("名前は必須です")
+                else:
+                    _doms_new = [d.strip() for d in _new_dom_ex.split("/") if d.strip()]
+                    _alis_new = [a.strip() for a in _new_ali_ex.split("/") if a.strip()]
+                    _node_new = dmg_graph.add_node(
+                        _graph_raw, _new_name.strip(),
+                        node_type=_new_type_ex.strip(),
+                        aliases=_alis_new, domains=_doms_new,
+                    )
+                    if _node_new:
+                        dmg_graph.save_graph_atomic(_gdir, _graph_raw)
+                        st.success(f"ノード「{_new_name}」を追加しました")
+                        st.rerun()
+                    else:
+                        st.error("追加に失敗しました (同名の既存ノードが返却されました)")
 
-    _view = st.radio("ビュー:", ["検索ビュー", "生成ビュー"], horizontal=True, key="rag_graph_view")
-    _vkey = "retrieval" if _view == "検索ビュー" else "generation"
+        # ---- 新規エッジ追加 ----
+        with st.expander("新規エッジを追加", expanded=False):
+            _name_to_id_new = {(n.get("name") or ""): nid
+                                 for nid, n in _graph_raw["nodes"].items()
+                                 if str(n.get("active", "Y")).upper() != "N"}
+            _sorted_names_new = sorted(_name_to_id_new.keys())
+            _ecol1, _ecol2 = st.columns(2)
+            _new_src = _ecol1.selectbox("source", _sorted_names_new, key=f"gs_new_e_s_{_gname}")
+            _new_tgt = _ecol2.selectbox("target", _sorted_names_new, key=f"gs_new_e_t_{_gname}")
+            _new_rel = st.text_input("述語 *", "", key=f"gs_new_e_r_{_gname}")
+            _new_edom = st.text_input("ドメイン (`/` 区切り)", "", key=f"gs_new_e_d_{_gname}")
+            if st.button("追加", key=f"gs_new_e_btn_{_gname}"):
+                if not _new_rel.strip():
+                    st.warning("述語は必須です")
+                elif _new_src == _new_tgt:
+                    st.warning("source と target は別ノードを選択してください")
+                else:
+                    _doms_new_e = [d.strip() for d in _new_edom.split("/") if d.strip()]
+                    _edge_new = dmg_graph.add_edge(
+                        _graph_raw, _name_to_id_new[_new_src], _name_to_id_new[_new_tgt],
+                        _new_rel.strip(), domains=_doms_new_e,
+                    )
+                    if _edge_new:
+                        dmg_graph.save_graph_atomic(_gdir, _graph_raw)
+                        st.success(f"エッジ ({_new_src}) --[{_new_rel}]--> ({_new_tgt}) を追加しました")
+                        st.rerun()
+                    else:
+                        st.error("追加に失敗しました (source / target のノードが見つかりません)")
 
-    try:
-        _usage = dmg_graph.analyze_graph_usage(_query, _resp, _rag_entry)
-    except Exception as _e:
-        st.error(f"グラフ利用分析に失敗しました: {_e}")
-        return
-    if _usage is None:
-        st.info("このターンではグラフが参照されていません。")
-        return
+    # ---------------------------- Tab 2: ナレッジグラフ -----------------------
+    with _tab_full:
+        # Filter widgets are wrapped in an st.form so a widget change on its
+        # own does NOT trigger a rerun (avoids re-rendering the 200-node SVG
+        # on every keystroke). Only 「検索」button submit re-renders.
+        _node_names_full = sorted({(n.get("name") or "") for n in _graph["nodes"].values() if n.get("name")})
+        _form_key = f"gs_form_{_gname}"
+        with st.form(_form_key, clear_on_submit=False):
+            _cf_pick_in = st.multiselect(
+                "ノード (絞込用、複数選択可 / 空 = 全体表示):",
+                _node_names_full, default=st.session_state.get(f"gs_pick_{_gname}", []),
+                key=f"{_form_key}_pick",
+            )
+            _cf1, _cf2, _cf3 = st.columns([1, 1, 3])
+            _color_by_type_in = _cf1.checkbox(
+                "型で色分け",
+                value=st.session_state.get(f"gs_col_{_gname}", True),
+                key=f"{_form_key}_col",
+            )
+            _hops_ex_in = _cf2.number_input(
+                "周辺展開ホップ:", min_value=1, max_value=3,
+                value=int(st.session_state.get(f"gs_exhops_{_gname}", 1)), step=1,
+                key=f"{_form_key}_hops",
+                help="ノード選択時のみ有効。選択ノードから何ホップまで含めるか。",
+            )
+            _lbl_top_in = _cf3.number_input(
+                "ラベル表示 (上位 N ハブ):", min_value=0, max_value=200,
+                value=int(st.session_state.get(f"gs_lbl_{_gname}", 25)), step=5,
+                key=f"{_form_key}_lbl",
+                help="ハブ上位 N のみラベル (0=非表示)。絞込表示時は選択ノードは常にラベル表示。",
+            )
+            _submitted = st.form_submit_button("検索", type="primary")
 
-    st.markdown(dgu.render_usage_svg(_usage, view=_vkey), unsafe_allow_html=True)
-    if _vkey == "generation" and (_usage["missed_nodes"] or _usage["missed_edges"]):
-        st.warning(f"カバレッジギャップ（赤）: ノード{len(_usage['missed_nodes'])}件 / "
-                   f"エッジ{len(_usage['missed_edges'])}件 — 出力に含まれるが今回の検索では"
-                   f"選択されていません（HOPS / EDGE_LIMIT / シード起点の見直し材料）")
+        if _submitted:
+            # Commit form values to the persistent state used for rendering
+            st.session_state[f"gs_pick_{_gname}"] = list(_cf_pick_in)
+            st.session_state[f"gs_col_{_gname}"] = bool(_color_by_type_in)
+            st.session_state[f"gs_exhops_{_gname}"] = int(_hops_ex_in)
+            st.session_state[f"gs_lbl_{_gname}"] = int(_lbl_top_in)
+        # Read the committed values (last successful search) for rendering.
+        _cf_pick = list(st.session_state.get(f"gs_pick_{_gname}", []))
+        _color_by_type = bool(st.session_state.get(f"gs_col_{_gname}", True))
+        _hops_ex = int(st.session_state.get(f"gs_exhops_{_gname}", 1))
+        _lbl_top = int(st.session_state.get(f"gs_lbl_{_gname}", 25))
 
-    _tables = dgu.usage_tables(_usage, view=_vkey)
-    _c1, _c2 = st.columns(2)
-    with _c1:
-        st.markdown("**ノード**")
-        st.dataframe(_tables["nodes"], use_container_width=True, hide_index=True)
-    with _c2:
-        st.markdown("**エッジ**")
-        st.dataframe(_tables["edges"], use_container_width=True, hide_index=True)
+        if _cf_pick:
+            _picked_ids = [nid for nid, n in _graph["nodes"].items() if n.get("name") in set(_cf_pick)]
+            _sub = {"nodes": {}, "edges": []}
+            _seen_e = set()
+            for _pid in _picked_ids:
+                _s = dgu.build_subgraph_around(_graph, _pid, hops=_hops_ex)
+                _sub["nodes"].update(_s["nodes"])
+                for _e in _s["edges"]:
+                    _sig = (_e["source"], _e["target"], _e.get("relation", ""), _e.get("create_date", ""))
+                    if _sig in _seen_e:
+                        continue
+                    _seen_e.add(_sig)
+                    _sub["edges"].append(_e)
+            st.caption(
+                f"選択 {len(_picked_ids)} 件 (hops={_hops_ex}) のエゴ・ネットワーク union — "
+                f"{len(_sub['nodes'])} nodes / {len(_sub['edges'])} edges"
+                " ／ 選択ノードから hops ホップ以内のノードすべて + それらの間のエッジを含みます"
+            )
+            _view_graph = _sub
+            # Honor the user's label_top_hubs limit even in drill-down mode.
+            # Picked seeds are always labeled via highlight, so setting
+            # label_top_hubs=0 still labels the selected nodes.
+            _lbl_effective = _lbl_top
+            _highlight = _picked_ids
+        else:
+            st.caption(f"全体表示 — {len(_graph['nodes'])} nodes / {len(_graph['edges'])} edges")
+            _view_graph = _graph
+            _lbl_effective = _lbl_top
+            _highlight = None
+
+        if _color_by_type:
+            st.markdown(dgu.neutral_legend_html(_view_graph), unsafe_allow_html=True)
+        # Interactive SVG needs an iframe (st.components.v1.html) so its
+        # inline <script> executes — st.markdown strips <script>.
+        import streamlit.components.v1 as _stc
+        _svg_html = dgu.render_graph_neutral_svg(
+            _view_graph, color_by_type=_color_by_type, label_top_hubs=_lbl_effective,
+            highlight_node_ids=_highlight, show_legend=False, interactive=True)
+        _stc.html(
+            f'<html><body style="margin:0;padding:0;">{_svg_html}</body></html>',
+            height=830, scrolling=True,
+        )
+
+        if _cf_pick:
+            for _pid in _picked_ids:
+                _pnode = _graph["nodes"][_pid]
+                with st.expander(f"{_pnode.get('name','?')} — props / 隣接エッジ", expanded=False):
+                    _prop_rows = [{"キー": _k, "値": (_v.get("value") if isinstance(_v, dict) else _v),
+                                     "as_of": (_v.get("as_of", "") if isinstance(_v, dict) else ""),
+                                     "lane": (_v.get("lane", "") if isinstance(_v, dict) else "")}
+                                    for _k, _v in (_pnode.get("props") or {}).items()]
+                    if _prop_rows:
+                        st.markdown("**props**")
+                        st.dataframe(pd.DataFrame(_prop_rows), hide_index=True, use_container_width=True)
+                    else:
+                        st.caption("_(props なし)_")
+                    _adj_rows = []
+                    for _e in _graph["edges"]:
+                        if _e["source"] == _pid or _e["target"] == _pid:
+                            _adj_rows.append({
+                                "方向": "出" if _e["source"] == _pid else "入",
+                                "述語": _e.get("relation", ""),
+                                "相手": (_graph["nodes"].get(
+                                    _e["target"] if _e["source"] == _pid else _e["source"]) or {}).get("name", ""),
+                                "props": ", ".join(
+                                    f"{k}={(v.get('value') if isinstance(v, dict) else v)}"
+                                    for k, v in (_e.get("props") or {}).items()
+                                )[:80],
+                                "create_date": _e.get("create_date", ""),
+                            })
+                    st.markdown(f"**隣接エッジ ({len(_adj_rows)} 件)**")
+                    if _adj_rows:
+                        st.dataframe(pd.DataFrame(_adj_rows), hide_index=True, use_container_width=True)
+                    else:
+                        st.caption("_(なし)_")
 
 
 def _knowledge_explorer():
@@ -2010,49 +2364,155 @@ def _knowledge_explorer():
                             st.markdown(_cmp_r["compare_text"].replace("\n", "<br>"), unsafe_allow_html=True)
 
                     # --- Knowledge Utility ---
+                    # Single "Analytics Results - Knowledge Utility" button that
+                    # dispatches on the ref type of this turn:
+                    #   Vector (ChromaDB/PageIndex) -> the existing scatter plot
+                    #   Graph                       -> the two Graph views
+                    #                                  (retrieval / generation)
+                    #                                  with the coverage-gap
+                    #                                  overlay + node/edge tables
+                    # Mixed refs (rare — same agent has both types) render both,
+                    # Graph first because it's structurally more informative for
+                    # per-turn analysis.
                     if st.session_state.get("allowed_analytics_knowledge", True):
                         _know_refs = _v2.get("response", {}).get("reference", {}).get("knowledge_rag", [])
-                        _ak_refs = [_p for _p in (dmu.parse_log_template(rd) for rd in _know_refs) if "similarity_Q" in _p]
-                        if _ak_refs:
+                        _all_parsed = [_p for _p in (dmu.parse_log_template(rd) for rd in _know_refs) if "similarity_Q" in _p]
+                        _ak_vec_refs   = [_p for _p in _all_parsed if str(_p.get("DB", "")).lower() != "graph"]
+                        _ak_graph_refs = [_p for _p in _all_parsed if str(_p.get("DB", "")).lower() == "graph"]
+                        if _ak_vec_refs or _ak_graph_refs:
                             st.markdown("---")
                             ak_col1, ak_col2, ak_col3 = st.columns(3)
-                            _ak_mode = ak_col2.radio("Knowledge Utility:", ["Default", "Norm(All)", "Norm(Group)"], index=1, key=f"{key_prefix}_ak_mode")
-                            _ak_dim_method = ak_col3.radio("Dimension Reduction:", ["PCA", "t-SNE"], index=0, key=f"{key_prefix}_ak_dim")
-                            _ak_dim_params = {}
-                            if _ak_dim_method == "t-SNE":
-                                _ak_dim_params["perplexity"] = ak_col3.number_input("t-SNE Perplexity:", value=40, step=1, key=f"{key_prefix}_ak_perp")
-                            _ak_dim = {"method": _ak_dim_method, "params": _ak_dim_params}
+                            # Controls are shown only when the corresponding
+                            # branch is applicable; Graph views have no dim-
+                            # reduction / normalization knobs (structural).
+                            _ak_mode = None
+                            _ak_dim = None
+                            if _ak_vec_refs:
+                                _ak_mode = ak_col2.radio(
+                                    "Knowledge Utility:",
+                                    ["Default", "Norm(All)", "Norm(Group)"],
+                                    index=1, key=f"{key_prefix}_ak_mode",
+                                )
+                                _ak_dim_method = ak_col3.radio(
+                                    "Dimension Reduction:",
+                                    ["PCA", "t-SNE"], index=0,
+                                    key=f"{key_prefix}_ak_dim",
+                                )
+                                _ak_dim_params = {}
+                                if _ak_dim_method == "t-SNE":
+                                    _ak_dim_params["perplexity"] = ak_col3.number_input(
+                                        "t-SNE Perplexity:", value=40, step=1,
+                                        key=f"{key_prefix}_ak_perp")
+                                _ak_dim = {"method": _ak_dim_method, "params": _ak_dim_params}
 
                             if ak_col1.button("Analytics Results - Knowledge Utility", key=f"{key_prefix}_ak_run", disabled=bool(st.session_state._bg_task)):
-                                import DigiM_VAnalytics as _dmva_ak
-                                _ref_ts = _v2.get("prompt", {}).get("timestamp", str(datetime.now()))
-                                _ak_title = f"KnowledgeExplorer_{_sid}"
-                                # Save into the analytics per-session folder (create one temporarily if missing)
-                                _ak_folder = st.session_state.get("_rag_analytics_folder", "")
-                                if not _ak_folder:
-                                    _ak_folder = os.path.join(_ANALYTICS_BASE, f"analytics{datetime.now().strftime('%Y%m%d_%H%M%S')}")
-                                    st.session_state._rag_analytics_folder = _ak_folder
-                                os.makedirs(_ak_folder, exist_ok=True)
-                                # Resolve persona-scope so the "all chunks" background dots
-                                # reflect what THIS persona could have retrieved at chat time
-                                # (instead of the full collection).
-                                _ak_persona_resolved = _resolve_persona_for_analytics(
-                                    _agent_file, _v2.get("setting") or {})
-                                _ak_exec_info_resolved = {
-                                    "SERVICE_INFO": dict(st.session_state.web_service),
-                                    "USER_INFO":    dict(st.session_state.web_user),
-                                }
-                                def _run_ak():
-                                    _r = _dmva_ak.analytics_knowledge(
-                                        _agent_file, _ref_ts, _ak_title, _ak_refs,
-                                        _ak_folder, _ak_mode, _ak_dim,
-                                        persona=_ak_persona_resolved,
-                                        exec_info=_ak_exec_info_resolved,
-                                    )
-                                    st.session_state[f"_{key_prefix}_ak_result"] = _r
-                                _run_bg_task("knowledge", "Analyzing knowledge utility (Knowledge Explorer)", _run_ak)
+                                # ---- Graph branch: replay retrieval + link response ----
+                                if _ak_graph_refs:
+                                    import DigiM_Graph as _dmg_gu
+                                    _gu_agent_rags = [
+                                        _kk for _kk in (_agent_data.get("KNOWLEDGE") or []) + (_agent_data.get("BOOK") or [])
+                                        if _kk.get("RETRIEVER") == "Graph"
+                                    ]
+                                    _gu_by_name = {}
+                                    for _gp in _ak_graph_refs:
+                                        _gu_by_name.setdefault(_gp.get("rag", ""), []).append(_gp)
+                                    _q_text = ((_v2.get("prompt", {}) or {}).get("query", {}) or {}).get("input", "") or ""
+                                    _resp_text = ((_v2.get("response", {}) or {}).get("text", "") or "")
+                                    _gu_all = {}
+                                    for _gu_rag_name in _gu_by_name.keys():
+                                        _gu_rag_cfg = next(
+                                            (_rr for _rr in _gu_agent_rags if _rr.get("RAG_NAME") == _gu_rag_name),
+                                            None,
+                                        )
+                                        if _gu_rag_cfg is None:
+                                            continue
+                                        try:
+                                            _gu_all[_gu_rag_name] = _dmg_gu.analyze_graph_usage(
+                                                _q_text, _resp_text, _gu_rag_cfg,
+                                            )
+                                        except Exception as _gu_e:
+                                            _gu_all[_gu_rag_name] = {"error": str(_gu_e)}
+                                    st.session_state[f"_{key_prefix}_ak_graph_result"] = _gu_all
+                                # ---- Vector branch: existing scatter analyzer ----
+                                if _ak_vec_refs:
+                                    import DigiM_VAnalytics as _dmva_ak
+                                    _ref_ts = _v2.get("prompt", {}).get("timestamp", str(datetime.now()))
+                                    _ak_title = f"KnowledgeExplorer_{_sid}"
+                                    _ak_folder = st.session_state.get("_rag_analytics_folder", "")
+                                    if not _ak_folder:
+                                        _ak_folder = os.path.join(_ANALYTICS_BASE, f"analytics{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+                                        st.session_state._rag_analytics_folder = _ak_folder
+                                    os.makedirs(_ak_folder, exist_ok=True)
+                                    _ak_persona_resolved = _resolve_persona_for_analytics(
+                                        _agent_file, _v2.get("setting") or {})
+                                    _ak_exec_info_resolved = {
+                                        "SERVICE_INFO": dict(st.session_state.web_service),
+                                        "USER_INFO":    dict(st.session_state.web_user),
+                                    }
+                                    _ak_refs_local = list(_ak_vec_refs)
+                                    _ak_mode_local = _ak_mode
+                                    _ak_dim_local = _ak_dim
+                                    def _run_ak():
+                                        _r = _dmva_ak.analytics_knowledge(
+                                            _agent_file, _ref_ts, _ak_title, _ak_refs_local,
+                                            _ak_folder, _ak_mode_local, _ak_dim_local,
+                                            persona=_ak_persona_resolved,
+                                            exec_info=_ak_exec_info_resolved,
+                                        )
+                                        st.session_state[f"_{key_prefix}_ak_result"] = _r
+                                    _run_bg_task("knowledge", "Analyzing knowledge utility (Knowledge Explorer)", _run_ak)
                                 st.rerun()
 
+                            # ---- Graph result rendering (Retrieval / Generation views) ----
+                            _gu_result = st.session_state.get(f"_{key_prefix}_ak_graph_result") or {}
+                            for _gu_rag_name, _gu_usage in _gu_result.items():
+                                if not _gu_usage or _gu_usage.get("error"):
+                                    if _gu_usage and _gu_usage.get("error"):
+                                        st.warning(f"Graph usage analysis failed ({_gu_rag_name}): {_gu_usage['error']}")
+                                    continue
+                                import DigiM_GraphUtility as _dgu
+                                _view_key_ui = st.radio(
+                                    f"表示ビュー ({_gu_rag_name}):",
+                                    ["検索ビュー", "生成ビュー"],
+                                    index=0, horizontal=True,
+                                    key=f"{key_prefix}_gu_view_{_gu_rag_name}",
+                                    help=(
+                                        "検索ビュー: グレー=全体 / ブルー=今回抽出 / スカイブルー=クエリで選ばれたシード。 "
+                                        "生成ビュー: 頻度グラデーション (ブルー→スカイブルー) + 赤=検索では選ばれなかったが出力に現れた要素 (カバレッジギャップ)"
+                                    ),
+                                )
+                                _view_key = "retrieval" if _view_key_ui == "検索ビュー" else "generation"
+                                _svg = _dgu.render_usage_svg(_gu_usage, view=_view_key)
+                                st.markdown(_svg, unsafe_allow_html=True)
+                                _tables = _dgu.usage_tables(_gu_usage, view=_view_key)
+                                _node_rows = _tables.get("nodes") or []
+                                _edge_rows = _tables.get("edges") or []
+                                _tc1, _tc2 = st.columns(2)
+                                with _tc1:
+                                    st.markdown("**ノード**")
+                                    if _node_rows:
+                                        st.dataframe(pd.DataFrame(_node_rows),
+                                                      hide_index=True, use_container_width=True)
+                                    else:
+                                        st.caption("_(該当なし)_")
+                                with _tc2:
+                                    st.markdown("**エッジ**")
+                                    if _edge_rows:
+                                        st.dataframe(pd.DataFrame(_edge_rows),
+                                                      hide_index=True, use_container_width=True)
+                                    else:
+                                        st.caption("_(該当なし)_")
+                                if _view_key == "generation":
+                                    _missed_n = len(_gu_usage.get("missed_nodes") or [])
+                                    _missed_e = len(_gu_usage.get("missed_edges") or [])
+                                    if _missed_n or _missed_e:
+                                        st.warning(
+                                            f"赤 = 出力に含まれるが検索では抽出されなかった要素: "
+                                            f"ノード {_missed_n} 件 / エッジ {_missed_e} 件。"
+                                            " HOPS / EDGE_LIMIT / FANOUT_LIMIT / シード辞書の調整余地があります。"
+                                        )
+
+                            # ---- Vector result rendering (unchanged behaviour) ----
                             if st.session_state.get(f"_{key_prefix}_ak_result"):
                                 _ak_r = st.session_state[f"_{key_prefix}_ak_result"]
                                 _ak_img_folder = st.session_state.get("_rag_analytics_folder", temp_folder_path)
@@ -2123,10 +2583,10 @@ def _knowledge_explorer():
     _source_options = []
     if _has_vectordb:
         _source_options.append("Collection (VectorDB)")
-    if _has_pageindex:
-        _source_options.append("PageIndex")
     if _has_graph:
         _source_options.append("Graph")
+    if _has_pageindex:
+        _source_options.append("PageIndex")
     if not _source_options:
         st.info("The selected agent has no RAG data configured")
         return
@@ -6689,6 +7149,31 @@ def main():
                     st.session_state.sidebar_message = "Deleted RAG"
                     st.session_state.rag_data_list = dmc.get_rag_list()
 
+                # Graph DB deletion (removes only graph.json — mapping.json /
+                # dictionary.json / source/ CSVs are kept so re-ingestion can
+                # rebuild from `Update RAG data` or the batch CLI).
+                try:
+                    import DigiM_Graph as _dmg_del_ui
+                    _graph_names_del = _dmg_del_ui.get_graph_list()
+                except Exception:
+                    _graph_names_del = []
+                if _graph_names_del:
+                    _graph_del_sel = st.multiselect(
+                        "Graph DB", _graph_names_del, key="delete_graph_db_multi",
+                        help="graph.json のみ削除 (mapping.json / dictionary.json / source/ は残る)",
+                    )
+                    if st.button("Delete Graph DB", key="delete_graph_db"):
+                        _targets = _graph_del_sel or _graph_names_del
+                        _cnt = 0
+                        for _gname_del in _targets:
+                            try:
+                                _gd_del = _dmg_del_ui.resolve_graph_dir(_gname_del)
+                                if _dmg_del_ui.delete_graph(_gd_del):
+                                    _cnt += 1
+                            except Exception:
+                                pass
+                        st.session_state.sidebar_message = f"Deleted Graph ({_cnt})"
+
                 # PageIndex Export: download the selected PageIndex as a ZIP of Excel + individual files
                 _pi_dict = dmc.get_page_index_list()
                 _pi_names = list(_pi_dict.keys())
@@ -6980,7 +7465,11 @@ def main():
                                 session_name_btn = session_id_list[:15]
                             situation = dms.get_situation(session_id_list)
                             if not situation:
-                                situation["TIME"] = now_time.strftime("%Y/%m/%d %H:%M:%S")
+                                # Default to No Date (empty TIME) — session-load
+                                # otherwise flips time_mode to "Custom Date" via
+                                # refresh_session() and pins now_time as the
+                                # situation timestamp, which surprises users.
+                                situation["TIME"] = ""
                                 situation["SITUATION"] = ""
                             if st.button(session_name_btn, key=session_key_list):
                                 st.session_state.main_view = "Chat"
@@ -7461,38 +7950,90 @@ def main():
                                                 st.rerun()
                                     if st.session_state.allowed_analytics_knowledge:
                                         if v2["response"]["reference"]["knowledge_rag"]:
+                                            # Split refs: Vector (ChromaDB/PageIndex) go to the
+                                            # scatter-plot analyzer; Graph refs go to the
+                                            # deterministic replay + response-linking pipeline.
+                                            # Same button, dispatched by 'DB' == 'Graph'.
+                                            _all_parsed_ku = [_p for _p in (dmu.parse_log_template(rd) for rd in v2["response"]["reference"]["knowledge_rag"]) if "similarity_Q" in _p]
+                                            _ak_vec_refs   = [_p for _p in _all_parsed_ku if str(_p.get("DB", "")).lower() != "graph"]
+                                            _ak_graph_refs = [_p for _p in _all_parsed_ku if str(_p.get("DB", "")).lower() == "graph"]
                                             ak_col1, ak_col2, ak_col3 = st.columns(3)
-                                            st.session_state.analytics_knowledge_mode = ak_col2.radio("Knowledge Utility:", ["Default", "Norm(All)", "Norm(Group)"], index=1, key=f"kumode_{k}_{k2}")
-                                            st.session_state.analytics_dimension_mode["method"] = ak_col3.radio("Dimension Reduction:", ["PCA", "t-SNE"], index=0, key=f"drmode_{k}_{k2}")
-                                            st.session_state.analytics_dimension_mode["params"] = {}
-                                            if st.session_state.analytics_dimension_mode["method"] == "t-SNE":
-                                                st.session_state.analytics_dimension_mode["params"]["perplexity"] = ak_col3.number_input(label="t-SNE Perplexity:", value=40, step=1, format="%d", key=f"tsne_perplexity_{k}_{k2}")
+                                            # Dim-reduction / normalization knobs only apply to
+                                            # the Vector branch (structural graph views have no
+                                            # dim-reduction). Show them only when vector refs exist.
+                                            if _ak_vec_refs:
+                                                st.session_state.analytics_knowledge_mode = ak_col2.radio("Knowledge Utility:", ["Default", "Norm(All)", "Norm(Group)"], index=1, key=f"kumode_{k}_{k2}")
+                                                st.session_state.analytics_dimension_mode["method"] = ak_col3.radio("Dimension Reduction:", ["PCA", "t-SNE"], index=0, key=f"drmode_{k}_{k2}")
+                                                st.session_state.analytics_dimension_mode["params"] = {}
+                                                if st.session_state.analytics_dimension_mode["method"] == "t-SNE":
+                                                    st.session_state.analytics_dimension_mode["params"]["perplexity"] = ak_col3.number_input(label="t-SNE Perplexity:", value=40, step=1, format="%d", key=f"tsne_perplexity_{k}_{k2}")
                                             if ak_col1.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}", disabled=bool(st.session_state._bg_task)):
                                                 _ak_agent_file = v2["setting"]["agent_file"]
                                                 _ak_title = f"{k}-{k2}-{st.session_state.session.session_id}"
-                                                _ak_refs = [_p for _p in (dmu.parse_log_template(rd) for rd in v2["response"]["reference"]["knowledge_rag"]) if "similarity_Q" in _p]
                                                 _ak_folder = st.session_state.session.session_analytics_folder_path
                                                 _ak_mode = st.session_state.analytics_knowledge_mode
                                                 _ak_dim = dict(st.session_state.analytics_dimension_mode)
                                                 _ak_k, _ak_k2 = k, k2
                                                 _ak_analytics_dict = analytics_dict
                                                 _ak_session = st.session_state.session
-                                                _ak_persona_resolved = _resolve_persona_for_analytics(
-                                                    _ak_agent_file, v2.get("setting") or {})
-                                                _ak_exec_info_resolved = {
-                                                    "SERVICE_INFO": dict(st.session_state.web_service),
-                                                    "USER_INFO":    dict(st.session_state.web_user),
-                                                }
-                                                def _run_ak():
-                                                    result = dmva.analytics_knowledge(
-                                                        _ak_agent_file, ref_timestamp, _ak_title, _ak_refs,
-                                                        _ak_folder, _ak_mode, _ak_dim,
-                                                        persona=_ak_persona_resolved,
-                                                        exec_info=_ak_exec_info_resolved,
-                                                    )
-                                                    _ak_analytics_dict["knowledge_utility"] = result
+                                                # ---- Graph branch: replay retrieval + response linking (sync, no LLM cost) ----
+                                                if _ak_graph_refs:
+                                                    import DigiM_Graph as _dmg_gu
+                                                    _agent_data_gu = dmu.read_json_file(_ak_agent_file, agent_folder_path) or {}
+                                                    _gu_agent_rags = [
+                                                        _kk for _kk in (_agent_data_gu.get("KNOWLEDGE") or []) + (_agent_data_gu.get("BOOK") or [])
+                                                        if _kk.get("RETRIEVER") == "Graph"
+                                                    ]
+                                                    _gu_by_name = {}
+                                                    for _gp in _ak_graph_refs:
+                                                        _gu_by_name.setdefault(_gp.get("rag", ""), []).append(_gp)
+                                                    _q_text_gu = (v2.get("prompt", {}) or {}).get("query", {}).get("input", "") or ""
+                                                    _resp_text_gu = (v2.get("response", {}) or {}).get("text", "") or ""
+                                                    # Recover the multi-query list captured at chat time
+                                                    # so the replay honors the same seed detection scope
+                                                    # the original retrieval used.
+                                                    _saved_traces = ((v2.get("response") or {}).get("reference") or {}).get("graph_seed_traces") or {}
+                                                    _gu_out = {}
+                                                    for _gu_rag_name in _gu_by_name.keys():
+                                                        _gu_rag_cfg = next(
+                                                            (_rr for _rr in _gu_agent_rags if _rr.get("RAG_NAME") == _gu_rag_name),
+                                                            None,
+                                                        )
+                                                        if _gu_rag_cfg is None:
+                                                            _gu_out[_gu_rag_name] = {"error": f"KNOWLEDGE/BOOK config not found for RAG_NAME '{_gu_rag_name}'"}
+                                                            continue
+                                                        try:
+                                                            _saved_q = (_saved_traces.get(_gu_rag_name) or {}).get("queries") or None
+                                                            _usage = _dmg_gu.analyze_graph_usage(
+                                                                _q_text_gu, _resp_text_gu, _gu_rag_cfg,
+                                                                queries=_saved_q,
+                                                            )
+                                                            _gu_out[_gu_rag_name] = _usage or {"error": "analyze_graph_usage returned None"}
+                                                        except Exception as _gu_e:
+                                                            _gu_out[_gu_rag_name] = {"error": str(_gu_e)}
+                                                    _ak_analytics_dict["graph_utility"] = _gu_out
+                                                    # Persist immediately so the render pass on the
+                                                    # next rerun picks it up alongside analytics_dict.
                                                     _ak_session.set_analytics_history(_ak_k, _ak_k2, _ak_analytics_dict)
-                                                _run_bg_task("knowledge", f"Analyzing knowledge utility ({_ak_k}_{_ak_k2})", _run_ak)
+                                                # ---- Vector branch: existing scatter analyzer (background) ----
+                                                if _ak_vec_refs:
+                                                    _ak_refs_local = list(_ak_vec_refs)
+                                                    _ak_persona_resolved = _resolve_persona_for_analytics(
+                                                        _ak_agent_file, v2.get("setting") or {})
+                                                    _ak_exec_info_resolved = {
+                                                        "SERVICE_INFO": dict(st.session_state.web_service),
+                                                        "USER_INFO":    dict(st.session_state.web_user),
+                                                    }
+                                                    def _run_ak():
+                                                        result = dmva.analytics_knowledge(
+                                                            _ak_agent_file, ref_timestamp, _ak_title, _ak_refs_local,
+                                                            _ak_folder, _ak_mode, _ak_dim,
+                                                            persona=_ak_persona_resolved,
+                                                            exec_info=_ak_exec_info_resolved,
+                                                        )
+                                                        _ak_analytics_dict["knowledge_utility"] = result
+                                                        _ak_session.set_analytics_history(_ak_k, _ak_k2, _ak_analytics_dict)
+                                                    _run_bg_task("knowledge", f"Analyzing knowledge utility ({_ak_k}_{_ak_k2})", _run_ak)
                                                 st.rerun()
                                     if "compare_agents" in analytics_dict:
                                         chat_expander_compare = st.expander("Analytics Results - Compare Agents")
@@ -7630,8 +8171,92 @@ def main():
                                                                     st.markdown(ak_line(ak_dict))
 
                                     if st.session_state.allowed_analytics_knowledge:
-                                        if "knowledge_utility" in analytics_dict:
+                                        # Graph Utility results (Retrieval / Generation views)
+                                        # rendered inside the same "Analytics Results - Knowledge
+                                        # Utility" expander so the single button drives both types.
+                                        if "graph_utility" in analytics_dict or "knowledge_utility" in analytics_dict:
                                             chat_expander_analytics = st.expander("Analytics Results - Knowledge Utility")
+                                            # Resolve the agent's KNOWLEDGE (+ BOOK) RAG_NAME order so both
+                                            # Graph and Vector sections render in the order defined in the
+                                            # agent JSON (e.g. Identity → Experience → Style → Opinion) —
+                                            # not dict-insertion / alphabetical.
+                                            _ku_agent_file = (v2.get("setting") or {}).get("agent_file", "")
+                                            _ku_agent_data = dmu.read_json_file(_ku_agent_file, agent_folder_path) if _ku_agent_file else {}
+                                            _ku_rag_order = [
+                                                _kk.get("RAG_NAME")
+                                                for _kk in (_ku_agent_data.get("KNOWLEDGE") or []) + (_ku_agent_data.get("BOOK") or [])
+                                                if _kk.get("RAG_NAME")
+                                            ]
+                                            def _ku_order_key(_name):
+                                                try:
+                                                    return _ku_rag_order.index(_name)
+                                                except ValueError:
+                                                    return len(_ku_rag_order) + hash(_name) % 1000
+                                            with chat_expander_analytics:
+                                                _gu_result_main = analytics_dict.get("graph_utility") or {}
+                                                for _gu_rag_name, _gu_usage in sorted(_gu_result_main.items(), key=lambda kv: _ku_order_key(kv[0])):
+                                                    st.markdown(f"### {_gu_rag_name} (Graph)")
+                                                    if not _gu_usage or _gu_usage.get("error"):
+                                                        st.warning(f"Graph usage analysis failed ({_gu_rag_name}): {(_gu_usage or {}).get('error', 'unknown error')}")
+                                                        continue
+                                                    try:
+                                                        import DigiM_GraphUtility as _dgu_main
+                                                        # Vertical layout: (1) シード生成トレース (expander),
+                                                        # (2) 検索ビュー SVG, (3) 生成ビュー SVG,
+                                                        # (4) 単一テーブル (検索/生成はフラグ列)
+                                                        _prov_html = _dgu_main.seed_provenance_html(_gu_usage)
+                                                        if _prov_html:
+                                                            _seed_n = len(_gu_usage.get("seed_names") or [])
+                                                            _q_n = len(_gu_usage.get("queries") or [])
+                                                            with st.expander(
+                                                                f"シード生成トレース  (最終シード {_seed_n} 件 / クエリ {_q_n} 件)",
+                                                                expanded=False,
+                                                            ):
+                                                                st.markdown(_prov_html, unsafe_allow_html=True)
+                                                        st.markdown("**検索ビュー**", unsafe_allow_html=True)
+                                                        st.markdown(
+                                                            _dgu_main.usage_legend_html("retrieval"),
+                                                            unsafe_allow_html=True,
+                                                        )
+                                                        st.markdown(
+                                                            _dgu_main.render_usage_svg(_gu_usage, view="retrieval", show_legend=False),
+                                                            unsafe_allow_html=True,
+                                                        )
+                                                        st.markdown("**生成ビュー**", unsafe_allow_html=True)
+                                                        st.markdown(
+                                                            _dgu_main.usage_legend_html("generation"),
+                                                            unsafe_allow_html=True,
+                                                        )
+                                                        st.markdown(
+                                                            _dgu_main.render_usage_svg(_gu_usage, view="generation", show_legend=False),
+                                                            unsafe_allow_html=True,
+                                                        )
+                                                        _tbl = _dgu_main.unified_usage_table(_gu_usage)
+                                                        _u_nodes = _tbl.get("nodes") or []
+                                                        _u_edges = _tbl.get("edges") or []
+                                                        st.markdown("**ノード一覧**  <sub>検索/生成のフラグ + 生成頻度</sub>", unsafe_allow_html=True)
+                                                        if _u_nodes:
+                                                            st.dataframe(pd.DataFrame(_u_nodes),
+                                                                          hide_index=True, use_container_width=True)
+                                                        else:
+                                                            st.caption("_(該当なし)_")
+                                                        st.markdown("**エッジ一覧**  <sub>検索/生成のフラグ + 生成頻度 + 述語一致</sub>", unsafe_allow_html=True)
+                                                        if _u_edges:
+                                                            st.dataframe(pd.DataFrame(_u_edges),
+                                                                          hide_index=True, use_container_width=True)
+                                                        else:
+                                                            st.caption("_(該当なし)_")
+                                                        _missed_n_main = len(_gu_usage.get("missed_nodes") or [])
+                                                        _missed_e_main = len(_gu_usage.get("missed_edges") or [])
+                                                        if _missed_n_main or _missed_e_main:
+                                                            st.warning(
+                                                                f"生成ビューの赤 = 出力に含まれるが検索では抽出されなかった要素: "
+                                                                f"ノード {_missed_n_main} 件 / エッジ {_missed_e_main} 件。"
+                                                                " HOPS / EDGE_LIMIT / FANOUT_LIMIT / シード辞書の調整余地があります。"
+                                                            )
+                                                    except Exception as _gu_render_e:
+                                                        st.warning(f"Graph render failed ({_gu_rag_name}): {_gu_render_e}")
+                                        if "knowledge_utility" in analytics_dict:
                                             with chat_expander_analytics:
                                                 similarity_utility_dict = analytics_dict["knowledge_utility"]["similarity_utility"]
                                                 st.markdown("**knowledge Utility:**")
@@ -7650,7 +8275,10 @@ def main():
                                                 if "image_files" in analytics_dict["knowledge_utility"]:
                                                     image_files = analytics_dict["knowledge_utility"]["image_files"]
                                                     ext_for = lambda k: "csv" if "csv" in k else "png"
-                                                    rag_categories = sorted(similarity_utility_dict.keys())
+                                                    # Sort by the agent JSON's KNOWLEDGE order (falls back
+                                                    # to alphabetical for unknown names).
+                                                    rag_categories = sorted(similarity_utility_dict.keys(),
+                                                                            key=_ku_order_key)
                                                     _ku_seq, _ku_sub = k, k2
                                                     rag_to_files = {
                                                         rag: {lk: _resolve_ku_file(st.session_state.session.session_analytics_folder_path, _ku_seq, _ku_sub, v, lk, rag) for lk, v in image_files.items()}

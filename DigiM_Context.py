@@ -1721,6 +1721,116 @@ def generate_rag():
                                     logger.warning(f"fin_flg update failed (page={page_id}, {prop_name}): {e}")
                         logger.info(f"{rag_id}: fin_flg reflected to {fin_cnt} Notion pages")
 
+                # GraphRAG — incremental Lane B (LLM) ingestion from Notion.
+                # Same rags.json shape as ChromaDB entries (bucket / data_name /
+                # item_dict / chk_dict / date_dict / category_dict / fin_flg) so
+                # only pages not yet marked RAGChk=true are pulled and merged
+                # into the existing graph.json (no full rebuild). After success
+                # the pipeline flips fin_flg on those pages so subsequent runs
+                # skip them.
+                elif rag_setting["data_type"] == "graph":
+                    graph_dir = rag_setting.get("file_path", "")
+                    if not graph_dir:
+                        logger.warning(f"{rag_id}: graph rag missing 'file_path'; skip")
+                    else:
+                        try:
+                            import DigiM_Graph as _dmg
+                            import DigiM_Agent as _dma
+                            import re as _re_g
+                            graph = _dmg.load_graph(graph_dir)
+                            dictionary = _dmg.load_dictionary(graph_dir)
+                            if not graph.get("nodes"):
+                                _dmg.ingest_seeds(graph, dictionary)
+                            extractor_agent = rag_setting.get(
+                                "extractor_agent", "agent_67GraphExtract.json")
+                            def _extract_call(prompt, _ag=extractor_agent):
+                                _ret = _dma.ext_generate_pureLLM(_ag, prompt)
+                                if isinstance(_ret, tuple) and _ret:
+                                    return _ret[0]
+                                return _ret
+                            _processed_pids = []
+                            _existing_source_ids = {
+                                sid for e in graph.get("edges", [])
+                                for sid in (e.get("source_ids") or [])
+                            }
+                            for chunk in rag_data:
+                                _pid = chunk.get("id", "")
+                                if not _pid:
+                                    continue
+                                # Safety: don't re-ingest a page whose id already
+                                # tagged an edge (chk_dict should already filter,
+                                # but this guards against config drift).
+                                if _pid in _existing_source_ids:
+                                    _processed_pids.append(_pid)
+                                    continue
+                                _text = chunk.get("value_text") or chunk.get("key_text") or ""
+                                if not str(_text).strip():
+                                    continue
+                                _as_of = chunk.get("create_date", "") or ""
+                                _cat = chunk.get("category", "")
+                                _domains = [_cat] if _cat else []
+                                _known = [n.get("name", "") for n in graph.get("nodes", {}).values()]
+                                _prompt = _dmg.GRAPH_EXTRACT_PROMPT % (
+                                    ", ".join(_known[:50]), _text)
+                                try:
+                                    _raw = _extract_call(_prompt)
+                                    _clean = _re_g.sub(
+                                        r"^```(json)?|```$", "",
+                                        str(_raw).strip(), flags=_re_g.M)
+                                    _data = json.loads(_clean)
+                                except Exception as _e:
+                                    logger.warning(
+                                        f"[GraphRAG extract failed] {rag_id} page={_pid}: {_e}")
+                                    continue
+                                for _t in _data.get("triples", []):
+                                    _s = _dmg.upsert_node(
+                                        graph, _t.get("subject", ""), _t.get("subject_type", ""),
+                                        [], _domains, dictionary)
+                                    _o = _dmg.upsert_node(
+                                        graph, _t.get("object", ""), _t.get("object_type", ""),
+                                        [], _domains, dictionary)
+                                    if _s and _o:
+                                        _dmg.upsert_edge(
+                                            graph, _s["id"], _o["id"],
+                                            _t.get("relation", "関連"),
+                                            domains=_domains,
+                                            props=_t.get("props") or {},
+                                            source_id=_pid, create_date=_as_of, lane="TEXT")
+                                for _p in _data.get("node_props", []):
+                                    _n = _dmg.upsert_node(
+                                        graph, _p.get("entity", ""), "", [], _domains, dictionary)
+                                    if _n:
+                                        _dmg.set_prop(
+                                            _n["props"], _p.get("key", ""), _p.get("value", ""),
+                                            _as_of, _pid, "TEXT")
+                                _processed_pids.append(_pid)
+                            _dmg.promote_props_to_edges(graph, dictionary)
+                            _dmg.save_graph_atomic(graph_dir, graph)
+                            logger.info(
+                                f"{rag_id} Graph incremental write done. pages: {len(_processed_pids)} "
+                                f"(nodes now={len(graph.get('nodes', {}))}, edges now={len(graph.get('edges', []))})")
+                        except Exception as _ge:
+                            logger.exception(f"{rag_id} GraphRAG ingestion failed: {_ge}")
+                            _processed_pids = []
+                        # Reflect fin_flg on Notion for the pages we ingested this run.
+                        fin_flg = rag_setting.get("fin_flg", {})
+                        if fin_flg and rag_setting["input"] == "notion" and _processed_pids:
+                            _fin_cnt = 0
+                            for _pid in _processed_pids:
+                                for _pn, _pv in fin_flg.items():
+                                    try:
+                                        if isinstance(_pv, bool):
+                                            dmn.update_notion_chk(_pid, _pn, _pv)
+                                            _fin_cnt += 1
+                                        else:
+                                            logger.warning(
+                                                f"fin_flg: unsupported type {_pn}={_pv}")
+                                    except Exception as _e:
+                                        logger.warning(
+                                            f"fin_flg update failed (page={_pid}, {_pn}): {_e}")
+                            logger.info(
+                                f"{rag_id}: fin_flg reflected to {_fin_cnt} Notion pages")
+
 # Delete a RAG database (Collection)
 def del_rag_db(ragdb_selected=[]):
     db_client = get_chroma_client()

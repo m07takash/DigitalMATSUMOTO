@@ -141,10 +141,13 @@ def _edge_style(ei, usage, view):
 
 
 # ------------------------------------------------------------------- svg ---
-def render_usage_svg(usage, view="retrieval", width=880, height=560, font_size=11):
+def render_usage_svg(usage, view="retrieval", width=880, height=560, font_size=11,
+                       show_legend=True):
     """Whole-graph SVG with the usage overlay for one view.
     Returns an SVG string (embed via st.markdown(..., unsafe_allow_html=True)
-    or save to a file)."""
+    or save to a file). Pass `show_legend=False` to omit the inline plate
+    when the caller renders a legend outside the figure via
+    `usage_legend_html(view)`."""
     graph = usage["graph"]
     pos = spring_layout(graph)
     pad = 60
@@ -190,22 +193,46 @@ def render_usage_svg(usage, view="retrieval", width=880, height=560, font_size=1
         (hot_nodes if emph else grey_nodes).append(g)
     parts += grey_nodes + hot_nodes
 
-    # legend (white backing plate so it never collides with graph elements)
-    if view == "retrieval":
-        legend = [(COL_SKYBLUE, "シード（クエリで選択）"), (COL_BLUE, "検索で抽出"), (COL_BG_NODE, "未使用")]
-    else:
-        legend = [(COL_BLUE, "出力に使用（低頻度）"), (COL_SKYBLUE, "出力に使用（高頻度）"),
-                  (COL_RED, "出力にあるが未検索"), (COL_BG_NODE, "未使用")]
-    plate_h = len(legend) * 20 + 12
-    parts.append(f'<rect x="6" y="4" width="200" height="{plate_h}" rx="6" '
-                 f'fill="#ffffff" fill-opacity="0.92" stroke="#e3e4e0"/>')
-    lx, ly = 18, 22
-    for color, label in legend:
-        parts.append(f'<circle cx="{lx}" cy="{ly}" r="6" fill="{color}"/>')
-        parts.append(f'<text x="{lx + 12}" y="{ly + 4}" font-size="{font_size}" fill="{COL_TEXT}">{label}</text>')
-        ly += 20
+    # Optional inline legend (white backing plate). Callers that render an
+    # external legend via `usage_legend_html(view)` should pass show_legend=False.
+    if show_legend:
+        if view == "retrieval":
+            legend = [(COL_SKYBLUE, "シード（クエリで選択）"), (COL_BLUE, "検索で抽出"), (COL_BG_NODE, "未使用")]
+        else:
+            legend = [(COL_BLUE, "出力に使用（低頻度）"), (COL_SKYBLUE, "出力に使用（高頻度）"),
+                      (COL_RED, "出力にあるが未検索"), (COL_BG_NODE, "未使用")]
+        plate_h = len(legend) * 20 + 12
+        parts.append(f'<rect x="6" y="4" width="200" height="{plate_h}" rx="6" '
+                     f'fill="#ffffff" fill-opacity="0.92" stroke="#e3e4e0"/>')
+        lx, ly = 18, 22
+        for color, label in legend:
+            parts.append(f'<circle cx="{lx}" cy="{ly}" r="6" fill="{color}"/>')
+            parts.append(f'<text x="{lx + 12}" y="{ly + 4}" font-size="{font_size}" fill="{COL_TEXT}">{label}</text>')
+            ly += 20
     parts.append("</svg>")
     return "".join(parts)
+
+
+def usage_legend_html(view="retrieval"):
+    """External-to-SVG legend for `render_usage_svg` — a compact HTML chip
+    row callers can `st.markdown(..., unsafe_allow_html=True)` above the
+    figure when they pass `show_legend=False` to the renderer."""
+    if view == "retrieval":
+        items = [(COL_SKYBLUE, "シード（クエリで選択）"),
+                 (COL_BLUE,    "検索で抽出"),
+                 (COL_BG_NODE, "未使用")]
+    else:
+        items = [(COL_BLUE,    "出力に使用（低頻度）"),
+                 (COL_SKYBLUE, "出力に使用（高頻度）"),
+                 (COL_RED,     "出力にあるが未検索"),
+                 (COL_BG_NODE, "未使用")]
+    chips = "".join(
+        f'<span style="display:inline-flex;align-items:center;'
+        f'margin:0 12px 6px 0;font-size:12px;color:{COL_TEXT};">'
+        f'<span style="display:inline-block;width:12px;height:12px;border-radius:50%;'
+        f'background:{c};border:1px solid #8b90a0;margin-right:6px;"></span>{html.escape(l)}'
+        f'</span>' for c, l in items)
+    return ('<div style="padding:4px 0 8px 0;line-height:1.6;">' + chips + '</div>')
 
 
 # ----------------------------------------------------------------- tables --
@@ -259,6 +286,87 @@ def usage_tables(usage, view="retrieval"):
     return {"nodes": nodes_rows, "edges": edges_rows}
 
 
+def unified_usage_table(usage):
+    """Single merged table with per-view flag columns — one row per node /
+    edge across both views. Used when the two SVGs are stacked vertically
+    and a single flat list of touched elements suffices instead of separate
+    per-view tables. Returns {'nodes': [...], 'edges': [...]}."""
+    graph = usage["graph"]
+    seeds = set(usage["seeds"])
+    retrieved_n = set(usage["retrieved_nodes"])
+    retrieved_e = set(usage["retrieved_edges"])
+    output_n_freq = dict(usage["output_nodes"])          # {nid: freq}
+    output_e_map = {h["index"]: h for h in usage["output_edges"]}
+    missed_n = set(usage["missed_nodes"])
+    missed_ei = {h["index"] for h in usage["missed_edges"]}
+
+    def _node_name(nid):
+        return graph["nodes"].get(nid, {}).get("name", nid)
+
+    def _triple(ei):
+        e = graph["edges"][ei]
+        return f'({_node_name(e["source"])}) --[{e["relation"]}]--> ({_node_name(e["target"])})'
+
+    # --- Nodes: union of retrieved + output ---
+    node_ids = list(dict.fromkeys(list(retrieved_n) + list(output_n_freq.keys())))
+    node_rows = []
+    for nid in node_ids:
+        n = graph["nodes"].get(nid, {})
+        _is_retrieved = nid in retrieved_n
+        _is_output = nid in output_n_freq
+        _freq = int(output_n_freq.get(nid, 0))
+        if not _is_retrieved and _is_output:
+            _view = "生成のみ (赤)"
+        elif _is_retrieved and _is_output:
+            _view = "検索+生成"
+        elif _is_retrieved and not _is_output:
+            _view = "検索のみ"
+        else:
+            _view = "-"
+        node_rows.append({
+            "エンティティ": n.get("name", nid),
+            "型": n.get("type", ""),
+            "ドメイン": " / ".join(n.get("domains", [])),
+            "検索": "シード" if nid in seeds else ("Y" if _is_retrieved else "N"),
+            "生成頻度": _freq if _is_output else 0,
+            "未検索(赤)": "Y" if nid in missed_n else "N",
+            "ビュー": _view,
+        })
+    # Sort: red (missed) first, then by generation freq desc, then by name
+    node_rows.sort(key=lambda r: (0 if r["未検索(赤)"] == "Y" else 1,
+                                     -r["生成頻度"], r["エンティティ"]))
+
+    # --- Edges: union of retrieved + output ---
+    edge_ids = list(dict.fromkeys(list(retrieved_e) + list(output_e_map.keys())))
+    edge_rows = []
+    for ei in edge_ids:
+        e = graph["edges"][ei]
+        _is_retrieved = ei in retrieved_e
+        _out = output_e_map.get(ei)
+        _freq = int(_out["freq"]) if _out else 0
+        _pmatch = "Y" if (_out and _out.get("predicate_match")) else "N"
+        if not _is_retrieved and _out:
+            _view = "生成のみ (赤)"
+        elif _is_retrieved and _out:
+            _view = "検索+生成"
+        elif _is_retrieved and not _out:
+            _view = "検索のみ"
+        else:
+            _view = "-"
+        edge_rows.append({
+            "エッジ": _triple(ei),
+            "ドメイン": " / ".join(e.get("domains", [])),
+            "検索": "Y" if _is_retrieved else "N",
+            "生成頻度": _freq,
+            "述語一致": _pmatch,
+            "未検索(赤)": "Y" if ei in missed_ei else "N",
+            "ビュー": _view,
+        })
+    edge_rows.sort(key=lambda r: (0 if r["未検索(赤)"] == "Y" else 1,
+                                     -r["生成頻度"], r["エッジ"]))
+    return {"nodes": node_rows, "edges": edge_rows}
+
+
 # -------------------------------------------------------------- preview ----
 def save_preview_html(usage, out_path, title="Graph Utility Preview"):
     """Both views + tables in one standalone HTML file (offline check /
@@ -287,3 +395,438 @@ def save_preview_html(usage, out_path, title="Graph Utility Preview"):
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(doc)
     return out_path
+
+
+# ============================================================================
+# Static "graph state" helpers (Knowledge Explorer, not per-turn).
+# ============================================================================
+
+# 8 soft pastel fills for type-based coloring (assigned deterministically by
+# md5(type_name) so the same type maps to the same color across sessions).
+_TYPE_PALETTE = [
+    "#c9e6ff", "#ffe0c9", "#d6f0d0", "#e5d6f0",
+    "#ffe6f0", "#d9edf0", "#f0ecd6", "#e0e0e0",
+]
+
+
+def _type_color(type_name):
+    """Deterministic soft color per node type — same across sessions."""
+    if not type_name:
+        return "#f2f2f2"
+    idx = int(hashlib.md5(type_name.encode()).hexdigest()[:8], 16) % len(_TYPE_PALETTE)
+    return _TYPE_PALETTE[idx]
+
+
+def render_graph_neutral_svg(graph, width=1200, height=800, font_size=10,
+                              color_by_type=True, label_top_hubs=25,
+                              highlight_node_ids=None, show_legend=True,
+                              interactive=True):
+    """Static whole-graph SVG (no per-turn overlay). Optionally color nodes
+    by type; labels only the top-degree hubs to avoid text clutter on large
+    graphs. If highlight_node_ids is given, those nodes get a blue ring +
+    always show their label (used by the drill-down tab). Pass
+    show_legend=False when rendering an external legend via
+    `neutral_legend_html(graph)` above the figure.
+
+    `interactive=True` (default) attaches CSS + inline JS so hovering a
+    node dims all edges except those incident to it, plus reveals the
+    node's name label if it wasn't already labeled. This requires
+    embedding via `st.components.v1.html(...)` — Streamlit's plain
+    `st.markdown(unsafe_allow_html=True)` strips inline `<script>`. Set
+    interactive=False for the offline preview HTML path.
+    """
+    highlight_node_ids = set(highlight_node_ids or [])
+    pos = spring_layout(graph)
+    pad = 60
+
+    def sx(nid): return pad + pos[nid][0] * (width - 2 * pad)
+    def sy(nid): return pad + pos[nid][1] * (height - 2 * pad)
+
+    parts = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+             f'viewBox="0 0 {width} {height}" style="background:#ffffff;font-family:sans-serif;'
+             f'max-width:100%;">']
+
+    # Compute degree first (used for label prioritization AND for the hub-set
+    # tooltip on each node).
+    degree = {nid: 0 for nid in graph["nodes"]}
+    for e in graph["edges"]:
+        if e["source"] in degree: degree[e["source"]] += 1
+        if e["target"] in degree: degree[e["target"]] += 1
+    _hub_ids = set(nid for nid, _d in sorted(degree.items(), key=lambda x: -x[1])[:label_top_hubs])
+
+    # Interactive styles: edges start faded → hover on any node reveals its
+    # incident edges (blue). Nodes flagged as "picked" (highlight_node_ids)
+    # show their edges permanently in sky-blue. Label opacity is boosted on
+    # hover regardless of hub status.
+    if interactive:
+        parts.append(
+            "<style>"
+            ".ge{opacity:0.10;transition:opacity 0.12s,stroke 0.12s,stroke-width 0.12s;}"
+            ".ge.picked{opacity:0.85;stroke:#7ec8ff;stroke-width:1.8;}"
+            ".ge.hl{opacity:1;stroke:#1f4fd8;stroke-width:2.4;}"
+            ".gn{cursor:pointer;}"
+            ".gn:hover circle{stroke:#1f4fd8;stroke-width:2.8;}"
+            ".glbl{opacity:0.65;pointer-events:none;transition:opacity 0.12s;}"
+            ".gn:hover .glbl{opacity:1;font-weight:600;fill:#20242e;}"
+            ".gn.picked .glbl{opacity:1;font-weight:700;fill:#20242e;}"
+            "</style>"
+        )
+
+    # Edges
+    for e in graph["edges"]:
+        if e["source"] not in pos or e["target"] not in pos:
+            continue
+        x1, y1, x2, y2 = sx(e["source"]), sy(e["source"]), sx(e["target"]), sy(e["target"])
+        _cls = "ge"
+        if e["source"] in highlight_node_ids or e["target"] in highlight_node_ids:
+            _cls += " picked"
+        _static_style = f' stroke="{COL_BG_EDGE}" stroke-width="1"'
+        _static_opacity = ' opacity="0.6"' if not interactive else ""
+        parts.append(f'<line class="{_cls}" data-src="{html.escape(e["source"])}" '
+                     f'data-tgt="{html.escape(e["target"])}" '
+                     f'x1="{x1:.0f}" y1="{y1:.0f}" x2="{x2:.0f}" y2="{y2:.0f}"'
+                     f'{_static_style}{_static_opacity}>'
+                     f'<title>{html.escape(e["relation"])}</title></line>')
+
+    # Nodes
+    for nid, n in graph["nodes"].items():
+        x, y = sx(nid), sy(nid)
+        _is_hub = nid in _hub_ids
+        _is_hl = nid in highlight_node_ids
+        _fill = _type_color(n.get("type", "")) if color_by_type else COL_BG_NODE
+        _stroke = COL_BLUE if _is_hl else "#8b90a0"
+        _r = 8 if _is_hl else (6 if _is_hub else 4)
+        _sw = 2.4 if _is_hl else 1.0
+        _grp_cls = "gn"
+        if _is_hl:
+            _grp_cls += " picked"
+        parts.append(f'<g class="{_grp_cls}" data-nid="{html.escape(nid)}">'
+                     f'<circle cx="{x:.0f}" cy="{y:.0f}" r="{_r}" fill="{_fill}" '
+                     f'stroke="{_stroke}" stroke-width="{_sw}">'
+                     f'<title>{html.escape(n["name"])} ({html.escape(n.get("type", ""))})'
+                     f' - degree {degree[nid]}</title></circle>')
+        if _is_hub or _is_hl:
+            _fill_txt = COL_TEXT if (_is_hl or _is_hub) else COL_TEXT_DIM
+            _weight = "600" if _is_hl else "500"
+            parts.append(f'<text class="glbl" x="{x:.0f}" y="{y + _r + font_size:.0f}" '
+                         f'font-size="{font_size}" fill="{_fill_txt}" '
+                         f'font-weight="{_weight}" text-anchor="middle">'
+                         f'{html.escape(n["name"])}</text>')
+        elif interactive:
+            # Add a hidden label that reveals on hover (opacity 0 in CSS).
+            parts.append(f'<text class="glbl" x="{x:.0f}" y="{y + _r + font_size:.0f}" '
+                         f'font-size="{font_size}" fill="{COL_TEXT_DIM}" '
+                         f'text-anchor="middle" style="opacity:0;">'
+                         f'{html.escape(n["name"])}</text>')
+        parts.append('</g>')
+
+    # Type legend (only when color_by_type is on AND show_legend requested).
+    # Callers that render the legend outside the figure via
+    # `neutral_legend_html(graph)` should pass show_legend=False.
+    if color_by_type and show_legend:
+        _types_present = sorted({n.get("type", "") for n in graph["nodes"].values() if n.get("type")})
+        _shown = _types_present[:12]  # cap legend rows
+        plate_h = len(_shown) * 18 + 14
+        parts.append(f'<rect x="6" y="4" width="230" height="{plate_h}" rx="6" '
+                     f'fill="#ffffff" fill-opacity="0.92" stroke="#e3e4e0"/>')
+        _lx, _ly = 18, 22
+        for _t in _shown:
+            parts.append(f'<circle cx="{_lx}" cy="{_ly}" r="5" fill="{_type_color(_t)}" stroke="#8b90a0"/>')
+            parts.append(f'<text x="{_lx + 10}" y="{_ly + 4}" font-size="{font_size}" '
+                         f'fill="{COL_TEXT}">{html.escape(_t)}</text>')
+            _ly += 18
+    # Inline interaction script: on mouseover of a node, add .hl class to
+    # every edge whose data-src OR data-tgt matches that node's data-nid.
+    # Runs once when the SVG is first parsed (via IIFE inside SVG scripting).
+    if interactive:
+        parts.append(
+            "<script><![CDATA["
+            "(function(){"
+            "var svg=document.currentScript.parentNode;"
+            "if(!svg||svg.tagName.toLowerCase()!=='svg'){return;}"
+            "var edges=svg.querySelectorAll('.ge');"
+            "var nodes=svg.querySelectorAll('.gn');"
+            "var byEnd={};"
+            "edges.forEach(function(e){"
+            "var s=e.getAttribute('data-src'),t=e.getAttribute('data-tgt');"
+            "(byEnd[s]=byEnd[s]||[]).push(e);(byEnd[t]=byEnd[t]||[]).push(e);"
+            "});"
+            "nodes.forEach(function(n){"
+            "var nid=n.getAttribute('data-nid');"
+            "n.addEventListener('mouseover',function(){"
+            "(byEnd[nid]||[]).forEach(function(e){e.classList.add('hl');});"
+            "});"
+            "n.addEventListener('mouseout',function(){"
+            "(byEnd[nid]||[]).forEach(function(e){e.classList.remove('hl');});"
+            "});"
+            "});"
+            "})();"
+            "]]></script>"
+        )
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def seed_provenance_html(usage):
+    """Render the seed-generation trace + dictionary alias resolution as
+    a compact HTML block for the Analytics Results Graph section. Shows
+    every query fed to entity linking, each raw substring match, and
+    (when different) the canonical node it resolved to via dictionary /
+    node-alias mapping. Returns "" when no trace is available."""
+    trace = usage.get("seed_trace") or []
+    queries = usage.get("queries") or []
+    seed_names = usage.get("seed_names") or []
+    if not (trace or queries or seed_names):
+        return ""
+    _rows = []
+    for _tr in trace:
+        _q = html.escape(str(_tr.get("query", "")))
+        _raw = _tr.get("matches_raw") or []
+        if _raw:
+            _hits = []
+            for _m in _raw:
+                _mention = html.escape(_m.get("mention", ""))
+                _mapped  = html.escape(_m.get("mapped_to_name", ""))
+                if _mention == _mapped:
+                    _hits.append(
+                        f'<span style="display:inline-block;padding:2px 8px;'
+                        f'background:#e8f0ff;border-radius:4px;margin:0 6px 4px 0;'
+                        f'color:#20242e;">{_mention}</span>')
+                else:
+                    _hits.append(
+                        f'<span style="display:inline-block;padding:2px 8px;'
+                        f'background:#fff3e0;border-radius:4px;margin:0 6px 4px 0;'
+                        f'color:#20242e;">{_mention} <span style="color:#8a8f98;">→</span> '
+                        f'<b>{_mapped}</b></span>')
+            _hits_html = "".join(_hits)
+        else:
+            _hits_html = '<span style="color:#8a8f98;">(該当なし)</span>'
+        _rows.append(
+            f'<div style="margin-bottom:6px;line-height:1.7;font-size:12px;">'
+            f'<span style="color:#8a8f98;">クエリ:</span> '
+            f'<code style="background:#f5f5f7;padding:1px 6px;border-radius:3px;">{_q}</code><br/>'
+            f'<span style="color:#8a8f98;margin-left:8px;">シード検出 (辞書変換):</span> {_hits_html}'
+            f'</div>')
+    _final = html.escape(", ".join(seed_names)) if seed_names else '<span style="color:#8a8f98;">(なし)</span>'
+    return (
+        f'<div style="border-left:3px solid #1f4fd8;background:#f9fafb;'
+        f'padding:8px 12px;margin:0 0 10px 0;border-radius:0 6px 6px 0;">'
+        f'<div style="font-size:12px;color:#20242e;font-weight:600;margin-bottom:6px;">'
+        f'シード生成トレース</div>'
+        + "".join(_rows) +
+        f'<div style="margin-top:4px;font-size:12px;">'
+        f'<span style="color:#8a8f98;">最終シード ({len(seed_names)}件):</span> '
+        f'<b>{_final}</b></div>'
+        f'</div>'
+    )
+
+
+def neutral_legend_html(graph, top_n=12):
+    """External-to-SVG legend for `render_graph_neutral_svg` — shows the
+    top-N types by node count with their assigned soft colors. Rendered as
+    a wrap-friendly chip row above/below the figure."""
+    from collections import Counter
+    _cnt = Counter((n.get("type") or "") for n in (graph.get("nodes") or {}).values())
+    _rows = [(t, c) for t, c in _cnt.most_common() if t]
+    _rows = _rows[:top_n]
+    if not _rows:
+        return ""
+    chips = "".join(
+        f'<span style="display:inline-flex;align-items:center;'
+        f'margin:0 12px 6px 0;font-size:12px;color:{COL_TEXT};">'
+        f'<span style="display:inline-block;width:12px;height:12px;border-radius:50%;'
+        f'background:{_type_color(t)};border:1px solid #8b90a0;margin-right:6px;"></span>'
+        f'{html.escape(t)} <span style="color:#8a8f98;margin-left:4px;">({c})</span></span>'
+        for t, c in _rows)
+    return (f'<div style="padding:4px 0 8px 0;line-height:1.6;">'
+              f'<span style="color:#666;font-size:11px;margin-right:8px;">凡例 (型 top {len(_rows)})</span>'
+              + chips + '</div>')
+
+
+def graph_overview_stats(graph, top_n=10):
+    """Structural summary of the graph — counts, distributions, top hubs.
+    Returns a dict of pre-formatted rows / values ready for st.dataframe /
+    st.metric consumption."""
+    from collections import Counter
+    nodes = graph.get("nodes") or {}
+    edges = graph.get("edges") or []
+
+    type_counter = Counter(n.get("type", "") or "(未指定)" for n in nodes.values())
+    domain_counter = Counter()
+    for n in nodes.values():
+        for d in (n.get("domains") or []):
+            domain_counter[d] += 1
+    for e in edges:
+        for d in (e.get("domains") or []):
+            domain_counter[d] += 1
+    pred_counter = Counter(e.get("relation", "") for e in edges)
+
+    degree = Counter()
+    for e in edges:
+        degree[e["source"]] += 1
+        degree[e["target"]] += 1
+    hubs = []
+    for nid, dg in degree.most_common(top_n):
+        n = nodes.get(nid, {})
+        hubs.append({
+            "エンティティ": n.get("name", nid),
+            "型":         n.get("type", ""),
+            "ドメイン":     " / ".join(n.get("domains", [])),
+            "次数":         dg,
+        })
+
+    _avg_degree = round((sum(degree.values()) / len(nodes)) if nodes else 0.0, 2)
+    _isolated = [nid for nid in nodes if degree.get(nid, 0) == 0]
+
+    return {
+        "totals": {
+            "ノード": len(nodes),
+            "エッジ": len(edges),
+            "型 種類": len(type_counter),
+            "ドメイン 種類": len(domain_counter),
+            "述語 種類": len(pred_counter),
+            "平均次数": _avg_degree,
+            "孤立ノード": len(_isolated),
+        },
+        "types":      [{"型": k, "件数": v} for k, v in type_counter.most_common(top_n * 3)],
+        "domains":    [{"ドメイン": k, "件数": v} for k, v in domain_counter.most_common(top_n * 3)],
+        "predicates": [{"述語": k, "件数": v} for k, v in pred_counter.most_common(top_n * 2)],
+        "hubs":       hubs,
+    }
+
+
+def graph_quality_report(graph, dictionary=None, dup_threshold=1):
+    """Data-quality checks — surfaces cleanup candidates:
+      - isolated_nodes: nodes with zero incident edges
+      - missing_type:   nodes with empty type field
+      - missing_domain: nodes with no domains
+      - dup_name_candidates: nodes whose names differ only by a
+        surface-level normalization (case/whitespace/simple hiragana-
+        katakana difference) — potential alias merge candidates
+      - predicate_variants: predicates that share a normalized form
+        (e.g. "関連する" / "関連" / "関連付ける" → suggest a canonical)
+    dup_threshold: minimum group size to report (default 2 = pairs).
+    Returns a dict of list-of-dict rows."""
+    from collections import defaultdict
+    nodes = graph.get("nodes") or {}
+    edges = graph.get("edges") or []
+    dictionary = dictionary or {}
+
+    # Isolated
+    incident = {nid: 0 for nid in nodes}
+    for e in edges:
+        if e["source"] in incident: incident[e["source"]] += 1
+        if e["target"] in incident: incident[e["target"]] += 1
+    _isolated = [
+        {"エンティティ": n.get("name", nid), "型": n.get("type", ""),
+         "ドメイン": " / ".join(n.get("domains", []))}
+        for nid, n in nodes.items() if incident.get(nid, 0) == 0
+    ]
+
+    # Missing type / domain
+    _no_type = [
+        {"エンティティ": n.get("name", nid), "次数": incident.get(nid, 0)}
+        for nid, n in nodes.items() if not (n.get("type") or "").strip()
+    ]
+    _no_domain = [
+        {"エンティティ": n.get("name", nid), "型": n.get("type", ""),
+         "次数": incident.get(nid, 0)}
+        for nid, n in nodes.items() if not (n.get("domains") or [])
+    ]
+
+    # Duplicate-name candidates (simple normalization)
+    def _norm(s):
+        s = (s or "").strip().lower().replace(" ", "").replace("　", "")
+        # optional kana fold could be added
+        return s
+    dup_map = defaultdict(list)
+    for nid, n in nodes.items():
+        dup_map[_norm(n.get("name", ""))].append((nid, n.get("name", ""), n.get("type", "")))
+    _dup_rows = []
+    for _key, entries in dup_map.items():
+        if len(entries) > dup_threshold:
+            for nid, name, typ in entries:
+                _dup_rows.append({
+                    "グループ": _key,
+                    "エンティティ": name,
+                    "型": typ,
+                    "同グループ内の他候補": ", ".join(n for _i, n, _t in entries if n != name),
+                })
+
+    # Predicate variants (basic normalization: strip trailing verb suffixes)
+    def _pred_norm(p):
+        for suf in ("する", "した", "される", "した。", "する。"):
+            if p.endswith(suf):
+                return p[: -len(suf)]
+        return p
+    pred_map = defaultdict(list)
+    for e in edges:
+        pred = e.get("relation", "")
+        pred_map[_pred_norm(pred)].append(pred)
+    _pred_var_rows = []
+    for norm_p, variants in pred_map.items():
+        _distinct = sorted(set(variants))
+        if len(_distinct) > 1:
+            _pred_var_rows.append({
+                "基本形候補": norm_p,
+                "バリアント": " / ".join(_distinct),
+                "登場回数": len(variants),
+            })
+
+    return {
+        "isolated_nodes":       _isolated,
+        "missing_type":         _no_type,
+        "missing_domain":       _no_domain,
+        "dup_name_candidates":  _dup_rows,
+        "predicate_variants":   sorted(_pred_var_rows, key=lambda r: -r["登場回数"]),
+    }
+
+
+def build_subgraph_around(graph, center_node_id, hops=1, edge_limit=60):
+    """Ego-network view — BFS TRAVERSAL edges only.
+
+    Contains the center node + every node reachable within `hops` steps,
+    and every edge TRAVERSED during that BFS. Explicitly excludes "back
+    edges" — edges between two visited nodes that were not on the
+    traversal path (e.g. an edge between two direct neighbors of the
+    center at hops=1). Rationale: the drill-down UI lists adjacency per
+    picked seed only; showing induced-subgraph edges that don't touch a
+    picked seed causes a mismatch ("phantom" lines in the SVG that don't
+    appear in any adjacency list).
+
+    At hops=1 this is exactly the star of the center (all incident
+    edges). At hops=2 it also traverses each direct neighbor's edges to
+    reach further nodes."""
+    from collections import deque
+    if center_node_id not in (graph.get("nodes") or {}):
+        return {"nodes": {}, "edges": []}
+    node_adj = {nid: [] for nid in graph["nodes"]}
+    for ei, e in enumerate(graph["edges"]):
+        if e["source"] in node_adj: node_adj[e["source"]].append(ei)
+        if e["target"] in node_adj: node_adj[e["target"]].append(ei)
+    keep_nodes = {center_node_id}
+    keep_edges = []
+    seen_edges = set()
+    frontier = deque([(center_node_id, 0)])
+    while frontier:
+        nid, dep = frontier.popleft()
+        if dep >= hops:
+            continue
+        for ei in node_adj.get(nid, []):
+            if ei in seen_edges:
+                continue
+            if len(keep_edges) >= edge_limit:
+                break
+            seen_edges.add(ei)
+            keep_edges.append(ei)
+            e = graph["edges"][ei]
+            other = e["target"] if e["source"] == nid else e["source"]
+            if other not in keep_nodes:
+                keep_nodes.add(other)
+                frontier.append((other, dep + 1))
+        if len(keep_edges) >= edge_limit:
+            break
+    return {
+        "nodes": {nid: graph["nodes"][nid] for nid in keep_nodes if nid in graph["nodes"]},
+        "edges": [graph["edges"][ei] for ei in keep_edges],
+    }

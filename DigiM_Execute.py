@@ -526,7 +526,13 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     # AgentSearch retriever) or initialise from the agent's root default.
     exec_info = {"SERVICE_INFO": service_info, "USER_INFO": user_info,
                   "_SESSION_ID": session_id, "_SESSION_NAME": session_name,
-                  "_AGENT_FILE": agent_file}
+                  "_AGENT_FILE": agent_file,
+                  # Full list of queries the retriever should consider: the
+                  # user's raw query, digest+situation-augmented variant, and
+                  # the RAG_QUERY_GENERATOR output. Graph retrieval iterates
+                  # all of them for seed detection; Vector retrieval already
+                  # uses the parallel query_vecs list.
+                  "_QUERIES": list(queries)}
     if execution.get("_AGENT_SEARCH_STATE") is not None:
         exec_info["_AGENT_SEARCH_STATE"] = execution["_AGENT_SEARCH_STATE"]
     else:
@@ -537,6 +543,10 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         exec_info["_AGENT_SEARCH_STATE"] = {"calls": 0, "max": _ag_max}
     knowledge_context, knowledge_selected = agent.set_knowledge_context(
         user_query, query_vecs, exec_info, meta_searches, private_mode=cfg["private_mode"])
+    # Graph retrieval stashes seed provenance for the Detail Information
+    # [Seed for Graph] panel and the Analytics Results Graph header.
+    graph_seed_traces = exec_info.get("_GRAPH_SEED_TRACES") or {}
+    output_reference["graph_seed_traces"] = graph_seed_traces
 
     # Set up the prompt template and query
     timestamp_log += "[12.Prompt template setup]" + str(datetime.now()) + "<br>"
@@ -681,7 +691,11 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             "text": response,
             "vec_file": response_vec_file,
             "reference": {"memory": memory_ref, "knowledge_rag": knowledge_ref,
-                          "user_memory": user_memory_used}
+                          "user_memory": user_memory_used,
+                          # Graph seed provenance keyed by RAG_NAME — the
+                          # Detail Information [Seed for Graph] panel and
+                          # the Chat Analytics Graph header read this.
+                          "graph_seed_traces": graph_seed_traces}
         }
 
         # Insert citation markers into the response synchronously when the

@@ -202,6 +202,7 @@ user/common/rag/json/*
 !user/common/rag/json/RAGsample_vec.json
 user/common/rag/docs/*
 !user/common/rag/docs/RAGsample.txt
+user/common/rag/graph/*
 user/common/rag/pages/*
 
 # DigiM Folder(csv)
