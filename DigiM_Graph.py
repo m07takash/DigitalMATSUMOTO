@@ -239,6 +239,268 @@ def add_edge(graph, src_id, dst_id, relation, domains=None, props=None,
     return edge
 
 
+# --------------------------------------------- Excel export / import CRUD --
+# Full-round-trip maintenance for the Knowledge Explorer Graph pane.
+# Export writes every node/edge (including logically-deleted ones) into a
+# two-sheet workbook. Import interprets the workbook as the desired end-state:
+#   - existing rows with matching id → UPDATE
+#   - rows with blank id            → CREATE
+#   - rows with active="N"          → logical delete
+#   - rows in the graph but NOT in the workbook → logical delete
+# Two-phase apply (plan → confirm → apply) so callers can preview the diff.
+def _split_slash_multi(value):
+    """Split a `/`-delimited string cell into a list, trimming whitespace.
+    Named to avoid collision with the ingestion-side `_split_multi(value, sep)`
+    defined further down in this module."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    return [p.strip() for p in str(value).split("/") if p.strip()]
+
+
+def _join_multi(value):
+    if not value:
+        return ""
+    return " / ".join(str(v).strip() for v in value if str(v).strip())
+
+
+def export_graph_to_xlsx(graph, out_path):
+    """Write the graph to `out_path` as a two-sheet .xlsx (nodes / edges).
+    Includes active=N rows so a full download reflects the true storage state.
+    Edge rows get their list index as the stable `id` column so import can
+    match rows back to the original edge."""
+    import openpyxl
+    wb = openpyxl.Workbook()
+    # -- nodes sheet --
+    ws_n = wb.active
+    ws_n.title = "nodes"
+    ws_n.append(["id", "name", "type", "aliases", "domains", "active"])
+    for nid, n in (graph.get("nodes") or {}).items():
+        ws_n.append([
+            nid,
+            n.get("name", ""),
+            n.get("type", ""),
+            _join_multi(n.get("aliases")),
+            _join_multi(n.get("domains")),
+            "N" if str(n.get("active", "Y")).upper() == "N" else "Y",
+        ])
+    # -- edges sheet --
+    ws_e = wb.create_sheet("edges")
+    ws_e.append(["id", "source", "target", "relation", "domains", "active", "create_date"])
+    _id_to_name = {nid: (n.get("name") or "") for nid, n in (graph.get("nodes") or {}).items()}
+    for ei, e in enumerate(graph.get("edges") or []):
+        ws_e.append([
+            ei,
+            _id_to_name.get(e.get("source"), ""),
+            _id_to_name.get(e.get("target"), ""),
+            e.get("relation", ""),
+            _join_multi(e.get("domains")),
+            "N" if str(e.get("active", "Y")).upper() == "N" else "Y",
+            e.get("create_date", ""),
+        ])
+    wb.save(out_path)
+    return out_path
+
+
+def _read_xlsx_rows(xlsx_path):
+    """Return {'nodes': [dict, ...], 'edges': [dict, ...]} from the workbook."""
+    import openpyxl
+    wb = openpyxl.load_workbook(xlsx_path, data_only=True)
+    out = {"nodes": [], "edges": []}
+    for sheet in ("nodes", "edges"):
+        if sheet not in wb.sheetnames:
+            continue
+        ws = wb[sheet]
+        header = [str(c.value).strip() if c.value is not None else "" for c in ws[1]]
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if all(v is None or (isinstance(v, str) and not v.strip()) for v in row):
+                continue
+            d = {}
+            for k, v in zip(header, row):
+                if not k:
+                    continue
+                d[k] = ("" if v is None else v)
+            out[sheet].append(d)
+    return out
+
+
+def compute_graph_import_plan(graph, xlsx_path):
+    """Diff the workbook against the graph. Returns a plan dict:
+        {"nodes": {"create": [rowdict...], "update": [(nid, changes)...],
+                    "delete": [nid, ...]},
+         "edges": {"create": [rowdict...], "update": [(ei, changes)...],
+                    "delete": [ei, ...]},
+         "warnings": [str, ...]}
+    Does not mutate the graph — pass the plan to apply_graph_import_plan()."""
+    rows = _read_xlsx_rows(xlsx_path)
+    warnings = []
+
+    # ---------- nodes ----------
+    n_create, n_update, n_delete = [], [], []
+    excel_node_ids = set()
+    existing_nodes = graph.get("nodes") or {}
+    for r in rows["nodes"]:
+        # Careful: `int(0) or ""` → "", which would misread edge id 0 as blank.
+        _raw_rid = r.get("id")
+        rid = "" if _raw_rid is None else str(_raw_rid).strip()
+        name = str(r.get("name", "") or "").strip()
+        typ = str(r.get("type", "") or "").strip()
+        aliases = _split_slash_multi(r.get("aliases"))
+        domains = _split_slash_multi(r.get("domains"))
+        active = str(r.get("active", "Y") or "Y").strip().upper() != "N"
+        if not rid:
+            if not name:
+                warnings.append(f"[nodes] name 空の行を無視 (id/name のいずれかが必須)")
+                continue
+            nid_new = node_id_for(name)
+            if nid_new in existing_nodes:
+                # Treat as update rather than dup create
+                n_update.append((nid_new, {
+                    "name": name, "type": typ, "aliases": aliases,
+                    "domains": domains, "active": active,
+                }))
+                excel_node_ids.add(nid_new)
+            else:
+                n_create.append({"name": name, "type": typ, "aliases": aliases,
+                                  "domains": domains, "active": active})
+            continue
+        excel_node_ids.add(rid)
+        cur = existing_nodes.get(rid)
+        if cur is None:
+            warnings.append(f"[nodes] id={rid} は存在しません (削除された ID？) — 無視")
+            continue
+        changes = {}
+        cur_active = str(cur.get("active", "Y")).upper() != "N"
+        if (cur.get("name") or "") != name:                 changes["name"] = name
+        if (cur.get("type") or "") != typ:                  changes["type"] = typ
+        if list(cur.get("aliases") or []) != aliases:       changes["aliases"] = aliases
+        if list(cur.get("domains") or []) != domains:       changes["domains"] = domains
+        if cur_active != active:                            changes["active"] = active
+        if changes:
+            n_update.append((rid, changes))
+    for nid, n in existing_nodes.items():
+        if nid in excel_node_ids:
+            continue
+        if str(n.get("active", "Y")).upper() == "N":
+            # already logically deleted — skip
+            continue
+        n_delete.append(nid)
+
+    # ---------- edges ----------
+    e_create, e_update, e_delete = [], [], []
+    excel_edge_ids = set()
+    edges = graph.get("edges") or []
+    name_to_id = {(nd.get("name") or ""): nid for nid, nd in existing_nodes.items()}
+    for r in rows["edges"]:
+        # Careful: `int(0) or ""` → "", which would misread edge id 0 as blank.
+        _raw_rid = r.get("id")
+        rid = "" if _raw_rid is None else str(_raw_rid).strip()
+        src_name = str(r.get("source", "") or "").strip()
+        tgt_name = str(r.get("target", "") or "").strip()
+        relation = str(r.get("relation", "") or "").strip()
+        domains = _split_slash_multi(r.get("domains"))
+        active = str(r.get("active", "Y") or "Y").strip().upper() != "N"
+        create_date = str(r.get("create_date", "") or "").strip()
+        src_id = name_to_id.get(src_name)
+        tgt_id = name_to_id.get(tgt_name)
+        if not rid:
+            if not (src_id and tgt_id and relation):
+                warnings.append(f"[edges] 新規作成に必要な source/target/relation が不足: {src_name!r} --[{relation}]--> {tgt_name!r}")
+                continue
+            e_create.append({"source": src_id, "target": tgt_id,
+                              "relation": relation, "domains": domains,
+                              "active": active, "create_date": create_date})
+            continue
+        try:
+            ei = int(rid)
+        except (TypeError, ValueError):
+            warnings.append(f"[edges] id={rid!r} が整数ではありません — 無視")
+            continue
+        if not (0 <= ei < len(edges)):
+            warnings.append(f"[edges] id={ei} は範囲外 (現エッジ数 {len(edges)}) — 無視")
+            continue
+        excel_edge_ids.add(ei)
+        cur = edges[ei]
+        # Endpoint changes need node-id resolution — skip if unresolvable but
+        # note it as a warning (relation-only edits keep working).
+        cur_src_name = (existing_nodes.get(cur.get("source")) or {}).get("name", "")
+        cur_tgt_name = (existing_nodes.get(cur.get("target")) or {}).get("name", "")
+        changes = {}
+        if (cur.get("relation") or "") != relation:            changes["relation"] = relation
+        if list(cur.get("domains") or []) != domains:          changes["domains"] = domains
+        cur_active = str(cur.get("active", "Y")).upper() != "N"
+        if cur_active != active:                               changes["active"] = active
+        if cur_src_name != src_name:
+            if src_id:
+                changes["source"] = src_id
+            else:
+                warnings.append(f"[edges] id={ei}: source={src_name!r} が見つからない — 変更を無視")
+        if cur_tgt_name != tgt_name:
+            if tgt_id:
+                changes["target"] = tgt_id
+            else:
+                warnings.append(f"[edges] id={ei}: target={tgt_name!r} が見つからない — 変更を無視")
+        if changes:
+            e_update.append((ei, changes))
+    for ei, e in enumerate(edges):
+        if ei in excel_edge_ids:
+            continue
+        if str(e.get("active", "Y")).upper() == "N":
+            continue
+        e_delete.append(ei)
+
+    return {
+        "nodes": {"create": n_create, "update": n_update, "delete": n_delete},
+        "edges": {"create": e_create, "update": e_update, "delete": e_delete},
+        "warnings": warnings,
+    }
+
+
+def apply_graph_import_plan(graph, plan):
+    """Mutate `graph` per the plan produced by compute_graph_import_plan().
+    Returns a counts dict: {'nodes_created', 'nodes_updated', 'nodes_deleted',
+    'edges_created', 'edges_updated', 'edges_deleted'}."""
+    counts = {"nodes_created": 0, "nodes_updated": 0, "nodes_deleted": 0,
+              "edges_created": 0, "edges_updated": 0, "edges_deleted": 0}
+
+    for row in plan["nodes"]["create"]:
+        n = add_node(graph, row["name"], node_type=row.get("type", ""),
+                      aliases=row.get("aliases"), domains=row.get("domains"),
+                      active=row.get("active", True))
+        if n is not None:
+            counts["nodes_created"] += 1
+    for nid, changes in plan["nodes"]["update"]:
+        _kw = {}
+        if "name" in changes:    _kw["name"] = changes["name"]
+        if "type" in changes:    _kw["node_type"] = changes["type"]
+        if "aliases" in changes: _kw["aliases"] = changes["aliases"]
+        if "domains" in changes: _kw["domains"] = changes["domains"]
+        if "active" in changes:  _kw["active"] = changes["active"]
+        if update_node(graph, nid, **_kw):
+            counts["nodes_updated"] += 1
+    for nid in plan["nodes"]["delete"]:
+        if set_node_active(graph, nid, False):
+            counts["nodes_deleted"] += 1
+
+    for row in plan["edges"]["create"]:
+        e = add_edge(graph, row["source"], row["target"], row["relation"],
+                      domains=row.get("domains"),
+                      create_date=row.get("create_date", ""),
+                      active=row.get("active", True))
+        if e is not None:
+            counts["edges_created"] += 1
+    for ei, changes in plan["edges"]["update"]:
+        if update_edge(graph, ei, **{k: v for k, v in changes.items() if k in
+                                      ("relation", "domains", "source", "target", "active")}):
+            counts["edges_updated"] += 1
+    for ei in plan["edges"]["delete"]:
+        if set_edge_active(graph, ei, False):
+            counts["edges_deleted"] += 1
+
+    return counts
+
+
 def load_dictionary(graph_dir):
     path = str(Path(graph_dir) / "dictionary.json")
     d = dmu.read_json_file(path) if os.path.exists(path) else {}
