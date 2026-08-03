@@ -455,7 +455,21 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             service_info, user_info, "WebSearch",
             session_id, session_name, agent_file, search_text, [], {}, engine=web_engine)
         web_duration = round((datetime.now() - t_web_start).total_seconds(), 2)
-        web_context = "[参考]関連するWEBの検索結果:\n" + web_result_text
+        # Guardrails around the raw search text — LLMs tend to over-defer to
+        # large chunks of external text (口調が寄る／会話文脈を忘れる)。
+        # 明示的に「これは参考」「人格・会話履歴を最優先」と枠で囲むだけで
+        # 有意に改善する（プロンプト長のオーバーヘッドは数十トークン）。
+        web_context = (
+            "\n[参考資料 — Web検索結果 (ここから)]\n"
+            "以下は事実の裏付け材料として渡します。次のルールを厳守してください:\n"
+            "・本文を丸写ししない／要約調に引きずられない。\n"
+            "・口調・語彙・視点は必ずあなた自身の人格設定に従う。\n"
+            "・これまでの会話の流れとユーザーの意図を最優先にし、必要な事実だけを自然に取り込む。\n"
+            "・情報の一部だけを使う場合、他は無視してよい（全部触れる必要はない）。\n"
+            "---\n"
+            + web_result_text +
+            "\n---\n[参考資料 END]\n"
+        )
         web_search_log = {"engine": web_engine, "model": web_model, "duration_sec": web_duration, "search_text": search_text, "urls": export_urls, "web_context": web_context}
         timestamp_log += f"[06.Web search done ({web_engine}/{web_model}, {web_duration}s)]" + str(datetime.now()) + "<br>"
     output_reference["Web_search"] = web_search_log

@@ -8301,6 +8301,50 @@ def main():
                                                     return len(_ku_rag_order) + hash(_name) % 1000
                                             with chat_expander_analytics:
                                                 _gu_result_main = analytics_dict.get("graph_utility") or {}
+                                                # ---- All-DB score summary (top of the expander) ----
+                                                # Vector RAGs: reuse the existing similarity_utility score.
+                                                # Graph RAGs: combined recall (③ = ノードRecall × エッジRecall).
+                                                try:
+                                                    import DigiM_GraphUtility as _dgu_top
+                                                    _vec_scores_top = ((analytics_dict.get("knowledge_utility") or {})
+                                                                        .get("similarity_utility") or {})
+                                                    _gu_scores_top = {}
+                                                    for _rn_top, _u_top in _gu_result_main.items():
+                                                        if not _u_top or _u_top.get("error"):
+                                                            continue
+                                                        _gu_scores_top[_rn_top] = _dgu_top.graph_recall_scores(_u_top)
+                                                    if _vec_scores_top or _gu_scores_top:
+                                                        st.markdown("**Knowledge Utility (全DBスコア)**", unsafe_allow_html=True)
+                                                        # Preserve KNOWLEDGE + BOOK declaration order (falls
+                                                        # back to insertion order for RAGs not in that list).
+                                                        _seen_top = set()
+                                                        _rows_top = []
+                                                        for _rn in _ku_rag_order:
+                                                            if _rn in _vec_scores_top:
+                                                                _rows_top.append(("Vector", _rn, _vec_scores_top[_rn]))
+                                                                _seen_top.add(_rn)
+                                                            elif _rn in _gu_scores_top:
+                                                                _rows_top.append(("Graph", _rn, _gu_scores_top[_rn]))
+                                                                _seen_top.add(_rn)
+                                                        for _rn, _v in _vec_scores_top.items():
+                                                            if _rn not in _seen_top:
+                                                                _rows_top.append(("Vector", _rn, _v))
+                                                                _seen_top.add(_rn)
+                                                        for _rn, _v in _gu_scores_top.items():
+                                                            if _rn not in _seen_top:
+                                                                _rows_top.append(("Graph", _rn, _v))
+                                                        _lines_top = []
+                                                        for _kind, _rn, _v in _rows_top:
+                                                            if _kind == "Graph":
+                                                                _c = _v.get("combined") if isinstance(_v, dict) else None
+                                                                _s = "N/A" if _c is None else f"{_c:.3f}"
+                                                                _lines_top.append(f"**{_rn}** (Graph): {_s}")
+                                                            else:
+                                                                _lines_top.append(f"**{_rn}**: {_v}")
+                                                        st.markdown(" ／ ".join(_lines_top), unsafe_allow_html=True)
+                                                        st.markdown("---")
+                                                except Exception as _sum_e:
+                                                    st.caption(f"_(summary render failed: {_sum_e})_")
                                                 for _gu_rag_name, _gu_usage in sorted(_gu_result_main.items(), key=lambda kv: _ku_order_key(kv[0])):
                                                     st.markdown(f"### {_gu_rag_name} (Graph)")
                                                     if not _gu_usage or _gu_usage.get("error"):
@@ -8309,8 +8353,8 @@ def main():
                                                     try:
                                                         import DigiM_GraphUtility as _dgu_main
                                                         # Vertical layout: (1) シード生成トレース (expander),
-                                                        # (2) 検索ビュー SVG, (3) 生成ビュー SVG,
-                                                        # (4) 単一テーブル (検索/生成はフラグ列)
+                                                        # (2) 統合ビュー SVG + PNG ダウンロード + シードチップ,
+                                                        # (3) ノード / エッジ HTML テーブル (状態カラー + 太字)
                                                         _prov_html = _dgu_main.seed_provenance_html(_gu_usage)
                                                         if _prov_html:
                                                             _seed_n = len(_gu_usage.get("seed_names") or [])
@@ -8320,44 +8364,58 @@ def main():
                                                                 expanded=False,
                                                             ):
                                                                 st.markdown(_prov_html, unsafe_allow_html=True)
-                                                        st.markdown("**検索ビュー**", unsafe_allow_html=True)
+                                                        # Per-DB score line (① / ② / ③)
+                                                        _scores_this = _dgu_main.graph_recall_scores(_gu_usage)
+                                                        def _fmt(_x):
+                                                            return "N/A" if _x is None else f"{_x:.3f}"
                                                         st.markdown(
-                                                            _dgu_main.usage_legend_html("retrieval"),
+                                                            "**スコア**: "
+                                                            f"① ノードRecall = {_fmt(_scores_this['node_recall'])} "
+                                                            f"({_scores_this['output_node_count'] - _scores_this['missed_node_count']}/{_scores_this['output_node_count']})"
+                                                            f" ＋ "
+                                                            f"② エッジRecall = {_fmt(_scores_this['edge_recall'])} "
+                                                            f"({_scores_this['output_edge_count'] - _scores_this['missed_edge_count']}/{_scores_this['output_edge_count']})"
+                                                            f" = "
+                                                            f"③ 統合スコア = **{_fmt(_scores_this['combined'])}** "
+                                                            "<sub>(N/A は 0 換算)</sub>",
+                                                            unsafe_allow_html=True,
+                                                        )
+                                                        st.markdown("**ナレッジグラフ 利用状況（統合ビュー）**", unsafe_allow_html=True)
+                                                        st.markdown(
+                                                            _dgu_main.unified_legend_html(),
                                                             unsafe_allow_html=True,
                                                         )
                                                         st.markdown(
-                                                            _dgu_main.render_usage_svg(_gu_usage, view="retrieval", show_legend=False),
+                                                            _dgu_main.render_unified_svg(_gu_usage, show_legend=False),
                                                             unsafe_allow_html=True,
                                                         )
-                                                        st.markdown("**生成ビュー**", unsafe_allow_html=True)
-                                                        st.markdown(
-                                                            _dgu_main.usage_legend_html("generation"),
-                                                            unsafe_allow_html=True,
-                                                        )
-                                                        st.markdown(
-                                                            _dgu_main.render_usage_svg(_gu_usage, view="generation", show_legend=False),
-                                                            unsafe_allow_html=True,
-                                                        )
-                                                        _tbl = _dgu_main.unified_usage_table(_gu_usage)
-                                                        _u_nodes = _tbl.get("nodes") or []
-                                                        _u_edges = _tbl.get("edges") or []
-                                                        st.markdown("**ノード一覧**  <sub>検索/生成のフラグ + 生成頻度</sub>", unsafe_allow_html=True)
-                                                        if _u_nodes:
-                                                            st.dataframe(pd.DataFrame(_u_nodes),
-                                                                          hide_index=True, use_container_width=True)
-                                                        else:
-                                                            st.caption("_(該当なし)_")
-                                                        st.markdown("**エッジ一覧**  <sub>検索/生成のフラグ + 生成頻度 + 述語一致</sub>", unsafe_allow_html=True)
-                                                        if _u_edges:
-                                                            st.dataframe(pd.DataFrame(_u_edges),
-                                                                          hide_index=True, use_container_width=True)
-                                                        else:
-                                                            st.caption("_(該当なし)_")
+                                                        # Seeds horizontal chip row + PNG download button
+                                                        _chip_html = _dgu_main.seeds_chip_html(_gu_usage)
+                                                        if _chip_html:
+                                                            st.markdown(_chip_html, unsafe_allow_html=True)
+                                                        try:
+                                                            _png_bytes = _dgu_main.render_unified_png(_gu_usage)
+                                                            from datetime import datetime as _dt_dl
+                                                            _dl_stamp = _dt_dl.now().strftime("%Y%m%d_%H%M%S")
+                                                            st.download_button(
+                                                                "📥 PNG ダウンロード",
+                                                                data=_png_bytes,
+                                                                file_name=f"graph_utility_{_gu_rag_name}_{_dl_stamp}.png",
+                                                                mime="image/png",
+                                                                key=f"gu_png_{_gu_rag_name}_{_dl_stamp}",
+                                                            )
+                                                        except Exception as _png_e:
+                                                            st.caption(f"_(PNG 生成に失敗: {_png_e})_")
+                                                        _tbl_html = _dgu_main.unified_usage_tables_html(_gu_usage)
+                                                        st.markdown("**ノード一覧**  <sub>状態カラーで色分け + シードはアンダーライン</sub>", unsafe_allow_html=True)
+                                                        st.markdown(_tbl_html["nodes_html"], unsafe_allow_html=True)
+                                                        st.markdown("**エッジ一覧**", unsafe_allow_html=True)
+                                                        st.markdown(_tbl_html["edges_html"], unsafe_allow_html=True)
                                                         _missed_n_main = len(_gu_usage.get("missed_nodes") or [])
                                                         _missed_e_main = len(_gu_usage.get("missed_edges") or [])
                                                         if _missed_n_main or _missed_e_main:
                                                             st.warning(
-                                                                f"生成ビューの赤 = 出力に含まれるが検索では抽出されなかった要素: "
+                                                                f"赤 = 出力に含まれるが検索では抽出されなかった要素: "
                                                                 f"ノード {_missed_n_main} 件 / エッジ {_missed_e_main} 件。"
                                                                 " HOPS / EDGE_LIMIT / FANOUT_LIMIT / シード辞書の調整余地があります。"
                                                             )
@@ -8640,6 +8698,96 @@ def main():
                 st.session_state.book_selected = st.multiselect(
                     "BOOK", [item["RAG_NAME"] for item in _book_list]
                 )
+
+        # Personality Override (session-local): lets the operator tune the
+        # active agent's PERSONALITY block for this chat without editing the
+        # underlying JSON. Fields are merged into overwrite_items at submit
+        # time via update_dict (deep-merge preserves untouched keys).
+        _cur_pers = (st.session_state.get("agent_data") or {}).get("PERSONALITY") or {}
+        _PERSONALITY_STR_UI = [
+            # Basic
+            ("SEX",            "性別"),
+            ("BIRTHDAY",       "誕生日"),
+            ("NATIONALITY",    "国籍"),
+            ("LANGUAGE",       "使用言語"),
+            # Physical
+            ("BLOOD_TYPE",     "血液型"),
+            ("RESIDENCE",      "居住地"),
+            ("HEIGHT",         "身長"),
+            ("WEIGHT",         "体重"),
+            ("FOOT_SIZE",      "足のサイズ"),
+            ("DOMINANT_HAND",  "利き手"),
+            ("DOMINANT_FOOT",  "利き足"),
+            ("HAIRSTYLE",      "髪型"),
+            ("GLASSES",        "メガネ"),
+            ("PERSONAL_COLOR", "パーソナルカラー"),
+        ]
+        _BIG5_KEYS = ["Openness", "Conscientiousness", "Extraversion", "Agreeableness", "Neuroticism"]
+        with st.expander("Personality Override", expanded=False):
+            st.caption(
+                "この会話のみで有効な PERSONALITY 上書き（エージェント JSON は変更しない）。"
+                " 家族構成は `/` 区切りで複数指定可。SPEAKING_STYLE は `prompt_templates.json` の"
+                " `SPEAKING_STYLE` キーから選択。BIG5 は 0.00〜1.00 の 5 特性。"
+            )
+            # IS_ALIVE (bool)
+            _alive_default = bool(_cur_pers.get("IS_ALIVE", True))
+            st.checkbox("存命", value=_alive_default, key="po_IS_ALIVE")
+
+            # Simple string fields (2-column grid)
+            _po_cols = st.columns(2)
+            for _i, (_k, _label) in enumerate(_PERSONALITY_STR_UI):
+                _default = str(_cur_pers.get(_k, "") or "")
+                _po_cols[_i % 2].text_input(
+                    _label, value=_default, key=f"po_{_k}",
+                )
+
+            # SPEAKING_STYLE (select — must be a key in prompt_templates.json)
+            try:
+                _speaking_options = list(dmu.read_json_file(
+                    "prompt_templates.json", mst_folder_path).get("SPEAKING_STYLE", {}).keys())
+            except Exception:
+                _speaking_options = []
+            if _speaking_options:
+                _cur_style = str(_cur_pers.get("SPEAKING_STYLE", "") or "")
+                if _cur_style and _cur_style not in _speaking_options:
+                    _speaking_options = [_cur_style] + _speaking_options
+                _sidx = _speaking_options.index(_cur_style) if _cur_style in _speaking_options else 0
+                st.selectbox("口調 (SPEAKING_STYLE)", _speaking_options,
+                              index=_sidx, key="po_SPEAKING_STYLE")
+            else:
+                st.text_input("口調 (SPEAKING_STYLE)",
+                                value=str(_cur_pers.get("SPEAKING_STYLE", "") or ""),
+                                key="po_SPEAKING_STYLE")
+
+            # FAMILY (list, `/` delimited)
+            _fam_default = _cur_pers.get("FAMILY") or []
+            if isinstance(_fam_default, list):
+                _fam_str = " / ".join(str(x) for x in _fam_default)
+            else:
+                _fam_str = str(_fam_default)
+            st.text_input("家族構成 (`/` 区切り)", value=_fam_str, key="po_FAMILY_STR")
+
+            # BIG5 (5 floats 0.00-1.00)
+            st.markdown("**BIG5**")
+            _big5_default = _cur_pers.get("BIG5") or {}
+            _big5_cols = st.columns(5)
+            for _i, _bk in enumerate(_BIG5_KEYS):
+                _bv = _big5_default.get(_bk, 0.5)
+                try:
+                    _bv = float(_bv)
+                except (TypeError, ValueError):
+                    _bv = 0.5
+                _big5_cols[_i].number_input(
+                    _bk, min_value=0.0, max_value=1.0, step=0.05,
+                    value=_bv, format="%.2f", key=f"po_BIG5_{_bk}",
+                )
+
+            # CHARACTER (text area — inline character prose or a .txt/.md filename)
+            _char_default = str(_cur_pers.get("CHARACTER", "") or "")
+            st.text_area(
+                "キャラクター (CHARACTER) — インラインテキスト or `character/` 配下のファイル名",
+                value=_char_default, height=100, key="po_CHARACTER",
+            )
 
         # User Memory (placed directly below BOOK on the main screen; shown when Allowed.User Memory=True)
         if st.session_state.allowed_user_memory:
@@ -10059,6 +10207,57 @@ def main():
             # Engine switch (IMAGEGEN)
             if st.session_state.imagegen_engine_name and st.session_state.imagegen_engine_name in st.session_state.agent_data.get("ENGINE", {}).get("IMAGEGEN", {}):
                 overwrite_items.setdefault("ENGINE", {})["IMAGEGEN"] = st.session_state.agent_data["ENGINE"]["IMAGEGEN"][st.session_state.imagegen_engine_name]
+
+            # PERSONALITY override (from the Personality Override expander).
+            # Only fields that DIFFER from the agent JSON default are packed
+            # into overwrite_items, so an unchanged expander leaves the JSON
+            # personality untouched. update_dict deep-merges, so partial
+            # overrides preserve other PERSONALITY keys not shown in the UI.
+            _pers_default = (st.session_state.get("agent_data") or {}).get("PERSONALITY") or {}
+            _pers_override = {}
+            # String fields (basic + physical + SPEAKING_STYLE + CHARACTER)
+            for _k in ("SEX", "BIRTHDAY", "NATIONALITY", "LANGUAGE",
+                       "BLOOD_TYPE", "RESIDENCE", "HEIGHT", "WEIGHT", "FOOT_SIZE",
+                       "DOMINANT_HAND", "DOMINANT_FOOT", "HAIRSTYLE", "GLASSES",
+                       "PERSONAL_COLOR", "SPEAKING_STYLE", "CHARACTER"):
+                _cur = st.session_state.get(f"po_{_k}", "")
+                if str(_cur) != str(_pers_default.get(_k, "") or ""):
+                    _pers_override[_k] = _cur
+            # IS_ALIVE (bool)
+            _cur_alive = bool(st.session_state.get("po_IS_ALIVE", True))
+            if _cur_alive != bool(_pers_default.get("IS_ALIVE", True)):
+                _pers_override["IS_ALIVE"] = _cur_alive
+            # FAMILY (list, from `/`-delimited string)
+            _fam_str = st.session_state.get("po_FAMILY_STR", "")
+            _fam_list = [x.strip() for x in _fam_str.split("/") if x.strip()]
+            _def_fam = _pers_default.get("FAMILY") or []
+            if isinstance(_def_fam, list):
+                _def_fam_norm = [str(x) for x in _def_fam]
+            else:
+                _def_fam_norm = [str(_def_fam)] if _def_fam else []
+            if _fam_list != _def_fam_norm:
+                _pers_override["FAMILY"] = _fam_list
+            # BIG5 (5 floats). update_dict deep-merges, so partial BIG5
+            # would silently mix with JSON defaults for missing keys — pack
+            # the full 5-tuple only when any component actually differs.
+            _big5_default = _pers_default.get("BIG5") or {}
+            _big5_cur = {}
+            _big5_changed = False
+            for _bk in ("Openness", "Conscientiousness", "Extraversion", "Agreeableness", "Neuroticism"):
+                _bv = st.session_state.get(f"po_BIG5_{_bk}")
+                try:
+                    _bv = float(_bv) if _bv is not None else float(_big5_default.get(_bk, 0.5))
+                except (TypeError, ValueError):
+                    _bv = float(_big5_default.get(_bk, 0.5))
+                _big5_cur[_bk] = _bv
+                try:
+                    _big5_changed = _big5_changed or (abs(_bv - float(_big5_default.get(_bk, 0.5))) > 1e-9)
+                except (TypeError, ValueError):
+                    _big5_changed = True
+            if _big5_changed:
+                _pers_override["BIG5"] = _big5_cur
+            if _pers_override:
+                overwrite_items["PERSONALITY"] = _pers_override
 
             # Knowledge addition
             add_knowledges = []

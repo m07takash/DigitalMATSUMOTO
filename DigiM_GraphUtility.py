@@ -213,6 +213,466 @@ def render_usage_svg(usage, view="retrieval", width=880, height=560, font_size=1
     return "".join(parts)
 
 
+# ================================================================ unified ==
+# 検索ビュー + 生成ビューを 1 枚に統合したビュー。生成ビューのカラーリング
+# (高頻度=スカイブルー / 低頻度=ブルー / 未検索=赤 / 未使用=グレー) をベース
+# に、「検索では抽出されたが生成では触れられなかった」ノード・エッジを
+# 半透明ブルー (BLUE, opacity 0.5) で追加。シードはグラフ上のラベルに
+# アンダーラインを引く + グラフ下に横一列のチップとして列挙する。
+# ---------------------------------------------------------------------------
+
+# Precedence of the 5 states (highest first): missed → output-high → output-low
+# → search-only → untouched. Returned tuple is (fill, stroke, fill_opacity,
+# stroke_opacity, radius, emphasized?).
+def _unified_node_style(nid, usage):
+    max_freq = max(usage["output_nodes"].values() or [1])
+    freq = usage["output_nodes"].get(nid, 0)
+    missed_set = set(usage["missed_nodes"])
+    retrieved_set = set(usage["retrieved_nodes"])
+    if freq:
+        if nid in missed_set:
+            return (COL_RED, COL_RED, 1.0, 1.0, 10, "missed")
+        fill = _freq_color(freq, max_freq)
+        return (fill, COL_BLUE, 1.0, 1.0, 9 + min(3, freq),
+                "hi" if freq >= max_freq else "lo")
+    if nid in retrieved_set:
+        return (COL_BLUE, COL_BLUE, 0.5, 0.5, 8, "search")
+    return (COL_BG_NODE, COL_BG_NODE, 1.0, 1.0, 7, "bg")
+
+
+def _unified_edge_style(ei, usage):
+    hit = next((h for h in usage["output_edges"] if h["index"] == ei), None)
+    missed_e = {h["index"] for h in usage["missed_edges"]}
+    if hit:
+        if ei in missed_e:
+            return (COL_RED, 2.4, 1.0, "missed")
+        max_freq = max((h["freq"] for h in usage["output_edges"]), default=1)
+        return (_freq_color(hit["freq"], max_freq), 2.4, 1.0,
+                "hi" if hit["freq"] >= max_freq else "lo")
+    if ei in set(usage["retrieved_edges"]):
+        return (COL_BLUE, 2.0, 0.5, "search")
+    return (COL_BG_EDGE, 1.0, 1.0, "bg")
+
+
+def render_unified_svg(usage, width=880, height=560, font_size=11,
+                        show_legend=False):
+    """Unified retrieval+generation view. See _unified_node_style /
+    _unified_edge_style for the color precedence. Seeds get an underlined
+    label to distinguish them from other emphasized nodes. Callers should
+    render the legend externally via `unified_legend_html()` and pass
+    `show_legend=False` (the default)."""
+    graph = usage["graph"]
+    pos = spring_layout(graph)
+    pad = 60
+    seeds = set(usage.get("seeds") or [])
+
+    def sx(nid): return pad + pos[nid][0] * (width - 2 * pad)
+    def sy(nid): return pad + pos[nid][1] * (height - 2 * pad)
+
+    parts = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" '
+             f'height="{height}" viewBox="0 0 {width} {height}" '
+             f'style="background:#ffffff;font-family:sans-serif;max-width:100%">']
+
+    # Edges: bg → search-only → emphasized (missed/output) so hot edges stay on top.
+    _tier = {"bg": 0, "search": 1, "hi": 2, "lo": 2, "missed": 3}
+    _tiered_edges = []
+    for ei, e in enumerate(graph["edges"]):
+        if e["source"] not in pos or e["target"] not in pos:
+            continue
+        stroke, w, opacity, tier = _unified_edge_style(ei, usage)
+        x1, y1, x2, y2 = sx(e["source"]), sy(e["source"]), sx(e["target"]), sy(e["target"])
+        line = (f'<line x1="{x1:.0f}" y1="{y1:.0f}" x2="{x2:.0f}" y2="{y2:.0f}" '
+                f'stroke="{stroke}" stroke-width="{w}" '
+                f'stroke-opacity="{opacity:.2f}">'
+                f'<title>{html.escape(e["relation"])}</title></line>')
+        emph_label = ""
+        if tier in ("hi", "lo", "missed"):
+            mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+            emph_label = (f'<text x="{mx:.0f}" y="{my - 4:.0f}" '
+                          f'font-size="{font_size - 2}" fill="{stroke}" '
+                          f'text-anchor="middle">{html.escape(e["relation"])}</text>')
+        _tiered_edges.append((_tier[tier], line, emph_label))
+    _tiered_edges.sort(key=lambda t: t[0])
+    for _, line, label in _tiered_edges:
+        parts.append(line)
+        if label:
+            parts.append(label)
+
+    # Nodes: same tiering — bg first, hot on top.
+    _tiered_nodes = []
+    for nid, n in graph["nodes"].items():
+        if nid not in pos:
+            continue
+        fill, stroke, fop, sop, r, tier = _unified_node_style(nid, usage)
+        x, y = sx(nid), sy(nid)
+        emph = tier in ("hi", "lo", "search", "missed")
+        label_fill = COL_TEXT if emph else COL_TEXT_DIM
+        weight = "600" if emph else "400"
+        text_deco = ' text-decoration="underline"' if nid in seeds else ""
+        g = (f'<g><circle cx="{x:.0f}" cy="{y:.0f}" r="{r}" fill="{fill}" '
+             f'stroke="{stroke}" stroke-width="1.5" '
+             f'fill-opacity="{fop:.2f}" stroke-opacity="{sop:.2f}">'
+             f'<title>{html.escape(n["name"])} ({html.escape(n.get("type", ""))})</title>'
+             f'</circle>'
+             f'<text x="{x:.0f}" y="{y + r + font_size:.0f}" font-size="{font_size}" '
+             f'fill="{label_fill}" font-weight="{weight}" text-anchor="middle"'
+             f'{text_deco}>{html.escape(n["name"])}</text></g>')
+        _tiered_nodes.append((_tier[tier], g))
+    _tiered_nodes.sort(key=lambda t: t[0])
+    for _, g in _tiered_nodes:
+        parts.append(g)
+
+    if show_legend:
+        # Optional inline legend (rarely used — Streamlit renders it externally).
+        legend = [(COL_SKYBLUE, "出力に使用（高頻度）"),
+                  (COL_BLUE,    "出力に使用（低頻度）"),
+                  (COL_BLUE,    "出力で未使用 (半透明)"),
+                  (COL_RED,     "出力にあるが未検索"),
+                  (COL_BG_NODE, "未使用")]
+        plate_h = len(legend) * 20 + 12
+        parts.append(f'<rect x="6" y="4" width="220" height="{plate_h}" rx="6" '
+                     f'fill="#ffffff" fill-opacity="0.92" stroke="#e3e4e0"/>')
+        lx, ly = 18, 22
+        for i, (color, label) in enumerate(legend):
+            opac = 0.5 if i == 2 else 1.0
+            parts.append(f'<circle cx="{lx}" cy="{ly}" r="6" fill="{color}" fill-opacity="{opac}"/>')
+            parts.append(f'<text x="{lx + 12}" y="{ly + 4}" font-size="{font_size}" fill="{COL_TEXT}">{label}</text>')
+            ly += 20
+    parts.append("</svg>")
+    return "".join(parts)
+
+
+def unified_legend_html():
+    """External-to-SVG legend for `render_unified_svg` — chips in the order
+    requested (高頻度 → 低頻度 → 出力で未使用 → 出力にあるが未検索 → 未使用)
+    plus a seed-underline marker chip."""
+    # (fill_color, opacity, label)
+    items = [
+        (COL_SKYBLUE, 1.0, "出力に使用（高頻度）"),
+        (COL_BLUE,    1.0, "出力に使用（低頻度）"),
+        (COL_BLUE,    0.5, "出力で未使用"),
+        (COL_RED,     1.0, "出力にあるが未検索"),
+        (COL_BG_NODE, 1.0, "未使用"),
+    ]
+    chips = ""
+    for c, opa, l in items:
+        chips += (
+            f'<span style="display:inline-flex;align-items:center;'
+            f'margin:0 12px 6px 0;font-size:12px;color:{COL_TEXT};">'
+            f'<span style="display:inline-block;width:12px;height:12px;'
+            f'border-radius:50%;background:{c};opacity:{opa};'
+            f'border:1px solid #8b90a0;margin-right:6px;"></span>{html.escape(l)}'
+            f'</span>')
+    # Seed underline marker (text with underline, not a circle)
+    chips += (
+        f'<span style="display:inline-flex;align-items:center;'
+        f'margin:0 12px 6px 0;font-size:12px;color:{COL_TEXT};">'
+        f'<span style="text-decoration:underline;font-weight:600;'
+        f'margin-right:6px;">シード</span>'
+        f'<span style="color:{COL_TEXT_DIM};">(グラフ上のラベルにアンダーライン)</span>'
+        f'</span>')
+    return f'<div style="padding:4px 0 8px 0;line-height:1.6;">{chips}</div>'
+
+
+def graph_recall_scores(usage):
+    """Compute the three per-turn Graph scores displayed in the Knowledge
+    Utility summary:
+
+      ① node_recall = |retrieved ∩ output_nodes| / |output_nodes|
+                    = 1 - (missed_nodes / output_nodes)
+      ② edge_recall = |retrieved ∩ output_edges| / |output_edges|
+                    = 1 - (missed_edges / output_edges)
+      ③ combined    = ① + ②   (undefined side counted as 0)
+
+    node_recall / edge_recall are None when the output contains 0 items of
+    that kind (nothing to hit — vacuous). The combined score always sums
+    them by counting None as 0 so "the LLM didn't cite any edges" pulls
+    combined down instead of quietly disappearing."""
+    output_nodes = usage.get("output_nodes") or {}
+    output_edges = usage.get("output_edges") or []
+    missed_nodes = usage.get("missed_nodes") or []
+    missed_edges = usage.get("missed_edges") or []
+
+    if output_nodes:
+        node_recall = 1.0 - (len(missed_nodes) / len(output_nodes))
+    else:
+        node_recall = None
+    if output_edges:
+        edge_recall = 1.0 - (len(missed_edges) / len(output_edges))
+    else:
+        edge_recall = None
+
+    combined = (0.0 if node_recall is None else node_recall) \
+             + (0.0 if edge_recall is None else edge_recall)
+    return {
+        "node_recall": node_recall,
+        "edge_recall": edge_recall,
+        "combined": combined,
+        "output_node_count": len(output_nodes),
+        "output_edge_count": len(output_edges),
+        "missed_node_count": len(missed_nodes),
+        "missed_edge_count": len(missed_edges),
+    }
+
+
+def seeds_chip_html(usage):
+    """Horizontal chip row listing the final seed names below the graph.
+    Returns '' when there are no seeds."""
+    names = usage.get("seed_names") or []
+    if not names:
+        return ""
+    chips = "".join(
+        f'<span style="display:inline-block;padding:4px 10px;'
+        f'background:{COL_SKYBLUE};color:{COL_TEXT};font-weight:600;'
+        f'border-radius:14px;margin:0 6px 6px 0;font-size:12px;'
+        f'border:1px solid {COL_BLUE};">'
+        f'{html.escape(n)}</span>' for n in names
+    )
+    return (
+        f'<div style="margin:6px 0 12px 0;">'
+        f'<span style="color:{COL_TEXT_DIM};font-size:12px;margin-right:8px;">'
+        f'シード ({len(names)} 件):</span>{chips}</div>'
+    )
+
+
+# --- unified table (HTML with per-row color + bold) ---
+def _unified_row_color(state):
+    """Map a unified-view state → text CSS color for tables."""
+    if state == "missed":
+        return COL_RED
+    if state == "hi":
+        return COL_SKYBLUE
+    if state == "lo":
+        return COL_BLUE
+    if state == "search":
+        return COL_BLUE  # half-alpha in the graph, but the table uses full alpha for legibility
+    return COL_TEXT_DIM
+
+
+def _classify_node_state(nid, usage):
+    max_freq = max(usage["output_nodes"].values() or [1])
+    freq = usage["output_nodes"].get(nid, 0)
+    if freq:
+        if nid in set(usage["missed_nodes"]):
+            return "missed"
+        return "hi" if freq >= max_freq else "lo"
+    if nid in set(usage["retrieved_nodes"]):
+        return "search"
+    return "bg"
+
+
+def _classify_edge_state(ei, usage, hit):
+    if hit:
+        if ei in {h["index"] for h in usage["missed_edges"]}:
+            return "missed"
+        max_freq = max((h["freq"] for h in usage["output_edges"]), default=1)
+        return "hi" if hit["freq"] >= max_freq else "lo"
+    if ei in set(usage["retrieved_edges"]):
+        return "search"
+    return "bg"
+
+
+def unified_usage_tables_html(usage):
+    """Return HTML for the node and edge tables where the entity/edge text
+    is colored + bolded per the unified view state. `st.markdown(...,
+    unsafe_allow_html=True)` renders this directly."""
+    graph = usage["graph"]
+    seeds = set(usage.get("seeds") or [])
+    retrieved_n = set(usage["retrieved_nodes"])
+    retrieved_e = set(usage["retrieved_edges"])
+    output_n_freq = dict(usage["output_nodes"])
+    output_e_map = {h["index"]: h for h in usage["output_edges"]}
+    missed_n = set(usage["missed_nodes"])
+    missed_ei = {h["index"] for h in usage["missed_edges"]}
+
+    def _node_name(nid):
+        return graph["nodes"].get(nid, {}).get("name", nid)
+
+    # ---- nodes ----
+    node_ids = list(dict.fromkeys(list(retrieved_n) + list(output_n_freq.keys())))
+    node_rows = []
+    for nid in node_ids:
+        n = graph["nodes"].get(nid, {})
+        state = _classify_node_state(nid, usage)
+        node_rows.append({
+            "nid": nid,
+            "name": n.get("name", nid),
+            "type": n.get("type", ""),
+            "domains": " / ".join(n.get("domains", [])),
+            "search": "シード" if nid in seeds else ("Y" if nid in retrieved_n else "N"),
+            "gen_freq": int(output_n_freq.get(nid, 0)),
+            "missed": nid in missed_n,
+            "state": state,
+        })
+    node_rows.sort(key=lambda r: (0 if r["missed"] else 1, -r["gen_freq"], r["name"]))
+
+    _n_head = "".join(f"<th>{h}</th>" for h in
+                       ("エンティティ", "型", "ドメイン", "検索", "生成頻度", "未検索(赤)"))
+    _n_body = ""
+    for r in node_rows:
+        color = _unified_row_color(r["state"])
+        deco = ";text-decoration:underline" if r["search"] == "シード" else ""
+        name_cell = (f'<td style="color:{color};font-weight:700{deco}">'
+                     f'{html.escape(r["name"])}</td>')
+        _n_body += (
+            f'<tr>{name_cell}'
+            f'<td>{html.escape(r["type"])}</td>'
+            f'<td>{html.escape(r["domains"])}</td>'
+            f'<td>{html.escape(r["search"])}</td>'
+            f'<td style="text-align:right">{r["gen_freq"]}</td>'
+            f'<td>{"Y" if r["missed"] else "N"}</td></tr>'
+        )
+    nodes_table = (
+        f'<div style="overflow-x:auto"><table style="border-collapse:collapse;'
+        f'font-size:12px;width:100%;font-family:sans-serif">'
+        f'<thead><tr style="text-align:left;color:{COL_TEXT_DIM};'
+        f'border-bottom:1px solid #e3e4e0">{_n_head}</tr></thead>'
+        f'<tbody>{_n_body or ""}</tbody>'
+        f'<style>td,th{{padding:4px 10px;border-bottom:1px solid #f0f1f2}}</style>'
+        f'</table></div>'
+    ) if node_rows else "<p style='color:#888;font-size:12px'>（該当なし）</p>"
+
+    # ---- edges ----
+    edge_ids = list(dict.fromkeys(list(retrieved_e) + list(output_e_map.keys())))
+    edge_rows = []
+    for ei in edge_ids:
+        e = graph["edges"][ei]
+        hit = output_e_map.get(ei)
+        state = _classify_edge_state(ei, usage, hit)
+        edge_rows.append({
+            "ei": ei,
+            "text": f'({_node_name(e["source"])}) --[{e.get("relation","")}]--> ({_node_name(e["target"])})',
+            "domains": " / ".join(e.get("domains", [])),
+            "search": "Y" if ei in retrieved_e else "N",
+            "gen_freq": int(hit["freq"]) if hit else 0,
+            "pmatch": "Y" if (hit and hit.get("predicate_match")) else "N",
+            "missed": ei in missed_ei,
+            "state": state,
+        })
+    edge_rows.sort(key=lambda r: (0 if r["missed"] else 1, -r["gen_freq"], r["text"]))
+
+    _e_head = "".join(f"<th>{h}</th>" for h in
+                       ("エッジ", "ドメイン", "検索", "生成頻度", "述語一致", "未検索(赤)"))
+    _e_body = ""
+    for r in edge_rows:
+        color = _unified_row_color(r["state"])
+        edge_cell = (f'<td style="color:{color};font-weight:700">'
+                     f'{html.escape(r["text"])}</td>')
+        _e_body += (
+            f'<tr>{edge_cell}'
+            f'<td>{html.escape(r["domains"])}</td>'
+            f'<td>{html.escape(r["search"])}</td>'
+            f'<td style="text-align:right">{r["gen_freq"]}</td>'
+            f'<td>{html.escape(r["pmatch"])}</td>'
+            f'<td>{"Y" if r["missed"] else "N"}</td></tr>'
+        )
+    edges_table = (
+        f'<div style="overflow-x:auto"><table style="border-collapse:collapse;'
+        f'font-size:12px;width:100%;font-family:sans-serif">'
+        f'<thead><tr style="text-align:left;color:{COL_TEXT_DIM};'
+        f'border-bottom:1px solid #e3e4e0">{_e_head}</tr></thead>'
+        f'<tbody>{_e_body or ""}</tbody>'
+        f'<style>td,th{{padding:4px 10px;border-bottom:1px solid #f0f1f2}}</style>'
+        f'</table></div>'
+    ) if edge_rows else "<p style='color:#888;font-size:12px'>（該当なし）</p>"
+
+    return {"nodes_html": nodes_table, "edges_html": edges_table}
+
+
+def render_unified_png(usage, width=880, height=560, dpi=150):
+    """PNG rendering of the unified view via matplotlib. Same color scheme
+    as render_unified_svg. Returns raw PNG bytes suitable for
+    st.download_button. matplotlib is already a project dependency so no
+    new install is needed."""
+    import io
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib import rcParams
+    # Same CJK font the analytics modules use — avoids ▯ boxes on 日本語 labels
+    rcParams["font.family"] = "Noto Sans CJK JP"
+
+    graph = usage["graph"]
+    pos = spring_layout(graph)
+    seeds = set(usage.get("seeds") or [])
+    if not pos:
+        # Empty graph — still return a valid PNG rather than raise
+        fig = plt.figure(figsize=(width / dpi, height / dpi), dpi=dpi)
+        buf = io.BytesIO(); fig.savefig(buf, format="png"); plt.close(fig)
+        return buf.getvalue()
+
+    pad_frac = 0.06
+    def sx(nid): return pad_frac + pos[nid][0] * (1 - 2 * pad_frac)
+    def sy(nid): return 1 - (pad_frac + pos[nid][1] * (1 - 2 * pad_frac))  # flip Y for image-like display
+
+    fig = plt.figure(figsize=(width / dpi, height / dpi), dpi=dpi)
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis("off")
+    ax.set_facecolor("#ffffff")
+
+    # Edges (tier-ordered so hot ones sit on top)
+    _tier = {"bg": 0, "search": 1, "hi": 2, "lo": 2, "missed": 3}
+    ordered_edges = []
+    for ei, e in enumerate(graph["edges"]):
+        if e["source"] not in pos or e["target"] not in pos:
+            continue
+        stroke, w, opacity, tier = _unified_edge_style(ei, usage)
+        ordered_edges.append((_tier[tier], ei, e, stroke, w, opacity, tier))
+    ordered_edges.sort(key=lambda t: t[0])
+    for _, ei, e, stroke, w, opacity, tier in ordered_edges:
+        x1, y1 = sx(e["source"]), sy(e["source"])
+        x2, y2 = sx(e["source"]) + 0, sy(e["source"]) + 0  # placeholder; overwritten below
+        x2, y2 = sx(e["target"]), sy(e["target"])
+        ax.plot([x1, x2], [y1, y2], color=stroke, linewidth=w, alpha=opacity, zorder=1 + _tier[tier])
+        if tier in ("hi", "lo", "missed"):
+            mx, my = (x1 + x2) / 2, (y1 + y2) / 2
+            ax.text(mx, my + 0.008, e.get("relation", ""),
+                    ha="center", va="bottom", fontsize=6, color=stroke,
+                    zorder=10)
+
+    # Nodes
+    ordered_nodes = []
+    for nid, n in graph["nodes"].items():
+        if nid not in pos:
+            continue
+        fill, stroke, fop, sop, r, tier = _unified_node_style(nid, usage)
+        ordered_nodes.append((_tier[tier], nid, n, fill, stroke, fop, sop, r, tier))
+    ordered_nodes.sort(key=lambda t: t[0])
+    for _, nid, n, fill, stroke, fop, sop, r, tier in ordered_nodes:
+        x, y = sx(nid), sy(nid)
+        size = (r * 5) ** 1.4
+        ax.scatter([x], [y], s=size, c=fill, edgecolors=stroke, linewidths=1.2,
+                    alpha=fop, zorder=5 + _tier[tier])
+        emph = tier in ("hi", "lo", "search", "missed")
+        label_color = COL_TEXT if emph else COL_TEXT_DIM
+        label_weight = "bold" if emph else "normal"
+        label_kwargs = dict(ha="center", va="top", fontsize=7,
+                              color=label_color, weight=label_weight,
+                              zorder=11)
+        # Seeds get underline via a TextPath — matplotlib text-decoration is not
+        # supported directly, so approximate by drawing an underline segment
+        # below the label bounds after placing the text.
+        text = ax.text(x, y - 0.02, n.get("name", nid), **label_kwargs)
+        if nid in seeds:
+            # Approximate underline: use text renderer to get the extent (in
+            # display coords) → convert back to data coords → draw a segment.
+            try:
+                fig.canvas.draw()
+                bb = text.get_window_extent()
+                inv = ax.transData.inverted()
+                (x0, y0), (x1v, y1v) = inv.transform([(bb.x0, bb.y0), (bb.x1, bb.y0)])
+                ax.plot([x0, x1v], [y0 - 0.005, y0 - 0.005],
+                        color=label_color, linewidth=0.8, zorder=12)
+            except Exception:
+                pass  # underline is nice-to-have; not worth failing the render
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", bbox_inches=None, pad_inches=0,
+                 facecolor="#ffffff")
+    plt.close(fig)
+    return buf.getvalue()
+
+
 def usage_legend_html(view="retrieval"):
     """External-to-SVG legend for `render_usage_svg` — a compact HTML chip
     row callers can `st.markdown(..., unsafe_allow_html=True)` above the

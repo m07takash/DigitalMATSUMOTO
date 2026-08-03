@@ -13,6 +13,19 @@
         "BIRTHDAY": "01-Jan-2026",
         "IS_ALIVE": true,
         "NATIONALITY": "Japanese",
+        "BLOOD_TYPE": "B",
+        "RESIDENCE": "大阪",
+        "HEIGHT": "170cm",
+        "WEIGHT": "60kg",
+        "FOOT_SIZE": "26cm",
+        "DOMINANT_HAND": "左",
+        "DOMINANT_FOOT": "左",
+        "HAIRSTYLE": "ショートカット、ブラック",
+        "GLASSES": "あり",
+        "FAMILY": [
+            "独身"
+        ],
+        "PERSONAL_COLOR": "オレンジ(Orange)",
         "BIG5": {
             "Openness": 0.8,
             "Conscientiousness": 0.8,

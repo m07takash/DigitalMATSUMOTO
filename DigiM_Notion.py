@@ -63,13 +63,15 @@ def get_num_by_id(pages, page_id, item):
         if page['id'] == page_id:
             return page["properties"][item]["number"]
 
-# Fetch a date field for a page ID
+# Fetch a date field for a page ID. Returns "" when the property exists but
+# is unset — get_chunk_notion treats a None return as "page has missing
+# required field, skip", so returning "" keeps optional dates from silently
+# dropping otherwise-valid pages (Graph RAG doesn't require create_date).
 def get_date_by_id(pages, page_id, item):
-    date = ""
     for page in pages:
         if page['id'] == page_id and item in page['properties'] and page['properties'][item]['date']:
-            date = page['properties'][item]['date']['start'][:10]
-            return date
+            return page['properties'][item]['date']['start'][:10]
+    return ""
 
 # Fetch a rich-text field for a page ID
 def get_rich_text_by_id(pages, page_id, item):
@@ -89,12 +91,16 @@ def get_chk_by_id(pages, page_id, item):
         if page['id'] == page_id:
             return page["properties"][item]["checkbox"]
 
-# Fetch the select (rating) field for a page ID
+# Fetch the select (rating) field for a page ID. Returns "" when unset —
+# get_chunk_notion treats None as "page has missing required field, skip",
+# so returning "" keeps optional selects (e.g. カテゴリ) from silently
+# dropping otherwise-valid pages.
 def get_select_by_id(pages, page_id, item):
     for page in pages:
         if page['id'] == page_id:
             sel = page['properties'][item].get('select')
-            return sel['name'] if sel else None
+            return sel['name'] if sel else ""
+    return ""
 
 # Fetch a multi-select field for a page ID (returns a list of names)
 def get_multi_select_by_id(pages, page_id, item):
