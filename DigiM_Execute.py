@@ -136,8 +136,17 @@ def _build_meta_searches(service_info, user_info, session_id, session_name, supp
 
 # B-4: Run Thinking Agent (analyze the question and decide execution parameters)
 def _run_thinking_agent(service_info, user_info, session_id, session_name,
-                        support_agent, agent, user_query, digest_text, situation_prompt):
-    """Run Thinking Agent and return the decision JSON and logs."""
+                        support_agent, agent, user_query, digest_text, situation_prompt,
+                        previous_thinking=None, web_search_preview=""):
+    """Run Thinking Agent and return the decision JSON and logs.
+
+    When called inside a multi-turn Thinking loop (`MAX_THINKING_TURNS>1`),
+    `previous_thinking` carries the prior turn's decision dict and
+    `web_search_preview` carries the raw text of the mid-loop preview
+    search (empty on turn 1). Both are injected into the Thinking prompt
+    via `{PreviousThinking}` / `{WebSearchPreview}` placeholders so the
+    agent can reconsider its judgement in light of what a search would
+    actually surface."""
     import json as _json
     if "THINKING" not in support_agent:
         return {}, {}
@@ -170,11 +179,25 @@ def _run_thinking_agent(service_info, user_info, session_id, session_name,
         else:
             book_info += f"- {book['RAG_NAME']}\n"
 
+    # Serialize previous_thinking for the LLM (compact reasoning + key
+    # decisions — the full raw dict is noisy). Falls back to empty when
+    # this is the first turn.
+    _prev_snippet = ""
+    if previous_thinking and isinstance(previous_thinking, dict):
+        _keep = ("reasoning", "habit", "web_search", "web_search_engine",
+                 "web_search_query", "rag_query_gene", "rag_query_hint",
+                 "books", "sufficient")
+        _prev_snippet = _json.dumps(
+            {k: previous_thinking[k] for k in _keep if k in previous_thinking},
+            ensure_ascii=False, indent=2)
+
     add_info = {
         "Situation": situation_prompt,
         "DigestText": digest_text,
         "HabitInfo": habit_info,
         "BookInfo": book_info,
+        "PreviousThinking": _prev_snippet,
+        "WebSearchPreview": web_search_preview or "",
     }
     agent_file = support_agent["THINKING"]
     _, _, response, model_name, prompt_tokens, response_tokens = dmt.call_function_by_name(
@@ -450,11 +473,24 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             "Google": _setting.get("GOOGLE_SEARCH_MODEL", "gemini-2.5-flash"),
         }
         web_model = _web_model_map.get(web_engine, "")
-        t_web_start = datetime.now()
-        _, _, web_result_text, export_urls = dmt.call_function_by_name(
-            service_info, user_info, "WebSearch",
-            session_id, session_name, agent_file, search_text, [], {}, engine=web_engine)
-        web_duration = round((datetime.now() - t_web_start).total_seconds(), 2)
+        # Multi-turn Thinking's preview action stashes a completed search
+        # here. Reuse it when the engine + search_text match to avoid a
+        # duplicate API call (the same query would return the same result
+        # anyway, and Web search is the most expensive step in the pipeline).
+        _wsc = execution.get("_WEB_SEARCH_CACHE") or {}
+        _cache_hit = (_wsc.get("engine") == web_engine
+                      and _wsc.get("search_text") == search_text
+                      and _wsc.get("result_text") is not None)
+        if _cache_hit:
+            web_result_text = _wsc["result_text"]
+            export_urls = _wsc.get("urls") or []
+            web_duration = float(_wsc.get("duration_sec") or 0.0)
+        else:
+            t_web_start = datetime.now()
+            _, _, web_result_text, export_urls = dmt.call_function_by_name(
+                service_info, user_info, "WebSearch",
+                session_id, session_name, agent_file, search_text, [], {}, engine=web_engine)
+            web_duration = round((datetime.now() - t_web_start).total_seconds(), 2)
         # Guardrails around the raw search text — LLMs tend to over-defer to
         # large chunks of external text (口調が寄る／会話文脈を忘れる)。
         # 明示的に「これは参考」「人格・会話履歴を最優先」と枠で囲むだけで
@@ -1096,11 +1132,15 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
         agent = dma.DigiM_Agent(in_agent_file)
         thinking_result = {}
 
-        # Thinking Mode: AI analyzes the question and decides execution parameters
+        # Thinking Mode: AI analyzes the question and decides execution parameters.
+        # Optionally multi-turn (B-type loop): between turns we run the
+        # preview action (Web search only for v1) requested by the current
+        # turn's judgement, feed the raw result into the next turn's
+        # Thinking prompt, and keep looping until `sufficient=true` or
+        # MAX_THINKING_TURNS is reached. The preview search is cached in
+        # `_WEB_SEARCH_CACHE` so the main execution's web-search path
+        # reuses it (no double API call).
         if cfg["thinking_mode"] and "SUPPORT_AGENT" in agent.agent and "THINKING" in agent.agent["SUPPORT_AGENT"]:
-            session.save_status_message("Thinking...")
-            yield service_info, user_info, "[STATUS]Thinking...", {}
-
             # Read the digest (for context-understanding by Thinking)
             _thinking_digest = ""
             if session.chat_history_active_dict:
@@ -1116,10 +1156,83 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
             _thinking_time = _sit.get("TIME") or datetime.now().strftime("%Y/%m/%d %H:%M:%S")
             _thinking_situation = (_sit.get("SITUATION", "") + " " + _thinking_time).strip()
 
-            thinking_result, thinking_log = _run_thinking_agent(
-                service_info, user_info, session_id, session_name,
-                agent.agent["SUPPORT_AGENT"], agent, user_query,
-                _thinking_digest, _thinking_situation)
+            _max_turns = int(in_execution.get("MAX_THINKING_TURNS", 1) or 1)
+            _max_turns = max(1, min(_max_turns, 5))  # hard cap to prevent runaway cost
+            thinking_result = {}
+            thinking_log = {}
+            thinking_history = []
+            _web_preview_for_next = ""
+            for _turn_idx in range(_max_turns):
+                _label = "Thinking" if _max_turns == 1 else f"Thinking (turn {_turn_idx + 1}/{_max_turns})"
+                session.save_status_message(f"{_label}...")
+                yield service_info, user_info, f"[STATUS]{_label}...", {}
+                _tr, _tl = _run_thinking_agent(
+                    service_info, user_info, session_id, session_name,
+                    agent.agent["SUPPORT_AGENT"], agent, user_query,
+                    _thinking_digest, _thinking_situation,
+                    previous_thinking=(thinking_result if _turn_idx > 0 else None),
+                    web_search_preview=_web_preview_for_next,
+                )
+                if _tl is not None:
+                    _tl = dict(_tl); _tl["turn"] = _turn_idx + 1
+                    thinking_history.append(_tl)
+                # Empty result → give up cleanly
+                if not _tr:
+                    thinking_log = _tl or {}
+                    break
+                thinking_result = _tr
+                thinking_log = _tl or {}
+                # Break out: LLM says its judgement is good enough, or we've
+                # exhausted the turn budget. Default treats missing
+                # `sufficient` as true so back-compat (single-turn) prompts
+                # never trip the loop.
+                _sufficient = bool(_tr.get("sufficient", True))
+                if _sufficient or _turn_idx == _max_turns - 1:
+                    break
+                # Mid-loop action: preview Web search when this turn requested it.
+                # Effective web toggle = user's UI ON OR Thinking's judgement.
+                # (Applies the same "user-ON stays ON" rule as the final apply
+                # below — only Thinking's engine choice can override cfg's.)
+                _want_search = bool(_tr.get("web_search")) or bool(cfg["web_search"])
+                _preview_engine = (_tr.get("web_search_engine")
+                                    or cfg["web_search_engine"]
+                                    or system_setting_dict.get("WEB_SEARCH_DEFAULT", "Perplexity"))
+                if not _want_search:
+                    _web_preview_for_next = ""
+                    continue
+                _preview_query = _tr.get("web_search_query", "") or ""
+                # Build the same search_text shape the main path builds so
+                # the cache key hits cleanly on the main-execution side.
+                if _preview_query:
+                    _search_text = "検索して欲しい内容:\n" + _preview_query + "\n\n[参考]元の質問:\n" + user_query
+                elif _thinking_digest or _thinking_situation:
+                    _search_text = ("検索して欲しい内容:\n" + user_query
+                                    + "\n\n[参考]これまでの会話:\n" + _thinking_digest
+                                    + "\n\n[参考]今の状況:\n" + _thinking_situation)
+                else:
+                    _search_text = user_query
+                session.save_status_message(f"{_label}: preview web search")
+                yield service_info, user_info, f"[STATUS]{_label}: preview web search...", {}
+                try:
+                    _t_start = datetime.now()
+                    _, _, _ws_text, _ws_urls = dmt.call_function_by_name(
+                        service_info, user_info, "WebSearch",
+                        session_id, session_name, in_agent_file, _search_text, [], {},
+                        engine=_preview_engine)
+                    _ws_dur = round((datetime.now() - _t_start).total_seconds(), 2)
+                    in_execution["_WEB_SEARCH_CACHE"] = {
+                        "engine": _preview_engine,
+                        "search_text": _search_text,
+                        "result_text": _ws_text,
+                        "urls": _ws_urls or [],
+                        "duration_sec": _ws_dur,
+                    }
+                    _web_preview_for_next = _ws_text or ""
+                except Exception as _ws_e:
+                    import logging as _lg_th
+                    _lg_th.getLogger(__name__).warning(
+                        f"[thinking-loop] preview web search failed (turn {_turn_idx+1}): {_ws_e}")
+                    _web_preview_for_next = ""
 
             # Apply Thinking output to execution settings (only items enabled by THINKING_TARGETS)
             _targets = in_execution.get("THINKING_TARGETS", {})
@@ -1142,11 +1255,16 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 if _targets.get("rag_query_gene", True) and "rag_query_gene" in thinking_result:
                     cfg["RAG_query_gene"] = thinking_result["rag_query_gene"]
 
-            # Pass the Thinking log/result to the chain-run execution
+            # Pass the Thinking log/result to the chain-run execution.
+            # `_THINKING_LOG` carries the FINAL turn's log for backward-compat
+            # (existing Detail Information consumers read a single log dict);
+            # the full per-turn history is exposed as `_THINKING_HISTORY`.
             in_execution["_THINKING_LOG"] = thinking_log
+            in_execution["_THINKING_HISTORY"] = thinking_history
             in_execution["_THINKING_RESULT"] = thinking_result
         else:
             in_execution["_THINKING_LOG"] = {}
+            in_execution["_THINKING_HISTORY"] = []
             in_execution["_THINKING_RESULT"] = {}
 
         # Habit selection: prefer the Thinking output if available; otherwise judge by Magic Word

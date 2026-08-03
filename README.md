@@ -511,7 +511,8 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
     },
     "Defaults": {
       "Thinking Mode": true,
-      "Thinking Targets": ["Habit", "Web Search", "RAG Query", "Books"]
+      "Thinking Targets": ["Habit", "Web Search", "RAG Query", "Books"],
+      "Max Thinking Turns": 1
     }
   }
 }
@@ -557,6 +558,7 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
 |------|----|------|
 | `Thinking Mode` | bool | Thinking Mode（思考ステップ）の初期ON/OFF。既定 `false` |
 | `Thinking Targets` | 配列 | Thinking Mode 有効時の対象リスト初期値。`"Habit"` / `"Web Search"` / `"RAG Query"` / `"Books"` / `"Personas"` から選ぶ（`Personas` はエージェントに `ORG` が定義されている場合のみ有効。無効な値はレンダリング時に自動で除外）。既定 `["Habit", "Web Search", "RAG Query", "Books"]` |
+| `Max Thinking Turns` | int | Thinking を最大何ターンまで走らせるか（1〜5、`1` = 従来の単発Thinking）。**2 以上にすると**、各ターンの Thinking JSON に `sufficient` フィールドが含まれ、`sufficient=false` の場合は **予備 Web 検索** を実行 → その結果を次ターンの Thinking プロンプトに渡す B型ループ が有効に。予備検索は `_WEB_SEARCH_CACHE` を通じてメイン応答パスで流用される（二重発火なし）。既定 `1` |
 
 > WebUI 上でチェックを変更すれば、そのセッションの間はユーザー操作が優先されます。次回ログイン時にまた `Defaults` の値から始まります。
 
@@ -965,30 +967,54 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/{DATA_NAME} --use-llm --embe
 
 #### PERSONALITY（性格設定）
 
-エージェントの人格を定義します。
+エージェントの人格を定義します。値が未設定 (空文字 / キー未定義) のフィールドはシステムプロンプトに出力されないので、支援エージェント等では最小限のみ書けばOK。
 
 ```json
 "PERSONALITY": {
-  "SEX": "女性",
-  "BIRTHDAY": "01-Jan-1980",
+  "SEX": "男性",
+  "BIRTHDAY": "17-Mar-1985",
   "IS_ALIVE": true,
   "NATIONALITY": "Japanese",
+  "BLOOD_TYPE": "A",
+  "RESIDENCE": "横浜",
+  "HEIGHT": "173cm",
+  "WEIGHT": "75kg",
+  "FOOT_SIZE": "26.5cm",
+  "DOMINANT_HAND": "右",
+  "DOMINANT_FOOT": "右",
+  "HAIRSTYLE": "ロングヘアーでパーマ、ダークブラウン+グリーンの部分カラー",
+  "GLASSES": "あり",
+  "FAMILY": ["妻1人", "子供なし"],
+  "PERSONAL_COLOR": "スカイブルー(DeepSkyBlue)",
+  "BIG5": {
+    "Openness": 0.4,
+    "Conscientiousness": 0.6,
+    "Extraversion": 0.85,
+    "Agreeableness": 0.3,
+    "Neuroticism": 0.7
+  },
   "LANGUAGE": "日本語",
-  "SPEAKING_STYLE": "Polite",
-  "CHARACTER": "Sample.txt",
-  "Openness": 0.7,
-  "Conscientiousness": 0.7,
-  "Extraversion": 0.7,
-  "Agreeableness": 0.7,
-  "Neuroticism": 0.2
+  "SPEAKING_STYLE": "Light",
+  "CHARACTER": "DigitalMATSUMOTO.txt"
 }
 ```
 
-| 項目 | 説明 |
-|------|------|
-| `SPEAKING_STYLE` | プロンプトテンプレートの `SPEAKING_STYLE` に定義された口調を指定 |
-| `CHARACTER` | `user/common/agent/character/` 配下のテキストファイル（**`.txt` または `.md`**）または直接記述。経歴・価値観・一人称等の詳細な人格定義 |
-| Big Five特性 | `Openness`（開放性）/ `Conscientiousness`（誠実性）/ `Extraversion`（外向性）/ `Agreeableness`（協調性）/ `Neuroticism`（神経症傾向）を 0.0〜1.0 で設定 |
+| 項目 | 型 | 説明 |
+|------|----|------|
+| `SEX` / `BIRTHDAY` / `IS_ALIVE` / `NATIONALITY` | str / str / bool / str | 基本属性 |
+| `BLOOD_TYPE` / `RESIDENCE` / `HEIGHT` / `WEIGHT` / `FOOT_SIZE` | str | 身体・住居属性（血液型 / 居住地 / 身長 / 体重 / 足のサイズ） |
+| `DOMINANT_HAND` / `DOMINANT_FOOT` | str | 利き手 / 利き足 |
+| `HAIRSTYLE` / `GLASSES` | str | 髪型 / メガネ有無 |
+| `FAMILY` | list[str] | 家族構成 (`["妻1人", "子供2人"]` 等) |
+| `PERSONAL_COLOR` | str | パーソナルカラー（例: `"スカイブルー(DeepSkyBlue)"`） |
+| `BIG5` | dict | `Openness` / `Conscientiousness` / `Extraversion` / `Agreeableness` / `Neuroticism` を 0.0〜1.0 で指定 (ネストされた dict) |
+| `LANGUAGE` | str | 使用言語 |
+| `SPEAKING_STYLE` | str | プロンプトテンプレートの `SPEAKING_STYLE` キー |
+| `CHARACTER` | str | `user/common/agent/character/` 配下の `.txt` / `.md`、または直接記述 |
+
+**WebUI ランタイム上書き — Personality Override**: Chat 画面の User Memory expander の直上に **Personality Override** expander があり、その会話だけ有効な PERSONALITY 上書きが可能（エージェント JSON は変更しない）。編集した項目のみ `overwrite_items["PERSONALITY"]` に詰めて `update_dict` の deep-merge で反映されるので、`BIG5` / `CHARACTER` などの未編集フィールドは JSON 既定値を保つ。BIG5 は 5 特性を1つでも変更した場合は全 5 値をまとめて上書き（部分マージ時の混在を防ぐ）。
+
+**ペルソナからの継承**: TheRound や Sample_personas の Excel (`personality` セル) にも同じ JSON を書けば、ペルソナ切替時にそのままエージェントの `PERSONALITY` として展開されます (`_apply_persona` は persona.personality で全置換)。
 
 #### ENGINE（LLMエンジン設定）
 
@@ -1194,7 +1220,7 @@ Notion保存時は `notion_name` でプロパティ名を個別に指定でき�
 | `ART_CRITICS` | 画像生成後の解説・批評を生成 |
 | `EXTRACT_DATE` | ユーザー入力から日付情報を抽出（RAGのメタデータ検索に使用） |
 | `RAG_QUERY_GENERATOR` | ユーザー入力からRAG検索用の補助クエリを生成 |
-| `THINKING` | ユーザーの質問を分析し、Habit選択・Web検索・RAGクエリ生成・Book追加を動的に判定（Thinking Mode有効時） |
+| `THINKING` | ユーザーの質問を分析し、Habit選択・Web検索・RAGクエリ生成・Book追加を動的に判定（Thinking Mode有効時）。**マルチターン対応**: `Max Thinking Turns > 1` にすると、各ターンの Thinking JSON の `sufficient=false` を検知して**予備 Web 検索**を実行 → 結果を次ターンの Thinking プロンプトに渡す B型ループ が動作。`sufficient=true` か上限到達で break。予備検索は `_WEB_SEARCH_CACHE` 経由でメイン応答パスに流用（二重発火なし） |
 | `KNOWLEDGE_INTERPRET` | Analytics Results - Knowledge Utility の「LLM解釈」ボタンが押されたときに、CSV/類似度ランク（+任意で散布図画像）を読んで「全体構成と今回の選択傾向」「貢献度分析（回答距離−質問距離）」「注目点・改善示唆」を返す（バックデータ中心・Vision任意） |
 | `CITATION_INJECT` | 本回答生成後、Web検索URLとBOOKチャンクを引用ソースとして `[N]` マーカーを本文末文に挿入し、末尾に `## References` セクションを付与する。Web検索URL or BOOKチャンクのどちらかが使われていれば自動発火（KNOWLEDGE は対象外）。デフォルトは Claude-Haiku-4.5 等の軽量モデル。LLM失敗時は本文不変で References のみ追加するフォールバックあり。**LLM出力に `[N]` マーカーも `## References` も含まれない場合は「対応関係なし」とみなして元の本文をそのまま維持**（LLMが弁解文を返しても元回答が守られる） |
 
@@ -1584,6 +1610,8 @@ Practiceの各CHAINステップで、その**ステップだけ**を複数ペル
 
 Web検索を有効にすると、LLMへの入力にWebの最新情報を付加できます。WebUIのチャット入力欄上部の「WEB Search」チェックボックスで有効化し、隣のセレクトボックスでエンジンを切り替えられます。
 
+**注入時のガードレール**: Web 検索結果は生の本文を `user_query` に混ぜず、`[参考資料 — Web検索結果 (ここから)]` / `[参考資料 END]` の枠で囲んで注入します（[DigiM_Execute.py `web_context`](DigiM_Execute.py)）。中に「本文を丸写ししない／口調・視点は人格設定に従う／会話流れとユーザー意図を最優先／一部だけ使ってよい」の4ルールを添え、LLM が Web の口調に引きずられて人格や会話文脈を失う挙動を抑えています。
+
 #### 対応エンジン
 
 | エンジン | APIキー | 特徴 |
@@ -1771,6 +1799,8 @@ Practice JSON のチェーンで以下の TYPE が使えます：
 ### 引用付与（Citation Injection）
 
 メインLLMが本回答を生成した後、軽量LLMによる**追加パス**で、Web検索URLとBOOKチャンクから引用ソースを抽出し、本文末文に `[N]` マーカーを挿入＋末尾に `## References` セクションを付与します。**本文の言い回しは変更しません**。
+
+**プロンプト側の強制**: `Citation Injector` プロンプト末尾に「References が 0 件になる場合は本文の本文だけを一字一句そのまま返す。**説明・弁解・メタコメントは一切出力しない**」を厳守指示として明記。加えて Execute 側で **`[N]` マーカーも `## References` も含まれない出力** は採用せず元本文を維持するガードあり（[DigiM_Execute.py `citation_inject` ブロック](DigiM_Execute.py) の length + marker 判定）。プロンプトを無視して LLM が「対応関係が見つかりません」等の弁解文を返しても本文が守られる。
 
 #### 動作モデル
 
@@ -2282,14 +2312,25 @@ Chat タブの「**Analytics Results - Knowledge Utility**」ボタンも、引�
 
 Knowledge Utility 散布図の **「全体集合」** ドット (背景の灰色) は、そのターンを動かしたペルソナの `define_code` で **Chroma `where` フィルタを適用** した結果が対象。ペルソナごとに見えていた知識空間に絞り込まれた状態で、参照されたチャンクのハイライト位置を読めるようになっています。
 
-**Graph refs が含まれる場合の追加表示（ターン依存の GraphRAG 分析）：** ボタン押下時に、そのターンの `knowledge_rag` refs から `'DB': 'Graph'` の refs を検出すると、Vector 用の散布図に加えて **Graph 用の 2 ビュー**を同じ expander 内に描画:
+**全DBスコアサマリ（expander 冒頭）**: Vector / Graph の両方について、KNOWLEDGE + BOOK の宣言順に 1 行で総括:
+- **Vector**: 既存の `similarity_utility` (`similarity_Q - similarity_A` 系のスコア)
+- **Graph**: 後述の **③ 統合スコア** (`node_recall + edge_recall`、N/A は 0 換算)
 
-- **検索ビュー**: グレー全体グラフ / ブルー = 今回抽出されたノード・エッジ / スカイブルー = クエリで選ばれたシード
-- **生成ビュー**: 出力に用いられた要素をブルー→スカイブルーのグラデーション（言及頻度）で表示 + **赤 = 出力に含まれるが今回の検索では選択されなかった要素**（カバレッジギャップ）
-- 図の下に **統合ノード/エッジ一覧**（検索/生成のフラグ列、生成頻度、述語一致、未検索フラグを 1 テーブルに集約、赤が最上位）
+**Graph refs が含まれる場合の追加表示（ターン依存の GraphRAG 分析）：** ボタン押下時に、そのターンの `knowledge_rag` refs から `'DB': 'Graph'` の refs を検出すると、Vector 用の散布図に加えて **Graph 用の統合ビュー**を同じ expander 内に描画:
+
+- **スコア行**: `① ノードRecall = X (a/b) ＋ ② エッジRecall = Y (c/d) = ③ 統合スコア = Z` を per-RAG で表示。① / ② は「出力に含まれるノード/エッジのうち、検索で抽出されていた割合」の Recall。③ は ① と ② の**和**（一方が N/A の場合は 0 として合算）
+- **統合ビュー SVG**（従来の検索/生成の2枚を統合、[DigiM_GraphUtility.render_unified_svg](DigiM_GraphUtility.py)）:
+  - スカイブルー = 出力に使用（高頻度）/ ブルー = 出力に使用（低頻度）
+  - **半透明ブルー (opacity=0.5) = 出力で未使用（検索で抽出のみ）** ← 新規状態
+  - 赤 = 出力にあるが未検索（カバレッジギャップ） / グレー = 未使用
+  - **シード** はグラフ上のラベルに**アンダーライン**、グラフ下に横一列チップで列挙
+- **📥 PNG ダウンロード** ボタン（グラフの下）— matplotlib で同じ配色を PNG bytes として書き出し
+- **HTML ノード / エッジ一覧**: エンティティ名 / エッジ text を状態カラー + 太字で色分け（シードはアンダーライン付き）
 - 分析は `DigiM_Graph.analyze_graph_usage(query, response, rag)` によりセッションログの (クエリ, 応答) から**オンデマンド再計算** — 実行時の記録は不要。link_output は node.name / node.aliases / dictionary.json aliases を **完全一致サブストリング**で拾う軽量 lexical マッチのため、応答の表記揺れ（例: 「松本」→ ノード名「松本敬史」）を拾うには `dictionary.json` の `aliases` または各ノードの `aliases` フィールド（概要・メンテ タブの編集で追加可）を充実させます
 
 **エージェント JSON の KNOWLEDGE 定義順で表示**: Vector / Graph の両セクションとも、そのターンを動かしたエージェントの `KNOWLEDGE` 配列（+ `BOOK`）の並び順でレンダリングされます（アルファベット順ではなく）。
+
+**Insight Analytics との統合**: [VAnalyticsArticle.py `analytics_insights`](VAnalyticsArticle.py) も同じ Graph 分析パイプラインを使用し、`_Graph_unified.svg` / `_Graph_unified.png` / `_Graph_SeedTrace.txt` を `user/common/analytics/insight/` に書き出します。加えて Graph 側の recall スコアは Notion **知識活用性** フィールドに `{"kind": "Graph", "combined": <float>, "node_recall": ..., "edge_recall": ..., ...}` の形で merge（Vector の `similarity_utility` と同一 dict に共存）。Monthly Analytics (`VAnalyticsMonthlyInsight`) はこの dict を検出したら `combined` を数値として拾って集計に組み込みます。
 
 ---
 
