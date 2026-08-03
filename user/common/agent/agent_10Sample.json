@@ -13,6 +13,19 @@
         "BIRTHDAY": "01-Jan-1980",
         "IS_ALIVE": true,
         "NATIONALITY": "Japanese",
+        "BLOOD_TYPE": "O",
+        "RESIDENCE": "東京",
+        "HEIGHT": "162cm",
+        "WEIGHT": "52kg",
+        "FOOT_SIZE": "23.5cm",
+        "DOMINANT_HAND": "右",
+        "DOMINANT_FOOT": "右",
+        "HAIRSTYLE": "肩下ストレート、ダークブラウン",
+        "GLASSES": "なし",
+        "FAMILY": [
+            "夫1人"
+        ],
+        "PERSONAL_COLOR": "ネイビー(MidnightBlue)",
         "BIG5": {
             "Openness": 0.7,
             "Conscientiousness": 0.7,

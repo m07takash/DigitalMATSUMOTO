@@ -244,6 +244,32 @@ class DigiM_Agent:
                 system_prompt += "\n存命: " + "Yes" if self.personality['IS_ALIVE'] else "No"
             if 'NATIONALITY' in self.personality:
                 system_prompt += f"\n国籍:{self.personality['NATIONALITY']}" if self.personality['NATIONALITY'] else ""
+            # Physical / lifestyle attributes. Emitted only when set so
+            # unspecified agents (e.g. utility support-agents) don't get
+            # noise appended to their system prompt.
+            _p = self.personality
+            _phys_fields = [
+                ("BLOOD_TYPE",    "血液型"),
+                ("RESIDENCE",     "居住地"),
+                ("HEIGHT",        "身長"),
+                ("WEIGHT",        "体重"),
+                ("FOOT_SIZE",     "足のサイズ"),
+                ("DOMINANT_HAND", "利き手"),
+                ("DOMINANT_FOOT", "利き足"),
+                ("HAIRSTYLE",     "髪型"),
+                ("GLASSES",       "メガネ"),
+                ("PERSONAL_COLOR", "パーソナルカラー"),
+            ]
+            for _key, _label in _phys_fields:
+                _val = _p.get(_key)
+                if _val:
+                    system_prompt += f"\n{_label}:{_val}"
+            _family = _p.get("FAMILY")
+            if _family:
+                if isinstance(_family, list):
+                    system_prompt += f"\n家族構成:{ '、'.join(str(f) for f in _family if f) }"
+                else:
+                    system_prompt += f"\n家族構成:{_family}"
             if 'BIG5' in self.personality:
                 if self.personality['BIG5']:
                     system_prompt += f"\nビックファイブ:[Openness:{self.personality['BIG5']['Openness']*100:.2f}%, Conscientiousness:{self.personality['BIG5']['Conscientiousness']*100:.2f}%, Extraversion:{self.personality['BIG5']['Extraversion']*100:.2f}%, Agreeableness:{self.personality['BIG5']['Agreeableness']*100:.2f}%, Neuroticism:{self.personality['BIG5']['Neuroticism']*100:.2f}%]"
