@@ -35,6 +35,13 @@ def thinking_agent(service_info, user_info, session_id, session_name, agent_file
     digest_text = add_info.get("DigestText", "")
     habit_info = add_info.get("HabitInfo", "")
     book_info = add_info.get("BookInfo", "")
+    # Multi-turn Thinking (B型ループ) hands the previous turn's decision and
+    # the mid-loop preview web-search result down through add_info. The
+    # `Thinking Agent` prompt template holds `{PreviousThinking}` and
+    # `{WebSearchPreview}` placeholders that we substitute in-place here —
+    # empty strings collapse to just the section header, which is fine.
+    previous_thinking = add_info.get("PreviousThinking", "") or ""
+    web_search_preview = add_info.get("WebSearchPreview", "") or ""
 
     practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
     practice = dmu.read_json_file(str(Path(practice_folder_path) / practice_file))
@@ -43,6 +50,11 @@ def thinking_agent(service_info, user_info, session_id, session_name, agent_file
     else:
         prompt_temp_cd = "Thinking"
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
+    prompt_template = (
+        prompt_template
+        .replace("{PreviousThinking}", previous_thinking)
+        .replace("{WebSearchPreview}", web_search_preview)
+    )
 
     context = ""
     if habit_info:

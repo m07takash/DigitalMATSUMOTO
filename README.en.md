@@ -510,7 +510,8 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
     },
     "Defaults": {
       "Thinking Mode": true,
-      "Thinking Targets": ["Habit", "Web Search", "RAG Query", "Books"]
+      "Thinking Targets": ["Habit", "Web Search", "RAG Query", "Books"],
+      "Max Thinking Turns": 1
     }
   }
 }
@@ -556,6 +557,7 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
 |------|------|------|
 | `Thinking Mode` | bool | Whether Thinking Mode (reasoning step) starts ON. Default `false` |
 | `Thinking Targets` | array | Initial target list when Thinking Mode is ON. Pick from `"Habit"` / `"Web Search"` / `"RAG Query"` / `"Books"` / `"Personas"` (`Personas` requires an agent with `ORG` defined; invalid values are filtered at render time). Default `["Habit", "Web Search", "RAG Query", "Books"]` |
+| `Max Thinking Turns` | int | Max number of Thinking turns to run (1-5, `1` = the previous single-turn behavior). **When set to 2 or more**, every turn's Thinking JSON includes a `sufficient` flag; when it is `false`, the pipeline runs a **preview Web search** and hands the result to the next turn's Thinking prompt (B-type loop). The preview search is reused by the main response path via `_WEB_SEARCH_CACHE` (no double-fire). Default `1` |
 
 > When the user toggles a checkbox in the WebUI, that runtime choice wins for the rest of the session. On the next login the session restarts from the `Defaults` values again.
 
@@ -954,30 +956,54 @@ Place agent definition JSON files under `user/common/agent/`. It is recommended 
 
 #### PERSONALITY (personality settings)
 
-Defines the personality of the agent.
+Defines the personality of the agent. Fields with an empty / unset value are not written into the system prompt, so utility support-agents can specify only the minimum they need.
 
 ```json
 "PERSONALITY": {
-  "SEX": "Female",
-  "BIRTHDAY": "01-Jan-1980",
+  "SEX": "Male",
+  "BIRTHDAY": "01-Jan-1990",
   "IS_ALIVE": true,
   "NATIONALITY": "Japanese",
+  "BLOOD_TYPE": "A",
+  "RESIDENCE": "Yokohama",
+  "HEIGHT": "173cm",
+  "WEIGHT": "75kg",
+  "FOOT_SIZE": "26.5cm",
+  "DOMINANT_HAND": "right",
+  "DOMINANT_FOOT": "right",
+  "HAIRSTYLE": "Long perm, dark brown with green highlights",
+  "GLASSES": "yes",
+  "FAMILY": ["1 wife", "no children"],
+  "PERSONAL_COLOR": "Sky blue (DeepSkyBlue)",
+  "BIG5": {
+    "Openness": 0.4,
+    "Conscientiousness": 0.6,
+    "Extraversion": 0.85,
+    "Agreeableness": 0.3,
+    "Neuroticism": 0.7
+  },
   "LANGUAGE": "Japanese",
-  "SPEAKING_STYLE": "Polite",
-  "CHARACTER": "Sample.txt",
-  "Openness": 0.7,
-  "Conscientiousness": 0.7,
-  "Extraversion": 0.7,
-  "Agreeableness": 0.7,
-  "Neuroticism": 0.2
+  "SPEAKING_STYLE": "Light",
+  "CHARACTER": "DigitalMATSUMOTO.txt"
 }
 ```
 
-| Item | Description |
-|------|------|
-| `SPEAKING_STYLE` | Specify the speaking style defined in `SPEAKING_STYLE` of the prompt template |
-| `CHARACTER` | A text file under `user/common/agent/character/` (**`.txt` or `.md`**), or directly described. Detailed personality definition such as career, values, first person, etc. |
-| Big Five traits | Set `Openness` / `Conscientiousness` / `Extraversion` / `Agreeableness` / `Neuroticism` in the 0.0-1.0 range |
+| Item | Type | Description |
+|------|------|-------------|
+| `SEX` / `BIRTHDAY` / `IS_ALIVE` / `NATIONALITY` | str / str / bool / str | Basic attributes |
+| `BLOOD_TYPE` / `RESIDENCE` / `HEIGHT` / `WEIGHT` / `FOOT_SIZE` | str | Physical / residence attributes (blood type / residence / height / weight / foot size) |
+| `DOMINANT_HAND` / `DOMINANT_FOOT` | str | Dominant hand / foot |
+| `HAIRSTYLE` / `GLASSES` | str | Hairstyle / whether glasses are worn |
+| `FAMILY` | list[str] | Family composition (e.g. `["1 wife", "2 children"]`) |
+| `PERSONAL_COLOR` | str | Personal color (e.g. `"Sky blue (DeepSkyBlue)"`) |
+| `BIG5` | dict | Nested `{Openness, Conscientiousness, Extraversion, Agreeableness, Neuroticism}` each in the 0.0-1.0 range |
+| `LANGUAGE` | str | Language used |
+| `SPEAKING_STYLE` | str | Key defined in `SPEAKING_STYLE` of the prompt template |
+| `CHARACTER` | str | A `.txt` / `.md` file under `user/common/agent/character/`, or direct prose |
+
+**WebUI runtime override — Personality Override**: In the Chat screen, an **Personality Override** expander sits directly above the User Memory expander. It lets the operator override the active agent's PERSONALITY for that chat only (the agent JSON is NOT edited). Only the fields you changed are packed into `overwrite_items["PERSONALITY"]` and applied via `update_dict`'s deep-merge, so `BIG5` / `CHARACTER` and other untouched fields keep their JSON defaults. BIG5 is packed as a full 5-value set whenever any of the 5 traits was edited (to avoid a partial-merge mix with the JSON defaults).
+
+**Persona inheritance**: The TheRound / Sample_personas Excel `personality` cell accepts the same JSON — when a persona is selected the whole dict replaces the agent's `PERSONALITY` (`_apply_persona` uses persona.personality wholesale).
 
 #### ENGINE (LLM engine settings)
 
@@ -1183,7 +1209,7 @@ Specifies Support Agents that assist the main dialogue. Each Support Agent is de
 | `ART_CRITICS` | Generates explanation / critique after image generation |
 | `EXTRACT_DATE` | Extracts date information from user input (used for RAG metadata search) |
 | `RAG_QUERY_GENERATOR` | Generates auxiliary queries for RAG search from user input |
-| `THINKING` | Analyzes the user's question and dynamically decides on Habit selection / Web search / RAG query generation / Book addition (when Thinking Mode is enabled) |
+| `THINKING` | Analyzes the user's question and dynamically decides on Habit selection / Web search / RAG query generation / Book addition (when Thinking Mode is enabled). **Multi-turn support**: setting `Max Thinking Turns > 1` enables the B-type loop — each turn's JSON carries a `sufficient` flag; when it is `false` the pipeline runs a **preview Web search** and feeds the result into the next Thinking turn. The loop breaks on `sufficient=true` or when the turn cap is reached. The preview search is reused by the main response path via `_WEB_SEARCH_CACHE` (no double-fire) |
 | `KNOWLEDGE_INTERPRET` | Invoked by the "Interpret with LLM" buttons under Analytics Results - Knowledge Utility. Reads the inventory CSV / similarity rank (+ optional scatter / bar images) and returns three sections: overall composition vs. this-query selection, contribution analysis using delta = response_sim − question_sim, and notable / improvement points. Back-data centric; images are optional for vision-capable models. |
 | `CITATION_INJECT` | After the main response is generated, this agent inserts `[N]` markers at sentences grounded in web URLs or BOOK chunks and appends a `## References` section. Fires automatically whenever a web URL or a BOOK chunk was used (KNOWLEDGE entries are not cited — they are treated as the agent's internalised knowledge). Defaults to a lightweight model (Claude-Haiku-4.5 / Gemini Flash Lite / GPT-5-mini). On LLM failure, falls back to leaving the body untouched and appending only the References list. **If the LLM output contains neither `[N]` markers nor a `## References` section, it is treated as "no correspondence" and the original body is kept verbatim** (protects the real answer when the LLM returns an apology instead of citations). |
 
@@ -1573,6 +1599,8 @@ In this example, the first step generates an image, and the second step has a di
 
 Enabling Web search lets you supplement the input to the LLM with the latest information from the Web. You enable it with the "WEB Search" checkbox above the WebUI chat input field, and switch engines with the adjacent select box.
 
+**Injection guardrail**: The raw web-search body is not mixed straight into `user_query`; it is wrapped in `[参考資料 — Web検索結果 (ここから)]` / `[参考資料 END]` (see [DigiM_Execute.py `web_context`](DigiM_Execute.py)) with four rules — do not copy verbatim, respect the personality voice, prioritize the ongoing conversation and user intent, and use only what's necessary. This suppresses the failure mode where the LLM starts echoing the web page's tone and loses its own persona / conversation context.
+
 #### Supported engines
 
 | Engine | API key | Features |
@@ -1760,6 +1788,8 @@ The 7 pipeline calls `RAG_query_generator` / `extract_date` / `thinking_agent` /
 ### Citation injection
 
 After the main LLM generates its response, a lightweight LLM runs an **additional pass** that extracts citation sources from web URLs and BOOK chunks, inserts `[N]` markers at the end of relevant sentences, and appends a `## References` section. **Body wording is not rewritten.**
+
+**Prompt-side enforcement**: The `Citation Injector` prompt ends with an explicit rule that whenever References would be 0, the tool must return the body verbatim — **no explanation, no apology, no meta commentary**. In addition, the Execute side keeps the original body whenever the LLM output contains neither `[N]` markers nor `## References` (see [DigiM_Execute.py `citation_inject` block](DigiM_Execute.py) — length + marker check). Even if the LLM ignores the prompt and returns "no correspondence found", the real answer is preserved.
 
 #### Pipeline
 
@@ -2271,14 +2301,25 @@ The Chat tab's **"Analytics Results - Knowledge Utility"** button also renders a
 
 The Knowledge Utility scatter's **background dots** ("all chunks") are now scoped to the **persona-accessible subset** of the Chroma collection — the `where` filter is built from the persona's `define_code` at chat time so each persona sees its own knowledge space.
 
-**Additional GraphRAG per-turn analysis (when the turn's refs include Graph):** on button click, the button now inspects the turn's `knowledge_rag` refs for `'DB': 'Graph'` and, when present, renders the **two Graph views** alongside the Vector scatter inside the same expander:
+**All-DB score summary (top of the expander)**: A single row of scores across every RAG in the KNOWLEDGE + BOOK declaration order:
+- **Vector**: the existing `similarity_utility` (`similarity_Q - similarity_A` family)
+- **Graph**: the ③ combined score below (`node_recall + edge_recall`, N/A counted as 0)
 
-- **Retrieval view**: grey whole graph / blue = this turn's retrieved nodes & edges / skyblue = query-linked seeds
-- **Generation view**: elements actually mentioned in the response painted with a blue→skyblue gradient by mention frequency + **red = present in the output but NOT retrieved this turn** (coverage gap)
-- Below each figure: **unified node/edge table** with view flags (retrieved / generated), frequency, predicate-match, and unretrieved flags — red rows first
+**Additional GraphRAG per-turn analysis (when the turn's refs include Graph):** on button click, the button inspects the turn's `knowledge_rag` refs for `'DB': 'Graph'` and, when present, renders a **unified Graph view** inside the same expander:
+
+- **Score line**: `① NodeRecall = X (a/b) ＋ ② EdgeRecall = Y (c/d) = ③ combined = Z` per-RAG. ① / ② are the recall of "of the nodes / edges the LLM's output actually mentioned, how many were retrieved". ③ is their **sum** (N/A on either side counted as 0)
+- **Unified SVG** (single figure replacing the older two-view split, [DigiM_GraphUtility.render_unified_svg](DigiM_GraphUtility.py)):
+  - skyblue = used in output (high-frequency) / blue = used in output (low-frequency)
+  - **half-alpha blue (opacity=0.5) = retrieved but NOT used in the output** (new state)
+  - red = in the output but not retrieved (coverage gap) / grey = untouched
+  - **Seeds** are underlined on the graph labels + listed as a horizontal chip row below the figure
+- **📥 PNG download** button below the graph — matplotlib emits the same coloring as raw PNG bytes
+- **HTML node / edge tables**: entity names and edge triples colored by state + bold (seeds get underline too)
 - The analysis is `DigiM_Graph.analyze_graph_usage(query, response, rag)` — on-demand replay from the session log's (query, response), no runtime recording. `link_output` uses **exact-substring lexical matching** against node.name / node.aliases / dictionary.json aliases, so response wording variations (e.g. "松本" for a node named "松本敬史") need to be captured either in `dictionary.json` `aliases` or in the per-node `aliases` field (editable via the 概要・メンテ tab)
 
 **Ordered by the agent JSON's KNOWLEDGE array**: both Vector and Graph sections render in the order defined by the running agent's `KNOWLEDGE` (+ `BOOK`) list — not alphabetical.
+
+**Insight Analytics integration**: [VAnalyticsArticle.py `analytics_insights`](VAnalyticsArticle.py) reuses the same Graph analysis pipeline and writes `_Graph_unified.svg` / `_Graph_unified.png` / `_Graph_SeedTrace.txt` under `user/common/analytics/insight/`. Graph recall scores are merged into the Notion **知識活用性** field as `{"kind": "Graph", "combined": <float>, "node_recall": ..., "edge_recall": ..., ...}` alongside the Vector `similarity_utility` in the same dict. Monthly Analytics (`VAnalyticsMonthlyInsight`) picks up the `combined` value from Graph entries when tabulating.
 
 ---
 

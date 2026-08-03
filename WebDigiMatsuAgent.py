@@ -422,6 +422,13 @@ def user_default_parameter(defaults_dict):
             # Invalid values (agent without the option, typos) are filtered at
             # render time — no need to validate here.
             st.session_state.thinking_targets = list(_t)
+    if "Max Thinking Turns" in defaults_dict:
+        try:
+            _mt = int(defaults_dict["Max Thinking Turns"])
+        except (TypeError, ValueError):
+            _mt = 1
+        # Hard-clamp so a stray large value in users.json can't blow up cost.
+        st.session_state.max_thinking_turns = max(1, min(_mt, 5))
 
 
 def user_allowed_parameter(allowded_dict):
@@ -8676,6 +8683,23 @@ def main():
                 default=_saved_targets, label_visibility="collapsed",
             )
 
+            # Max Thinking Turns (B-type loop): default 1 = existing single-turn behavior.
+            # When >1, between turns the pipeline runs the Web search Thinking asked
+            # for, feeds the result into the next Thinking pass, and breaks out early
+            # when Thinking returns sufficient=true.
+            st.session_state.max_thinking_turns = st.number_input(
+                "Max Thinking Turns",
+                min_value=1, max_value=5,
+                value=int(st.session_state.get("max_thinking_turns", 1)),
+                step=1,
+                help=(
+                    "Thinkingを何ターンまで走らせるか (既定 1 = 従来動作)。"
+                    " 2 以上にすると、Thinkingが sufficient=false を返した場合に"
+                    " 予備Web検索 → 次ターンのThinkingへ結果を渡す、を最大N回繰り返します。"
+                    " 予備検索はメイン応答パスでキャッシュ流用されるため二重発火しません。"
+                ),
+            )
+
             # Max Personas: shown only when Thinking Mode is ON and Personas is selected
             if "Personas" in st.session_state.thinking_targets:
                 try:
@@ -10307,6 +10331,8 @@ def main():
             execution["_PRE_LOCKED"] = True
             # Phase 7: inject PersonaSelector cap into execution
             execution["MAX_PERSONAS"] = int(st.session_state.get("max_personas", 3))
+            # Multi-turn Thinking cap (B-type loop). Default 1 = single turn.
+            execution["MAX_THINKING_TURNS"] = int(st.session_state.get("max_thinking_turns", 1))
             # Resolve the selected persona IDs into real persona dicts
             _resolved_personas = []
             _selected_pids = list(st.session_state.get("selected_persona_ids") or [])
