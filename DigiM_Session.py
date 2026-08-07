@@ -1194,6 +1194,51 @@ class DigiMSession:
                         + (", ".join(_final) if _final else "(none)") + "\n"
                     )
 
+            # [Reference Knowledge Debug] — surfaces why the ##Reference
+            # Knowledge section came out the way it did (or didn't). Reads
+            # the diagnostic dict DigiM_Execute stamps into response.reference
+            # when cite_knowledge is on.
+            _ck_dbg = ((chat_history_dict_seq["response"] or {})
+                       .get("reference") or {}).get("cite_knowledge_debug")
+            if _ck_dbg:
+                chat_detail_info += "\n[Reference Knowledge Debug]\n"
+                chat_detail_info += (
+                    f"cite_knowledge_on: {_ck_dbg.get('cite_knowledge_on')}\n"
+                    f"manifest_size:     {_ck_dbg.get('manifest_size')}\n"
+                    f"selector_agent:    {_ck_dbg.get('selector_agent', '')}\n"
+                    f"selector_entries:  {_ck_dbg.get('selector_entries', 0)}\n"
+                    f"fallback_used:     {_ck_dbg.get('fallback_used')}\n"
+                    f"emitted_rows:      {_ck_dbg.get('emitted_rows')}\n"
+                )
+                if _ck_dbg.get("skip_reason"):
+                    chat_detail_info += f"skip_reason:       {_ck_dbg['skip_reason']}\n"
+                if _ck_dbg.get("response_tail_200"):
+                    chat_detail_info += f"response_tail:     {_ck_dbg['response_tail_200']!r}\n"
+                # Selector Picked lists only the entries that matched a manifest
+                # row — unmatched entries (selector hallucinated an ID) are
+                # dropped from the debug view AND from the visible
+                # ## Reference Knowledge section by _build_knowledge_section.
+                _decl = [d for d in (_ck_dbg.get("llm_declared") or [])
+                         if d.get("matched")]
+                if _decl:
+                    chat_detail_info += "Selector picked:\n"
+                    for _d in _decl:
+                        chat_detail_info += (
+                            f"  - ({_d.get('rag','')}) {_d.get('title','') or _d.get('id','')} "
+                            f"[id={_d.get('id','')}] — {_d.get('note','')}\n"
+                        )
+                _man = _ck_dbg.get("manifest") or []
+                if _man:
+                    chat_detail_info += f"Manifest ({len(_man)} chunks the selector could pick from):\n"
+                    for _m in _man:
+                        chat_detail_info += (
+                            f"  - ({_m.get('rag','')}) {_m.get('title','')} "
+                            f"[id={_m.get('id','')} "
+                            f"sim_Q={_m.get('sim_q',0.0):.3f} "
+                            f"sim_A={_m.get('sim_a',0.0):.3f} "
+                            f"util={_m.get('util',0.0):.4f}]\n"
+                        )
+
             chat_detail_info += "\n[RAG context]\n["
             for rag_set_dict in chat_history_dict_seq["response"]["reference"]["knowledge_rag"]:
                 chat_detail_info += "{"+ rag_set_dict.replace("\n", "").replace("$", "＄") + "},\n"

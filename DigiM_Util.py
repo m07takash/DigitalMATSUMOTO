@@ -110,6 +110,11 @@ _DISPLAY_ONLY_HEADERS = (
     "## 参照した知識",
 )
 _MERMAID_BLOCK_RE = re.compile(r"```mermaid\s.*?```", re.DOTALL)
+# Belt-and-suspenders — response-side code in DigiM_Execute usually strips
+# this before the response is persisted, but if the LLM emits it and the
+# main strip misses (e.g. tag typo), we still want it out of memory context.
+_KNOWLEDGE_USED_FENCE_RE = re.compile(
+    r"```knowledge_used\s*\n.*?\n?```", re.DOTALL | re.IGNORECASE)
 
 def strip_display_only_sections(text: str) -> str:
     if not text or not isinstance(text, str):
@@ -123,6 +128,7 @@ def strip_display_only_sections(text: str) -> str:
                 break
     stripped = text[:cut_at].rstrip()
     stripped = _MERMAID_BLOCK_RE.sub("", stripped).rstrip()
+    stripped = _KNOWLEDGE_USED_FENCE_RE.sub("", stripped).rstrip()
     return stripped
 
 # Sanitize text (remove JSON/XML-forbidden and control characters)

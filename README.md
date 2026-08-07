@@ -103,6 +103,25 @@ Digital MATSUMOTO lab合同会社
 
 ## アーキテクチャ概要
 
+### 概念モデル：Original / AI / User の三者循環
+
+本プログラムの基本思想は「オリジナル（リアル松本）」「デジタルツインAI（デジタルMATSUMOTO）」「ユーザー（リアル松本自身または対話相手）」の**三者が相互に理解し合いながら成長する循環**を作ることです。以下の技術構成はこの循環を実装するための手段として設計されています。
+
+```
+リアル松本(Original)  ⇄  デジタルMATSUMOTO(AI)  ⇄  リアル松本(User)
+```
+
+四方向の相互作用がこの循環を駆動します：
+
+- **Original → AI**：AIにジブンらしい知識（Personality / Knowledge / Habit）を与える
+- **AI → Original**：AIから本来の自分を想い出す（自己理解の鏡としてのAI）
+- **User → AI**：AIと対話して何かを成し遂げる（実務や創作の共同作業）
+- **AI → User**：AIから今の自分を内省する（User Memory / Feedback による気付き）
+
+これらすべての相互作用は「**Respect（相手を尊重する姿勢）**」に貫かれ、「**Growth Management（成長の管理）**」によって長期的な循環として維持されます。単なる作業効率化ツールではなく、ヒトとAIが共に成長するための共育環境を目指しています。詳細は [概要とアーキテクチャの説明](docs/Overview_of_DigitalMATSUMOTO.pdf) を参照してください。
+
+### 技術構成
+
 ```
 [Streamlit UI / FastAPI / Jupyter Notebook]
           |

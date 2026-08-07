@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import threading
 from datetime import datetime
@@ -97,81 +98,377 @@ EMPHASIS_INSTRUCTION = (
 )
 
 
-def _build_knowledge_section(knowledge_selected, agent_data, top_n=5):
-    """List the KNOWLEDGE chunks that ACTUALLY influenced this turn's output.
+_KV_RE_CI = re.compile(r"'([^']+)'\s*:\s*'((?:[^'\\]|\\.)*)'")
+_NUM_RE_CI = re.compile(r"'([^']+)'\s*:\s*(-?\d+\.?\d*)")
 
-    Built deterministically from the retrieval log — no LLM involved — so it is
-    unaffected by citation-injector failures and works even when there is
-    nothing citable for `## Reference Info`. BOOK entries are skipped because
-    they already flow into `## Reference Info` via the citation path.
 
-    Utility polarity: `similarity_prompt` / `similarity_response` are DISTANCES
-    (lower = more similar). A chunk shaped the answer more than the question
-    when it is closer to the answer than to the question, i.e. sim_r < sim_q,
-    i.e. util = sim_q - sim_r > 0. Ranking by util descending surfaces the
-    chunks that pulled the answer toward themselves; chunks with util <= 0
-    were retrieved by the query but not obviously used in the output, so they
-    are dropped from the display (a strict "influenced" list is more useful
-    than an exhaustive one). Capped at `top_n`."""
-    import logging as _lg_ks
-    if not isinstance(knowledge_selected, list) or not knowledge_selected:
-        _lg_ks.getLogger(__name__).info(
-            "[cite_knowledge] skip: knowledge_selected is empty")
-        return ""
-    import re as _re_ks
-    _book_names = {(b or {}).get("RAG_NAME")
-                   for b in (agent_data.get("BOOK") or [])
-                   if isinstance(b, dict) and b.get("RAG_NAME")}
-    _kv_re = _re_ks.compile(r"'([^']+)'\s*:\s*'((?:[^'\\]|\\.)*)'")
-    _num_re = _re_ks.compile(r"'([^']+)'\s*:\s*(-?\d+\.?\d*)")
+def _iter_knowledge_chunks(knowledge_selected, book_names):
+    """Yield (rag, cid, title, sim_q, sim_a, util, value_text) per non-book
+    chunk.
+
+    cid is the chunk's stable identifier (the `id`/`ID` field ChromaDB or the
+    PageIndex layer stamps in). We use it — not title — to key the manifest
+    the second-pass selector references, because titles collide across RAGs
+    and can be edited by the LLM's fuzzy paraphrasing.
+
+    knowledge_selected is a mixed list — Vector chunks are dicts, PageIndex
+    entries arrive as pre-formatted LOG_TEMPLATE strings. Normalise both."""
     def _as_float(v):
         try:
             return float(v) if v is not None else 0.0
         except (TypeError, ValueError):
             return 0.0
-
-    seen = set()
-    rows = []
-    for c in knowledge_selected:
+    for c in knowledge_selected or []:
         if isinstance(c, dict):
             rag = c.get("rag", "") or c.get("rag_name", "")
-            title = c.get("title", "") or c.get("ID", "") or c.get("id", "")
+            cid = str(c.get("id", "") or c.get("ID", "") or "")
+            title = c.get("title", "") or cid
             sim_q = _as_float(c.get("similarity_prompt", c.get("similarity_Q", 0.0)))
             sim_a = _as_float(c.get("similarity_response", c.get("similarity_A", 0.0)))
+            body = c.get("value_text_short") or c.get("value_text") or ""
         elif isinstance(c, str):
-            kv = dict(_kv_re.findall(c))
-            nums = dict(_num_re.findall(c))
+            kv = dict(_KV_RE_CI.findall(c))
+            nums = dict(_NUM_RE_CI.findall(c))
             rag = kv.get("rag", "")
-            title = kv.get("title", "") or kv.get("page_id", "") or kv.get("ID", "")
+            cid = kv.get("ID", "") or kv.get("id", "") or kv.get("page_id", "")
+            title = kv.get("title", "") or cid
             sim_q = _as_float(nums.get("similarity_Q", nums.get("similarity_prompt", 0.0)))
             sim_a = _as_float(nums.get("similarity_A", nums.get("similarity_response", 0.0)))
+            body = kv.get("summary", "") or kv.get("text_short", "")
         else:
             continue
-        if not rag or rag in _book_names:
+        if not rag or rag in book_names or not cid:
             continue
-        key = (rag, title)
-        if key in seen:
-            continue
-        seen.add(key)
-        util = sim_q - sim_a
-        # Drop chunks that didn't pull the answer toward themselves. Zero
-        # utility means "as close to the question as to the answer" — no
-        # evidence of shaping the output — and negative means it matched the
-        # question more than the answer.
-        if util <= 0:
-            continue
-        rows.append((util, rag, title))
+        yield rag, cid, title, sim_q, sim_a, (sim_q - sim_a), body
 
-    rows.sort(key=lambda r: -r[0])
-    rows = rows[:top_n]
-    _lg_ks.getLogger(__name__).info(
-        f"[cite_knowledge] emitting {len(rows)} rows (from {len(knowledge_selected)} refs, util>0 only)")
-    if not rows:
+
+def _build_cite_knowledge_manifest(knowledge_selected, agent_data):
+    """Build a lookup of every non-book chunk in this turn's retrieval.
+
+    Returns {(rag, id): {rag, id, title, body, sim_q, sim_a, util}, ...}.
+    No cap — the second-pass selector needs to see every chunk to decide
+    what was actually referenced (the user explicitly asked us to stop
+    truncating at top-60). Empty when no non-book chunks were retrieved.
+
+    Selection of "which chunks the LLM actually used" is delegated to a
+    dedicated support agent call (see _detect_used_chunks below), so we
+    no longer inject an inline directive into the primary prompt."""
+    _book_names = {(b or {}).get("RAG_NAME")
+                   for b in (agent_data.get("BOOK") or [])
+                   if isinstance(b, dict) and b.get("RAG_NAME")}
+    lookup = {}
+    for rag, cid, title, sim_q, sim_a, util, body in _iter_knowledge_chunks(
+            knowledge_selected, _book_names):
+        key = (rag, cid)
+        if key in lookup:
+            continue
+        lookup[key] = {"rag": rag, "id": cid, "title": title,
+                       "body": body, "sim_q": sim_q, "sim_a": sim_a,
+                       "util": util}
+    import logging as _lg_bd
+    if not lookup:
+        _lg_bd.getLogger(__name__).info(
+            "[cite_knowledge] manifest empty — no non-book knowledge chunks "
+            f"(knowledge_selected size={len(knowledge_selected or [])}, "
+            f"book_rags={sorted(_book_names)})")
+    else:
+        _lg_bd.getLogger(__name__).info(
+            f"[cite_knowledge] manifest built — size={len(lookup)} "
+            f"(from {len(knowledge_selected or [])} knowledge chunks)")
+    return lookup
+
+
+def _detect_used_chunks(service_info, user_info, session_id, session_name,
+                         selector_agent_file, primary_response, chunk_lookup):
+    """Second-pass LLM call that decides which chunks the primary answer
+    actually referenced. Returns [(rag, cid, usage_note), ...] preserving
+    the selector's order, dropping any (rag, cid) pair that doesn't map back
+    to the manifest.
+
+    The selector agent (SUPPORT_AGENT.KNOWLEDGE_USAGE_SELECTOR, defaults to
+    agent_80DigiMKnowledgeUsageSelector.json) is a lightweight support
+    agent. Its prompt template is `Knowledge Usage Selector` — mirrors the
+    Insight-Old "参照した【知識情報】と参考にした点(箇条書き)" idea but is
+    RAG-name-agnostic and returns structured JSON.
+
+    Returns [] on any failure (missing agent, LLM error, parse error) so
+    the caller falls through to the util-based fallback and Reference
+    Knowledge still ends up populated when possible."""
+    import logging as _lg_ku
+    _log = _lg_ku.getLogger(__name__)
+    if not chunk_lookup or not primary_response:
+        return []
+    if not selector_agent_file:
+        selector_agent_file = "agent_80DigiMKnowledgeUsageSelector.json"
+    try:
+        selector = dma.DigiM_Agent(selector_agent_file)
+        model_type = "LLM"
+        practice_file = selector.agent["HABIT"]["DEFAULT"]["PRACTICE"]
+        practice_path = Path(practice_folder_path) / practice_file
+        try:
+            practice = dmu.read_json_file(str(practice_path))
+            first_chain = practice.get("CHAINS", [{}])[0]
+            prompt_temp_cd = (first_chain.get("SETTING") or {}).get(
+                "PROMPT_TEMPLATE", "Knowledge Usage Selector")
+        except Exception:
+            prompt_temp_cd = "Knowledge Usage Selector"
+        prompt_template = selector.set_prompt_template(prompt_temp_cd)
+    except Exception as _e:
+        _log.warning(f"[cite_knowledge] selector agent load failed: {_e}")
+        return []
+
+    # Build the Retrieved Knowledge manifest the selector reads. Include ID
+    # (the identifier it must return), RAG name, title, and a body preview
+    # so it can judge whether content appears in the answer.
+    from collections import defaultdict
+    grouped = defaultdict(list)
+    for meta in chunk_lookup.values():
+        grouped[meta["rag"]].append(meta)
+    manifest_lines = []
+    for rag in sorted(grouped.keys()):
+        manifest_lines.append(f"■ RAG: {rag}")
+        for m in grouped[rag]:
+            _body = (m.get("body") or "").replace("\n", " ")
+            if len(_body) > 300:
+                _body = _body[:300] + "..."
+            manifest_lines.append(
+                f"  - ID: {m['id']}\n"
+                f"    タイトル: {m.get('title','')}\n"
+                f"    本文抜粋: {_body}"
+            )
+    prompt = (
+        f"{prompt_template}\n\n"
+        f"【本回答】\n{primary_response}\n\n"
+        f"【Retrieved Knowledge】\n" + "\n".join(manifest_lines) + "\n"
+    )
+
+    try:
+        raw = ""
+        for _p, chunk, _c in selector.generate_response(
+                model_type, prompt, [], stream_mode=False):
+            if chunk:
+                raw += chunk
+    except Exception as _e:
+        _log.warning(f"[cite_knowledge] selector LLM call failed: {_e}")
+        return []
+
+    # Extract the JSON list from the response. Selector is instructed to
+    # wrap in a ```json fence but be tolerant if it forgets.
+    _json_fence_re = re.compile(
+        r"```(?:json)?\s*(?P<body>\[.*?\])\s*```",
+        re.DOTALL | re.IGNORECASE)
+    m = _json_fence_re.search(raw or "")
+    payload = m.group("body") if m else None
+    if payload is None:
+        # No fence — try to find a bare JSON array.
+        m2 = re.search(r"(\[.*\])", raw or "", re.DOTALL)
+        payload = m2.group(1) if m2 else "[]"
+    import json as _json
+    try:
+        arr = _json.loads(payload)
+    except Exception as _e:
+        _log.warning(f"[cite_knowledge] selector JSON parse failed: {_e}; "
+                     f"raw_tail={(raw or '')[-200:]!r}")
+        return []
+    if not isinstance(arr, list):
+        return []
+    entries = []
+    for item in arr:
+        if not isinstance(item, dict):
+            continue
+        rag = str(item.get("rag", "")).strip()
+        cid = str(item.get("ID", item.get("id", ""))).strip()
+        usage = str(item.get("usage", "")).strip()
+        if not rag or not cid:
+            continue
+        entries.append((rag, cid, usage))
+    _log.info(f"[cite_knowledge] selector returned {len(entries)} entries "
+              f"(manifest size={len(chunk_lookup)})")
+    return entries
+
+
+def _refresh_chunk_util(chunk_lookup, knowledge_selected):
+    """Refresh sim_a / util in the lookup after the LLM's response has been
+    embedded and similarity_response has been stamped into knowledge_selected
+    by `get_knowledge_reference`. Lookup is keyed by (rag, id)."""
+    if not chunk_lookup or not knowledge_selected:
+        return
+    by_key = {}
+    def _f(v):
+        try: return float(v) if v is not None else 0.0
+        except (TypeError, ValueError): return 0.0
+    for c in knowledge_selected:
+        if isinstance(c, dict):
+            rag = c.get("rag") or c.get("rag_name") or ""
+            cid = str(c.get("id", "") or c.get("ID", "") or "")
+            if not rag or not cid:
+                continue
+            by_key[(rag, cid)] = (
+                _f(c.get("similarity_prompt", c.get("similarity_Q", 0.0))),
+                _f(c.get("similarity_response", c.get("similarity_A", 0.0))),
+            )
+        elif isinstance(c, str):
+            kv = dict(_KV_RE_CI.findall(c))
+            nums = dict(_NUM_RE_CI.findall(c))
+            rag = kv.get("rag", "")
+            cid = kv.get("ID", "") or kv.get("id", "") or kv.get("page_id", "")
+            if not rag or not cid:
+                continue
+            by_key[(rag, cid)] = (
+                _f(nums.get("similarity_Q", nums.get("similarity_prompt", 0.0))),
+                _f(nums.get("similarity_A", nums.get("similarity_response", 0.0))),
+            )
+    for key, meta in chunk_lookup.items():
+        pair = by_key.get(key)
+        if pair is None:
+            continue
+        sim_q, sim_a = pair
+        meta["sim_q"] = sim_q
+        meta["sim_a"] = sim_a
+        meta["util"] = sim_q - sim_a
+
+
+def _sanitize_reference_snippet(text, max_len=60):
+    """Flatten a book/knowledge snippet so it fits on one bullet line.
+
+    Book snippets are raw chunk bodies — they can contain markdown headers
+    (`# ...`), tables (`| ... |`), fenced code blocks, bullet lists and
+    embedded newlines. Left as-is, they poison the Reference Info block
+    (each snippet renders as a nested heading + table, splitting the
+    numbered list). This helper strips the structural markers and
+    collapses whitespace so the snippet reads as a short prose fragment."""
+    if not text:
+        return ""
+    s = str(text)
+    # Drop fenced code / mermaid blocks entirely — they'd render as a
+    # multi-line code box under the reference list.
+    s = re.sub(r"```.*?```", " ", s, flags=re.DOTALL)
+    # Strip leading heading / bullet / blockquote markers per line.
+    s = re.sub(r"(^|\n)\s*(#+|>|\-|\*|\+|\d+\.)\s+", r"\1", s)
+    # Table pipes → visual dividers.
+    s = s.replace("|", " ")
+    # Collapse any remaining whitespace (newlines, tabs, runs of spaces).
+    s = re.sub(r"\s+", " ", s).strip()
+    if len(s) > max_len:
+        s = s[:max_len].rstrip() + "..."
+    return s
+
+
+def _build_plain_references_block(sources):
+    """Same shape citation_inject._build_references_block produces, inlined
+    here so the outer code can append it without depending on tool-plugin
+    import paths. Empty when there are no citable sources.
+
+    Dedup: web by URL, book by (rag_name, title). Ordering follows the input
+    list — matches whatever call site already prioritised."""
+    if not sources:
+        return ""
+    seen = set()
+    lines = []
+    for s in sources:
+        if not isinstance(s, dict):
+            continue
+        kind = (s.get("type") or "web").lower()
+        if kind == "web":
+            url = (s.get("url") or "").strip()
+            if not url:
+                continue
+            key = ("web", url)
+            if key in seen:
+                continue
+            seen.add(key)
+            title = (s.get("title") or "").strip()
+            lines.append(f"(web) {url}" + (f" - {title}" if title else ""))
+        elif kind == "book":
+            rag_name = (s.get("rag_name") or "").strip()
+            title = (s.get("title") or "").strip()
+            if not title:
+                continue
+            key = ("book", rag_name, title)
+            if key in seen:
+                continue
+            seen.add(key)
+            # Belt-and-suspenders sanitize (upstream _ci_sources build
+            # already applied this, but the plain-references path is also
+            # called by the WebUI skill fallback which builds sources with
+            # raw snippets).
+            snippet = _sanitize_reference_snippet(
+                s.get("snippet") or "", max_len=60)
+            tag = f"(book: {rag_name})" if rag_name else "(book)"
+            parts = [tag, title]
+            if snippet:
+                parts.append("— " + snippet)
+            lines.append(" ".join(parts))
+    if not lines:
+        return ""
+    return "## Reference Info\n" + "\n".join(
+        f"[{i}] {lbl}" for i, lbl in enumerate(lines, 1))
+
+
+def _build_util_fallback_entries(chunk_lookup):
+    """Fallback when the second-pass selector returned nothing.
+
+    One representative from EVERY RAG in the manifest (best util within
+    each RAG), ordered by util descending. Returns list of (rag, id, note)
+    triples matching the selector output shape."""
+    if not chunk_lookup:
+        return []
+    from collections import defaultdict
+    by_rag = defaultdict(list)
+    for meta in chunk_lookup.values():
+        by_rag[meta.get("rag", "")].append(meta)
+    picked = []
+    for rag, items in by_rag.items():
+        best = max(items, key=lambda m: m.get("util", 0.0))
+        picked.append(best)
+    picked.sort(key=lambda m: -m.get("util", 0.0))
+    return [(m.get("rag", ""), m.get("id", ""), "(auto: 選定エージェント未実行)")
+            for m in picked]
+
+
+def _build_knowledge_section(entries, chunk_lookup, title_cap=20,
+                              note_cap=30):
+    """Assemble the ## Reference Knowledge section from the selector output.
+
+    entries       — list of (rag, id, usage_note) from _detect_used_chunks
+                    or _build_util_fallback_entries.
+    chunk_lookup  — {(rag, id): {rag, id, title, util, ...}} from
+                    _build_cite_knowledge_manifest.
+
+    Format per line:
+        - (RAG_NAME)Title-truncated: note-truncated (Knowledge Utility: X.XXXX)
+
+    Entries whose (rag, id) doesn't map back to the manifest are dropped
+    silently — the selector occasionally hallucinates an ID, and showing
+    those rows with util=N/A confused the user more than it helped. If
+    every entry drops, the whole section is suppressed (returns ""); the
+    caller must NOT emit a bare header in that case."""
+    import logging as _lg_ks
+    if not entries:
         return ""
     lines = []
-    for util, rag, title in rows:
-        label = f"({rag}){title}" if title else f"({rag})"
-        lines.append(f"- {label} (Knowledge Utility:{util:.4f})")
+    dropped = 0
+    for rag, cid, note in entries:
+        meta = chunk_lookup.get((rag, cid))
+        if meta is None:
+            dropped += 1
+            continue
+        util = meta.get("util", 0.0)
+        display_rag = meta.get("rag", rag)
+        display_title = meta.get("title", cid)
+        _t = display_title[:title_cap] + "..." if len(display_title) > title_cap else display_title
+        _n = (note or "").replace("\n", " ").strip()
+        if len(_n) > note_cap:
+            _n = _n[:note_cap] + "..."
+        lines.append(
+            f"- ({display_rag}){_t}: {_n} (Knowledge Utility: {util:.4f})"
+        )
+    _lg_ks.getLogger(__name__).info(
+        f"[cite_knowledge] emitting {len(lines)} rows "
+        f"({len(entries) - dropped}/{len(entries)} matched against manifest of "
+        f"{len(chunk_lookup)} chunks; {dropped} dropped as unmatched)")
+    if not lines:
+        return ""
     return "## Reference Knowledge\n" + "\n".join(lines)
 
 # B-3: Common USER_INPUT resolution
@@ -785,6 +1082,16 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     _format_prompt = DIAGRAM_INSTRUCTION if cfg.get("diagram_mode") else ""
     _format_prompt += EMPHASIS_INSTRUCTION if cfg.get("emphasis_mode") else ""
 
+    # Cite-knowledge manifest: pre-build the (rag, id) -> meta lookup of
+    # every non-book chunk in this turn. The primary prompt no longer
+    # carries a self-declaration directive — a dedicated second-pass
+    # selector agent (SUPPORT_AGENT.KNOWLEDGE_USAGE_SELECTOR) decides
+    # which chunks were used after the primary answer is produced.
+    _cite_chunk_lookup = {}
+    if cfg.get("cite_knowledge") and model_type == "LLM":
+        _cite_chunk_lookup = _build_cite_knowledge_manifest(
+            knowledge_selected, agent.agent)
+
     if model_type == "LLM":
         # Order: Session summary -> Dialogue partner info -> Knowledge ->
         #        Template -> User query -> Situation
@@ -946,14 +1253,19 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                     _kv = dict(_kv_re.findall(_c))
                     if _kv.get("rag") in _book_rag_names:
                         _pageindex_entries.append(_kv)
-            # Vector BOOK chunks: take top-K by similarity_response
+            # Vector BOOK chunks: take top-K by similarity_response.
+            # Snippet is sanitised: book chunk bodies frequently contain
+            # markdown headers / tables / code fences that would otherwise
+            # render inside Reference Info as nested widgets — flatten them.
             _vector_chunks.sort(key=lambda c: c.get("similarity_response", 0) or 0, reverse=True)
             for _c in _vector_chunks[:10]:
                 _ci_sources.append({
                     "type": "book",
                     "rag_name": _c.get("rag", ""),
                     "title": _c.get("title", "") or _c.get("ID", ""),
-                    "snippet": (_c.get("value_text_short") or _c.get("value_text") or "")[:80],
+                    "snippet": _sanitize_reference_snippet(
+                        _c.get("value_text_short") or _c.get("value_text") or "",
+                        max_len=60),
                 })
             # PageIndex BOOK entries: LLM already filtered (max_pages),
             # take all (typically ≤5) since they were explicitly selected.
@@ -962,7 +1274,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                     "type": "book",
                     "rag_name": _kv.get("rag", ""),
                     "title": _kv.get("title", "") or _kv.get("page_id", ""),
-                    "snippet": (_kv.get("summary") or "")[:80],
+                    "snippet": _sanitize_reference_snippet(
+                        _kv.get("summary") or "", max_len=60),
                 })
 
         if cfg["insert_citations"] and _ci_sources:
@@ -1011,11 +1324,27 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                         f"contains '## Reference Info': {'## Reference Info' in response}"
                     )
                 else:
-                    _lg_ci.getLogger(__name__).warning(
-                        f"[citation_inject] kept original (no markers or length): "
-                        f"cited_len={len(_cited) if _cited else 0}, body_len={len(response)}, "
-                        f"has_marker={_has_marker}"
-                    )
+                    # Injection was rejected (LLM returned meta commentary or
+                    # too short). The user still wants to SEE what was
+                    # searched — silently dropping Reference Info here is
+                    # what caused the "Reference not showing" bug when Web
+                    # Search + Reference Knowledge were both on. Fall back to
+                    # a plain References block built directly from the source
+                    # list, without inline [N] markers in the body.
+                    _refs_block = _build_plain_references_block(_ci_sources)
+                    if _refs_block and "## Reference Info" not in response:
+                        response = f"{(response or '').rstrip()}\n\n{_refs_block}"
+                        response_chat_dict["text"] = response
+                        _lg_ci.getLogger(__name__).info(
+                            f"[citation_inject] kept original body but appended "
+                            f"plain Reference Info block ({len(_ci_sources)} sources)"
+                        )
+                    else:
+                        _lg_ci.getLogger(__name__).warning(
+                            f"[citation_inject] kept original (no markers or length): "
+                            f"cited_len={len(_cited) if _cited else 0}, body_len={len(response)}, "
+                            f"has_marker={_has_marker}"
+                        )
             except Exception as _ce:
                 import logging as _lg
                 _lg.getLogger(__name__).exception(f"Citation injection failed: {_ce}")
@@ -1030,25 +1359,92 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                     session.save_error_log(_ce, context=_ctx)
                 except Exception:
                     pass
+                # Same fallback as the rejected-injection path — the user
+                # asked to see references whenever Web/Book were searched,
+                # so even on injector failure we surface the source list.
+                _refs_block = _build_plain_references_block(_ci_sources)
+                if _refs_block and "## Reference Info" not in response:
+                    response = f"{(response or '').rstrip()}\n\n{_refs_block}"
+                    response_chat_dict["text"] = response
 
-        # Referenced KNOWLEDGE, listed in its own section below `## Reference Info`.
-        # Deterministic (no LLM), so it survives citation-injector failures and
-        # also fires when there was nothing citable at all. Always appended —
-        # any pre-existing "Reference Knowledge" line in the LLM's own body is the
-        # LLM's imagination, whereas this section is grounded in the retrieval
-        # log. Both can coexist so the user can compare.
+        # Referenced KNOWLEDGE — populated by a dedicated second-pass
+        # selector agent that reads the primary answer + the Retrieved
+        # Knowledge manifest and returns the chunks that were actually
+        # referenced. This replaces earlier attempts (inline directive,
+        # util-based heuristic) that under-reported or biased toward
+        # whichever RAG had the most/longest chunks. On selector failure
+        # we still emit a one-per-RAG util fallback so the section is
+        # populated whenever cite_knowledge is on and chunks were retrieved.
         if cfg.get("cite_knowledge"):
             try:
-                _ks = _build_knowledge_section(knowledge_selected, agent.agent)
-                if _ks:
-                    response = f"{(response or '').rstrip()}\n\n{_ks}"
-                    # The Citation Injector path a few lines above also does
-                    # this — writing to `response` alone doesn't reach the UI
-                    # because the session persists `response_chat_dict["text"]`.
-                    response_chat_dict["text"] = response
+                import logging as _lg_ks
+                _log = _lg_ks.getLogger(__name__)
+                _ck_dbg = {
+                    "cite_knowledge_on":  True,
+                    "manifest_size":      len(_cite_chunk_lookup),
+                    "selector_agent":     "",
+                    "selector_entries":   0,
+                    "fallback_used":      False,
+                    "emitted_rows":       0,
+                    "response_tail_200":  response[-200:] if response else "",
+                    "skip_reason":        "",
+                }
+                if not _cite_chunk_lookup:
+                    _ck_dbg["skip_reason"] = "no manifest (cite_knowledge off at manifest-build time OR no non-book chunks retrieved)"
+                    _log.info(f"[cite_knowledge] {_ck_dbg['skip_reason']} — Reference Knowledge suppressed")
+                else:
+                    # Refresh util now that similarity_response is stamped
+                    # (Detail Information reads this from the debug dict).
+                    _refresh_chunk_util(_cite_chunk_lookup, knowledge_selected)
+                    _selector_agent = (agent.agent.get("SUPPORT_AGENT") or {}).get(
+                        "KNOWLEDGE_USAGE_SELECTOR", "agent_80DigiMKnowledgeUsageSelector.json")
+                    _ck_dbg["selector_agent"] = _selector_agent
+                    _entries = _detect_used_chunks(
+                        service_info, user_info, session_id, session_name,
+                        _selector_agent, response, _cite_chunk_lookup)
+                    _ck_dbg["selector_entries"] = len(_entries)
+                    _ck_dbg["llm_declared"] = [
+                        {"rag": rag, "id": cid, "note": note,
+                         "matched": (rag, cid) in _cite_chunk_lookup,
+                         "title": (_cite_chunk_lookup.get((rag, cid), {}) or {}).get("title", "")}
+                        for rag, cid, note in _entries
+                    ]
+                    if not _entries:
+                        _entries = _build_util_fallback_entries(_cite_chunk_lookup)
+                        _ck_dbg["fallback_used"] = True
+                        _log.info(
+                            f"[cite_knowledge] fallback (one per RAG) -> "
+                            f"{len(_entries)} entries"
+                        )
+                    _ks = _build_knowledge_section(_entries, _cite_chunk_lookup)
+                    if _ks:
+                        # Append AFTER any ## Reference Info the citation
+                        # injector just added, so the two sections coexist:
+                        #   ## Reference Info       (Web / Book)
+                        #   ## Reference Knowledge  (internal KNOWLEDGE)
+                        response = f"{(response or '').rstrip()}\n\n{_ks}"
+                        response_chat_dict["text"] = response
+                        # Count matched only — unmatched rows are dropped from
+                        # the visible section by _build_knowledge_section.
+                        _ck_dbg["emitted_rows"] = sum(
+                            1 for rag, cid, _n in _entries
+                            if (rag, cid) in _cite_chunk_lookup)
+                    else:
+                        _ck_dbg["skip_reason"] = "no rows (selector empty OR every entry unmatched + fallback empty)"
+                        _log.info(f"[cite_knowledge] {_ck_dbg['skip_reason']}")
+                _ck_dbg["manifest"] = [
+                    {"rag": m.get("rag", ""),
+                     "id":  m.get("id", ""),
+                     "title": m.get("title", ""),
+                     "sim_q": m.get("sim_q", 0.0),
+                     "sim_a": m.get("sim_a", 0.0),
+                     "util":  m.get("util", 0.0)}
+                    for m in (_cite_chunk_lookup or {}).values()
+                ]
+                response_chat_dict.setdefault("reference", {})["cite_knowledge_debug"] = _ck_dbg
             except Exception as _kse:
                 import logging as _lg_ks
-                _lg_ks.getLogger(__name__).warning(
+                _lg_ks.getLogger(__name__).exception(
                     f"Knowledge reference section skipped: {_kse}")
 
         # Image log (IMAGEGEN)

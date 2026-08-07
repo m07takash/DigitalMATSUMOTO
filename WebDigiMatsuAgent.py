@@ -416,9 +416,39 @@ def ensure_login():
 def user_default_parameter(defaults_dict):
     # Per-user initial toggles from users.json → Defaults.
     # Only override when the key is present, so partial dicts don't reset
-    # unrelated toggles to their factory defaults.
-    if "Thinking Mode" in defaults_dict:
-        st.session_state.thinking_mode = bool(defaults_dict["Thinking Mode"])
+    # unrelated toggles to their factory defaults. The label on the LEFT is
+    # the users.json key (title case, matches what the UI shows); on the
+    # RIGHT is the underlying st.session_state attribute name.
+    _BOOL_MAP = {
+        "Streaming Mode":         "stream_mode",
+        "Memory Use":             "memory_use",
+        "Save Digest":            "save_digest",
+        "Private Mode":           "private_mode",
+        "RAG Query Gen":          "RAG_query_gene",
+        "Meta Search":            "meta_search",
+        "Magic Word":             "magic_word_use",
+        "Thinking Mode":          "thinking_mode",
+        "WEB Search":             "web_search",
+        "Web Search Guardrail":   "web_search_guardrail",
+        "Include URL Subpages":   "url_fetch_subpages",
+        "Reference Knowledge":    "cite_knowledge",
+        "Diagrams":               "diagram_mode",
+        "Emphasis":               "emphasis_mode",
+        "Match Input Language":   "po_LANG_AUTO",
+    }
+    for _key, _attr in _BOOL_MAP.items():
+        if _key in defaults_dict:
+            setattr(st.session_state, _attr, bool(defaults_dict[_key]))
+
+    _STR_MAP = {
+        "Web Search Engine":      "web_search_engine",
+        "Language":               "po_LANGUAGE",
+        "Speaking Style":         "po_SPEAKING_STYLE",
+    }
+    for _key, _attr in _STR_MAP.items():
+        if _key in defaults_dict and defaults_dict[_key] is not None:
+            setattr(st.session_state, _attr, str(defaults_dict[_key]))
+
     if "Thinking Targets" in defaults_dict:
         _t = defaults_dict["Thinking Targets"]
         if isinstance(_t, list):
@@ -432,6 +462,18 @@ def user_default_parameter(defaults_dict):
             _mt = 1
         # Hard-clamp so a stray large value in users.json can't blow up cost.
         st.session_state.max_thinking_turns = max(1, min(_mt, 5))
+    if "Max Personas" in defaults_dict:
+        try:
+            _mp = int(defaults_dict["Max Personas"])
+        except (TypeError, ValueError):
+            _mp = 3
+        st.session_state.max_personas = max(1, min(_mp, 20))
+    if "Books" in defaults_dict:
+        # BOOK preselection — filtered at render time against the current
+        # agent's BOOK list, so a stale name silently drops instead of erroring.
+        _b = defaults_dict["Books"]
+        if isinstance(_b, list):
+            st.session_state.book_selected = [str(x) for x in _b if x]
 
 
 def user_allowed_parameter(allowded_dict):
@@ -2871,8 +2913,7 @@ def _knowledge_explorer():
         df = pd.DataFrame(_pi_pages)
         total_count = len(df)
 
-        # Tree-structure display
-        st.subheader("Page Tree")
+        # Group pages by category for the interactive tree render below.
         _categories = {}
         for p in _pi_pages:
             cat = p.get("category", "Uncategorized")
@@ -2880,41 +2921,110 @@ def _knowledge_explorer():
                 _categories[cat] = []
             _categories[cat].append(p)
 
-        import matplotlib
-        matplotlib.use("Agg")
-        import matplotlib.pyplot as plt
-        fig_tree, ax_tree = plt.subplots(figsize=(12, max(4, len(_pi_pages) * 0.35)))
-        ax_tree.set_xlim(-0.5, 10)
-        ax_tree.set_ylim(-0.5, len(_pi_pages) + len(_categories))
-        ax_tree.axis("off")
-        ax_tree.set_title(f"Page Index: {_pi_name} ({total_count} pages)", fontsize=14, fontweight="bold")
-
-        # Set of IDs to highlight (set after sensitivity analysis)
+        # Set of IDs to highlight (set after sensitivity analysis).
         _highlight_ids = set()
         _pi_sens = st.session_state.get("_rag_pi_sensitivity")
         if _pi_sens and _pi_sens.get("pi_name") == _pi_name:
             _highlight_ids = set(_pi_sens.get("selected_ids", []))
 
-        y_pos = len(_pi_pages) + len(_categories) - 1
-        for cat, pages in _categories.items():
-            # Category header
-            ax_tree.text(0.3, y_pos, f"[{cat}]", fontsize=11, fontweight="bold", va="center",
-                        fontfamily="IPAexGothic")
-            y_pos -= 1
-            for p in pages:
-                pid = p["id"]
-                title = p.get("title", "")
-                _color = "#1565C0" if pid in _highlight_ids else "#333333"
-                _weight = "bold" if pid in _highlight_ids else "normal"
-                _marker = ">>>" if pid in _highlight_ids else " - "
-                ax_tree.text(1.0, y_pos, f"{_marker} [{pid}] {title}", fontsize=9, va="center",
-                            color=_color, fontweight=_weight, fontfamily="IPAexGothic")
-                y_pos -= 1
+        # Selected page (persisted across reruns so a click on any row
+        # in the tree updates the right-hand viewer without losing the
+        # rest of the tab's state). Default to the first page.
+        _pi_sel_key = f"_pi_view_id_{_pi_name}"
+        if _pi_sel_key not in st.session_state:
+            st.session_state[_pi_sel_key] = _pi_pages[0]["id"]
 
-        st.pyplot(fig_tree)
-        plt.close(fig_tree)
+        # ----- Two-column layout: clickable tree (left) + body viewer (right) -----
+        _tree_col, _body_col = st.columns([1, 2])
 
-        # Data list
+        with _tree_col:
+            st.subheader(f"Page Tree — {_pi_name} ({total_count} pages)")
+            # Inject CSS that targets ALL buttons currently rendered on the
+            # page. It only takes effect while the PageIndex tab is being
+            # rendered (Streamlit rebuilds the DOM on every rerun, so this
+            # style tag disappears when you switch tabs). We accept the
+            # tradeoff that any other buttons rendered on THIS same tab
+            # would also be left-aligned — there aren't any.
+            st.markdown(
+                """
+                <style>
+                div[data-testid="stButton"] > button {
+                    text-align: left !important;
+                    justify-content: flex-start !important;
+                    padding: 3px 10px !important;
+                    min-height: 28px !important;
+                    height: auto !important;
+                    line-height: 1.35 !important;
+                    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace !important;
+                    font-size: 12.5px !important;
+                    white-space: pre !important;
+                }
+                div[data-testid="stButton"] > button > div,
+                div[data-testid="stButton"] > button p {
+                    text-align: left !important;
+                    justify-content: flex-start !important;
+                    width: 100% !important;
+                    margin: 0 !important;
+                }
+                div[data-testid="stButton"] { margin-bottom: 2px !important; }
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
+            _cats_order = list(_categories.keys())
+            for _ci, cat in enumerate(_cats_order):
+                pages = _categories[cat]
+                st.markdown(f"**📂 {cat}**")
+                _last_i = len(pages) - 1
+                for _pi, p in enumerate(pages):
+                    pid = str(p["id"])
+                    title = str(p.get("title", ""))
+                    _selected = (pid == st.session_state[_pi_sel_key])
+                    _hi = pid in _highlight_ids
+                    _branch = "└─" if _pi == _last_i else "├─"
+                    _state = "●" if _selected else "○"
+                    _hi_mark = " ▶" if _hi else "  "
+                    _label = f"{_branch}{_hi_mark} {_state} [{pid}] {title}"
+                    # Streamlit buttons preserve session state via the WebSocket
+                    # (unlike <a href> navigation which broke cookie-based login).
+                    if st.button(_label, key=f"pi_tree_btn_{_pi_name}_{pid}",
+                                  use_container_width=True,
+                                  type="primary" if _selected else "secondary"):
+                        st.session_state[_pi_sel_key] = pid
+                        st.rerun()
+
+        with _body_col:
+            st.subheader("Page Content")
+            _pi_view_id = st.session_state[_pi_sel_key]
+            _page_meta = next((p for p in _pi_pages if p["id"] == _pi_view_id), {})
+            _page_path = os.path.join("user/common/rag/pages",
+                                       _pi_name, f"{_pi_view_id}.md")
+            _title = _page_meta.get("title", "")
+            st.markdown(f"**[{_pi_view_id}] {_title}**")
+            _meta_bits = []
+            if _page_meta.get("category"):
+                _meta_bits.append(f"category: {_page_meta['category']}")
+            if _page_meta.get("timestamp"):
+                _meta_bits.append(f"timestamp: {_page_meta['timestamp']}")
+            if _page_meta.get("tags"):
+                _meta_bits.append(f"tags: {', '.join(_page_meta['tags'])}")
+            if _meta_bits:
+                st.caption(" · ".join(_meta_bits))
+            if os.path.exists(_page_path):
+                try:
+                    with open(_page_path, "r", encoding="utf-8") as _fh:
+                        _page_body = _fh.read()
+                    # Scroll container so long pages don't dominate the tab.
+                    with st.container(height=600, border=True):
+                        st.markdown(_page_body)
+                except Exception as _pe:
+                    st.warning(f"Failed to read page file {_page_path}: {_pe}")
+            else:
+                st.warning(f"Page file not found: {_page_path}")
+
+        # Data list (kept as a compact tabular view below the tree)
+        st.markdown("---")
+        st.subheader("Data List")
         _list_cols = [c for c in df.columns if c not in ("sort_order",)]
         st.dataframe(df[_list_cols], hide_index=True, use_container_width=True, height=300)
 

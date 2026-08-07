@@ -102,6 +102,25 @@ Digital MATSUMOTO lab LLC
 
 ## Architecture overview
 
+### Conceptual model: Original / AI / User three-way loop
+
+The core design intent is to sustain a **loop of mutual understanding and growth among three parties**: "Original" (real Matsumoto), "Digital-twin AI" (Digital MATSUMOTO), and "User" (real Matsumoto himself, or a conversation partner). The technical architecture that follows is the machinery that implements this loop.
+
+```
+Real Matsumoto (Original)  ⇄  Digital MATSUMOTO (AI)  ⇄  Real Matsumoto (User)
+```
+
+Four directions of interaction drive the loop:
+
+- **Original → AI**: feed the AI knowledge that is uniquely "you" (Personality / Knowledge / Habit)
+- **AI → Original**: rediscover your true self through the AI (the AI as a mirror of self-understanding)
+- **User → AI**: dialogue with the AI to accomplish something (work / creative co-production)
+- **AI → User**: reflect on your current self through the AI (User Memory / Feedback insights)
+
+All four flows are grounded in **Respect** (an attitude of honouring the counterpart) and sustained as a long-term loop by **Growth Management**. This is not a productivity tool — it is a co-cultivation environment where humans and AIs grow together. See [Overview and architecture description(JPN)](docs/Overview_of_DigitalMATSUMOTO.pdf) for details.
+
+### Technical composition
+
 ```
 [Streamlit UI / FastAPI / Jupyter Notebook]
           |
