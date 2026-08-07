@@ -139,6 +139,7 @@ and RAG (ChromaDB).
 | `DigiM_API.py` | FastAPI endpoints |
 | `DigiM_DB_Export.py` | PostgreSQL export / vectorization |
 | `DigiM_VAnalytics.py` | Knowledge usage analysis |
+| `DigiM_Guardrail.py` | Outbound guardrail that masks or blocks confidential data (API keys / PII) just before it reaches a web-search API |
 | `DigiM_Graph.py` | GraphRAG (pure-structure knowledge graph: ingestion, entity resolution, path+neighborhood retrieval, usage analysis) |
 | `DigiM_GraphBuilder.py` | Knowledge-graph ingestion batch CLI (builds graph.json from mapping.json / dictionary.json) |
 | `DigiM_GraphUtility.py` | Graph Utility rendering (deterministic-layout SVG, retrieval/generation views, tables) |
@@ -1600,6 +1601,24 @@ In this example, the first step generates an image, and the second step has a di
 Enabling Web search lets you supplement the input to the LLM with the latest information from the Web. You enable it with the "WEB Search" checkbox above the WebUI chat input field, and switch engines with the adjacent select box.
 
 **Injection guardrail**: The raw web-search body is not mixed straight into `user_query`; it is wrapped in `[参考資料 — Web検索結果 (ここから)]` / `[参考資料 END]` (see [DigiM_Execute.py `web_context`](DigiM_Execute.py)) with four rules — do not copy verbatim, respect the personality voice, prioritize the ongoing conversation and user intent, and use only what's necessary. This suppresses the failure mode where the LLM starts echoing the web page's tone and loses its own persona / conversation context.
+
+#### Outbound guardrail (confidential-data filter)
+
+A web-search query is assembled from the user's chat input, so posting it to a third-party search API can carry confidential text out of the system. [DigiM_Guardrail.py](DigiM_Guardrail.py) intercepts it **at that egress point**.
+
+**Scope is the web-search send only** - the main LLM call and RAG retrieval are untouched. Detection is **regex + Luhn only** (no LLM), so it runs offline and never ships the inspected text anywhere to make its decision.
+
+| MODE | Behaviour |
+|------|-----------|
+| `mask` (default) | Replace matches with `[REDACTED:<rule>]` and continue searching |
+| `block` | Skip the external API entirely and return what was detected |
+| `off` | Disabled |
+
+**Config**: `user/common/mst/web_search_guard.json` (falls back to `sample_web_search_guard.json`, then to the built-in defaults). List project or client names under `KEYWORDS` to have those literals redacted too.
+
+**Built-in rules**: provider API keys (OpenAI / Anthropic / GitHub / AWS / Google / Slack), JWTs, private-key blocks, Bearer tokens, `key: value` credentials, email addresses, JP mobile/landline numbers, and credit-card numbers (**Luhn-validated**, so a plain 16-digit identifier is not a false positive). The 12-digit My Number rule is **off by default** because it over-matches; enable it in the config when needed.
+
+**Applied at**: the head of all five engine functions (Perplexity / OpenAI / AzureOpenAI / Google / Claude). Each engine is also registered as its own callable tool, so the guard is wired **per engine** rather than only in the dispatcher. The `[guardrail]` log records **rule names and hit counts only** - never the matched values.
 
 #### Supported engines
 
