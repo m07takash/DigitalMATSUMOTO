@@ -493,7 +493,13 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
     similarity_Q_stats_dict = _order_dict_by_rag(similarity_Q_stats.to_dict(orient='index'))
     similarity_A_stats_dict = _order_dict_by_rag(similarity_A_stats.to_dict(orient='index'))
     similarity_utility_dict = _order_dict_by_rag(knowledge_utility_stats_dict)
-    similarity_rank_raw = (df.sort_values(['rag', 'similarity_Q'], ascending=[True, True]).groupby('rag')[['DB', 'ID', 'title', 'similarity_Q', 'similarity_A','knowledge_utility', 'QUERY_SEQ', 'QUERY_MODE']].apply(lambda x: x.to_dict(orient='records')).to_dict())
+    # KUtilRanking is Vector-only. Graph refs carry hardcoded
+    # similarity_Q=0/similarity_A=0 (the concept doesn't map onto graph
+    # traversal — Graph coverage is scored separately via graph_recall_scores),
+    # so keeping them in the ranking produces meaningless zero rows that
+    # dominate the "lowest similarity_Q" head of the sort. Drop them here.
+    _df_rank = df[df["DB"] != "Graph"] if "DB" in df.columns else df
+    similarity_rank_raw = (_df_rank.sort_values(['rag', 'similarity_Q'], ascending=[True, True]).groupby('rag')[['DB', 'ID', 'title', 'similarity_Q', 'similarity_A','knowledge_utility', 'QUERY_SEQ', 'QUERY_MODE']].apply(lambda x: x.to_dict(orient='records')).to_dict())
     similarity_rank = _order_dict_by_rag(similarity_rank_raw)
 
     # Create the folder if missing
