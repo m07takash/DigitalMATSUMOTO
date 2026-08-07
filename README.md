@@ -1829,8 +1829,11 @@ Chat サイドバーの2つのチェックボックスで、回答への付加�
 |---|---|---|
 | **Reference Knowledge** | `CITE_KNOWLEDGE` | 回答末尾に、そのターンで実際に参照した **KNOWLEDGE** を `## 参照した知識` として列挙。`## References`（Web/BOOK）とは**別セクション**。BOOK は References 側に出るため除外 |
 | **Diagrams** | `DIAGRAM_MODE` | 説明の中で **Markdown の表**と **Mermaid 図**（```mermaid フェンス）を使うようメインプロンプト末尾に指示を追加 |
+| **Emphasis** | `EMPHASIS_MODE` | 要点を **太字** で強調し、長い回答では見出し・箇条書きで整理するようメインプロンプト末尾に指示を追加 |
 
 **Reference Knowledge**: `## References` が LLM による追加パスなのに対し、こちらは検索ログ（`knowledge_selected`）から**コードで決定的に生成**します。したがって引用インジェクタが失敗しても影響を受けず、引用対象（Web/BOOK）が皆無のターンでも単独で機能します。Vector チャンク（dict）と PageIndex / Graph の LOG_TEMPLATE 文字列の両形式に対応し、`(RAG名, タイトル)` で重複排除して最大20件。
+
+**Emphasis**: 結論・数値・固有名詞など回答の核心となる語句を `**太字**` にし、長い回答は見出し（##／###）と箇条書きで整理させます。**強調は「稀であるほど強調として機能する」ため、1段落あたり1〜2箇所という上限を指示に明記**しています（全文が太字になるのを防ぐため）。書式のみの指示で、口調や人格設定（PERSONALITY / CHARACTER）には介入しません。Diagrams と併用でき、その場合は両方の指示がプロンプト末尾に連結されます。
 
 **Diagrams**: Mermaid ブロックは WebUI 側の [`render_response_markdown`](WebDigiMatsuAgent.py) が本文から切り出し、iframe 内でレンダリングします（表は Markdown のまま素通し）。Mermaid ランタイムは **`static/mermaid.min.js` があればそれをインライン展開**し、無ければ CDN を参照します。**閉域環境では `static/mermaid.min.js` を配置**してください（未配置かつオフラインの場合は図のソースをそのまま表示するフォールバック）。```mermaid フェンスを含まない回答は従来どおり `st.markdown` に素通しされるため、既存表示への影響はありません。
 
