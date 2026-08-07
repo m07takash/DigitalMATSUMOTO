@@ -7146,16 +7146,29 @@ def main():
             st.markdown("---")
 
             num_session_visible = st.number_input(label="Visible Sessions", value=5, step=1, format="%d")
-            st.session_state.session_inactive_list = dms.get_session_list_inactive()
-            st.session_state.session_inactive_list_selected = st.multiselect("Activate Sessions", [f"{item['id']}_{item['name']}" for item in st.session_state.session_inactive_list])
+            # Use *_visible variant so the list is already sorted by
+            # last_update_date desc (newest first). Labels show session name
+            # only via format_func while the multiselect value stays the
+            # session id for stable identity (name duplicates would otherwise
+            # collide).
+            st.session_state.session_inactive_list = dms.get_session_list_inactive_visible(
+                st.session_state.service_id, st.session_state.user_id, st.session_state.user_admin_flg)
+            _inact_label_map = {
+                item["id"]: (item.get("name") or item["id"])
+                for item in st.session_state.session_inactive_list
+            }
+            st.session_state.session_inactive_list_selected = st.multiselect(
+                "Activate Sessions",
+                list(_inact_label_map.keys()),
+                format_func=lambda _sid: _inact_label_map.get(_sid, _sid),
+            )
             if st.button("Activate", key="activate_sessions"):
-                for session_list_selected in st.session_state.session_inactive_list_selected:
-                    session_id_selected = session_list_selected.split("_")[0]
+                for session_id_selected in st.session_state.session_inactive_list_selected:
                     activate_session = dms.DigiMSession(session_id_selected)
                     activate_session.save_active_session("Y")
                     activate_session.save_user_dialog_session("UNSAVED")
-                activate_sessions_str = ", ".join(st.session_state.session_inactive_list_selected)
-                st.session_state.sidebar_message = f"Re-displayed sessions ({activate_sessions_str})"
+                _activated_labels = [_inact_label_map.get(_sid, _sid) for _sid in st.session_state.session_inactive_list_selected]
+                st.session_state.sidebar_message = f"Re-displayed sessions ({', '.join(_activated_labels)})"
                 st.rerun()
 
             # DB Export / Archive (shown only to users with Session Archive permission)
