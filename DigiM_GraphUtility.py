@@ -9,12 +9,12 @@
 #
 # Two views over DigiM_Graph.analyze_graph_usage(...) output:
 #
-#   view="retrieval"  … 検索ビュー
+#   view="retrieval"  ... retrieval view
 #     grey       : graph background (untouched nodes / edges)
 #     blue       : nodes & edges selected by this turn's retrieval
 #     skyblue    : seed nodes linked from the query
 #
-#   view="generation" … 生成ビュー
+#   view="generation" ... generation view
 #     grey       : background
 #     blue→skyblue gradient : nodes & edges actually used in the AI output
 #                             (mention frequency; max freq = skyblue)
@@ -214,11 +214,12 @@ def render_usage_svg(usage, view="retrieval", width=880, height=560, font_size=1
 
 
 # ================================================================ unified ==
-# 検索ビュー + 生成ビューを 1 枚に統合したビュー。生成ビューのカラーリング
-# (高頻度=スカイブルー / 低頻度=ブルー / 未検索=赤 / 未使用=グレー) をベース
-# に、「検索では抽出されたが生成では触れられなかった」ノード・エッジを
-# 半透明ブルー (BLUE, opacity 0.5) で追加。シードはグラフ上のラベルに
-# アンダーラインを引く + グラフ下に横一列のチップとして列挙する。
+# Unified view merging retrieval + generation into one image. Base coloring
+# is the generation view (high freq = skyblue / low freq = blue / surfaced
+# but not retrieved = red / unused = grey). Nodes/edges that WERE retrieved
+# but not touched in generation are added in translucent BLUE (opacity 0.5).
+# Seeds get an underline on the label and are also listed as chips in a
+# horizontal row below the graph.
 # ---------------------------------------------------------------------------
 
 # Precedence of the 5 states (highest first): missed → output-high → output-low
@@ -499,7 +500,7 @@ def unified_usage_tables_html(usage):
             "name": n.get("name", nid),
             "type": n.get("type", ""),
             "domains": " / ".join(n.get("domains", [])),
-            "search": "シード" if nid in seeds else ("Y" if nid in retrieved_n else "N"),
+            "search": "seed" if nid in seeds else ("Y" if nid in retrieved_n else "N"),
             "gen_freq": int(output_n_freq.get(nid, 0)),
             "missed": nid in missed_n,
             "state": state,
@@ -507,11 +508,11 @@ def unified_usage_tables_html(usage):
     node_rows.sort(key=lambda r: (0 if r["missed"] else 1, -r["gen_freq"], r["name"]))
 
     _n_head = "".join(f"<th>{h}</th>" for h in
-                       ("エンティティ", "型", "ドメイン", "検索", "生成頻度", "未検索(赤)"))
+                       ("Entity", "Type", "Domain", "Retrieval", "Gen freq", "Missed (red)"))
     _n_body = ""
     for r in node_rows:
         color = _unified_row_color(r["state"])
-        deco = ";text-decoration:underline" if r["search"] == "シード" else ""
+        deco = ";text-decoration:underline" if r["search"] == "seed" else ""
         name_cell = (f'<td style="color:{color};font-weight:700{deco}">'
                      f'{html.escape(r["name"])}</td>')
         _n_body += (
@@ -552,7 +553,7 @@ def unified_usage_tables_html(usage):
     edge_rows.sort(key=lambda r: (0 if r["missed"] else 1, -r["gen_freq"], r["text"]))
 
     _e_head = "".join(f"<th>{h}</th>" for h in
-                       ("エッジ", "ドメイン", "検索", "生成頻度", "述語一致", "未検索(赤)"))
+                       ("Edge", "Domain", "Retrieval", "Gen freq", "Predicate match", "Missed (red)"))
     _e_body = ""
     for r in edge_rows:
         color = _unified_row_color(r["state"])
@@ -589,7 +590,7 @@ def render_unified_png(usage, width=880, height=560, dpi=150):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     from matplotlib import rcParams
-    # Same CJK font the analytics modules use — avoids ▯ boxes on 日本語 labels
+    # Same CJK font the analytics modules use — avoids ▯ boxes on non-ASCII labels
     rcParams["font.family"] = "Noto Sans CJK JP"
 
     graph = usage["graph"]
@@ -718,30 +719,30 @@ def usage_tables(usage, view="retrieval"):
         for nid in usage["retrieved_nodes"]:
             n = graph["nodes"].get(nid, {})
             nodes_rows.append({
-                "区分": "シード" if nid in seeds else "抽出",
-                "エンティティ": n.get("name", nid),
-                "型": n.get("type", ""),
-                "ドメイン": " / ".join(n.get("domains", [])),
+                "Kind": "seed" if nid in seeds else "retrieved",
+                "Entity": n.get("name", nid),
+                "Type": n.get("type", ""),
+                "Domain": " / ".join(n.get("domains", [])),
             })
         for ei in usage["retrieved_edges"]:
-            edges_rows.append({"区分": "抽出", "エッジ": triple(ei),
-                               "ドメイン": " / ".join(graph["edges"][ei].get("domains", []))})
+            edges_rows.append({"Kind": "retrieved", "Edge": triple(ei),
+                               "Domain": " / ".join(graph["edges"][ei].get("domains", []))})
     else:
         for nid, freq in sorted(usage["output_nodes"].items(), key=lambda x: -x[1]):
             n = graph["nodes"].get(nid, {})
             nodes_rows.append({
-                "区分": "未検索(赤)" if nid in missed_n else "出力に使用",
-                "エンティティ": n.get("name", nid),
-                "頻度": freq,
-                "検索でも抽出": "Y" if nid in retrieved_n else "N",
+                "Kind": "Missed (red)" if nid in missed_n else "used",
+                "Entity": n.get("name", nid),
+                "Freq": freq,
+                "Also retrieved": "Y" if nid in retrieved_n else "N",
             })
         for h in sorted(usage["output_edges"], key=lambda x: -x["freq"]):
             edges_rows.append({
-                "区分": "未検索(赤)" if h["index"] in missed_ei else "出力に使用",
-                "エッジ": triple(h["index"]),
-                "頻度": h["freq"],
-                "述語一致": "Y" if h.get("predicate_match") else "N",
-                "検索でも抽出": "Y" if h["index"] in retrieved_e else "N",
+                "Kind": "Missed (red)" if h["index"] in missed_ei else "used",
+                "Edge": triple(h["index"]),
+                "Freq": h["freq"],
+                "Predicate match": "Y" if h.get("predicate_match") else "N",
+                "Also retrieved": "Y" if h["index"] in retrieved_e else "N",
             })
     return {"nodes": nodes_rows, "edges": edges_rows}
 
@@ -776,25 +777,25 @@ def unified_usage_table(usage):
         _is_output = nid in output_n_freq
         _freq = int(output_n_freq.get(nid, 0))
         if not _is_retrieved and _is_output:
-            _view = "生成のみ (赤)"
+            _view = "gen only (red)"
         elif _is_retrieved and _is_output:
-            _view = "検索+生成"
+            _view = "retrieval+gen"
         elif _is_retrieved and not _is_output:
-            _view = "検索のみ"
+            _view = "retrieval only"
         else:
             _view = "-"
         node_rows.append({
-            "エンティティ": n.get("name", nid),
-            "型": n.get("type", ""),
-            "ドメイン": " / ".join(n.get("domains", [])),
-            "検索": "シード" if nid in seeds else ("Y" if _is_retrieved else "N"),
-            "生成頻度": _freq if _is_output else 0,
-            "未検索(赤)": "Y" if nid in missed_n else "N",
-            "ビュー": _view,
+            "Entity": n.get("name", nid),
+            "Type": n.get("type", ""),
+            "Domain": " / ".join(n.get("domains", [])),
+            "Retrieval": "seed" if nid in seeds else ("Y" if _is_retrieved else "N"),
+            "Gen freq": _freq if _is_output else 0,
+            "Missed (red)": "Y" if nid in missed_n else "N",
+            "View": _view,
         })
     # Sort: red (missed) first, then by generation freq desc, then by name
-    node_rows.sort(key=lambda r: (0 if r["未検索(赤)"] == "Y" else 1,
-                                     -r["生成頻度"], r["エンティティ"]))
+    node_rows.sort(key=lambda r: (0 if r["Missed (red)"] == "Y" else 1,
+                                     -r["Gen freq"], r["Entity"]))
 
     # --- Edges: union of retrieved + output ---
     edge_ids = list(dict.fromkeys(list(retrieved_e) + list(output_e_map.keys())))
@@ -806,24 +807,24 @@ def unified_usage_table(usage):
         _freq = int(_out["freq"]) if _out else 0
         _pmatch = "Y" if (_out and _out.get("predicate_match")) else "N"
         if not _is_retrieved and _out:
-            _view = "生成のみ (赤)"
+            _view = "gen only (red)"
         elif _is_retrieved and _out:
-            _view = "検索+生成"
+            _view = "retrieval+gen"
         elif _is_retrieved and not _out:
-            _view = "検索のみ"
+            _view = "retrieval only"
         else:
             _view = "-"
         edge_rows.append({
-            "エッジ": _triple(ei),
-            "ドメイン": " / ".join(e.get("domains", [])),
-            "検索": "Y" if _is_retrieved else "N",
-            "生成頻度": _freq,
-            "述語一致": _pmatch,
-            "未検索(赤)": "Y" if ei in missed_ei else "N",
-            "ビュー": _view,
+            "Edge": _triple(ei),
+            "Domain": " / ".join(e.get("domains", [])),
+            "Retrieval": "Y" if _is_retrieved else "N",
+            "Gen freq": _freq,
+            "Predicate match": _pmatch,
+            "Missed (red)": "Y" if ei in missed_ei else "N",
+            "View": _view,
         })
-    edge_rows.sort(key=lambda r: (0 if r["未検索(赤)"] == "Y" else 1,
-                                     -r["生成頻度"], r["エッジ"]))
+    edge_rows.sort(key=lambda r: (0 if r["Missed (red)"] == "Y" else 1,
+                                     -r["Gen freq"], r["Edge"]))
     return {"nodes": node_rows, "edges": edge_rows}
 
 
@@ -1111,7 +1112,7 @@ def graph_overview_stats(graph, top_n=10):
     nodes = graph.get("nodes") or {}
     edges = graph.get("edges") or []
 
-    type_counter = Counter(n.get("type", "") or "(未指定)" for n in nodes.values())
+    type_counter = Counter(n.get("type", "") or "(unspecified)" for n in nodes.values())
     domain_counter = Counter()
     for n in nodes.values():
         for d in (n.get("domains") or []):
@@ -1129,10 +1130,10 @@ def graph_overview_stats(graph, top_n=10):
     for nid, dg in degree.most_common(top_n):
         n = nodes.get(nid, {})
         hubs.append({
-            "エンティティ": n.get("name", nid),
-            "型":         n.get("type", ""),
-            "ドメイン":     " / ".join(n.get("domains", [])),
-            "次数":         dg,
+            "Entity":  n.get("name", nid),
+            "Type":    n.get("type", ""),
+            "Domain":  " / ".join(n.get("domains", [])),
+            "Degree":  dg,
         })
 
     _avg_degree = round((sum(degree.values()) / len(nodes)) if nodes else 0.0, 2)
@@ -1140,17 +1141,17 @@ def graph_overview_stats(graph, top_n=10):
 
     return {
         "totals": {
-            "ノード": len(nodes),
-            "エッジ": len(edges),
-            "型 種類": len(type_counter),
-            "ドメイン 種類": len(domain_counter),
-            "述語 種類": len(pred_counter),
-            "平均次数": _avg_degree,
-            "孤立ノード": len(_isolated),
+            "Nodes": len(nodes),
+            "Edges": len(edges),
+            "Type kinds": len(type_counter),
+            "Domain kinds": len(domain_counter),
+            "Relation kinds": len(pred_counter),
+            "Avg degree": _avg_degree,
+            "Isolated nodes": len(_isolated),
         },
-        "types":      [{"型": k, "件数": v} for k, v in type_counter.most_common(top_n * 3)],
-        "domains":    [{"ドメイン": k, "件数": v} for k, v in domain_counter.most_common(top_n * 3)],
-        "predicates": [{"述語": k, "件数": v} for k, v in pred_counter.most_common(top_n * 2)],
+        "types":      [{"Type": k, "Count": v} for k, v in type_counter.most_common(top_n * 3)],
+        "domains":    [{"Domain": k, "Count": v} for k, v in domain_counter.most_common(top_n * 3)],
+        "predicates": [{"Relation": k, "Count": v} for k, v in pred_counter.most_common(top_n * 2)],
         "hubs":       hubs,
     }
 
@@ -1178,19 +1179,19 @@ def graph_quality_report(graph, dictionary=None, dup_threshold=1):
         if e["source"] in incident: incident[e["source"]] += 1
         if e["target"] in incident: incident[e["target"]] += 1
     _isolated = [
-        {"エンティティ": n.get("name", nid), "型": n.get("type", ""),
-         "ドメイン": " / ".join(n.get("domains", []))}
+        {"Entity": n.get("name", nid), "Type": n.get("type", ""),
+         "Domain": " / ".join(n.get("domains", []))}
         for nid, n in nodes.items() if incident.get(nid, 0) == 0
     ]
 
     # Missing type / domain
     _no_type = [
-        {"エンティティ": n.get("name", nid), "次数": incident.get(nid, 0)}
+        {"Entity": n.get("name", nid), "Degree": incident.get(nid, 0)}
         for nid, n in nodes.items() if not (n.get("type") or "").strip()
     ]
     _no_domain = [
-        {"エンティティ": n.get("name", nid), "型": n.get("type", ""),
-         "次数": incident.get(nid, 0)}
+        {"Entity": n.get("name", nid), "Type": n.get("type", ""),
+         "Degree": incident.get(nid, 0)}
         for nid, n in nodes.items() if not (n.get("domains") or [])
     ]
 
@@ -1208,8 +1209,8 @@ def graph_quality_report(graph, dictionary=None, dup_threshold=1):
             for nid, name, typ in entries:
                 _dup_rows.append({
                     "グループ": _key,
-                    "エンティティ": name,
-                    "型": typ,
+                    "Entity": name,
+                    "Type": typ,
                     "同グループ内の他候補": ", ".join(n for _i, n, _t in entries if n != name),
                 })
 

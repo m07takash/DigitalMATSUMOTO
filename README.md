@@ -534,8 +534,7 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
 |------|------|
 | `Session Archive` | セッションアーカイブ機能 |
 | `RAG Management` | RAGデータ管理（Update RAG Data等） |
-| `Exec Setting` | 実行設定の表示・変更 |
-| `RAG Setting` | RAG設定の表示・変更 |
+| `Conversation Settings` | Chat 画面の「**Conversation Settings**」エクスパンダ全体（Streaming/Memory/Web検索/BOOK/Personality Override/User Memory/Session Summary/Time/Situation/Skills）の表示ゲート。既定 `true`。<br>※ 旧 `Exec Setting` / `RAG Setting` は本キーに統合されたため未使用（残っていても無視） |
 | `Feedback` | フィードバック機能 |
 | `Details` | 詳細情報の表示 |
 | `Analytics Knowledge` | 知識活用分析 |
@@ -719,6 +718,8 @@ RAGデータに `private` フラグを設定できます。`private: true` の�
 CSV内の `private` 列に `True` / `False` を記載します。
 
 > `private` フラグが未設定のデータは自動的に `false`（公開）として扱われます。既存データへの影響はありません。
+
+> **Notion プロパティが空でもページはスキップされません**: `item_dict` の中で `"select"` / `"date"` 型のプロパティを指定しても、そのプロパティが Notion 側で未設定のページは値が `""` として取り込まれます (以前は `None` を返してページ全体がスキップされていました)。任意カテゴリや任意日付を持つデータベースでも、他の必須フィールドさえ揃っていれば取り込めます ([DigiM_Notion.py `get_select_by_id` / `get_date_by_id`](DigiM_Notion.py))。
 
 **category_items によるデータのフィルタリング：**
 
@@ -1039,7 +1040,7 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/{DATA_NAME} --use-llm --embe
 | API | FUNC | 対応モデル例 |
 |-----|------|------------|
 | OpenAI | `generate_response_T_gpt` | GPT-4.1, GPT-4.1-mini 等 |
-| Google | `generate_response_T_gemini` | Gemini-2.5-Flash, Gemini-3.1 等 |
+| Google | `generate_response_T_gemini` | Gemini-3.5-Flash, Gemini-3.1 等 |
 | Anthropic | `generate_response_T_claude` | Claude-Sonnet-4.5, Claude-Haiku 等 |
 | XAI | `generate_response_T_grok` | Grok-4 等 |
 | **Azure OpenAI** | `generate_response_T_azure_openai` | Azure上のgpt-*デプロイ（`MODEL`にデプロイ名を指定） |
@@ -1221,7 +1222,7 @@ Notion保存時は `notion_name` でプロパティ名を個別に指定でき�
 | `ART_CRITICS` | 画像生成後の解説・批評を生成 |
 | `EXTRACT_DATE` | ユーザー入力から日付情報を抽出（RAGのメタデータ検索に使用） |
 | `RAG_QUERY_GENERATOR` | ユーザー入力からRAG検索用の補助クエリを生成 |
-| `THINKING` | ユーザーの質問を分析し、Habit選択・Web検索・RAGクエリ生成・Book追加を動的に判定（Thinking Mode有効時）。**マルチターン対応**: `Max Thinking Turns > 1` にすると、各ターンの Thinking JSON の `sufficient=false` を検知して**予備 Web 検索**を実行 → 結果を次ターンの Thinking プロンプトに渡す B型ループ が動作。`sufficient=true` か上限到達で break。予備検索は `_WEB_SEARCH_CACHE` 経由でメイン応答パスに流用（二重発火なし） |
+| `THINKING` | ユーザーの質問を分析し、Habit選択・Web検索・RAGクエリ生成・Book追加を動的に判定（Thinking Mode有効時）。**マルチターン対応**: `Max Thinking Turns > 1` にすると、各ターンの Thinking JSON の `sufficient=false` を検知して**予備 Web 検索**を実行 → 結果を次ターンの Thinking プロンプトに渡す B型ループ が動作。`sufficient=true` か上限到達で break。予備検索は `_WEB_SEARCH_CACHE` 経由でメイン応答パスに流用（二重発火なし）。<br>**プロンプトテンプレの placeholder**: `PROMPT_TEMPLATE.Thinking Agent` は `{PreviousThinking}` (前ターンの判定 JSON) と `{WebSearchPreview}` (予備検索結果テキスト) を含み、[user/common/tool/thinking.py](user/common/tool/thinking.py) が実行時に `.replace()` で差し込みます。カスタマイズする際はこの2つの placeholder を残してください（削除すると 2ターン目以降が前情報無しで走ることになります）。出力 JSON にも `sufficient` フィールドを含めることが必須 |
 | `KNOWLEDGE_INTERPRET` | Analytics Results - Knowledge Utility の「LLM解釈」ボタンが押されたときに、CSV/類似度ランク（+任意で散布図画像）を読んで「全体構成と今回の選択傾向」「貢献度分析（回答距離−質問距離）」「注目点・改善示唆」を返す（バックデータ中心・Vision任意） |
 | `CITATION_INJECT` | 本回答生成後、Web検索URLとBOOKチャンクを引用ソースとして `[N]` マーカーを本文末文に挿入し、末尾に `## References` セクションを付与する。Web検索URL or BOOKチャンクのどちらかが使われていれば自動発火（KNOWLEDGE は対象外）。デフォルトは Claude-Haiku-4.5 等の軽量モデル。LLM失敗時は本文不変で References のみ追加するフォールバックあり。**LLM出力に `[N]` マーカーも `## References` も含まれない場合は「対応関係なし」とみなして元の本文をそのまま維持**（LLMが弁解文を返しても元回答が守られる） |
 
@@ -1580,6 +1581,9 @@ Practiceの各CHAINステップで、その**ステップだけ**を複数ペル
 | `USER_INPUT` | 入力テキストの固定値（指定するとユーザー入力の代わりに使用） |
 | `CONTENTS` | 前ステップの出力を参照（`EXPORT_1` で1つ目のステップの出力） |
 | `SITUATION` | 状況情報の設定 |
+| `WEB_SEARCH` / `META_SEARCH` / `RAG_QUERY_GENE` / `INSERT_CITATIONS` | 親 execution からの継承 (`cfg[…]`) を **チェーン単位で false に落とせる**（`true` は親が false なら効かない — AND 結合）。他の toggle は setting に書かなくても親の値が伝播 |
+
+**親 execution から自動継承される toggle** (setting に書かなくても各チェーンで有効): `MEMORY_USE / MEMORY_SAVE / MEMORY_SIMILARITY / MAGIC_WORD_USE / STREAM_MODE / SAVE_DIGEST / WEB_SEARCH_ENGINE / **CITE_KNOWLEDGE / DIAGRAM_MODE / EMPHASIS_MODE** / PRIVATE_MODE / THINKING_MODE`。**Reference Knowledge / Diagrams / Emphasis** の3つも `DigiMatsuExecute_Practice` から各チェーンステップに正しく伝播します（過去のバージョンでは伝播漏れがあり toggle が無効化されていましたが修正済み）。
 
 #### マルチステップの例（画像生成 + 批評）
 
@@ -1662,7 +1666,7 @@ OPENAI_SEARCH_SYSTEM_PROMPT: "Be precise and concise."
 OPENAI_SEARCH_USER_PROMPT: "以下の入力に基づいて、関連する情報を提供してください。"
 
 # Google Grounding Search
-GOOGLE_SEARCH_MODEL: "gemini-2.5-flash-preview-05-20"
+GOOGLE_SEARCH_MODEL: "gemini-3.5-flash"
 GOOGLE_SEARCH_USER_PROMPT: "以下の入力に基づいて、関連する情報を提供してください。"
 
 # Claude Web Search (web_search_20260209)
@@ -1869,6 +1873,7 @@ BOOK と KNOWLEDGE の区別は `agent.agent["BOOK"]` 内の `RAG_NAME` でフ�
 
 - **デフォルト ON**：`_parse_execution_settings` の `insert_citations` 既定値は `True`。WebUI 上にトグルはありません — 引用ソース（Web URL または BOOK チャンク）が1件以上あれば**自動発火**します。
 - **明示OFF**（API 等）：`execution["INSERT_CITATIONS"] = false` を渡せば無効化可能。
+- **Practice の CHAIN 単位 override**：Practice JSON の `CHAINS[i].SETTING.INSERT_CITATIONS` に `false` を書けば、そのチェーンステップだけ Citation Injector を止められます（例: マルチステップ Practice で「1つ目のチェーンは元の 参照した知識 を保ったまま出力したい／2つ目は最終応答なので Web References を付ける」といった使い分け）。未指定なら親の値を継承 ([DigiM_Execute.py:1500](DigiM_Execute.py))。
 - **エンジン切替**：`SUPPORT_AGENT.CITATION_INJECT` で agent_file を指定。デフォルトは `agent_79DigiMCitationInject.json`（Claude-Haiku-4.5 系）。
 
 #### 多段フォールバック
@@ -2351,6 +2356,8 @@ Knowledge Utility 散布図の **「全体集合」** ドット (背景の灰色
 - **Vector**: 既存の `similarity_utility` (`similarity_Q - similarity_A` 系のスコア)
 - **Graph**: 後述の **③ 統合スコア** (`node_recall + edge_recall`、N/A は 0 換算)
 
+**`{title}_KUtilRanking.txt` は Vector-only**: `analytics_knowledge` が書き出すランキングファイル（Insight Analytics でも同じ関数を使用）は、`DB=Graph` の行を除外した Vector 参照だけを扱います。Graph は `similarity_Q/A` を持たない（ハードコード0）ため混ぜるとランキング先頭がゼロで埋まるため、[DigiM_VAnalytics.py:496-502](DigiM_VAnalytics.py#L496-L502) でフィルタしています。Graph のカバレッジは上記の Recall スコアで別トラックとして評価してください。
+
 **Graph refs が含まれる場合の追加表示（ターン依存の GraphRAG 分析）：** ボタン押下時に、そのターンの `knowledge_rag` refs から `'DB': 'Graph'` の refs を検出すると、Vector 用の散布図に加えて **Graph 用の統合ビュー**を同じ expander 内に描画:
 
 - **スコア行**: `① ノードRecall = X (a/b) ＋ ② エッジRecall = Y (c/d) = ③ 統合スコア = Z` を per-RAG で表示。① / ② は「出力に含まれるノード/エッジのうち、検索で抽出されていた割合」の Recall。③ は ① と ② の**和**（一方が N/A の場合は 0 として合算）
@@ -2391,7 +2398,7 @@ Chat の各ターン下部の「**Detail Information**」エクスパンダは4�
 
 ### セッションサマリー（ユーザー定義のセッション状態文書）
 
-**メモリダイジェストとは別**の、**ユーザーが書式を指定できるセッション状態文書**。対話のたびに軽量LLM (デフォルトは `agent_65SessionSummary.json` → Gemini-2.5-Flash) がバックグラウンドでテンプレートを埋めていき、次以降のプロンプトに `[Current Session Summary]` ブロックとして注入されます。
+**メモリダイジェストとは別**の、**ユーザーが書式を指定できるセッション状態文書**。対話のたびに軽量LLM (デフォルトは `agent_65SessionSummary.json` → Gemini-3.5-Flash) がバックグラウンドでテンプレートを埋めていき、次以降のプロンプトに `[Current Session Summary]` ブロックとして注入されます。
 
 **用途例**:
 - **顧客ヒアリング**: 「会社名 / 担当者 / 課題 / 次アクション」を毎ターン蓄積 → 数ターン後に会社の全体像を Agent が保持している状態を作る
@@ -2416,7 +2423,7 @@ Session Summary の更新と Memory Digest の生成は**別スレッドで完�
 
 **軽量エージェントによる更新**:
 
-デフォルトでは `agent_65SessionSummary.json` (Gemini-2.5-Flash デフォルト) がグローバルフォールバックとして使われるため、**全 Chat エージェントで追加設定不要**で軽量モデルによるサマリー更新が有効になります。特定のエージェントで別モデルを使いたい場合は、そのエージェント JSON の `SUPPORT_AGENT` に:
+デフォルトでは `agent_65SessionSummary.json` (Gemini-3.5-Flash デフォルト) がグローバルフォールバックとして使われるため、**全 Chat エージェントで追加設定不要**で軽量モデルによるサマリー更新が有効になります。特定のエージェントで別モデルを使いたい場合は、そのエージェント JSON の `SUPPORT_AGENT` に:
 
 ```json
 "SUPPORT_AGENT": {
@@ -2425,7 +2432,7 @@ Session Summary の更新と Memory Digest の生成は**別スレッドで完�
 }
 ```
 
-を追加 (既に `agent_01DigitalMATSUMOTO.json` と `agent_10Sample.json` は設定済み)。エージェント側で `DEFAULT` エンジンを `GPT-5-nano` や `Claude-Haiku-4.5` に変えれば、全体を切り替えることもできます。
+を追加 (既に `agent_01DigitalMATSUMOTO.json` と `agent_10Sample.json` は設定済み)。エージェント側で `DEFAULT` エンジンを `GPT-5.4-nano` や `Claude-Haiku-4.5` に変えれば、全体を切り替えることもできます。
 
 **プロンプトへの注入位置**:
 
@@ -2461,6 +2468,10 @@ Summary が最上位に来るのは、「セッション内で確定した情報
 - **実行中** → `draft_input` に保存し、`📝 下書き:` バナーが上に出現
 
 バナーには `Send draft` / `Discard` ボタン。実行完了で Send draft が有効化されるので、後追いで送信できます。複数回入力すると最新の内容で上書き、Discard で破棄。スラッシュコマンド (`/skill_name ...`) も下書き状態で保持されます。
+
+### Activate Sessions セレクタ（サイドバー）
+
+過去に非表示にした（`Del` ボタンで `active=N` にした）セッションを再表示するための multiselect。**セッション名** で表示され、**最終更新日 (`last_update_date`) の降順**でソートされます（内部では ID を値として保持しているため、同名セッションでも一意に選べます）。Admin 以外は自分のセッションのみが対象。選択後に **`Activate`** ボタンで一括再表示。
 
 ---
 
@@ -2735,7 +2746,7 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
 | `session_id` | | 自動発番 | セッションID。LINE連携なら LINE ユーザーID を指定すると会話が継続される |
 | `session_name` | | 自動生成 | セッション名 |
 | `agent_file` | | `API_AGENT_FILE` | 使用するエージェント（例: `agent_10Sample.json`） |
-| `engine` | | エージェントのDEFAULT | LLMエンジン名（例: `Gemini-2.5-Flash`）。エージェントの ENGINE.LLM に定義されている名前を指定 |
+| `engine` | | エージェントのDEFAULT | LLMエンジン名（例: `Gemini-3.5-Flash`）。エージェントの ENGINE.LLM に定義されている名前を指定 |
 | `situation` | | `{"TIME":"","SITUATION":""}` | 日時・状況設定。`TIME` を空にすると日時なしで実行 |
 
 **実行設定（Exec Setting）:**
@@ -2955,7 +2966,7 @@ curl -s -X POST http://localhost:8899/run \
     "session_id": "API_TEST_002",
     "user_input": "量子コンピュータについて教えて",
     "agent_file": "agent_10Sample.json",
-    "engine": "Gemini-2.5-Flash"
+    "engine": "Gemini-3.5-Flash"
   }' | python3 -m json.tool --no-ensure-ascii
 
 # 全パラメータをデフォルト状態で明示指定して実行

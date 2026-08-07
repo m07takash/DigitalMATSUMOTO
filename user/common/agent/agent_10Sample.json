@@ -33,7 +33,7 @@
             "Agreeableness": 0.7,
             "Neuroticism": 0.2
         },
-        "LANGUAGE": "日本語",
+        "LANGUAGE": "Japanese",
         "SPEAKING_STYLE": "Polite",
         "CHARACTER": "Sample.txt"
     },
@@ -170,10 +170,10 @@
                     "digest": "Y"
                 }
             },
-            "GPT-5-mini": {
-                "NAME": "GPT-5-mini",
+            "GPT-5.4-mini": {
+                "NAME": "GPT-5.4-mini",
                 "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5-mini-2025-08-07",
+                "MODEL": "gpt-5.4-mini",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {
@@ -184,10 +184,10 @@
                     "digest": "Y"
                 }
             },
-            "GPT-5-nano": {
-                "NAME": "GPT-5-nano",
+            "GPT-5.4-nano": {
+                "NAME": "GPT-5.4-nano",
                 "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5-nano-2025-08-07",
+                "MODEL": "gpt-5.4-nano",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {

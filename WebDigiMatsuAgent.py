@@ -134,9 +134,11 @@ if 'allowed_agent_performance_explorer' not in st.session_state:
 if 'allowed_evaluation' not in st.session_state:
     st.session_state.allowed_evaluation = False
 if 'allowed_exec_setting' not in st.session_state:
-    st.session_state.allowed_exec_setting = True
+    st.session_state.allowed_exec_setting = True   # legacy — no longer read
 if 'allowed_rag_setting' not in st.session_state:
-    st.session_state.allowed_rag_setting = True
+    st.session_state.allowed_rag_setting = True    # legacy — no longer read
+if 'allowed_conversation_settings' not in st.session_state:
+    st.session_state.allowed_conversation_settings = True
 if 'allowed_feedback' not in st.session_state:
     st.session_state.allowed_feedback = True
 if 'allowed_details' not in st.session_state:
@@ -438,8 +440,11 @@ def user_allowed_parameter(allowded_dict):
     st.session_state.allowed_user_memory_explorer = allowded_dict.get("User Memory Explorer", False)
     st.session_state.allowed_agent_performance_explorer = allowded_dict.get("Agent Performance Explorer", False)
     st.session_state.allowed_evaluation = allowded_dict.get("Evaluation", False)
-    st.session_state.allowed_exec_setting = allowded_dict.get("Exec Setting", True)
-    st.session_state.allowed_rag_setting = allowded_dict.get("RAG Setting", True)
+    # Exec Setting / RAG Setting are legacy — they used to gate the top-of-page
+    # per-toggle blocks that no longer exist. Everything now lives under the
+    # single `Conversation Settings` expander (below), which honors this key:
+    st.session_state.allowed_conversation_settings = allowded_dict.get(
+        "Conversation Settings", True)
     st.session_state.allowed_feedback = allowded_dict.get("Feedback", True)
     st.session_state.allowed_details = allowded_dict.get("Details", True)
     st.session_state.allowed_analytics_knowledge = allowded_dict.get("Analytics Knowledge", True)
@@ -480,6 +485,7 @@ def _render_llm_input_tab(v2: dict):
     _agent_file = (v2.get("setting") or {}).get("agent_file", "")
     _persona = _resolve_persona_for_analytics(_agent_file, v2.get("setting") or {})
 
+    # Rebuild the system prompt with the persona override at chat time.
     _system_prompt = ""
     try:
         _agent_obj = dma.DigiM_Agent(_agent_file, persona=_persona)
@@ -512,12 +518,17 @@ def _render_llm_input_tab(v2: dict):
         st.code(_ss_ctx, language="markdown")
 
     # ---- 1. Retrieved Knowledge — HEADER + per-chunk CHUNK template ----
+    # Reference list (each is already CHUNK_TEMPLATE-formatted with a
+    # `chunk_context` field for ChromaDB chunks; PageIndex entries arrive as
+    # strings or dicts with `page_id`).
     _km_refs = ((v2.get("response") or {}).get("reference", {}) or {}).get("knowledge_rag") or []
+    # The agent's KNOWLEDGE setting (per-RAG configs containing HEADER_TEMPLATE
+    # / CHUNK_TEMPLATE) is snapshotted on the prompt side.
     _km_settings = (_prompt_dict.get("knowledge_rag") or {}).get("setting") or []
     _header_by_rag = {k.get("RAG_NAME", ""): k.get("HEADER_TEMPLATE", "")
                        for k in _km_settings}
     if _km_refs:
-        st.markdown("**取得された Knowledge (RAG)**")
+        st.markdown("**Retrieved Knowledge (RAG)**")
         # Group references by rag_name.
         #   - dict entries: read .rag_name (or .bucket / .DB as fallback hints)
         #   - string entries (legacy log fallback for AgentSearch /
@@ -533,6 +544,9 @@ def _render_llm_input_tab(v2: dict):
             else:
                 _s = str(_r)
                 _rn = "(log)"
+                # Common LOG_TEMPLATE shapes:
+                #   "'rag':'<name>', 'agent':'<name>', ..."
+                #   "rag=<name>, agent=<name>"
                 import re as _re
                 _m = _re.search(r"['\"]?rag['\"]?\s*[:=]\s*['\"]?([^,'\"]+)", _s)
                 if _m:
@@ -541,12 +555,16 @@ def _render_llm_input_tab(v2: dict):
         for _rn, _items in _grouped.items():
             _hdr = _header_by_rag.get(_rn, "")
             with st.container():
-                st.markdown(f"📚 **{_rn}** &nbsp;・&nbsp; {len(_items)} chunks")
+                st.markdown(f"📚 **{_rn}** &nbsp;·&nbsp; {len(_items)} chunks")
                 _block = ""
                 if _hdr:
                     _block += _hdr.rstrip() + "\n\n"
                 for _it in _items:
                     if isinstance(_it, dict):
+                        # `chunk_context` is the CHUNK_TEMPLATE already
+                        # formatted with this chunk's fields (added by
+                        # `create_rag_context`); fall back to log_format
+                        # rendering if absent.
                         _ck = _it.get("chunk_context") or _it.get("log") or str(_it)
                     else:
                         _ck = str(_it)
@@ -556,7 +574,9 @@ def _render_llm_input_tab(v2: dict):
     # ---- 2. Prompt Template ----
     _tpl_code = (_prompt_dict.get("prompt_template") or {}).get("setting", "")
     if _tpl_code:
-        st.markdown("**プロンプトテンプレート**")
+        st.markdown("**Prompt template**")
+        # Resolve the template text via the agent so users see the actual
+        # phrasing applied this turn (not just the code name).
         _tpl_text = ""
         try:
             _tpl_text = _agent_obj.set_prompt_template(_tpl_code) or ""
@@ -573,12 +593,12 @@ def _render_llm_input_tab(v2: dict):
     _attachments = _q.get("contents") or []
     _web = _prompt_dict.get("web_search") or {}
     if _user_raw or _user_after or _attachments or _web.get("web_context"):
-        st.markdown("**ユーザークエリ**")
+        st.markdown("**User query**")
         _parts = []
         if _user_raw:
             _parts.append(_user_raw)
         if _user_after and _user_after != _user_raw:
-            _parts.append(f"--- 前処理後 ---\n{_user_after}")
+            _parts.append(f"--- After preprocessing ---\n{_user_after}")
         if _attachments:
             _names = []
             for _a in _attachments:
@@ -586,7 +606,7 @@ def _render_llm_input_tab(v2: dict):
                     _names.append(str(_a.get("file_name") or _a.get("name") or _a))
                 else:
                     _names.append(str(_a))
-            _parts.append("--- 添付ファイル ---\n" + "\n".join(f"📎 {n}" for n in _names))
+            _parts.append("--- Attachments ---\n" + "\n".join(f"📎 {n}" for n in _names))
         if _web.get("web_context"):
             _engine = _web.get("engine", "?")
             _urls   = _web.get("urls") or []
@@ -604,7 +624,7 @@ def _render_llm_input_tab(v2: dict):
     # ---- 4. Situation ----
     _sit = _q.get("situation") or {}
     if _sit:
-        st.markdown("**シチュエーション**")
+        st.markdown("**Situation**")
         if isinstance(_sit, dict):
             _lines = []
             for _k, _v in _sit.items():
@@ -616,6 +636,8 @@ def _render_llm_input_tab(v2: dict):
     # ---- 5. Final Assembled Prompt (collapsed) ----
     _final_prompt = _prompt_dict.get("text", "")
     with st.expander("Final Assembled Prompt (sent as user message)", expanded=False):
+        # Render as a wrapped <pre> block so the whole prompt is visible
+        # top-to-bottom — newlines preserved, word-wrap on, no inner scroll.
         import html as _html_lim
         _esc = _html_lim.escape(_final_prompt or "(empty)")
         st.markdown(
@@ -987,6 +1009,8 @@ def initialize_session_states():
         st.session_state.overwrite_flg_rag = False
     if 'web_search' not in st.session_state:
         st.session_state.web_search = False
+    if 'web_search_guardrail' not in st.session_state:
+        st.session_state.web_search_guardrail = True
     if 'cite_knowledge' not in st.session_state:
         st.session_state.cite_knowledge = False
     if 'diagram_mode' not in st.session_state:
@@ -1342,8 +1366,8 @@ def _render_attachment_link_row(seq_key, uploaded_file_path, file_name, file_typ
         f'<div style="font-size:0.85em; margin-top:4px; margin-bottom:2px;">'
         f'📎 <b>{_safe_name}</b> '
         f'<span style="color:#888;">({_size_str} · {html.escape(_mime)})</span> — '
-        f'<a href="{_href}" target="_blank" rel="noopener noreferrer">🔗 ブラウザで開く</a> · '
-        f'<a href="{_href}" download="{_safe_name}">⬇ ダウンロード</a>'
+        f'<a href="{_href}" target="_blank" rel="noopener noreferrer">🔗 Open in browser</a> · '
+        f'<a href="{_href}" download="{_safe_name}">⬇ Download</a>'
         f'</div>',
         unsafe_allow_html=True,
     )
@@ -1670,11 +1694,11 @@ def _explanation_block(state_base, template_name, fallback_agent, ctx_builder, l
 def _graph_utility_pane(graph_names, agent_graph_rags):
     """Graph view inside Knowledge Explorer — pure "graph state" browser
     (not per-turn). 5 tabs:
-      1. 概要        : total counts / type & domain distribution / hubs / predicates
-      2. 全体図      : whole-graph SVG (type-color option, hub labeling)
-      3. フィルタ表   : node / edge tables with type / domain / substring filters
-      4. ノード探索   : select an entity → ego-network SVG + full props
-      5. データ品質   : isolated / missing type or domain / duplicate-name / predicate variants
+      1. Overview       : total counts / type & domain distribution / hubs / predicates
+      2. Full view      : whole-graph SVG (type-color option, hub labeling)
+      3. Filter tables  : node / edge tables with type / domain / substring filters
+      4. Node explorer  : select an entity → ego-network SVG + full props
+      5. Data quality   : isolated / missing type or domain / duplicate-name / predicate variants
     Per-turn retrieval + generation views live under the Chat sidebar's
     "Analytics Results - Knowledge Utility" button (Graph auto-detected)."""
     import DigiM_Graph as dmg_graph
@@ -1692,87 +1716,87 @@ def _graph_utility_pane(graph_names, agent_graph_rags):
     #   _graph     = active-only view; used by stats / rendering / overview.
     _graph_raw = dmg_graph.load_graph(_gdir)
     if not _graph_raw["nodes"]:
-        st.info(f"グラフが空です。先に取込バッチを実行してください: python3 DigiM_GraphBuilder.py {_gdir}")
+        st.info(f"Graph is empty. Run the import batch first: python3 DigiM_GraphBuilder.py {_gdir}")
         return
     _graph = dmg_graph.filter_active(_graph_raw)
     _dic = dmg_graph.load_dictionary(_gdir)
     _stats = dgu.graph_overview_stats(_graph)
     _t = _stats["totals"]
-    st.caption(f"📁 `{_gdir}` — ノード:{_t['ノード']} / エッジ:{_t['エッジ']} / "
-               f"型 種類:{_t['型 種類']} / ドメイン 種類:{_t['ドメイン 種類']} / "
-               f"述語 種類:{_t['述語 種類']} / 平均次数:{_t['平均次数']} / 孤立:{_t['孤立ノード']}")
+    st.caption(f"📁 `{_gdir}` — Nodes:{_t['Nodes']} / Edges:{_t['Edges']} / "
+               f"Type kinds:{_t['Type kinds']} / Domain kinds:{_t['Domain kinds']} / "
+               f"Relation kinds:{_t['Relation kinds']} / Avg degree:{_t['Avg degree']} / Isolated:{_t['Isolated nodes']}")
 
-    _tab_ov, _tab_full = st.tabs(["概要・メンテ", "ナレッジグラフ"])
+    _tab_ov, _tab_full = st.tabs(["Overview & maintenance", "Knowledge graph"])
 
-    # ------------------------------- Tab 1: 概要 ------------------------------
+    # ------------------------------- Tab 1: Overview -------------------------
     with _tab_ov:
         _kc = st.columns(4)
-        _kc[0].metric("ノード", _t["ノード"])
-        _kc[1].metric("エッジ", _t["エッジ"])
-        _kc[2].metric("孤立ノード", _t["孤立ノード"])
-        _kc[3].metric("平均次数", _t["平均次数"])
+        _kc[0].metric("Nodes", _t["Nodes"])
+        _kc[1].metric("Edges", _t["Edges"])
+        _kc[2].metric("Isolated nodes", _t["Isolated nodes"])
+        _kc[3].metric("Avg degree", _t["Avg degree"])
         _kc2 = st.columns(3)
-        _kc2[0].metric("型 種類", _t["型 種類"])
-        _kc2[1].metric("ドメイン 種類", _t["ドメイン 種類"])
-        _kc2[2].metric("述語 種類", _t["述語 種類"])
+        _kc2[0].metric("Type kinds", _t["Type kinds"])
+        _kc2[1].metric("Domain kinds", _t["Domain kinds"])
+        _kc2[2].metric("Relation kinds", _t["Relation kinds"])
         _dc1, _dc2 = st.columns(2)
         with _dc1:
-            st.markdown("**型別分布**")
+            st.markdown("**By type**")
             st.dataframe(pd.DataFrame(_stats["types"]), hide_index=True, use_container_width=True)
         with _dc2:
-            st.markdown("**ドメイン別分布**  <sub>ノード + エッジ合算</sub>", unsafe_allow_html=True)
+            st.markdown("**By domain**  <sub>nodes + edges combined</sub>", unsafe_allow_html=True)
             st.dataframe(pd.DataFrame(_stats["domains"]), hide_index=True, use_container_width=True)
         _dc3, _dc4 = st.columns(2)
         with _dc3:
-            st.markdown("**最ハブノード top10** <sub>次数降順</sub>", unsafe_allow_html=True)
+            st.markdown("**Top-10 hub nodes** <sub>by degree, descending</sub>", unsafe_allow_html=True)
             st.dataframe(pd.DataFrame(_stats["hubs"]), hide_index=True, use_container_width=True)
         with _dc4:
-            st.markdown("**述語頻度 top20**")
+            st.markdown("**Top-20 relations**")
             st.dataframe(pd.DataFrame(_stats["predicates"]), hide_index=True, use_container_width=True)
         # --- Data quality (folded expanders under Overview) ---
         st.markdown("---")
-        st.markdown("### データ品質")
+        st.markdown("### Data quality")
         _qr = dgu.graph_quality_report(_graph, _dic)
         _kq = st.columns(4)
-        _kq[0].metric("孤立ノード", len(_qr["isolated_nodes"]))
-        _kq[1].metric("型 未指定", len(_qr["missing_type"]))
-        _kq[2].metric("ドメイン 未指定", len(_qr["missing_domain"]))
-        _kq[3].metric("述語バリアント", len(_qr["predicate_variants"]))
-        with st.expander(f"孤立ノード ({len(_qr['isolated_nodes'])})"):
+        _kq[0].metric("Isolated nodes", len(_qr["isolated_nodes"]))
+        _kq[1].metric("Missing type", len(_qr["missing_type"]))
+        _kq[2].metric("Missing domain", len(_qr["missing_domain"]))
+        _kq[3].metric("Predicate variants", len(_qr["predicate_variants"]))
+        with st.expander(f"Isolated nodes ({len(_qr['isolated_nodes'])})"):
             if _qr["isolated_nodes"]:
                 st.dataframe(pd.DataFrame(_qr["isolated_nodes"]), hide_index=True, use_container_width=True)
             else:
-                st.caption("_(該当なし)_")
-        with st.expander(f"型が未指定 ({len(_qr['missing_type'])})"):
+                st.caption("_(none)_")
+        with st.expander(f"Missing type ({len(_qr['missing_type'])})"):
             if _qr["missing_type"]:
                 st.dataframe(pd.DataFrame(_qr["missing_type"]), hide_index=True, use_container_width=True)
             else:
-                st.caption("_(該当なし)_")
-        with st.expander(f"ドメインが未指定 ({len(_qr['missing_domain'])})"):
+                st.caption("_(none)_")
+        with st.expander(f"Missing domain ({len(_qr['missing_domain'])})"):
             if _qr["missing_domain"]:
                 st.dataframe(pd.DataFrame(_qr["missing_domain"]), hide_index=True, use_container_width=True)
             else:
-                st.caption("_(該当なし)_")
-        with st.expander(f"重複名 候補 ({len(_qr['dup_name_candidates'])}) — alias 化候補"):
+                st.caption("_(none)_")
+        with st.expander(f"Duplicate-name candidates ({len(_qr['dup_name_candidates'])}) — alias suggestions"):
             if _qr["dup_name_candidates"]:
                 st.dataframe(pd.DataFrame(_qr["dup_name_candidates"]), hide_index=True, use_container_width=True)
             else:
-                st.caption("_(該当なし)_")
-        with st.expander(f"述語バリアント ({len(_qr['predicate_variants'])}) — 正規化候補"):
+                st.caption("_(none)_")
+        with st.expander(f"Predicate variants ({len(_qr['predicate_variants'])}) — normalisation suggestions"):
             if _qr["predicate_variants"]:
                 st.dataframe(pd.DataFrame(_qr["predicate_variants"]), hide_index=True, use_container_width=True)
             else:
-                st.caption("_(該当なし)_")
+                st.caption("_(none)_")
 
-        # --- ノード / エッジ 編集 (フィルタ表を data_editor 化) ---
-        # 論理削除フラグ (active=Y/N) を切り替えるチェックボックス列 + 名前・型・
-        # ドメイン・エイリアスをインライン編集。「変更を適用」で graph.json に
-        # 原子的に保存。retrieval / rendering は保存直後の filter_active で
-        # 反映される (Streamlit rerun で再読み込み)。
+        # --- Node / edge editing (filter tables backed by data_editor) ---
+        # Toggles the logical-delete flag (active=Y/N) via checkbox column;
+        # inline editing for name / type / domains / aliases. "Save" writes
+        # graph.json atomically. Retrieval / rendering pick up the change on
+        # the next filter_active call (Streamlit rerun reloads).
         st.markdown("---")
-        st.markdown("### ノード / エッジ 編集")
+        st.markdown("### Node / edge editing")
         _show_deleted = st.checkbox(
-            "削除済み (active=N) も表示", value=False, key=f"gs_showdel_{_gname}",
+            "Include deleted (active=N)", value=False, key=f"gs_showdel_{_gname}",
         )
         from collections import Counter as _Cnt
         _deg_all = _Cnt()
@@ -1784,12 +1808,12 @@ def _graph_utility_pane(graph_names, agent_graph_rags):
                                 | {d for e in _graph_raw["edges"] for d in (e.get("domains") or [])})
         _all_preds = sorted({e.get("relation", "") for e in _graph_raw["edges"]})
 
-        # ---- ノード表 (edit) ----
-        st.markdown("#### ノード")
+        # ---- Node table (edit) ----
+        st.markdown("#### Nodes")
         _fc1, _fc2, _fc3 = st.columns(3)
-        _f_type = _fc1.multiselect("型:", _all_types, default=[], key=f"gs_ft_{_gname}")
-        _f_dom  = _fc2.multiselect("ドメイン:", _all_domains, default=[], key=f"gs_fd_{_gname}")
-        _f_sub  = _fc3.text_input("名前/エイリアス 部分一致:", "", key=f"gs_fs_{_gname}")
+        _f_type = _fc1.multiselect("Type:", _all_types, default=[], key=f"gs_ft_{_gname}")
+        _f_dom  = _fc2.multiselect("Domain:", _all_domains, default=[], key=f"gs_fd_{_gname}")
+        _f_sub  = _fc3.text_input("Name/alias substring:", "", key=f"gs_fs_{_gname}")
 
         _rows_n, _orig_n = [], []  # keep parallel original snapshot for diff
         for _nid, _n in _graph_raw["nodes"].items():
@@ -1807,47 +1831,47 @@ def _graph_utility_pane(graph_names, agent_graph_rags):
                 if _needle and _needle not in _name and not any(_needle in _a for _a in _aliases):
                     continue
             _row = {
-                "エンティティ": _name,
-                "型": _typ,
-                "ドメイン": " / ".join(_doms),
-                "エイリアス": " / ".join(_aliases),
-                "有効": _active,
-                "次数": _deg_all.get(_nid, 0),
+                "Entity": _name,
+                "Type": _typ,
+                "Domain": " / ".join(_doms),
+                "Aliases": " / ".join(_aliases),
+                "Active": _active,
+                "Degree": _deg_all.get(_nid, 0),
             }
             _rows_n.append(_row)
             _orig_n.append((_nid, dict(_row)))
-        st.caption(f"表示中 {len(_rows_n)} / 全 {len(_graph_raw['nodes'])} ノード (削除済みを含む)")
+        st.caption(f"Showing {len(_rows_n)} / {len(_graph_raw['nodes'])} nodes (including deleted)")
         _edited_n_df = st.data_editor(
             pd.DataFrame(_rows_n) if _rows_n else pd.DataFrame(
-                columns=["エンティティ", "型", "ドメイン", "エイリアス", "有効", "次数"]),
+                columns=["Entity", "Type", "Domain", "Aliases", "Active", "Degree"]),
             key=f"gs_edit_nodes_{_gname}",
             column_config={
-                "有効": st.column_config.CheckboxColumn(default=True),
-                "次数": st.column_config.NumberColumn(disabled=True),
+                "Active": st.column_config.CheckboxColumn(default=True),
+                "Degree": st.column_config.NumberColumn(disabled=True),
             },
-            disabled=["次数"],
+            disabled=["Degree"],
             hide_index=True,
             use_container_width=True,
             num_rows="fixed",
         )
-        if st.button("ノード変更を保存", key=f"gs_save_nodes_{_gname}",
+        if st.button("Save node changes", key=f"gs_save_nodes_{_gname}",
                        disabled=not _rows_n):
             _edited_records = _edited_n_df.to_dict("records") if hasattr(_edited_n_df, "to_dict") else list(_edited_n_df)
             _n_applied = 0
             for (_nid, _orig_row), _edited in zip(_orig_n, _edited_records):
                 # Compare after normalizing domains/aliases (str -> list)
-                _new_doms = [d.strip() for d in str(_edited.get("ドメイン", "")).split("/") if d.strip()]
-                _new_alis = [a.strip() for a in str(_edited.get("エイリアス", "")).split("/") if a.strip()]
-                _new_name = str(_edited.get("エンティティ", "")).strip()
-                _new_type = str(_edited.get("型", ""))
-                _new_active = bool(_edited.get("有効", True))
-                _orig_doms = [d.strip() for d in str(_orig_row.get("ドメイン", "")).split("/") if d.strip()]
-                _orig_alis = [a.strip() for a in str(_orig_row.get("エイリアス", "")).split("/") if a.strip()]
-                if (_new_name != _orig_row["エンティティ"]
-                        or _new_type != _orig_row["型"]
+                _new_doms = [d.strip() for d in str(_edited.get("Domain", "")).split("/") if d.strip()]
+                _new_alis = [a.strip() for a in str(_edited.get("Aliases", "")).split("/") if a.strip()]
+                _new_name = str(_edited.get("Entity", "")).strip()
+                _new_type = str(_edited.get("Type", ""))
+                _new_active = bool(_edited.get("Active", True))
+                _orig_doms = [d.strip() for d in str(_orig_row.get("Domain", "")).split("/") if d.strip()]
+                _orig_alis = [a.strip() for a in str(_orig_row.get("Aliases", "")).split("/") if a.strip()]
+                if (_new_name != _orig_row["Entity"]
+                        or _new_type != _orig_row["Type"]
                         or _new_doms != _orig_doms
                         or _new_alis != _orig_alis
-                        or _new_active != _orig_row["有効"]):
+                        or _new_active != _orig_row["Active"]):
                     dmg_graph.update_node(
                         _graph_raw, _nid,
                         name=_new_name, node_type=_new_type,
@@ -1857,17 +1881,17 @@ def _graph_utility_pane(graph_names, agent_graph_rags):
                     _n_applied += 1
             if _n_applied:
                 dmg_graph.save_graph_atomic(_gdir, _graph_raw)
-                st.success(f"{_n_applied} 件のノードを更新しました。")
+                st.success(f"Updated {_n_applied} node(s).")
                 st.rerun()
             else:
-                st.caption("変更なし")
+                st.caption("No changes.")
 
-        # ---- エッジ表 (edit) ----
-        st.markdown("#### エッジ")
+        # ---- Edge table (edit) ----
+        st.markdown("#### Edges")
         _ec1, _ec2, _ec3 = st.columns(3)
-        _e_pred = _ec1.multiselect("述語:", _all_preds, default=[], key=f"gs_ep_{_gname}")
-        _e_dom = _ec2.multiselect("ドメイン:", _all_domains, default=[], key=f"gs_ed_{_gname}")
-        _e_ent = _ec3.text_input("source/target 部分一致:", "", key=f"gs_es_{_gname}")
+        _e_pred = _ec1.multiselect("Relation:", _all_preds, default=[], key=f"gs_ep_{_gname}")
+        _e_dom = _ec2.multiselect("Domain:", _all_domains, default=[], key=f"gs_ed_{_gname}")
+        _e_ent = _ec3.text_input("source/target substring:", "", key=f"gs_es_{_gname}")
         _rows_e, _orig_e = [], []
         for _ei, _e in enumerate(_graph_raw["edges"]):
             _e_active = str(_e.get("active", "Y")).upper() != "N"
@@ -1885,42 +1909,42 @@ def _graph_utility_pane(graph_names, agent_graph_rags):
                     continue
             _row = {
                 "source": _sname,
-                "述語": _pred,
+                "Relation": _pred,
                 "target": _tname,
-                "ドメイン": " / ".join(_doms),
-                "有効": _e_active,
+                "Domain": " / ".join(_doms),
+                "Active": _e_active,
                 "create_date": _e.get("create_date", ""),
             }
             _rows_e.append(_row)
             _orig_e.append((_ei, dict(_row)))
-        st.caption(f"表示中 {len(_rows_e)} / 全 {len(_graph_raw['edges'])} エッジ")
+        st.caption(f"Showing {len(_rows_e)} / {len(_graph_raw['edges'])} edges")
         _edited_e_df = st.data_editor(
             pd.DataFrame(_rows_e) if _rows_e else pd.DataFrame(
-                columns=["source", "述語", "target", "ドメイン", "有効", "create_date"]),
+                columns=["source", "Relation", "target", "Domain", "Active", "create_date"]),
             key=f"gs_edit_edges_{_gname}",
             column_config={
                 "source": st.column_config.TextColumn(disabled=True),
                 "target": st.column_config.TextColumn(disabled=True),
                 "create_date": st.column_config.TextColumn(disabled=True),
-                "有効": st.column_config.CheckboxColumn(default=True),
+                "Active": st.column_config.CheckboxColumn(default=True),
             },
             disabled=["source", "target", "create_date"],
             hide_index=True,
             use_container_width=True,
             num_rows="fixed",
         )
-        if st.button("エッジ変更を保存", key=f"gs_save_edges_{_gname}",
+        if st.button("Save edge changes", key=f"gs_save_edges_{_gname}",
                        disabled=not _rows_e):
             _edited_e_records = _edited_e_df.to_dict("records") if hasattr(_edited_e_df, "to_dict") else list(_edited_e_df)
             _e_applied = 0
             for (_ei, _orig_row), _edited in zip(_orig_e, _edited_e_records):
-                _new_pred = str(_edited.get("述語", ""))
-                _new_doms = [d.strip() for d in str(_edited.get("ドメイン", "")).split("/") if d.strip()]
-                _orig_doms = [d.strip() for d in str(_orig_row.get("ドメイン", "")).split("/") if d.strip()]
-                _new_active = bool(_edited.get("有効", True))
-                if (_new_pred != _orig_row["述語"]
+                _new_pred = str(_edited.get("Relation", ""))
+                _new_doms = [d.strip() for d in str(_edited.get("Domain", "")).split("/") if d.strip()]
+                _orig_doms = [d.strip() for d in str(_orig_row.get("Domain", "")).split("/") if d.strip()]
+                _new_active = bool(_edited.get("Active", True))
+                if (_new_pred != _orig_row["Relation"]
                         or _new_doms != _orig_doms
-                        or _new_active != _orig_row["有効"]):
+                        or _new_active != _orig_row["Active"]):
                     dmg_graph.update_edge(
                         _graph_raw, _ei,
                         relation=_new_pred, domains=_new_doms,
@@ -1929,20 +1953,20 @@ def _graph_utility_pane(graph_names, agent_graph_rags):
                     _e_applied += 1
             if _e_applied:
                 dmg_graph.save_graph_atomic(_gdir, _graph_raw)
-                st.success(f"{_e_applied} 件のエッジを更新しました。")
+                st.success(f"Updated {_e_applied} edge(s).")
                 st.rerun()
             else:
-                st.caption("変更なし")
+                st.caption("No changes.")
 
-        # ---- 新規ノード追加 ----
-        with st.expander("新規ノードを追加", expanded=False):
-            _new_name = st.text_input("名前 *", "", key=f"gs_new_n_name_{_gname}")
-            _new_type_ex = st.text_input("型", "", key=f"gs_new_n_type_{_gname}")
-            _new_dom_ex = st.text_input("ドメイン (`/` 区切り)", "", key=f"gs_new_n_dom_{_gname}")
-            _new_ali_ex = st.text_input("エイリアス (`/` 区切り)", "", key=f"gs_new_n_ali_{_gname}")
-            if st.button("追加", key=f"gs_new_n_btn_{_gname}"):
+        # ---- Add new node ----
+        with st.expander("Add new node", expanded=False):
+            _new_name = st.text_input("Name *", "", key=f"gs_new_n_name_{_gname}")
+            _new_type_ex = st.text_input("Type", "", key=f"gs_new_n_type_{_gname}")
+            _new_dom_ex = st.text_input("Domain (`/` separated)", "", key=f"gs_new_n_dom_{_gname}")
+            _new_ali_ex = st.text_input("Aliases (`/` separated)", "", key=f"gs_new_n_ali_{_gname}")
+            if st.button("Add", key=f"gs_new_n_btn_{_gname}"):
                 if not _new_name.strip():
-                    st.warning("名前は必須です")
+                    st.warning("Name is required.")
                 else:
                     _doms_new = [d.strip() for d in _new_dom_ex.split("/") if d.strip()]
                     _alis_new = [a.strip() for a in _new_ali_ex.split("/") if a.strip()]
@@ -1953,13 +1977,13 @@ def _graph_utility_pane(graph_names, agent_graph_rags):
                     )
                     if _node_new:
                         dmg_graph.save_graph_atomic(_gdir, _graph_raw)
-                        st.success(f"ノード「{_new_name}」を追加しました")
+                        st.success(f"Added node '{_new_name}'.")
                         st.rerun()
                     else:
-                        st.error("追加に失敗しました (同名の既存ノードが返却されました)")
+                        st.error("Add failed (an existing node with the same name was returned).")
 
-        # ---- 新規エッジ追加 ----
-        with st.expander("新規エッジを追加", expanded=False):
+        # ---- Add new edge ----
+        with st.expander("Add new edge", expanded=False):
             _name_to_id_new = {(n.get("name") or ""): nid
                                  for nid, n in _graph_raw["nodes"].items()
                                  if str(n.get("active", "Y")).upper() != "N"}
@@ -1967,13 +1991,13 @@ def _graph_utility_pane(graph_names, agent_graph_rags):
             _ecol1, _ecol2 = st.columns(2)
             _new_src = _ecol1.selectbox("source", _sorted_names_new, key=f"gs_new_e_s_{_gname}")
             _new_tgt = _ecol2.selectbox("target", _sorted_names_new, key=f"gs_new_e_t_{_gname}")
-            _new_rel = st.text_input("述語 *", "", key=f"gs_new_e_r_{_gname}")
-            _new_edom = st.text_input("ドメイン (`/` 区切り)", "", key=f"gs_new_e_d_{_gname}")
-            if st.button("追加", key=f"gs_new_e_btn_{_gname}"):
+            _new_rel = st.text_input("Relation *", "", key=f"gs_new_e_r_{_gname}")
+            _new_edom = st.text_input("Domain (`/` separated)", "", key=f"gs_new_e_d_{_gname}")
+            if st.button("Add", key=f"gs_new_e_btn_{_gname}"):
                 if not _new_rel.strip():
-                    st.warning("述語は必須です")
+                    st.warning("Relation is required.")
                 elif _new_src == _new_tgt:
-                    st.warning("source と target は別ノードを選択してください")
+                    st.warning("source and target must be different nodes.")
                 else:
                     _doms_new_e = [d.strip() for d in _new_edom.split("/") if d.strip()]
                     _edge_new = dmg_graph.add_edge(
@@ -1982,21 +2006,22 @@ def _graph_utility_pane(graph_names, agent_graph_rags):
                     )
                     if _edge_new:
                         dmg_graph.save_graph_atomic(_gdir, _graph_raw)
-                        st.success(f"エッジ ({_new_src}) --[{_new_rel}]--> ({_new_tgt}) を追加しました")
+                        st.success(f"Added edge ({_new_src}) --[{_new_rel}]--> ({_new_tgt}).")
                         st.rerun()
                     else:
-                        st.error("追加に失敗しました (source / target のノードが見つかりません)")
+                        st.error("Add failed (source / target node not found).")
 
-        # ---- Excel 一括更新 (全件エクスポート → 編集 → 全件インポート) ----
-        # 全件ダウンロード / アップロードによる CRUD を実現。編集不能な列
-        # (id, 次数など) は編集後の差分計算で無視される。アップロードした
-        # xlsx が現状の graph.json より少ないノード/エッジを持っていた場合、
-        # 「Excel に出てこない = 削除希望」とみなして論理削除 (active=N)。
-        with st.expander("Excel 一括更新 (エクスポート / インポート)", expanded=False):
+        # ---- Bulk Excel update (export all → edit → import all) ----
+        # Full-download / full-upload CRUD. Non-editable columns (id,
+        # degree, etc.) are ignored during diff computation. When the
+        # uploaded xlsx contains fewer nodes/edges than the current
+        # graph.json, "absent from Excel = delete request" — the missing
+        # rows are logically deleted (active=N).
+        with st.expander("Bulk update via Excel (export / import)", expanded=False):
             st.caption(
-                "全件ダウンロード → 手元で編集 → 全件アップロード の運用。"
-                " 空 `id` 行 = 新規作成 / `active=N` = 論理削除 /"
-                " Excel から消えた行 = 論理削除。"
+                "Full download → edit locally → full upload."
+                " Empty `id` = create / `active=N` = logical delete /"
+                " rows missing from Excel = logical delete."
             )
             import io as _io_xl
             _buf = _io_xl.BytesIO()
@@ -2011,13 +2036,13 @@ def _graph_utility_pane(graph_names, agent_graph_rags):
                 _buf.seek(0)
                 _dl_ok = True
             except Exception as _e_dl:
-                st.warning(f"エクスポート準備に失敗: {_e_dl}")
+                st.warning(f"Export preparation failed: {_e_dl}")
                 _dl_ok = False
             if _dl_ok:
                 from datetime import datetime as _dt_xl
                 _ts = _dt_xl.now().strftime("%Y%m%d_%H%M%S")
                 st.download_button(
-                    "📥 全件ダウンロード (.xlsx)",
+                    "📥 Download all (.xlsx)",
                     data=_buf.getvalue(),
                     file_name=f"{_gname}_graph_{_ts}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -2025,7 +2050,7 @@ def _graph_utility_pane(graph_names, agent_graph_rags):
                 )
             st.markdown("---")
             _uploaded = st.file_uploader(
-                "編集済み .xlsx を選択",
+                "Choose edited .xlsx",
                 type=["xlsx"], key=f"gs_xlsx_up_{_gname}",
                 accept_multiple_files=False,
             )
@@ -2038,7 +2063,7 @@ def _graph_utility_pane(graph_names, agent_graph_rags):
                 try:
                     _plan = dmg_graph.compute_graph_import_plan(_graph_raw, _upload_path)
                 except Exception as _e_pl:
-                    st.error(f"インポート計画の計算に失敗: {_e_pl}")
+                    st.error(f"Failed to compute import plan: {_e_pl}")
                     _plan = None
                 if _plan:
                     _nc = len(_plan["nodes"]["create"])
@@ -2048,65 +2073,65 @@ def _graph_utility_pane(graph_names, agent_graph_rags):
                     _eu = len(_plan["edges"]["update"])
                     _ed = len(_plan["edges"]["delete"])
                     st.markdown(
-                        f"**差分プレビュー** — "
-                        f"ノード: 新規 {_nc} / 更新 {_nu} / 削除 {_nd}　　"
-                        f"エッジ: 新規 {_ec} / 更新 {_eu} / 削除 {_ed}"
+                        f"**Diff preview** — "
+                        f"Nodes: create {_nc} / update {_nu} / delete {_nd}　　"
+                        f"Edges: create {_ec} / update {_eu} / delete {_ed}"
                     )
                     if _plan.get("warnings"):
-                        with st.expander(f"警告 ({len(_plan['warnings'])})", expanded=False):
+                        with st.expander(f"Warnings ({len(_plan['warnings'])})", expanded=False):
                             for _w in _plan["warnings"]:
                                 st.caption(_w)
                     _total = _nc + _nu + _nd + _ec + _eu + _ed
                     if _total == 0:
-                        st.info("差分はありません。適用不要です。")
+                        st.info("No diff. Nothing to apply.")
                     else:
-                        if st.button("適用 (graph.json に保存)",
+                        if st.button("Apply (save to graph.json)",
                                        key=f"gs_xlsx_apply_{_gname}",
                                        type="primary"):
                             _counts = dmg_graph.apply_graph_import_plan(_graph_raw, _plan)
                             dmg_graph.save_graph_atomic(_gdir, _graph_raw)
                             st.success(
-                                f"適用完了 — ノード: 新規 {_counts['nodes_created']}"
-                                f" / 更新 {_counts['nodes_updated']}"
-                                f" / 削除 {_counts['nodes_deleted']}　　"
-                                f"エッジ: 新規 {_counts['edges_created']}"
-                                f" / 更新 {_counts['edges_updated']}"
-                                f" / 削除 {_counts['edges_deleted']}"
+                                f"Apply complete — Nodes: create {_counts['nodes_created']}"
+                                f" / update {_counts['nodes_updated']}"
+                                f" / delete {_counts['nodes_deleted']}　　"
+                                f"Edges: create {_counts['edges_created']}"
+                                f" / update {_counts['edges_updated']}"
+                                f" / delete {_counts['edges_deleted']}"
                             )
                             st.rerun()
 
-    # ---------------------------- Tab 2: ナレッジグラフ -----------------------
+    # ---------------------------- Tab 2: Knowledge graph --------------------
     with _tab_full:
         # Filter widgets are wrapped in an st.form so a widget change on its
         # own does NOT trigger a rerun (avoids re-rendering the 200-node SVG
-        # on every keystroke). Only 「検索」button submit re-renders.
+        # on every keystroke). Only the "Search" submit re-renders.
         _node_names_full = sorted({(n.get("name") or "") for n in _graph["nodes"].values() if n.get("name")})
         _form_key = f"gs_form_{_gname}"
         with st.form(_form_key, clear_on_submit=False):
             _cf_pick_in = st.multiselect(
-                "ノード (絞込用、複数選択可 / 空 = 全体表示):",
+                "Nodes (filter, multi-select / empty = show whole graph):",
                 _node_names_full, default=st.session_state.get(f"gs_pick_{_gname}", []),
                 key=f"{_form_key}_pick",
             )
             _cf1, _cf2, _cf3 = st.columns([1, 1, 3])
             _color_by_type_in = _cf1.checkbox(
-                "型で色分け",
+                "Color by type",
                 value=st.session_state.get(f"gs_col_{_gname}", True),
                 key=f"{_form_key}_col",
             )
             _hops_ex_in = _cf2.number_input(
-                "周辺展開ホップ:", min_value=1, max_value=3,
+                "Expansion hops:", min_value=1, max_value=3,
                 value=int(st.session_state.get(f"gs_exhops_{_gname}", 1)), step=1,
                 key=f"{_form_key}_hops",
-                help="ノード選択時のみ有効。選択ノードから何ホップまで含めるか。",
+                help="Only effective when nodes are selected. Number of hops from the selected node(s) to include.",
             )
             _lbl_top_in = _cf3.number_input(
-                "ラベル表示 (上位 N ハブ):", min_value=0, max_value=200,
+                "Show labels (top-N hubs):", min_value=0, max_value=200,
                 value=int(st.session_state.get(f"gs_lbl_{_gname}", 25)), step=5,
                 key=f"{_form_key}_lbl",
-                help="ハブ上位 N のみラベル (0=非表示)。絞込表示時は選択ノードは常にラベル表示。",
+                help="Label only the top-N hubs (0 = none). When filtered, the selected nodes are always labelled.",
             )
-            _submitted = st.form_submit_button("検索", type="primary")
+            _submitted = st.form_submit_button("Search", type="primary")
 
         if _submitted:
             # Commit form values to the persistent state used for rendering
@@ -2134,9 +2159,9 @@ def _graph_utility_pane(graph_names, agent_graph_rags):
                     _seen_e.add(_sig)
                     _sub["edges"].append(_e)
             st.caption(
-                f"選択 {len(_picked_ids)} 件 (hops={_hops_ex}) のエゴ・ネットワーク union — "
+                f"Selected {len(_picked_ids)} node(s) (hops={_hops_ex}) — ego-network union — "
                 f"{len(_sub['nodes'])} nodes / {len(_sub['edges'])} edges"
-                " ／ 選択ノードから hops ホップ以内のノードすべて + それらの間のエッジを含みます"
+                " / includes every node within `hops` of the selection plus the edges between them"
             )
             _view_graph = _sub
             # Honor the user's label_top_hubs limit even in drill-down mode.
@@ -2145,7 +2170,7 @@ def _graph_utility_pane(graph_names, agent_graph_rags):
             _lbl_effective = _lbl_top
             _highlight = _picked_ids
         else:
-            st.caption(f"全体表示 — {len(_graph['nodes'])} nodes / {len(_graph['edges'])} edges")
+            st.caption(f"Full view — {len(_graph['nodes'])} nodes / {len(_graph['edges'])} edges")
             _view_graph = _graph
             _lbl_effective = _lbl_top
             _highlight = None
@@ -2166,8 +2191,8 @@ def _graph_utility_pane(graph_names, agent_graph_rags):
         if _cf_pick:
             for _pid in _picked_ids:
                 _pnode = _graph["nodes"][_pid]
-                with st.expander(f"{_pnode.get('name','?')} — props / 隣接エッジ", expanded=False):
-                    _prop_rows = [{"キー": _k, "値": (_v.get("value") if isinstance(_v, dict) else _v),
+                with st.expander(f"{_pnode.get('name','?')} — props / adjacent edges", expanded=False):
+                    _prop_rows = [{"Key": _k, "Value": (_v.get("value") if isinstance(_v, dict) else _v),
                                      "as_of": (_v.get("as_of", "") if isinstance(_v, dict) else ""),
                                      "lane": (_v.get("lane", "") if isinstance(_v, dict) else "")}
                                     for _k, _v in (_pnode.get("props") or {}).items()]
@@ -2175,14 +2200,14 @@ def _graph_utility_pane(graph_names, agent_graph_rags):
                         st.markdown("**props**")
                         st.dataframe(pd.DataFrame(_prop_rows), hide_index=True, use_container_width=True)
                     else:
-                        st.caption("_(props なし)_")
+                        st.caption("_(no props)_")
                     _adj_rows = []
                     for _e in _graph["edges"]:
                         if _e["source"] == _pid or _e["target"] == _pid:
                             _adj_rows.append({
-                                "方向": "出" if _e["source"] == _pid else "入",
-                                "述語": _e.get("relation", ""),
-                                "相手": (_graph["nodes"].get(
+                                "Direction": "out" if _e["source"] == _pid else "in",
+                                "Relation": _e.get("relation", ""),
+                                "Peer": (_graph["nodes"].get(
                                     _e["target"] if _e["source"] == _pid else _e["source"]) or {}).get("name", ""),
                                 "props": ", ".join(
                                     f"{k}={(v.get('value') if isinstance(v, dict) else v)}"
@@ -2190,11 +2215,11 @@ def _graph_utility_pane(graph_names, agent_graph_rags):
                                 )[:80],
                                 "create_date": _e.get("create_date", ""),
                             })
-                    st.markdown(f"**隣接エッジ ({len(_adj_rows)} 件)**")
+                    st.markdown(f"**Adjacent edges ({len(_adj_rows)})**")
                     if _adj_rows:
                         st.dataframe(pd.DataFrame(_adj_rows), hide_index=True, use_container_width=True)
                     else:
-                        st.caption("_(なし)_")
+                        st.caption("_(none)_")
 
 
 def _knowledge_explorer():
@@ -2465,14 +2490,14 @@ def _knowledge_explorer():
                                 "Exclude KNOWLEDGE (regression):",
                                 _cmp_kn_names, default=[],
                                 key=f"{key_prefix}_cmp_excl_k",
-                                help="比較対象から外したい KNOWLEDGE RAG_NAME を選択。空 = 通常比較。",
+                                help="Select KNOWLEDGE RAG_NAMEs to exclude from comparison. Empty = full comparison.",
                             )
                         if _cmp_bk_names:
                             _cmp_excl_b = st.multiselect(
                                 "Exclude BOOK (regression):",
                                 _cmp_bk_names, default=[],
                                 key=f"{key_prefix}_cmp_excl_b",
-                                help="比較対象から外したい BOOK RAG_NAME を選択。空 = 通常比較。",
+                                help="Select BOOK RAG_NAMEs to exclude from comparison. Empty = full comparison.",
                             )
                         compare_col1, _ = st.columns(2)
                         if compare_col1.button("Analytics Results - Compare Agents", key=f"{key_prefix}_cmp_run", disabled=bool(st.session_state._bg_task)):
@@ -2650,16 +2675,16 @@ def _knowledge_explorer():
                                     continue
                                 import DigiM_GraphUtility as _dgu
                                 _view_key_ui = st.radio(
-                                    f"表示ビュー ({_gu_rag_name}):",
-                                    ["検索ビュー", "生成ビュー"],
+                                    f"View ({_gu_rag_name}):",
+                                    ["Retrieval view", "Generation view"],
                                     index=0, horizontal=True,
                                     key=f"{key_prefix}_gu_view_{_gu_rag_name}",
                                     help=(
-                                        "検索ビュー: グレー=全体 / ブルー=今回抽出 / スカイブルー=クエリで選ばれたシード。 "
-                                        "生成ビュー: 頻度グラデーション (ブルー→スカイブルー) + 赤=検索では選ばれなかったが出力に現れた要素 (カバレッジギャップ)"
+                                        "Retrieval view: grey=all / blue=this-turn / skyblue=query-selected seeds. "
+                                        "Generation view: frequency gradient (blue→skyblue) + red=surfaced in output but not retrieved (coverage gap)"
                                     ),
                                 )
-                                _view_key = "retrieval" if _view_key_ui == "検索ビュー" else "generation"
+                                _view_key = "retrieval" if _view_key_ui == "Retrieval view" else "generation"
                                 _svg = _dgu.render_usage_svg(_gu_usage, view=_view_key)
                                 st.markdown(_svg, unsafe_allow_html=True)
                                 _tables = _dgu.usage_tables(_gu_usage, view=_view_key)
@@ -2667,27 +2692,27 @@ def _knowledge_explorer():
                                 _edge_rows = _tables.get("edges") or []
                                 _tc1, _tc2 = st.columns(2)
                                 with _tc1:
-                                    st.markdown("**ノード**")
+                                    st.markdown("**Nodes**")
                                     if _node_rows:
                                         st.dataframe(pd.DataFrame(_node_rows),
                                                       hide_index=True, use_container_width=True)
                                     else:
-                                        st.caption("_(該当なし)_")
+                                        st.caption("_(none)_")
                                 with _tc2:
-                                    st.markdown("**エッジ**")
+                                    st.markdown("**Edges**")
                                     if _edge_rows:
                                         st.dataframe(pd.DataFrame(_edge_rows),
                                                       hide_index=True, use_container_width=True)
                                     else:
-                                        st.caption("_(該当なし)_")
+                                        st.caption("_(none)_")
                                 if _view_key == "generation":
                                     _missed_n = len(_gu_usage.get("missed_nodes") or [])
                                     _missed_e = len(_gu_usage.get("missed_edges") or [])
                                     if _missed_n or _missed_e:
                                         st.warning(
-                                            f"赤 = 出力に含まれるが検索では抽出されなかった要素: "
-                                            f"ノード {_missed_n} 件 / エッジ {_missed_e} 件。"
-                                            " HOPS / EDGE_LIMIT / FANOUT_LIMIT / シード辞書の調整余地があります。"
+                                            f"Red = surfaced in the output but not retrieved: "
+                                            f"nodes {_missed_n} / edges {_missed_e}."
+                                            " Consider tuning HOPS / EDGE_LIMIT / FANOUT_LIMIT / seed dictionary."
                                         )
 
                             # ---- Vector result rendering (unchanged behaviour) ----
@@ -3216,11 +3241,11 @@ def _knowledge_explorer():
             ax.scatter(_dfx["X1"], _dfx["X2"], s=_dot, alpha=0.7)
         _lh = []
         if _cm:
-            _lh.append(_L2D([0], [0], linestyle="", label=f"〔{_color_col}〕"))
+            _lh.append(_L2D([0], [0], linestyle="", label=f"[{_color_col}]"))
             for c, col in _cm.items():
                 _lh.append(_L2D([0], [0], marker="o", linestyle="", color=col, markersize=8, label=str(c)[:20]))
         if _mk:
-            _lh.append(_L2D([0], [0], linestyle="", label=f"〔{_marker_col}〕"))
+            _lh.append(_L2D([0], [0], linestyle="", label=f"[{_marker_col}]"))
             for mv, ms in _mk.items():
                 _lh.append(_L2D([0], [0], marker=ms, linestyle="", color="dimgray", markersize=8, label=str(mv)[:20]))
         if _lh:
@@ -3248,7 +3273,7 @@ def _knowledge_explorer():
         for cl in _present:
             _m = _dfc["Cluster"] == cl
             ax.scatter(_dfc.loc[_m, "X1"], _dfc.loc[_m, "X2"], color=_cc.get(cl, "gray"), alpha=0.7)
-        _lh = [_L2D([0], [0], linestyle="", label="〔Cluster〕")]
+        _lh = [_L2D([0], [0], linestyle="", label="[Cluster]")]
         for cl in _present:
             _lh.append(_L2D([0], [0], marker="o", linestyle="", color=_cc.get(cl, "gray"), markersize=8, label=_lab(cl)))
         ax.legend(handles=_lh, loc="upper left", bbox_to_anchor=(1, 1), fontsize=8)
@@ -3284,7 +3309,7 @@ def _knowledge_explorer():
                     _pf, _pt = _pv
                     _dd = pd.to_datetime(_sub["create_date"], errors="coerce")
                     _sub = _sub[(_dd >= pd.Timestamp(_pf)) & (_dd <= pd.Timestamp(_pt) + pd.Timedelta(days=1))]
-                    _desc.append(f"{_pf}〜{_pt}")
+                    _desc.append(f"{_pf}-{_pt}")
         return _sub, (" / ".join(_desc) if _desc else "no filter")
 
     # =========================================================
@@ -4613,7 +4638,7 @@ def _user_memory_explorer():
             for _lbl, _k in (("Recurring", "recurring_topics"), ("Emerging", "emerging"),
                              ("Declining", "declining"), ("Shifts", "shifts")):
                 if _nw.get(_k):
-                    st.markdown(f"**{_lbl}:** " + "、".join(str(x) for x in _nw[_k]))
+                    st.markdown(f"**{_lbl}:** " + ", ".join(str(x) for x in _nw[_k]))
         else:
             st.caption("Nowaday has not been generated yet")
 
@@ -4658,10 +4683,10 @@ def _user_memory_explorer():
         if _rev["big5"] or _rev["lists"]:
             with st.expander("Review-needed (pending) items"):
                 if _rev["big5"]:
-                    st.markdown("**Big5:** " + "、".join(
+                    st.markdown("**Big5:** " + ", ".join(
                         f"{ux.BIG5_JA.get(t,t)}(score={s},conf={c})" for t, s, c in _rev["big5"]))
                 for _f, _items in _rev["lists"].items():
-                    st.markdown(f"**{_f}:** " + "、".join(_items))
+                    st.markdown(f"**{_f}:** " + ", ".join(_items))
 
         # ============ Agent relationship / communication analysis ============
         st.markdown("---")
@@ -4943,7 +4968,7 @@ def _user_memory_explorer():
                         _ax_qa.scatter(len(it["query"]), len(it["response"]),
                                        color=_c2col.get(it["Cluster"], "gray"),
                                        alpha=0.7, s=55, edgecolors="white", linewidths=0.6)
-                    _lh_qr = [_L2D_qr([0], [0], linestyle="", label="〔Cluster〕")]
+                    _lh_qr = [_L2D_qr([0], [0], linestyle="", label="[Cluster]")]
                     for cl in _cmap_qr_lbl:
                         _nm = _names_qr.get(str(int(cl))) or _names_qr.get(int(cl))
                         _lab_qr = f"C{int(cl)}: {str(_nm)[:14]}" if _nm else f"Cluster {int(cl)}"
@@ -5712,7 +5737,7 @@ def _user_memory_explorer():
                         _b5lines.append(f"{ux.BIG5_JA.get(_t,_t)}={_score:.2f}({_it.get('status','')})")
                         _b5_radar_pairs.append((ux.BIG5_JA.get(_t, _t), _score))
                 if _b5lines:
-                    _r.append("- **Big5:** " + "、".join(_b5lines))
+                    _r.append("- **Big5:** " + ", ".join(_b5lines))
                 # Embed the same Big5 radar chart shown on-screen
                 if len(_b5_radar_pairs) >= 3:
                     try:
@@ -5843,7 +5868,7 @@ def _user_memory_explorer():
                 for _lbl, _k in (("Recurring","recurring_topics"),("Emerging","emerging"),
                                  ("Declining","declining"),("Shifts","shifts")):
                     if _nw.get(_k):
-                        _r.append(f"- **{_lbl}:** " + "、".join(str(x) for x in _nw[_k]))
+                        _r.append(f"- **{_lbl}:** " + ", ".join(str(x) for x in _nw[_k]))
             _traj_all = ux.user_emotion_trajectory(_ud, "")
             if _traj_all:
                 _rng = st.session_state.get("ume_deep_traj_period")
@@ -6071,7 +6096,7 @@ def _user_memory_explorer():
                         if _items_x:
                             _r.append(
                                 f"- **{_lbl_x}:** "
-                                + "、".join(f"{k}({c})" for k, c in _items_x)
+                                + ", ".join(f"{k}({c})" for k, c in _items_x)
                             )
 
                 # --- KMeans conversation clusters (if Run clustering was hit) ---
@@ -6688,7 +6713,7 @@ def _evaluation_screen():
             _plugin_cats = None
     _cat_cb_prefix = f"eval_cat_cb_{_meta['folder']}_"
     if _plugin_cats:
-        st.markdown("**対象カテゴリ (Run analysis 前に選択, 複数可):**")
+        st.markdown("**Target categories (choose before Run analysis, multi-select):**")
         _cb_cols = st.columns(min(len(_plugin_cats), 7))
         for _i, _c in enumerate(_plugin_cats):
             _cb_key = _cat_cb_prefix + _c
@@ -6716,7 +6741,7 @@ def _evaluation_screen():
         st.session_state[f"eval_llm_agent_{_meta['folder']}"] = _eval_agent_pre
         st.caption(
             f"🔒 Evaluation agent: `{_eval_agent_pre}` "
-            "(専用エージェント固定 — 評価の再現性のため選択不可)"
+            "(fixed to the dedicated agent — locked for reproducibility)"
         )
 
     _bc1, _bc2 = st.columns([1, 3])
@@ -6731,8 +6756,8 @@ def _evaluation_screen():
                 st.session_state[_state_pfx + "_result"] = _res
                 st.session_state.pop(_state_pfx + "_llm", None)
                 st.session_state.pop(_state_pfx + "_report", None)
-                # Auto-fire per-category LLM structured analysis (人格形成
-                # rubric / 目標 structure) so the operator doesn't need to
+                # Auto-fire per-category LLM structured analysis (personality-
+                # formation rubric / goal structure) so the operator does not need to
                 # click per-category buttons. Skipped when no agent is
                 # selected or the plugin doesn't expose the hook.
                 if _eval_agent_pre and hasattr(_plugin, "llm_augment"):
@@ -6751,17 +6776,17 @@ def _evaluation_screen():
                         if _aug_errs:
                             for _cat_err, _msg_err in _aug_errs.items():
                                 st.error(
-                                    f"LLM 構造化分析 ({_cat_err}) 失敗: {_msg_err}"
+f"LLM structured analysis ({_cat_err}) failed: {_msg_err}"
                                 )
                     except Exception as _e_aug:
                         # Non-fatal — the render layer falls back to a
                         # "not yet analyzed" placeholder when no cache.
-                        st.warning(f"LLM 構造化分析 skip: {_e_aug}")
+                        st.warning(f"LLM structured analysis skipped: {_e_aug}")
             except Exception as _e:
                 st.error(f"Analysis failed: {_e}")
         st.rerun()
     if _plugin_cats is not None and not _selected_cats:
-        _bc2.warning("少なくとも 1 つのカテゴリを選択してください")
+        _bc2.warning("Select at least one category.")
 
     _result = st.session_state.get(_state_pfx + "_result")
     if not _result:
@@ -6807,9 +6832,9 @@ def _evaluation_screen():
             index=_agent_files_llm.index(_default_llm_agent),
             key=_sel_key,
             help=(
-                "LLM Evaluation は総評コメント生成用の別枠エージェント選択です。"
-                "上部の Run analysis (構造化スコアリング) は引き続き "
-                f"`{_eval_agent_pre or '(none)'}` で固定されています。"
+                "LLM Evaluation selects the separate agent used to generate the summary comment."
+                "The Run analysis (structured scoring) above continues to use "
+                f"`{_eval_agent_pre or '(none)'}` (pinned)."
             ),
         )
         # Free-form question box. When left empty the button falls back to
@@ -6817,23 +6842,23 @@ def _evaluation_screen():
         # answers the question grounded in the analysis report.
         _q_key = f"eval_llm_question_{_meta['folder']}"
         _user_question = st.text_area(
-            "質問 (任意)",
+            "Question (optional)",
             key=_q_key,
             height=90,
             placeholder=(
-                "分析結果について聞きたいことがあれば入力してください。\n"
-                "例: 「Answer(AI) と Ground Truth で最も乖離が大きい軸はどれで、"
-                "その原因として考えられることは?」\n"
-                "空欄のままだと 全体評価 / 強み / 弱み / 改善提案 の定型講評を出します。"
+                "Enter anything you want to ask about the analysis result.\n"
+                "Example: 'Which axis diverges most between Answer(AI) and Ground Truth,"
+                "and what likely causes it?'\n"
+                "When empty, produces the default review: overall score / strengths / weaknesses / suggestions."
             ),
             help=(
-                "分析結果 (report_md) をコンテキストとして LLM に渡し、"
-                "この質問に対する回答を Markdown で返します。"
+                "Passes the analysis result (report_md) to the LLM as context and "
+                "returns the answer to this question as Markdown."
             ),
         )
-        _btn_label = ("この質問に回答"
+        _btn_label = ("Answer this question"
                        if (_user_question or "").strip()
-                       else "Evaluate with LLM (定型講評)")
+                       else "Evaluate with LLM (default review)")
         _le_c1, _le_c2 = st.columns([1, 3])
         if _le_c1.button(_btn_label, key="eval_llm_run",
                           disabled=bool(st.session_state._bg_task)):
@@ -6861,13 +6886,13 @@ def _evaluation_screen():
         _llm = st.session_state.get(_state_pfx + "_llm")
         if _llm:
             _q_shown = _llm.get("question") or ""
-            _mode = "Q&A" if _q_shown else "定型講評"
+            _mode = "Q&A" if _q_shown else "Default review"
             st.caption(
                 f"Mode: `{_mode}`  /  Agent: `{_llm['agent']}`  /  "
                 f"Model: `{_llm['model']}`  /  Generated: {_llm['timestamp']}"
             )
             if _q_shown:
-                with st.expander("📝 送信した質問", expanded=False):
+                with st.expander("📝 Submitted question", expanded=False):
                     st.markdown(_q_shown)
             st.markdown(_llm.get("text", ""))
     else:
@@ -7351,7 +7376,7 @@ def main():
                 if _graph_names_del:
                     _graph_del_sel = st.multiselect(
                         "Graph DB", _graph_names_del, key="delete_graph_db_multi",
-                        help="graph.json のみ削除 (mapping.json / dictionary.json / source/ は残る)",
+                        help="Delete graph.json only (mapping.json / dictionary.json / source/ are kept).",
                     )
                     if st.button("Delete Graph DB", key="delete_graph_db"):
                         _targets = _graph_del_sel or _graph_names_del
@@ -7782,123 +7807,40 @@ def main():
     # the page, right below the User Memory expander (see search for
     # `_render_session_summary_settings()` below).
 
-    # Web component layout
-    header_col1, header_col2, header_col3, header_col4 = st.columns(4)
-
-    # Time setup
-    header_col1.markdown("Time Setting:")
-    _time_modes = ["Real Date", "Custom Date", "No Date"]
-    _time_mode_idx = _time_modes.index(st.session_state.time_mode) if st.session_state.time_mode in _time_modes else 0
-    time_mode = header_col1.radio("Time Mode:", _time_modes, index=_time_mode_idx, label_visibility="collapsed", horizontal=True)
-    st.session_state.time_mode = time_mode
-    if time_mode == "Real Date":
-        selected_time_setting = now_time.strftime("%Y/%m/%d %H:%M:%S")
-    elif time_mode == "No Date":
-        selected_time_setting = ""
-    else:
-        from datetime import date as _date
-        _cd_tab1, _cd_tab2 = header_col1.tabs(["Calendar", "Free Text"])
-        with _cd_tab1:
-            _cd_date = st.date_input("Date:", value=now_time.date(), min_value=_date(1, 1, 1), max_value=_date(9999, 12, 31), key="custom_date_cal")
-            _cd_time = st.time_input("Time:", value=now_time.time(), key="custom_time_cal")
-            selected_time_setting = datetime.combine(_cd_date, _cd_time).strftime("%Y/%m/%d %H:%M:%S")
-        with _cd_tab2:
-            if "custom_time_input" not in st.session_state:
-                st.session_state.custom_time_input = ""
-            selected_time_setting = st.text_input("Situation Date:", key="custom_time_input", placeholder="e.g. 500 BC, Tenpo 3 Edo, AD 30000")
-            if not selected_time_setting:
-                selected_time_setting = datetime.combine(_cd_date, _cd_time).strftime("%Y/%m/%d %H:%M:%S")
-    time_setting = str(selected_time_setting)
-    st.session_state.time_setting = time_setting
-
-    # Execution settings
-    if st.session_state.allowed_exec_setting:
-        header_col2.markdown("Exec Setting:")
-
-        # Streaming setting
-        if header_col2.checkbox("Streaming Mode", value=st.session_state.stream_mode):
-            st.session_state.stream_mode = True
-        else:
-            st.session_state.stream_mode = False
-
-        # Conversation memory toggle
-        if header_col2.checkbox("Memory Use", value=st.session_state.memory_use):
-            st.session_state.memory_use = True
-        else:
-            st.session_state.memory_use = False
-
-        # Memory digest save toggle
-        if header_col2.checkbox("Save Digest", value=st.session_state.save_digest):
-            st.session_state.save_digest = True
-        else:
-            st.session_state.save_digest = False
-
-        # Magic-word toggle
-        if header_col2.checkbox("Magic Word", value=st.session_state.magic_word_use):
-            st.session_state.magic_word_use = True
-        else:
-            st.session_state.magic_word_use = False
-
-    #    # Memory save toggle
-    #    if header_col2.checkbox("Memory Save", value=st.session_state.memory_save):
-    #        st.session_state.memory_save = True
-    #    else:
-    #        st.session_state.memory_save = False
-
-    #    # Memory similarity toggle
-    #    if header_col2.checkbox("Memory Similarity", value=st.session_state.memory_similarity):
-    #        st.session_state.memory_similarity = True
-    #    else:
-    #        st.session_state.memory_similarity = False
-
-
-    # Execution settings
-    if st.session_state.allowed_rag_setting:
-        header_col3.markdown("RAG Setting:")
-
-        # RAG search-query generation toggle
-        if header_col3.checkbox("RAG Query Gen", value=st.session_state.RAG_query_gene):
-            st.session_state.RAG_query_gene = True
-        else:
-            st.session_state.RAG_query_gene = False
-
-        # Meta-search toggle
-        if header_col3.checkbox("Meta Search", value=st.session_state.meta_search):
-            st.session_state.meta_search = True
-        else:
-            st.session_state.meta_search = False
-
-    # Toggle which chat history is shown
-    num_seq_visible = 10
-    sub_header_col1, sub_header_col2 = header_col4.columns(2)
-    option = sub_header_col1.radio("History Seq Visible:", ("LATEST", "FULL"))
-    if option == "LATEST":
-        st.session_state.seq_visible_set = True
-        if num_seq_visible := sub_header_col2.number_input(label="Visible Seq", value=10, step=1, format="%d"):
+    # Top header row: only History controls now — Time / Exec / RAG / Web
+    # Search / Situation / Personality Override / User Memory / Session
+    # Summary / Skills all consolidated into the "Conversation Settings"
+    # expander further down (see the block after the file uploader).
+    _hdr_history_cols = st.columns([1, 1, 1])
+    with _hdr_history_cols[0]:
+        num_seq_visible = 10
+        _sub_a, _sub_b = st.columns(2)
+        option = _sub_a.radio("History Seq Visible:", ("LATEST", "FULL"))
+        if option == "LATEST":
             st.session_state.seq_visible_set = True
-    elif option == "FULL":
-        st.session_state.seq_visible_set = False
+            if num_seq_visible := _sub_b.number_input(label="Visible Seq", value=10, step=1, format="%d"):
+                st.session_state.seq_visible_set = True
+        elif option == "FULL":
+            st.session_state.seq_visible_set = False
+    with _hdr_history_cols[1]:
+        option = st.radio("History Detail Visible:", ("ALL", "SUMMARY"))
+        if option == "ALL":
+            st.session_state.chat_history_visible_dict = st.session_state.session.chat_history_active_dict
+        elif option == "SUMMARY":
+            st.session_state.chat_history_visible_dict = st.session_state.session.chat_history_active_omit_dict
+    with _hdr_history_cols[2]:
+        if st.button("Delete Chat History(Chk)", key="delete_chat_history"):
+            if st.session_state.seq_memory:
+                for del_seq in st.session_state.seq_memory:
+                    st.session_state.session.chg_seq_history(del_seq, "N")
+                st.session_state.sidebar_message = "Deleted chat history"
+                st.session_state.seq_memory = []
+                st.rerun()
 
-    # Chat history row count
-    option = header_col4.radio("History Detail Visible:", ("ALL", "SUMMARY"))
-    if option == "ALL":
-        st.session_state.chat_history_visible_dict = st.session_state.session.chat_history_active_dict
-    elif option == "SUMMARY":
-        st.session_state.chat_history_visible_dict = st.session_state.session.chat_history_active_omit_dict
-
-    # Delete chat history (button)
-    if header_col4.button("Delete Chat History(Chk)", key="delete_chat_history"):
-        if st.session_state.seq_memory:
-            for del_seq in st.session_state.seq_memory:
-                st.session_state.session.chg_seq_history(del_seq, "N")
-            st.session_state.sidebar_message = "Deleted chat history"
-            st.session_state.seq_memory = []
-            st.rerun()
-
-    # Situation Setting has moved below the User Memory expander (see the
-    # placement search for the new `situation_setting = st.text_input(...)`
-    # line below). We keep a placeholder here so the variable is defined
-    # regardless of whether allowed_user_memory is False — updated later.
+    # Placeholders for local vars set inside the Conversation Settings
+    # expander below (they must be defined here in case the expander is
+    # gated off by `allowed_conversation_settings=False`).
+    time_setting = st.session_state.time_setting
     situation_setting = st.session_state.situation_setting
 
     # Configure Chat history row count
@@ -7998,6 +7940,9 @@ def main():
                                 download_data.append({"role": "detail", "content": st.session_state.session.get_detail_info(k, k2)})
                                 chat_expander = st.expander("Detail Information")
                                 with chat_expander:
+                                    # Three tabs: the LLM-input recon and the
+                                    # token-usage rollup are new (top); Detail
+                                    # is the previous text-block view.
                                     _dt_t1, _dt_t2, _dt_t3, _dt_t4 = st.tabs(
                                         ["LLM Input", "Token Usage", "Detail", "Session Summary"]
                                     )
@@ -8073,7 +8018,7 @@ def main():
                                                     _cmp_knowledge_names,
                                                     default=[],
                                                     key=f"cmpExcludeK_{k}_{k2}",
-                                                    help="比較対象から外したい KNOWLEDGE RAG_NAME を選択。空 = 通常比較。",
+                                                    help="Select KNOWLEDGE RAG_NAMEs to exclude from comparison. Empty = full comparison.",
                                                 )
                                             if _cmp_book_names:
                                                 _cmp_exclude_b = st.multiselect(
@@ -8081,7 +8026,7 @@ def main():
                                                     _cmp_book_names,
                                                     default=[],
                                                     key=f"cmpExcludeB_{k}_{k2}",
-                                                    help="比較対象から外したい BOOK RAG_NAME を選択。空 = 通常比較。",
+                                                    help="Select BOOK RAG_NAMEs to exclude from comparison. Empty = full comparison.",
                                                 )
                                             compare_col1, _ = st.columns(2)
                                             if compare_col1.button("Analytics Results - Compare Agents", key=f"conpareAgent_btn{k}_{k2}", disabled=bool(st.session_state._bg_task)):
@@ -8387,7 +8332,7 @@ def main():
                                                 _gu_result_main = analytics_dict.get("graph_utility") or {}
                                                 # ---- All-DB score summary (top of the expander) ----
                                                 # Vector RAGs: reuse the existing similarity_utility score.
-                                                # Graph RAGs: combined recall (③ = ノードRecall × エッジRecall).
+                                                # Graph RAGs: combined recall = (node recall + edge recall).
                                                 try:
                                                     import DigiM_GraphUtility as _dgu_top
                                                     _vec_scores_top = ((analytics_dict.get("knowledge_utility") or {})
@@ -8398,7 +8343,7 @@ def main():
                                                             continue
                                                         _gu_scores_top[_rn_top] = _dgu_top.graph_recall_scores(_u_top)
                                                     if _vec_scores_top or _gu_scores_top:
-                                                        st.markdown("**Knowledge Utility (全DBスコア)**", unsafe_allow_html=True)
+                                                        st.markdown("**Knowledge Utility (all-DB scores)**", unsafe_allow_html=True)
                                                         # Preserve KNOWLEDGE + BOOK declaration order (falls
                                                         # back to insertion order for RAGs not in that list).
                                                         _seen_top = set()
@@ -8436,15 +8381,15 @@ def main():
                                                         continue
                                                     try:
                                                         import DigiM_GraphUtility as _dgu_main
-                                                        # Vertical layout: (1) シード生成トレース (expander),
-                                                        # (2) 統合ビュー SVG + PNG ダウンロード + シードチップ,
-                                                        # (3) ノード / エッジ HTML テーブル (状態カラー + 太字)
+                                                        # Vertical layout: (1) seed-generation trace (expander),
+                                                        # (2) unified-view SVG + PNG download + seed chips,
+                                                        # (3) Node / edge HTML tables (state colors + bold)
                                                         _prov_html = _dgu_main.seed_provenance_html(_gu_usage)
                                                         if _prov_html:
                                                             _seed_n = len(_gu_usage.get("seed_names") or [])
                                                             _q_n = len(_gu_usage.get("queries") or [])
                                                             with st.expander(
-                                                                f"シード生成トレース  (最終シード {_seed_n} 件 / クエリ {_q_n} 件)",
+                                                                f"Seed generation trace  (final seeds {_seed_n} / queries {_q_n})",
                                                                 expanded=False,
                                                             ):
                                                                 st.markdown(_prov_html, unsafe_allow_html=True)
@@ -8453,18 +8398,18 @@ def main():
                                                         def _fmt(_x):
                                                             return "N/A" if _x is None else f"{_x:.3f}"
                                                         st.markdown(
-                                                            "**スコア**: "
-                                                            f"① ノードRecall = {_fmt(_scores_this['node_recall'])} "
+                                                            "**Scores**: "
+                                                            f"(1) Node Recall = {_fmt(_scores_this['node_recall'])} "
                                                             f"({_scores_this['output_node_count'] - _scores_this['missed_node_count']}/{_scores_this['output_node_count']})"
                                                             f" ＋ "
-                                                            f"② エッジRecall = {_fmt(_scores_this['edge_recall'])} "
+                                                            f"(2) Edge Recall = {_fmt(_scores_this['edge_recall'])} "
                                                             f"({_scores_this['output_edge_count'] - _scores_this['missed_edge_count']}/{_scores_this['output_edge_count']})"
                                                             f" = "
-                                                            f"③ 統合スコア = **{_fmt(_scores_this['combined'])}** "
-                                                            "<sub>(N/A は 0 換算)</sub>",
+                                                            f"(3) Combined = **{_fmt(_scores_this['combined'])}** "
+                                                            "<sub>(N/A counts as 0)</sub>",
                                                             unsafe_allow_html=True,
                                                         )
-                                                        st.markdown("**ナレッジグラフ 利用状況（統合ビュー）**", unsafe_allow_html=True)
+                                                        st.markdown("**Knowledge Graph utilisation (unified view)**", unsafe_allow_html=True)
                                                         st.markdown(
                                                             _dgu_main.unified_legend_html(),
                                                             unsafe_allow_html=True,
@@ -8482,26 +8427,26 @@ def main():
                                                             from datetime import datetime as _dt_dl
                                                             _dl_stamp = _dt_dl.now().strftime("%Y%m%d_%H%M%S")
                                                             st.download_button(
-                                                                "📥 PNG ダウンロード",
+                                                                "📥 Download PNG",
                                                                 data=_png_bytes,
                                                                 file_name=f"graph_utility_{_gu_rag_name}_{_dl_stamp}.png",
                                                                 mime="image/png",
                                                                 key=f"gu_png_{_gu_rag_name}_{_dl_stamp}",
                                                             )
                                                         except Exception as _png_e:
-                                                            st.caption(f"_(PNG 生成に失敗: {_png_e})_")
+                                                            st.caption(f"_(PNG generation failed: {_png_e})_")
                                                         _tbl_html = _dgu_main.unified_usage_tables_html(_gu_usage)
-                                                        st.markdown("**ノード一覧**  <sub>状態カラーで色分け + シードはアンダーライン</sub>", unsafe_allow_html=True)
+                                                        st.markdown("**Nodes**  <sub>colored by state; seeds underlined</sub>", unsafe_allow_html=True)
                                                         st.markdown(_tbl_html["nodes_html"], unsafe_allow_html=True)
-                                                        st.markdown("**エッジ一覧**", unsafe_allow_html=True)
+                                                        st.markdown("**Edges**", unsafe_allow_html=True)
                                                         st.markdown(_tbl_html["edges_html"], unsafe_allow_html=True)
                                                         _missed_n_main = len(_gu_usage.get("missed_nodes") or [])
                                                         _missed_e_main = len(_gu_usage.get("missed_edges") or [])
                                                         if _missed_n_main or _missed_e_main:
                                                             st.warning(
-                                                                f"赤 = 出力に含まれるが検索では抽出されなかった要素: "
-                                                                f"ノード {_missed_n_main} 件 / エッジ {_missed_e_main} 件。"
-                                                                " HOPS / EDGE_LIMIT / FANOUT_LIMIT / シード辞書の調整余地があります。"
+                                                                f"Red = surfaced in the output but not retrieved: "
+f"nodes {_missed_n_main} / edges {_missed_e_main}."
+                                                                " Consider tuning HOPS / EDGE_LIMIT / FANOUT_LIMIT / seed dictionary."
                                                             )
                                                     except Exception as _gu_render_e:
                                                         st.warning(f"Graph render failed ({_gu_rag_name}): {_gu_render_e}")
@@ -8673,38 +8618,9 @@ def main():
         st.session_state.uploaded_files = uploaded_files
         show_uploaded_files_widget(st.session_state.uploaded_files)
 
-        # Web search settings
-        if st.session_state.allowed_web_search:
-            _ws_col1, _ws_col2 = st.columns([1, 2])
-            if _ws_col1.checkbox("WEB Search", value=st.session_state.web_search):
-                st.session_state.web_search = True
-                _ws_setting = dmu.read_yaml_file("setting.yaml")
-                _ws_default = _ws_setting.get("WEB_SEARCH_DEFAULT", "Perplexity")
-                # `WEB_SEARCH_ENGINES_AVAILABLE` (setting.yaml) is the allowlist
-                # for the dropdown — if missing/empty, fall back to every
-                # registered engine. Unknown entries are dropped silently so a
-                # stale config doesn't break the picker.
-                _ws_all = list(dmt.WEB_SEARCH_ENGINES.keys())
-                _ws_allow = _ws_setting.get("WEB_SEARCH_ENGINES_AVAILABLE") or []
-                _ws_engines = [e for e in _ws_allow if e in _ws_all] or _ws_all
-                if "web_search_engine" not in st.session_state or st.session_state.web_search_engine not in _ws_engines:
-                    st.session_state.web_search_engine = _ws_default if _ws_default in _ws_engines else _ws_engines[0]
-                _ws_col2.selectbox("Engine:", _ws_engines, key="web_search_engine", label_visibility="collapsed")
-            else:
-                st.session_state.web_search = False
-
-        # Citation injection is always ON when there are citable sources
-        # (Web URLs or Book chunks). The Execute-side gate handles the actual
-        # firing condition; no UI toggle needed.
-
-        # URL fetch: http(s) links in the input are auto-fetched and treated as attachments.
-        # Crawling subpages is optional (default OFF).
-        st.session_state.url_fetch_subpages = st.checkbox(
-            "Include URL Subpages", value=st.session_state.url_fetch_subpages,
-            help="If the input contains a URL, it is fetched automatically. When ON, also fetches in-domain links where possible (caps in setting.yaml URL_FETCH).",
-        )
-
-        # Include Query: shown only when the previous seq ran multi-persona
+        # Include Query: shown only when the previous seq ran multi-persona.
+        # Kept outside the settings expander since it's a conditional toggle
+        # that appears only when relevant.
         def _prev_seq_is_multi_persona():
             try:
                 _hist = st.session_state.session.chat_history_active_dict or {}
@@ -8712,10 +8628,8 @@ def main():
                     return False
                 _max_seq = max(_hist.keys(), key=int)
                 _seq_block = _hist.get(_max_seq, {})
-                # seq-level MEMORY_FLG=N (Phase 4: whole-practice parallel)
                 if _seq_block.get("SETTING", {}).get("MEMORY_FLG") == "N":
                     return True
-                # persona_id is set in 2+ sub_seqs (Phase 6: chain.PERSONAS)
                 _sub_seqs = [k for k in _seq_block.keys() if k != "SETTING"]
                 if len(_sub_seqs) >= 2:
                     _persona_count = sum(
@@ -8732,215 +8646,306 @@ def main():
             st.session_state.include_query = st.checkbox(
                 "Include Query (include previous personas' responses)",
                 value=st.session_state.get("include_query", False),
-                help="When ON, embed each persona's full response from the previous seq at the head of the next turn's input. Does not affect RAG query generation.",
+                help="When ON, embed each persona's full response from the previous seq at the head of the next turn's input.",
             )
         else:
             st.session_state.include_query = False
 
-        # Output options: reference the KNOWLEDGE actually used, and ask for
-        # tables / Mermaid diagrams in the explanation.
-        _out_col1, _out_col2, _out_col3 = st.columns(3)
-        st.session_state.cite_knowledge = _out_col1.checkbox(
-            "Reference Knowledge", value=st.session_state.cite_knowledge,
-            help="回答の末尾に、そのターンで実際に参照した KNOWLEDGE を「## 参照した知識」として列挙します（Web/BOOK の ## References とは別セクション）。",
-        )
-        st.session_state.diagram_mode = _out_col2.checkbox(
-            "Diagrams", value=st.session_state.diagram_mode,
-            help="説明の中で Markdown の表と Mermaid 図（```mermaid）を使うようLLMに指示します。図は WebUI 上でレンダリングされます。",
-        )
-        st.session_state.emphasis_mode = _out_col3.checkbox(
-            "Emphasis", value=st.session_state.emphasis_mode,
-            help="要点を **太字** で強調し、長い回答では見出し・箇条書きで整理するようLLMに指示します（書式のみで、口調や人格設定は変えません）。",
-        )
+        # ==== Consolidated Conversation Settings expander ==================
+        # Everything that used to live scattered across the top (Time / Exec /
+        # RAG) and the middle section (Web Search / Book / output toggles /
+        # Personality Override / User Memory / Session Summary / Situation /
+        # Skills) collapses into a single expander so the chat log dominates
+        # the viewport by default.
+        if st.session_state.get("allowed_conversation_settings", True):
+            with st.expander("Conversation Settings", expanded=False):
+                # --- Row 1: Streaming / Memory Use / Save Digest / Private Mode ---
+                _r1 = st.columns(4)
+                st.session_state.stream_mode  = _r1[0].checkbox("Streaming Mode", value=st.session_state.stream_mode)
+                st.session_state.memory_use   = _r1[1].checkbox("Memory Use",     value=st.session_state.memory_use)
+                st.session_state.save_digest  = _r1[2].checkbox("Save Digest",    value=st.session_state.save_digest)
+                st.session_state.private_mode = _r1[3].checkbox("Private Mode",   value=st.session_state.private_mode)
+                # Memory Similarity is intentionally disabled — expensive per-turn
+                # cosine vs every memory entry; kept as commented-out reference:
+                # st.session_state.memory_similarity = st.checkbox("Memory Similarity", value=st.session_state.memory_similarity)
 
-        # Private Mode / Thinking Mode
-        _mode_col1, _mode_col2 = st.columns(2)
-        if _mode_col1.checkbox("Private Mode", value=st.session_state.private_mode):
-            st.session_state.private_mode = True
-        else:
-            st.session_state.private_mode = False
-        if _mode_col2.checkbox("Thinking Mode", value=st.session_state.thinking_mode):
-            st.session_state.thinking_mode = True
-        else:
-            st.session_state.thinking_mode = False
-        if st.session_state.thinking_mode:
-            _thinking_options = ["Habit", "Web Search", "RAG Query", "Books"]
-            # The Personas option is added only for agents with ORG defined
-            _agent_orgs = st.session_state.agent_data.get("ORG") or []
-            if isinstance(_agent_orgs, list) and _agent_orgs:
-                _thinking_options.append("Personas")
-            # Drop choices not supported by the current agent from existing selection
-            _saved_targets = [t for t in st.session_state.thinking_targets if t in _thinking_options]
-            st.session_state.thinking_targets = st.multiselect(
-                "Thinking Targets", _thinking_options,
-                default=_saved_targets, label_visibility="collapsed",
-            )
+                # --- Row 2: RAG Query Gen / Meta Search ---
+                _r2 = st.columns(2)
+                st.session_state.RAG_query_gene = _r2[0].checkbox("RAG Query Gen", value=st.session_state.RAG_query_gene)
+                st.session_state.meta_search    = _r2[1].checkbox("Meta Search",   value=st.session_state.meta_search)
 
-            # Max Thinking Turns (B-type loop): default 1 = existing single-turn behavior.
-            # When >1, between turns the pipeline runs the Web search Thinking asked
-            # for, feeds the result into the next Thinking pass, and breaks out early
-            # when Thinking returns sufficient=true.
-            st.session_state.max_thinking_turns = st.number_input(
-                "Max Thinking Turns",
-                min_value=1, max_value=5,
-                value=int(st.session_state.get("max_thinking_turns", 1)),
-                step=1,
-                help=(
-                    "Thinkingを何ターンまで走らせるか (既定 1 = 従来動作)。"
-                    " 2 以上にすると、Thinkingが sufficient=false を返した場合に"
-                    " 予備Web検索 → 次ターンのThinkingへ結果を渡す、を最大N回繰り返します。"
-                    " 予備検索はメイン応答パスでキャッシュ流用されるため二重発火しません。"
-                ),
-            )
+                # --- Row 3: Thinking Mode / Magic Word (+ Thinking subsettings) ---
+                _r3 = st.columns(2)
+                st.session_state.thinking_mode   = _r3[0].checkbox("Thinking Mode", value=st.session_state.thinking_mode)
+                st.session_state.magic_word_use  = _r3[1].checkbox("Magic Word",    value=st.session_state.magic_word_use)
+                if st.session_state.thinking_mode:
+                    _thinking_options = ["Habit", "Web Search", "RAG Query", "Books"]
+                    _agent_orgs = st.session_state.agent_data.get("ORG") or []
+                    if isinstance(_agent_orgs, list) and _agent_orgs:
+                        _thinking_options.append("Personas")
+                    _saved_targets = [t for t in st.session_state.thinking_targets if t in _thinking_options]
+                    st.session_state.thinking_targets = st.multiselect(
+                        "Thinking Targets", _thinking_options,
+                        default=_saved_targets, label_visibility="collapsed",
+                    )
+                    st.session_state.max_thinking_turns = st.number_input(
+                        "Max Thinking Turns",
+                        min_value=1, max_value=5,
+                        value=int(st.session_state.get("max_thinking_turns", 1)),
+                        step=1,
+                        help=(
+                            "How many Thinking turns to run at most (default 1 = legacy behavior)."
+                            " With 2+ turns, if Thinking returns sufficient=false a reserve web search"
+                            " runs and its result is fed to the next Thinking turn, up to N times."
+                        ),
+                    )
+                    if "Personas" in st.session_state.thinking_targets:
+                        try:
+                            _yaml = dmu.read_yaml_file("setting.yaml")
+                            _default_max_p = int(_yaml.get("MAX_PERSONAS", 3))
+                        except Exception:
+                            _default_max_p = 3
+                        st.session_state.max_personas = st.number_input(
+                            "Max Personas (cap when using Thinking)",
+                            min_value=1, max_value=20,
+                            value=int(st.session_state.get("max_personas", _default_max_p)),
+                            step=1,
+                            help="Upper bound for PersonaSelector in chain.PERSONAS=\"THINKING\" steps.",
+                        )
 
-            # Max Personas: shown only when Thinking Mode is ON and Personas is selected
-            if "Personas" in st.session_state.thinking_targets:
+                # --- Row 4: WEB Search + Engine (hidden when Thinking Mode ON;
+                # Thinking judges web_search / engine dynamically in that case) ---
+                if not st.session_state.thinking_mode and st.session_state.allowed_web_search:
+                    _ws_col1, _ws_col2 = st.columns([1, 2])
+                    if _ws_col1.checkbox("WEB Search", value=st.session_state.web_search):
+                        st.session_state.web_search = True
+                        _ws_setting = dmu.read_yaml_file("setting.yaml")
+                        _ws_default = _ws_setting.get("WEB_SEARCH_DEFAULT", "Perplexity")
+                        _ws_all = list(dmt.WEB_SEARCH_ENGINES.keys())
+                        _ws_allow = _ws_setting.get("WEB_SEARCH_ENGINES_AVAILABLE") or []
+                        _ws_engines = [e for e in _ws_allow if e in _ws_all] or _ws_all
+                        if "web_search_engine" not in st.session_state or st.session_state.web_search_engine not in _ws_engines:
+                            st.session_state.web_search_engine = _ws_default if _ws_default in _ws_engines else _ws_engines[0]
+                        _ws_col2.selectbox("Engine:", _ws_engines, key="web_search_engine", label_visibility="collapsed")
+                    else:
+                        st.session_state.web_search = False
+
+                # --- Row 4b: Web search guardrail — applies to both normal
+                # WEB Search AND Thinking Mode's internal web search. ---
+                if st.session_state.thinking_mode or st.session_state.web_search:
+                    st.session_state.web_search_guardrail = st.checkbox(
+                        "Web Search Guardrail",
+                        value=st.session_state.get("web_search_guardrail", True),
+                        help="When ON, the web-search result is wrapped in an instruction telling the LLM to keep persona/context in charge and use the snippet only as reference. When OFF, the raw snippet is passed through unwrapped.",
+                    )
+
+                # --- Row 5: BOOK multiselect (hidden when Thinking Mode ON;
+                # Thinking auto-selects Books based on PURPOSE in that case) ---
+                if not st.session_state.thinking_mode and st.session_state.allowed_book:
+                    _book_list = st.session_state.agent_data.get("BOOK") or []
+                    if isinstance(_book_list, list) and len(_book_list) > 0:
+                        st.session_state.book_selected = st.multiselect(
+                            "BOOK", [item["RAG_NAME"] for item in _book_list]
+                        )
+
+                # --- Row 6: URL fetch subpages (kept with fetch-related controls) ---
+                st.session_state.url_fetch_subpages = st.checkbox(
+                    "Include URL Subpages", value=st.session_state.url_fetch_subpages,
+                    help="If the input contains a URL, it is fetched automatically. When ON, also fetches in-domain links (caps in setting.yaml URL_FETCH).",
+                )
+
+                # --- Row 7: Reference Knowledge / Diagrams / Emphasis ---
+                _out = st.columns(3)
+                st.session_state.cite_knowledge = _out[0].checkbox(
+                    "Reference Knowledge", value=st.session_state.cite_knowledge,
+                    help="At the end of the reply, list the KNOWLEDGE chunks actually referenced this turn as '## Reference Knowledge' (a separate section from ## Reference Info for Web/BOOK).",
+                )
+                st.session_state.diagram_mode = _out[1].checkbox(
+                    "Diagrams", value=st.session_state.diagram_mode,
+                    help="Tell the LLM to use Markdown tables and Mermaid diagrams (```mermaid) inside the explanation.",
+                )
+                st.session_state.emphasis_mode = _out[2].checkbox(
+                    "Emphasis", value=st.session_state.emphasis_mode,
+                    help="Tell the LLM to emphasise key points in **bold** and to organise long answers with headings and bullet lists.",
+                )
+
+                # --- Language / Speaking Style (elevated from Personality
+                # Override for quick access — both drive the LLM's response
+                # voice more visibly than the other PERSONALITY fields).
+                _cur_pers = (st.session_state.get("agent_data") or {}).get("PERSONALITY") or {}
+                _lang_options = ["Japanese", "English", "Chinese", "Korean",
+                                  "Spanish", "French", "German",
+                                  "Italian", "Portuguese", "Dutch",
+                                  "Russian", "Arabic", "Hindi"]
+                _cur_lang = str(_cur_pers.get("LANGUAGE", "") or "")
+                # "Auto" is a UI-only sentinel; when checked, the LANGUAGE
+                # selectbox is disabled and the override sends "__AUTO__" so
+                # DigiM_Agent emits an instruction to mirror the user's input
+                # language (while still honoring an explicit in-prompt request
+                # for a different language).
+                if _cur_lang and _cur_lang not in _lang_options and _cur_lang != "__AUTO__":
+                    _lang_options = [_cur_lang] + _lang_options
+                _lidx = _lang_options.index(_cur_lang) if _cur_lang in _lang_options else 0
                 try:
-                    _yaml = dmu.read_yaml_file("setting.yaml")
-                    _default_max_p = int(_yaml.get("MAX_PERSONAS", 3))
+                    _speaking_options = list(dmu.read_json_file(
+                        "prompt_templates.json", mst_folder_path).get("SPEAKING_STYLE", {}).keys())
                 except Exception:
-                    _default_max_p = 3
-                st.session_state.max_personas = st.number_input(
-                    "Max Personas (cap when using Thinking)",
-                    min_value=1, max_value=20,
-                    value=int(st.session_state.get("max_personas", _default_max_p)),
-                    step=1,
-                    help="Upper bound for PersonaSelector in chain.PERSONAS=\"THINKING\" steps. Does not affect the manual multiselect.",
-                )
-
-        # Select from BOOK (shown only when the agent has at least one Book configured)
-        if st.session_state.allowed_book:
-            _book_list = st.session_state.agent_data.get("BOOK") or []
-            if isinstance(_book_list, list) and len(_book_list) > 0:
-                st.session_state.book_selected = st.multiselect(
-                    "BOOK", [item["RAG_NAME"] for item in _book_list]
-                )
-
-        # Personality Override (session-local): lets the operator tune the
-        # active agent's PERSONALITY block for this chat without editing the
-        # underlying JSON. Fields are merged into overwrite_items at submit
-        # time via update_dict (deep-merge preserves untouched keys).
-        _cur_pers = (st.session_state.get("agent_data") or {}).get("PERSONALITY") or {}
-        _PERSONALITY_STR_UI = [
-            # Basic
-            ("SEX",            "性別"),
-            ("BIRTHDAY",       "誕生日"),
-            ("NATIONALITY",    "国籍"),
-            ("LANGUAGE",       "使用言語"),
-            # Physical
-            ("BLOOD_TYPE",     "血液型"),
-            ("RESIDENCE",      "居住地"),
-            ("HEIGHT",         "身長"),
-            ("WEIGHT",         "体重"),
-            ("FOOT_SIZE",      "足のサイズ"),
-            ("DOMINANT_HAND",  "利き手"),
-            ("DOMINANT_FOOT",  "利き足"),
-            ("HAIRSTYLE",      "髪型"),
-            ("GLASSES",        "メガネ"),
-            ("PERSONAL_COLOR", "パーソナルカラー"),
-        ]
-        _BIG5_KEYS = ["Openness", "Conscientiousness", "Extraversion", "Agreeableness", "Neuroticism"]
-        with st.expander("Personality Override", expanded=False):
-            st.caption(
-                "この会話のみで有効な PERSONALITY 上書き（エージェント JSON は変更しない）。"
-                " 家族構成は `/` 区切りで複数指定可。SPEAKING_STYLE は `prompt_templates.json` の"
-                " `SPEAKING_STYLE` キーから選択。BIG5 は 0.00〜1.00 の 5 特性。"
-            )
-            # IS_ALIVE (bool)
-            _alive_default = bool(_cur_pers.get("IS_ALIVE", True))
-            st.checkbox("存命", value=_alive_default, key="po_IS_ALIVE")
-
-            # Simple string fields (2-column grid)
-            _po_cols = st.columns(2)
-            for _i, (_k, _label) in enumerate(_PERSONALITY_STR_UI):
-                _default = str(_cur_pers.get(_k, "") or "")
-                _po_cols[_i % 2].text_input(
-                    _label, value=_default, key=f"po_{_k}",
-                )
-
-            # SPEAKING_STYLE (select — must be a key in prompt_templates.json)
-            try:
-                _speaking_options = list(dmu.read_json_file(
-                    "prompt_templates.json", mst_folder_path).get("SPEAKING_STYLE", {}).keys())
-            except Exception:
-                _speaking_options = []
-            if _speaking_options:
+                    _speaking_options = []
                 _cur_style = str(_cur_pers.get("SPEAKING_STYLE", "") or "")
-                if _cur_style and _cur_style not in _speaking_options:
+                if _speaking_options and _cur_style and _cur_style not in _speaking_options:
                     _speaking_options = [_cur_style] + _speaking_options
-                _sidx = _speaking_options.index(_cur_style) if _cur_style in _speaking_options else 0
-                st.selectbox("口調 (SPEAKING_STYLE)", _speaking_options,
-                              index=_sidx, key="po_SPEAKING_STYLE")
-            else:
-                st.text_input("口調 (SPEAKING_STYLE)",
-                                value=str(_cur_pers.get("SPEAKING_STYLE", "") or ""),
-                                key="po_SPEAKING_STYLE")
-
-            # FAMILY (list, `/` delimited)
-            _fam_default = _cur_pers.get("FAMILY") or []
-            if isinstance(_fam_default, list):
-                _fam_str = " / ".join(str(x) for x in _fam_default)
-            else:
-                _fam_str = str(_fam_default)
-            st.text_input("家族構成 (`/` 区切り)", value=_fam_str, key="po_FAMILY_STR")
-
-            # BIG5 (5 floats 0.00-1.00)
-            st.markdown("**BIG5**")
-            _big5_default = _cur_pers.get("BIG5") or {}
-            _big5_cols = st.columns(5)
-            for _i, _bk in enumerate(_BIG5_KEYS):
-                _bv = _big5_default.get(_bk, 0.5)
-                try:
-                    _bv = float(_bv)
-                except (TypeError, ValueError):
-                    _bv = 0.5
-                _big5_cols[_i].number_input(
-                    _bk, min_value=0.0, max_value=1.0, step=0.05,
-                    value=_bv, format="%.2f", key=f"po_BIG5_{_bk}",
+                _lang_auto = st.checkbox(
+                    "Match input language (Auto)",
+                    value=bool(st.session_state.get("po_LANG_AUTO", _cur_lang == "__AUTO__")),
+                    key="po_LANG_AUTO",
+                    help="Reply in the same language as the user's input. If the user explicitly asks for a different language in-prompt, that request is honored.",
                 )
+                _lang_cols = st.columns(2)
+                _lang_cols[0].selectbox(
+                    "Language", _lang_options, index=_lidx,
+                    key="po_LANGUAGE", disabled=_lang_auto,
+                    help="Response language. Defaults to PERSONALITY.LANGUAGE in the agent JSON. Ignored when 'Match input language' is on.",
+                )
+                if _speaking_options:
+                    _sidx = _speaking_options.index(_cur_style) if _cur_style in _speaking_options else 0
+                    _lang_cols[1].selectbox("Speaking style", _speaking_options,
+                                              index=_sidx, key="po_SPEAKING_STYLE")
+                else:
+                    _lang_cols[1].text_input("Speaking style",
+                                                value=_cur_style, key="po_SPEAKING_STYLE")
 
-            # CHARACTER (text area — inline character prose or a .txt/.md filename)
-            _char_default = str(_cur_pers.get("CHARACTER", "") or "")
-            st.text_area(
-                "キャラクター (CHARACTER) — インラインテキスト or `character/` 配下のファイル名",
-                value=_char_default, height=100, key="po_CHARACTER",
-            )
+                # --- Nested: Personality Override (LANGUAGE / SPEAKING_STYLE
+                # moved out to the row above; the rest still lives here)
+                _PERSONALITY_STR_UI = [
+                    ("SEX", "Sex"), ("BIRTHDAY", "Birthday"), ("NATIONALITY", "Nationality"),
+                    ("BLOOD_TYPE", "Blood type"), ("RESIDENCE", "Residence"),
+                    ("HEIGHT", "Height"), ("WEIGHT", "Weight"), ("FOOT_SIZE", "Foot size"),
+                    ("DOMINANT_HAND", "Dominant hand"), ("DOMINANT_FOOT", "Dominant foot"),
+                    ("HAIRSTYLE", "Hairstyle"), ("GLASSES", "Glasses"),
+                    ("PERSONAL_COLOR", "Personal color"),
+                ]
+                _BIG5_KEYS = ["Openness", "Conscientiousness", "Extraversion", "Agreeableness", "Neuroticism"]
+                with st.expander("Personality Override", expanded=False):
+                    st.caption(
+                        "PERSONALITY overrides effective for this session only (agent JSON stays unchanged)."
+                        " Family accepts multiple entries separated by `/`. BIG5 is 5 traits in 0.00-1.00."
+                    )
+                    st.checkbox("Alive", value=bool(_cur_pers.get("IS_ALIVE", True)), key="po_IS_ALIVE")
+                    _po_cols = st.columns(2)
+                    for _i, (_k, _label) in enumerate(_PERSONALITY_STR_UI):
+                        _default = str(_cur_pers.get(_k, "") or "")
+                        _po_cols[_i % 2].text_input(_label, value=_default, key=f"po_{_k}")
+                    _fam_default = _cur_pers.get("FAMILY") or []
+                    _fam_str = " / ".join(str(x) for x in _fam_default) if isinstance(_fam_default, list) else str(_fam_default)
+                    st.text_input("Family (`/` separated)", value=_fam_str, key="po_FAMILY_STR")
+                    st.markdown("**BIG5**")
+                    _big5_default = _cur_pers.get("BIG5") or {}
+                    _big5_cols = st.columns(5)
+                    for _i, _bk in enumerate(_BIG5_KEYS):
+                        _bv = _big5_default.get(_bk, 0.5)
+                        try: _bv = float(_bv)
+                        except (TypeError, ValueError): _bv = 0.5
+                        _big5_cols[_i].number_input(_bk, min_value=0.0, max_value=1.0, step=0.05,
+                                                      value=_bv, format="%.2f", key=f"po_BIG5_{_bk}")
+                    st.text_area(
+                        "Character (CHARACTER) — inline text or a filename under `character/`",
+                        value=str(_cur_pers.get("CHARACTER", "") or ""), height=100, key="po_CHARACTER",
+                    )
 
-        # User Memory (placed directly below BOOK on the main screen; shown when Allowed.User Memory=True)
-        if st.session_state.allowed_user_memory:
-            import DigiM_UserMemorySetting as _dmus
-            _uid_for_um = st.session_state.user_id
+                # --- Nested: User Memory ---
+                if st.session_state.allowed_user_memory:
+                    import DigiM_UserMemorySetting as _dmus
+                    _uid_for_um = st.session_state.user_id
+                    with st.expander("User Memory", expanded=False):
+                        _user_setting = _dmus.load_user_setting(_uid_for_um)
+                        _active_layers = _dmus.resolve_active_layers(_uid_for_um)
+                        st.caption(f"Active layers: {', '.join(_active_layers) if _active_layers else '(all off)'}")
+                        _checked_layers = _user_setting.get("layers", [])
+                        _layer_cols = st.columns(3)
+                        _new_layers = []
+                        for _i, _l in enumerate(("persona", "nowaday", "history")):
+                            _val = _layer_cols[_i].checkbox(_l, value=(_l in _checked_layers), key=f"um_layer_{_l}")
+                            if _val:
+                                _new_layers.append(_l)
+                        st.session_state.user_memory_layers_now = _new_layers
+                        if st.button("Save Layer Setting", key="um_save_layers"):
+                            _dmus.save_user_setting(_uid_for_um, _new_layers)
+                            st.session_state.sidebar_message = "Layer setting saved."
+                            st.rerun()
 
-            with st.expander("User Memory", expanded=False):
-                _user_setting = _dmus.load_user_setting(_uid_for_um)
-                _active_layers = _dmus.resolve_active_layers(_uid_for_um)
-                st.caption(f"Active layers: {', '.join(_active_layers) if _active_layers else '(all off)'}")
+                # --- Nested: Session Summary Setting ---
+                _render_session_summary_settings()
 
-                # Layer On/Off (3 columns) + Save Layer Setting
-                _checked_layers = _user_setting.get("layers", [])
-                _layer_cols = st.columns(3)
-                _new_layers = []
-                for _i, _l in enumerate(("persona", "nowaday", "history")):
-                    _val = _layer_cols[_i].checkbox(_l, value=(_l in _checked_layers), key=f"um_layer_{_l}")
-                    if _val:
-                        _new_layers.append(_l)
-                # The current checkbox state is reflected immediately for this session (next chat) without pressing Save
-                st.session_state.user_memory_layers_now = _new_layers
-                if st.button("Save Layer Setting", key="um_save_layers"):
-                    _dmus.save_user_setting(_uid_for_um, _new_layers)
-                    st.session_state.sidebar_message = "Layer setting saved."
-                    st.rerun()
+                # --- Time Mode + custom date/time ---
+                st.markdown("**Time Setting**")
+                _time_modes = ["Real Date", "Custom Date", "No Date"]
+                _time_mode_idx = _time_modes.index(st.session_state.time_mode) if st.session_state.time_mode in _time_modes else 0
+                time_mode = st.radio("Time Mode:", _time_modes, index=_time_mode_idx,
+                                       label_visibility="collapsed", horizontal=True)
+                st.session_state.time_mode = time_mode
+                if time_mode == "Real Date":
+                    selected_time_setting = now_time.strftime("%Y/%m/%d %H:%M:%S")
+                elif time_mode == "No Date":
+                    selected_time_setting = ""
+                else:
+                    from datetime import date as _date
+                    _cd_tab1, _cd_tab2 = st.tabs(["Calendar", "Free Text"])
+                    with _cd_tab1:
+                        _cd_date = st.date_input("Date:", value=now_time.date(),
+                                                    min_value=_date(1, 1, 1), max_value=_date(9999, 12, 31),
+                                                    key="custom_date_cal")
+                        _cd_time = st.time_input("Time:", value=now_time.time(), key="custom_time_cal")
+                        selected_time_setting = datetime.combine(_cd_date, _cd_time).strftime("%Y/%m/%d %H:%M:%S")
+                    with _cd_tab2:
+                        if "custom_time_input" not in st.session_state:
+                            st.session_state.custom_time_input = ""
+                        selected_time_setting = st.text_input("Situation Date:", key="custom_time_input",
+                                                                 placeholder="e.g. 500 BC, Tenpo 3 Edo, AD 30000")
+                        if not selected_time_setting:
+                            selected_time_setting = datetime.combine(_cd_date, _cd_time).strftime("%Y/%m/%d %H:%M:%S")
+                time_setting = str(selected_time_setting)
+                st.session_state.time_setting = time_setting
 
-                # Reviewing/editing Persona/Nowaday/History has moved
-                # to the User Memory Explorer's tab 3 (Edit My Memory).
+                # --- Situation text ---
+                situation_setting = st.text_input("Situation Setting:",
+                                                     value=st.session_state.situation_setting)
 
-    # Session Summary settings + Situation Setting live here (right below the
-    # User Memory expander) so all context-related knobs cluster in one place.
-    # Chat Name / Time / Exec / RAG live above the chat log because they change
-    # per-turn behaviour; the context knobs below tune the per-session dossier.
-    _render_session_summary_settings()
-    situation_setting = st.text_input("Situation Setting:",
-                                        value=st.session_state.situation_setting)
+                # --- Nested: Skills available (moved from just above the chat_input) ---
+                _agent_skill_list = (st.session_state.get("agent_data", {}) or {}).get("SKILL", {}).get("TOOL_LIST") or []
+                if _agent_skill_list:
+                    _skill_count = len(_agent_skill_list)
+                    _skill_expander_label = f"Skills available on this agent ({_skill_count}) — slash commands"
+                else:
+                    _skill_expander_label = "Skills available on this agent (0) — none configured for this agent"
+                with st.expander(_skill_expander_label, expanded=False):
+                    if _agent_skill_list:
+                        _registry_entries = {e["name"]: e for e in dmtr.list_tools(_agent_skill_list)}
+                        for _sname in _agent_skill_list:
+                            _entry = _registry_entries.get(_sname)
+                            if _entry is None:
+                                st.markdown(f"- `/{_sname}` *(not registered in tool registry)*")
+                                continue
+                            _desc = (_entry.get("description") or "").strip()
+                            _example = (_entry.get("example") or "").strip()
+                            if _example:
+                                if "\n" in _example:
+                                    st.markdown(f"- **/{_sname}**")
+                                    st.code(_example, language=None)
+                                    st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;{_desc}", unsafe_allow_html=True)
+                                else:
+                                    st.markdown(f"- `{_example}`\n  &nbsp;&nbsp;&nbsp;&nbsp;{_desc}",
+                                                 unsafe_allow_html=True)
+                            else:
+                                _required = (_entry.get("schema") or {}).get("required") or []
+                                _syntax = f"/{_sname} " + " ".join(f"<{a}>" for a in _required) if _required else f"/{_sname}"
+                                st.markdown(f"- `{_syntax}`\n  &nbsp;&nbsp;&nbsp;&nbsp;{_desc}",
+                                             unsafe_allow_html=True)
+                        st.caption("Type `/skills` (or `/help`) in chat to re-list this anywhere.")
+                    else:
+                        st.markdown(
+                            "This agent has no `SKILL.TOOL_LIST` configured. "
+                            "Add tool names to the agent JSON's `SKILL.TOOL_LIST` to expose them as `/<name>` chat commands."
+                        )
 
     # File downloader
     if st.session_state.allowed_download_md:
@@ -9094,10 +9099,10 @@ def main():
                 output = result[2] if len(result) > 2 else ""
                 if len(result) == 4 and isinstance(result[3], list):
                     export_contents = result[3]
-            # Append a `## References` block when the skill returned URL-shaped
+            # Append a `## Reference Info` block when the skill returned URL-shaped
             # export_contents (e.g. WebSearch). Perplexity/Claude already bake
             # [N] markers into the body, but no source list — surface it here.
-            if output and "## References" not in output:
+            if output and "## Reference Info" not in output and "## References" not in output:
                 _seen_urls = set()
                 _ref_labels = []
                 for _e in export_contents or []:
@@ -9111,7 +9116,7 @@ def main():
                     _ref_labels.append(f"(web) {_u}" + (f" - {_t}" if _t else ""))
                 if _ref_labels:
                     _refs_block = "\n".join(f"[{_i}] {_lbl}" for _i, _lbl in enumerate(_ref_labels, 1))
-                    output = f"{output.rstrip()}\n\n## References\n{_refs_block}"
+                    output = f"{output.rstrip()}\n\n## Reference Info\n{_refs_block}"
             _save_skill_turn(session, svc, usr, agent_file, raw_text, output, ts_begin,
                              tool_name=skill_name, export_contents=export_contents, is_error=False, agent_name=_agent_name)
             session.save_status("UNLOCKED")
@@ -9813,7 +9818,7 @@ def main():
                 "they are preserved verbatim in the output. No per-row evaluation is "
                 "run on the Baseline text (downstream evaluators such as Personal "
                 "Evaluation consume them in aggregate).\n\n"
-                "**Eval only mode** — check `Eval only (Answer(AI) ↔ Ground Truth を再評価)` "
+                "**Eval only mode** — check `Eval only (re-evaluate Answer(AI) ↔ Ground Truth)` "
                 "to skip the agent invocation and just re-run `eval_answer_vs_groundtruth` on "
                 "the existing `Answer` + `Ground Truth` columns. Requires both columns to be "
                 "filled; the `Question` column is used as evaluation context when present but "
@@ -9836,23 +9841,23 @@ def main():
             # Eval-only toggle — decided BEFORE we pick sheets so the sheet
             # detector can look for the correct required columns.
             st.checkbox(
-                "Eval only (Answer(AI) ↔ Ground Truth を再評価)",
+                "Eval only (re-evaluate Answer(AI) ↔ Ground Truth)",
                 value=False,
                 key="batch_eval_only",
                 help=(
-                    "ON にすると、アップロードした Excel の既存 `Answer` と "
-                    "`Ground Truth` 列だけを使って `eval_answer_vs_groundtruth` を再実行し、"
-                    "Verdict / Score / Match / Seq Ratio / Token F1 / Eval 列を上書きします。"
-                    "エージェント呼び出しはスキップされるため、`Question` 列は評価時の "
-                    "コンテキストとして参照される (無くても実行可)。"
+                    "When ON, only the existing `Answer` and `Ground Truth` columns in the uploaded "
+                    "Excel are used to re-run `eval_answer_vs_groundtruth`, overwriting the "
+                    "Verdict / Score / Match / Seq Ratio / Token F1 / Eval columns."
+                    "The agent call is skipped, so the `Question` column is used as "
+                    "reference context during evaluation (optional)."
                 ),
             )
             _eval_only = bool(st.session_state.get("batch_eval_only"))
 
             # Sheet picker: when a file is uploaded, list every sheet that has
             # the required columns for the chosen mode.
-            #   - Normal:    Question 必須
-            #   - Eval only: Answer + Ground Truth 必須
+            #   - Normal:    requires Question
+            #   - Eval only: requires Answer + Ground Truth
             _target_sheet = "__ALL__"
             _q_sheets = []
             if _batch_file is not None:
@@ -9875,25 +9880,25 @@ def main():
                         except Exception:
                             continue
                 except Exception as _e:
-                    st.warning(f"シート一覧の読み込みに失敗しました: {_e}")
+                    st.warning(f"Failed to load sheet list: {_e}")
                 if _q_sheets:
-                    _opts = ["(全シート)"] + _q_sheets
+                    _opts = ["(All sheets)"] + _q_sheets
                     _picker_label = (
-                        f"対象シート (Answer + Ground Truth のあるシート: {len(_q_sheets)})"
+f"Target sheet (sheets with Answer + Ground Truth: {len(_q_sheets)})"
                         if _eval_only else
-                        f"対象シート (Question列のあるシート: {len(_q_sheets)})"
+f"Target sheet (sheets with Question: {len(_q_sheets)})"
                     )
                     _picked = st.selectbox(
                         _picker_label,
                         options=_opts,
                         key=f"batch_sheet_pick_{_batch_uploader_key}",
                     )
-                    _target_sheet = "__ALL__" if _picked == "(全シート)" else _picked
+                    _target_sheet = "__ALL__" if _picked == "(All sheets)" else _picked
                 else:
                     st.warning(
-                        "`Answer` と `Ground Truth` 列のあるシートが見つかりませんでした。"
+                        "No sheet with both `Answer` and `Ground Truth` columns was found."
                         if _eval_only else
-                        "`Question` 列のあるシートが見つかりませんでした。"
+                        "No sheet with a `Question` column was found."
                     )
             _bc1, _bc2 = st.columns([1, 1])
             _bc2.checkbox(
@@ -9902,10 +9907,10 @@ def main():
                 key="batch_save_digest",
                 disabled=_eval_only,
                 help=(
-                    "バッチテストにのみ有効な独立トグル。OFF で各行の digest 生成を "
-                    "抑止 — 大量実行のコスト/時間を節約。Chat ヘッダーの "
-                    "Save Digest とは独立。"
-                    " (Eval only モードでは digest 生成は発生しないため無効)"
+                    "Independent toggle for batch testing only. When OFF, per-row digest "
+                    "generation is suppressed to save cost/time on large runs. Independent "
+                    "of the Chat-header Save Digest."
+                    " (Disabled under Eval only mode — digest is never generated then.)"
                 ),
             )
             _can_run_batch = (
@@ -9916,10 +9921,13 @@ def main():
                 "Run Eval Only (Re-evaluate)" if _eval_only else "Run Batch Test"
             )
             if _bc1.button(_run_label, key="batch_test_run", disabled=not _can_run_batch):
+                # Persist the uploaded file to temp so the bg thread can re-read it
                 _ts_in = datetime.now().strftime("%Y%m%d_%H%M%S")
                 _saved_path = Path(temp_folder_path) / f"batch_input_{_ts_in}_{_batch_file.name}"
                 _saved_path.write_bytes(_batch_file.getbuffer())
 
+                # Snapshot current chat settings exactly like the normal chat handler does,
+                # except force STREAM_MODE=False (batch runs sequential, no streaming UI).
                 _bt_execution = {
                     # MEMORY_USE is decided per-row inside _run_batch_bg
                     # from the `MemoryNo` column. MEMORY_SAVE follows the
@@ -9938,6 +9946,7 @@ def main():
                     "RAG_QUERY_GENE":    st.session_state.RAG_query_gene,
                     "WEB_SEARCH":        st.session_state.web_search,
                     "WEB_SEARCH_ENGINE": st.session_state.get("web_search_engine", ""),
+                    "WEB_SEARCH_GUARDRAIL": st.session_state.get("web_search_guardrail", True),
                     "CITE_KNOWLEDGE":    st.session_state.cite_knowledge,
                     "DIAGRAM_MODE":      st.session_state.diagram_mode,
                     "EMPHASIS_MODE":     st.session_state.emphasis_mode,
@@ -9985,6 +9994,7 @@ def main():
                     # re-evaluates existing Answer/Ground Truth pairs.
                     "eval_only": _eval_only,
                 }
+                # Reset the uploader so the same file isn't accidentally re-run
                 st.session_state["batch_test_uploader_counter"] = (
                     st.session_state.get("batch_test_uploader_counter", 0) + 1
                 )
@@ -10011,7 +10021,7 @@ def main():
                 _result_options = [_p.name for _p in reversed(_batch_results)]  # newest first
                 _rc1, _rc2 = st.columns([3, 1])
                 _picked_name = _rc1.selectbox(
-                    f"Result file ({len(_batch_results)} 件 / 最新がデフォルト)",
+                    f"Result file ({len(_batch_results)} files / latest by default)",
                     options=_result_options,
                     index=0,
                     key="batch_result_pick",
@@ -10032,7 +10042,7 @@ def main():
                 try:
                     _ra_sheets = pd.read_excel(_selected, sheet_name=None)
                 except Exception as _ra_e:
-                    st.warning(f"結果Excelの読み込みに失敗しました: {_ra_e}")
+                    st.warning(f"Failed to load result Excel: {_ra_e}")
                     _ra_sheets = {}
 
                 # Cross-sheet summary
@@ -10058,11 +10068,10 @@ def main():
 
                 if _ra_agg_df.empty:
                     st.info(
-                        "`Score` 列のあるシートがありません。Ground Truth 付きで再実行すると "
-                        "ここに集計が表示されます。"
+                        "No sheet has a `Score` column. Re-run with Ground Truth attached to see aggregates here."
                     )
                 else:
-                    st.markdown("**シート横断サマリ**")
+                    st.markdown("**Cross-sheet summary**")
                     st.dataframe(_ra_agg_df, hide_index=True, use_container_width=True)
 
                     for _ra_sn, _ra_df in _ra_sheets.items():
@@ -10074,15 +10083,15 @@ def main():
 
                         st.markdown(f"#### {_ra_sn}")
                         _ra_c1, _ra_c2, _ra_c3, _ra_c4 = st.columns(4)
-                        _ra_c1.metric("件数", int(len(_ra_df)))
+                        _ra_c1.metric("Rows", int(len(_ra_df)))
                         _ra_c2.metric(
-                            "Score 平均",
+                            "Score mean",
                             f"{_ra_scores.mean():.1f}" if len(_ra_scores) else "—",
                         )
                         if len(_ra_verdicts):
-                            _ra_c3.metric("○率", f"{(_ra_verdicts == '○').mean() * 100:.0f}%")
+                            _ra_c3.metric("Pass rate", f"{(_ra_verdicts == '○').mean() * 100:.0f}%")
                         else:
-                            _ra_c3.metric("○率", "—")
+                            _ra_c3.metric("Pass rate", "—")
                         _ra_c4.metric(
                             "Exact Match",
                             f"{int((_ra_matches == 'Y').sum())}/{int(len(_ra_df))}",
@@ -10105,7 +10114,7 @@ def main():
                             )
                             _ra_hist = _ra_bins.value_counts().sort_index()
                             _ra_hist.index = [str(_i) for _i in _ra_hist.index]
-                            _ra_cc2.markdown("Score 分布")
+                            _ra_cc2.markdown("Score distribution")
                             _ra_cc2.bar_chart(_ra_hist)
 
                         _ra_show = _ra_df.copy()
@@ -10117,7 +10126,7 @@ def main():
                                               "Verdict", "Score", "Eval")
                                 if _c in _ra_show.columns
                             ]
-                            st.markdown(f"**低スコア {len(_ra_show)}件**")
+                            st.markdown(f"**Low scores ({len(_ra_show)})**")
                             st.dataframe(
                                 _ra_show[_ra_cols], hide_index=True, use_container_width=True,
                             )
@@ -10127,7 +10136,7 @@ def main():
                     _ra_b1, _ra_b2 = st.columns([1, 2])
                     _ra_busy = bool(st.session_state._bg_task)
                     if _ra_b1.button(
-                        "LLM評価を生成", key=f"batch_critique_btn_{_selected.name}",
+                        "Generate LLM review", key=f"batch_critique_btn_{_selected.name}",
                         disabled=_ra_busy,
                     ):
                         _ra_worst = []
@@ -10160,65 +10169,17 @@ def main():
                             _ra_crit_path.write_text(_ra_crit or "", encoding="utf-8")
                             st.rerun()
                         except Exception as _ra_ee:
-                            st.error(f"LLM評価エラー: {type(_ra_ee).__name__}: {_ra_ee}")
+                            st.error(f"LLM review error: {type(_ra_ee).__name__}: {_ra_ee}")
                     if _ra_crit_path.exists():
-                        _ra_b2.markdown(f"_保存済み: `{_ra_crit_path.name}`_")
+                        _ra_b2.markdown(f"_Saved: `{_ra_crit_path.name}`_")
                         try:
                             st.markdown("---")
                             st.markdown(_ra_crit_path.read_text(encoding="utf-8"))
                         except Exception:
                             pass
 
-        # Skills discovery panel: surfaces the current agent's SKILL.TOOL_LIST
-        # as slash-command form right above the chat input so users don't have
-        # to remember `/skills`. Auto-updates whenever the agent switches.
-        _agent_skill_list = (st.session_state.get("agent_data", {}) or {}).get("SKILL", {}).get("TOOL_LIST") or []
-        if _agent_skill_list:
-            _skill_count = len(_agent_skill_list)
-            _skill_expander_label = f"Skills available on this agent ({_skill_count}) — slash commands"
-        else:
-            _skill_expander_label = "Skills available on this agent (0) — none configured for this agent"
-        with st.expander(_skill_expander_label, expanded=False):
-            if _agent_skill_list:
-                _registry_entries = {e["name"]: e for e in dmtr.list_tools(_agent_skill_list)}
-                for _sname in _agent_skill_list:
-                    _entry = _registry_entries.get(_sname)
-                    if _entry is None:
-                        # Listed in SKILL but not registered (typo / plugin not loaded)
-                        st.markdown(f"- `/{_sname}` *(not registered in tool registry)*")
-                        continue
-                    _desc = (_entry.get("description") or "").strip()
-                    # Prefer the tool's concrete usage example (set via
-                    # register_tool(..., example="..."))  — it's the slash
-                    # command verbatim, much friendlier than the generic
-                    # "<input>" placeholder. Fall back to the schema-derived
-                    # syntax only when the tool didn't provide an example.
-                    _example = (_entry.get("example") or "").strip()
-                    if _example:
-                        if "\n" in _example:
-                            st.markdown(f"- **/{_sname}**")
-                            st.code(_example, language=None)
-                            st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;{_desc}", unsafe_allow_html=True)
-                        else:
-                            st.markdown(f"- `{_example}`\n  &nbsp;&nbsp;&nbsp;&nbsp;{_desc}",
-                                         unsafe_allow_html=True)
-                    else:
-                        _required = (_entry.get("schema") or {}).get("required") or []
-                        if _required:
-                            _syntax = f"/{_sname} " + " ".join(f"<{a}>" for a in _required)
-                        else:
-                            _syntax = f"/{_sname}"
-                        st.markdown(f"- `{_syntax}`\n  &nbsp;&nbsp;&nbsp;&nbsp;{_desc}",
-                                     unsafe_allow_html=True)
-                st.caption("Type `/skills` (or `/help`) in chat to re-list this anywhere. "
-                           "If a skill is unknown to this agent the chat will reply with an error.")
-            else:
-                st.markdown(
-                    "This agent has no `SKILL.TOOL_LIST` configured. "
-                    "Add tool names to the agent JSON's `SKILL.TOOL_LIST` to "
-                    "expose them as `/<name>` chat commands. "
-                    "See agent_02DigitalMATSUMOTO_ToolUser.json for an example."
-                )
+        # Skills expander has been moved into the "Conversation Settings"
+        # expander (last section). This spot is intentionally empty.
 
         # Draft banner — surfaces a stashed message when the user typed something
         # while a prior turn was still running. Send is gated on the same
@@ -10232,7 +10193,7 @@ def main():
                 # is still re-sent verbatim when "Send draft" is clicked.
                 _draft_collapsed = " ".join(_draft_text.split())
                 _draft_preview = (_draft_collapsed[:30] + "…") if len(_draft_collapsed) > 30 else _draft_collapsed
-                st.info(f"📝 下書き ({len(_draft_text)}字): {_draft_preview}")
+                st.info(f"📝 Draft ({len(_draft_text)} chars): {_draft_preview}")
                 _dc1, _dc2 = st.columns([1, 1])
                 _send_disabled = _chat_disabled or not _draft_text.strip()
                 if _dc1.button("Send draft", key="draft_send_btn", disabled=_send_disabled):
@@ -10253,7 +10214,7 @@ def main():
         if raw_input := st.chat_input("Your Message"):
             if _chat_disabled:
                 st.session_state.draft_input = raw_input
-                st.toast("実行中のため下書きとして保存しました。完了後に Send draft で送信できます。")
+                st.toast("Saved as draft while a run is in progress. Use Send draft to submit after it finishes.")
                 st.rerun()
             else:
                 st.session_state.pending_input = raw_input
@@ -10335,7 +10296,6 @@ def main():
             # overrides preserve other PERSONALITY keys not shown in the UI.
             _pers_default = (st.session_state.get("agent_data") or {}).get("PERSONALITY") or {}
             _pers_override = {}
-            # String fields (basic + physical + SPEAKING_STYLE + CHARACTER)
             for _k in ("SEX", "BIRTHDAY", "NATIONALITY", "LANGUAGE",
                        "BLOOD_TYPE", "RESIDENCE", "HEIGHT", "WEIGHT", "FOOT_SIZE",
                        "DOMINANT_HAND", "DOMINANT_FOOT", "HAIRSTYLE", "GLASSES",
@@ -10343,11 +10303,14 @@ def main():
                 _cur = st.session_state.get(f"po_{_k}", "")
                 if str(_cur) != str(_pers_default.get(_k, "") or ""):
                     _pers_override[_k] = _cur
-            # IS_ALIVE (bool)
+            # Auto-language sentinel — overrides whatever the LANGUAGE
+            # selectbox says. Only sent when the box is checked, and always
+            # sent when it is (regardless of the JSON default).
+            if bool(st.session_state.get("po_LANG_AUTO", False)):
+                _pers_override["LANGUAGE"] = "__AUTO__"
             _cur_alive = bool(st.session_state.get("po_IS_ALIVE", True))
             if _cur_alive != bool(_pers_default.get("IS_ALIVE", True)):
                 _pers_override["IS_ALIVE"] = _cur_alive
-            # FAMILY (list, from `/`-delimited string)
             _fam_str = st.session_state.get("po_FAMILY_STR", "")
             _fam_list = [x.strip() for x in _fam_str.split("/") if x.strip()]
             _def_fam = _pers_default.get("FAMILY") or []
@@ -10357,9 +10320,6 @@ def main():
                 _def_fam_norm = [str(_def_fam)] if _def_fam else []
             if _fam_list != _def_fam_norm:
                 _pers_override["FAMILY"] = _fam_list
-            # BIG5 (5 floats). update_dict deep-merges, so partial BIG5
-            # would silently mix with JSON defaults for missing keys — pack
-            # the full 5-tuple only when any component actually differs.
             _big5_default = _pers_default.get("BIG5") or {}
             _big5_cur = {}
             _big5_changed = False
@@ -10404,6 +10364,7 @@ def main():
             execution["RAG_QUERY_GENE"] = st.session_state.RAG_query_gene
             execution["WEB_SEARCH"] = st.session_state.web_search
             execution["WEB_SEARCH_ENGINE"] = st.session_state.get("web_search_engine", "")
+            execution["WEB_SEARCH_GUARDRAIL"] = st.session_state.get("web_search_guardrail", True)
             # INSERT_CITATIONS not set explicitly — defaults to True in
             # DigiM_Execute._parse_execution_settings, so the citation injector
             # fires automatically whenever there are citable sources.
@@ -10430,7 +10391,6 @@ def main():
             execution["_PRE_LOCKED"] = True
             # Phase 7: inject PersonaSelector cap into execution
             execution["MAX_PERSONAS"] = int(st.session_state.get("max_personas", 3))
-            # Multi-turn Thinking cap (B-type loop). Default 1 = single turn.
             execution["MAX_THINKING_TURNS"] = int(st.session_state.get("max_thinking_turns", 1))
             # Resolve the selected persona IDs into real persona dicts
             _resolved_personas = []

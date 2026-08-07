@@ -48,12 +48,17 @@ def _parse_execution_settings(execution):
         "RAG_query_gene":    execution.get("RAG_QUERY_GENE", True),
         "web_search":        execution.get("WEB_SEARCH", False),
         "web_search_engine": execution.get("WEB_SEARCH_ENGINE", ""),
+        # Default ON: web-search results are wrapped in a short guardrail
+        # that tells the LLM to keep persona/context in charge and treat the
+        # snippet as reference material only. Turning it off passes the raw
+        # search text into the prompt unwrapped.
+        "web_search_guardrail": execution.get("WEB_SEARCH_GUARDRAIL", True),
         # Default ON: citations are automatically inserted whenever there are
         # citable sources (web URLs or Book chunks). API callers can opt out
         # explicitly via execution["INSERT_CITATIONS"] = False.
         "insert_citations":  execution.get("INSERT_CITATIONS", True),
         # Default OFF: KNOWLEDGE is the agent's internalised knowledge and is
-        # excluded from `## References` by policy. Turning this on appends a
+        # excluded from `## Reference Info` by policy. Turning this on appends a
         # separate section listing the KNOWLEDGE chunks the turn actually used.
         "cite_knowledge":    execution.get("CITE_KNOWLEDGE", False),
         # Default OFF: when on, the main prompt asks for Markdown tables and
@@ -92,34 +97,54 @@ EMPHASIS_INSTRUCTION = (
 )
 
 
-def _build_knowledge_section(knowledge_selected, agent_data, limit=20):
-    """List the KNOWLEDGE chunks used this turn as a standalone section.
+def _build_knowledge_section(knowledge_selected, agent_data, top_n=5):
+    """List the KNOWLEDGE chunks that ACTUALLY influenced this turn's output.
 
     Built deterministically from the retrieval log — no LLM involved — so it is
     unaffected by citation-injector failures and works even when there is
-    nothing citable for `## References`. BOOK entries are skipped because they
-    already flow into `## References` via the citation path.
-    """
+    nothing citable for `## Reference Info`. BOOK entries are skipped because
+    they already flow into `## Reference Info` via the citation path.
+
+    Utility polarity: `similarity_prompt` / `similarity_response` are DISTANCES
+    (lower = more similar). A chunk shaped the answer more than the question
+    when it is closer to the answer than to the question, i.e. sim_r < sim_q,
+    i.e. util = sim_q - sim_r > 0. Ranking by util descending surfaces the
+    chunks that pulled the answer toward themselves; chunks with util <= 0
+    were retrieved by the query but not obviously used in the output, so they
+    are dropped from the display (a strict "influenced" list is more useful
+    than an exhaustive one). Capped at `top_n`."""
+    import logging as _lg_ks
     if not isinstance(knowledge_selected, list) or not knowledge_selected:
+        _lg_ks.getLogger(__name__).info(
+            "[cite_knowledge] skip: knowledge_selected is empty")
         return ""
     import re as _re_ks
     _book_names = {(b or {}).get("RAG_NAME")
                    for b in (agent_data.get("BOOK") or [])
                    if isinstance(b, dict) and b.get("RAG_NAME")}
     _kv_re = _re_ks.compile(r"'([^']+)'\s*:\s*'((?:[^'\\]|\\.)*)'")
+    _num_re = _re_ks.compile(r"'([^']+)'\s*:\s*(-?\d+\.?\d*)")
+    def _as_float(v):
+        try:
+            return float(v) if v is not None else 0.0
+        except (TypeError, ValueError):
+            return 0.0
+
     seen = set()
     rows = []
     for c in knowledge_selected:
         if isinstance(c, dict):
             rag = c.get("rag", "") or c.get("rag_name", "")
             title = c.get("title", "") or c.get("ID", "") or c.get("id", "")
-            snippet = (c.get("value_text_short") or c.get("value_text") or "")[:80]
+            sim_q = _as_float(c.get("similarity_prompt", c.get("similarity_Q", 0.0)))
+            sim_a = _as_float(c.get("similarity_response", c.get("similarity_A", 0.0)))
         elif isinstance(c, str):
-            # LOG_TEMPLATE 'key':'value' string (PageIndex / Graph entries)
             kv = dict(_kv_re.findall(c))
+            nums = dict(_num_re.findall(c))
             rag = kv.get("rag", "")
             title = kv.get("title", "") or kv.get("page_id", "") or kv.get("ID", "")
-            snippet = (kv.get("summary") or kv.get("text_short") or "")[:80]
+            sim_q = _as_float(nums.get("similarity_Q", nums.get("similarity_prompt", 0.0)))
+            sim_a = _as_float(nums.get("similarity_A", nums.get("similarity_response", 0.0)))
         else:
             continue
         if not rag or rag in _book_names:
@@ -128,16 +153,26 @@ def _build_knowledge_section(knowledge_selected, agent_data, limit=20):
         if key in seen:
             continue
         seen.add(key)
-        rows.append((rag, title, snippet))
+        util = sim_q - sim_a
+        # Drop chunks that didn't pull the answer toward themselves. Zero
+        # utility means "as close to the question as to the answer" — no
+        # evidence of shaping the output — and negative means it matched the
+        # question more than the answer.
+        if util <= 0:
+            continue
+        rows.append((util, rag, title))
+
+    rows.sort(key=lambda r: -r[0])
+    rows = rows[:top_n]
+    _lg_ks.getLogger(__name__).info(
+        f"[cite_knowledge] emitting {len(rows)} rows (from {len(knowledge_selected)} refs, util>0 only)")
     if not rows:
         return ""
     lines = []
-    for rag, title, snippet in rows[:limit]:
-        label = f"（{rag}）{title}" if title else f"（{rag}）"
-        if snippet:
-            label += f" — {snippet}"
-        lines.append(f"- {label}")
-    return "## 参照した知識\n" + "\n".join(lines)
+    for util, rag, title in rows:
+        label = f"({rag}){title}" if title else f"({rag})"
+        lines.append(f"- {label} (Knowledge Utility:{util:.4f})")
+    return "## Reference Knowledge\n" + "\n".join(lines)
 
 # B-3: Common USER_INPUT resolution
 def _resolve_user_input(user_input_setting, user_query, results):
@@ -504,7 +539,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     # Support-agent situation (Thinking / RAG Query Generator / Extract Date,
     # ...). Falls back to the current real date when the parent's TIME is
     # empty ("No Date"). Support agents need date awareness to judge
-    # freshness ("最近" / "今の") and generate meta-search date ranges even
+    # freshness ("recent" / "current") and generate meta-search date ranges even
     # when the main-response persona intentionally omits date grounding.
     _sup_sit = dict(situation or {})
     if not _sup_sit.get("TIME"):
@@ -575,20 +610,27 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                 session_id, session_name, agent_file, search_text, [], {}, engine=web_engine)
             web_duration = round((datetime.now() - t_web_start).total_seconds(), 2)
         # Guardrails around the raw search text — LLMs tend to over-defer to
-        # large chunks of external text (口調が寄る／会話文脈を忘れる)。
-        # 明示的に「これは参考」「人格・会話履歴を最優先」と枠で囲むだけで
-        # 有意に改善する（プロンプト長のオーバーヘッドは数十トークン）。
-        web_context = (
-            "\n[参考資料 — Web検索結果 (ここから)]\n"
-            "以下は事実の裏付け材料として渡します。次のルールを厳守してください:\n"
-            "・本文を丸写ししない／要約調に引きずられない。\n"
-            "・口調・語彙・視点は必ずあなた自身の人格設定に従う。\n"
-            "・これまでの会話の流れとユーザーの意図を最優先にし、必要な事実だけを自然に取り込む。\n"
-            "・情報の一部だけを使う場合、他は無視してよい（全部触れる必要はない）。\n"
-            "---\n"
-            + web_result_text +
-            "\n---\n[参考資料 END]\n"
-        )
+        # large chunks of external text (tone drifts, conversation context is
+        # forgotten). Wrapping the snippet with "this is reference material,
+        # your persona and the running dialogue take priority" measurably
+        # improves grounding, at a cost of a few dozen prompt tokens.
+        # Toggleable via cfg["web_search_guardrail"] — off passes the raw
+        # snippet through unwrapped, for callers who want the search result
+        # to speak for itself.
+        if cfg.get("web_search_guardrail", True):
+            web_context = (
+                "\n[Reference material — Web search result (start)]\n"
+                "Treat the block below as reference only. Follow these rules strictly:\n"
+                "- Do not copy the text verbatim; do not drift into a summary tone.\n"
+                "- Tone, vocabulary, and perspective must follow your own persona.\n"
+                "- The running conversation and the user's intent come first; weave in only the facts you need.\n"
+                "- You may use only a portion of the material and ignore the rest.\n"
+                "---\n"
+                + web_result_text +
+                "\n---\n[Reference material END]\n"
+            )
+        else:
+            web_context = "\n" + web_result_text + "\n"
         web_search_log = {"engine": web_engine, "model": web_model, "duration_sec": web_duration, "search_text": search_text, "urls": export_urls, "web_context": web_context}
         timestamp_log += f"[06.Web search done ({web_engine}/{web_model}, {web_duration}s)]" + str(datetime.now()) + "<br>"
     output_reference["Web_search"] = web_search_log
@@ -872,7 +914,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         # Insert citation markers into the response synchronously when the
         # user enabled the toggle AND Web search actually returned URLs.
         # The citation tool has its own internal fallback (append plain
-        # `## References` to the original body) if the LLM step fails, so
+        # `## Reference Info` to the original body) if the LLM step fails, so
         # the worst-case here is that the body is untouched.
         # Build the citation candidate list:
         #  - Web search URLs (always citable when present)
@@ -951,14 +993,22 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                 # citations to be added, not for the response to be replaced
                 # with an explanation of why they couldn't be.
                 import re as _re_ci
-                _has_marker = bool(_cited and (_re_ci.search(r"\[\d+\]", _cited) or "## References" in _cited))
+                _has_marker = bool(_cited and (
+                    _re_ci.search(r"\[\d+\]", _cited)
+                    or "## Reference Info" in _cited
+                    or "## References" in _cited
+                ))
                 if _cited and _has_marker and len(_cited) >= max(0.5 * len(response), 50):
+                    # Normalize legacy `## References` header to the new name so
+                    # UI + stripping code only need to know the new label.
+                    if "## Reference Info" not in _cited and "## References" in _cited:
+                        _cited = _cited.replace("## References", "## Reference Info")
                     response = _cited
                     response_chat_dict["text"] = response
                     _lg_ci.getLogger(__name__).info(
                         f"[citation_inject] applied: new body_len={len(response)}, "
                         f"contains '[1]': {'[1]' in response}, "
-                        f"contains '## References': {'## References' in response}"
+                        f"contains '## Reference Info': {'## Reference Info' in response}"
                     )
                 else:
                     _lg_ci.getLogger(__name__).warning(
@@ -981,14 +1031,21 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                 except Exception:
                     pass
 
-        # Referenced KNOWLEDGE, listed in its own section below `## References`.
+        # Referenced KNOWLEDGE, listed in its own section below `## Reference Info`.
         # Deterministic (no LLM), so it survives citation-injector failures and
-        # also fires when there was nothing citable at all.
+        # also fires when there was nothing citable at all. Always appended —
+        # any pre-existing "Reference Knowledge" line in the LLM's own body is the
+        # LLM's imagination, whereas this section is grounded in the retrieval
+        # log. Both can coexist so the user can compare.
         if cfg.get("cite_knowledge"):
             try:
                 _ks = _build_knowledge_section(knowledge_selected, agent.agent)
-                if _ks and "## 参照した知識" not in response:
+                if _ks:
                     response = f"{(response or '').rstrip()}\n\n{_ks}"
+                    # The Citation Injector path a few lines above also does
+                    # this — writing to `response` alone doesn't reach the UI
+                    # because the session persists `response_chat_dict["text"]`.
+                    response_chat_dict["text"] = response
             except Exception as _kse:
                 import logging as _lg_ks
                 _lg_ks.getLogger(__name__).warning(
@@ -1251,7 +1308,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
 
             # Read the situation. Falls back to the current real date when
             # the parent's TIME is empty ("No Date") so Thinking can still
-            # judge freshness signals ("最近", "今の", 年号を含むクエリ etc.)
+            # judge freshness signals ("recent", "current", year-containing queries etc.)
             # instead of asking the LLM to reason without a clock.
             _sit = in_situation or {}
             _thinking_time = _sit.get("TIME") or datetime.now().strftime("%Y/%m/%d %H:%M:%S")
@@ -1497,7 +1554,16 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                     "RAG_QUERY_GENE":    cfg["RAG_query_gene"] and setting.get("RAG_QUERY_GENE", True),
                     "WEB_SEARCH":        setting.get("WEB_SEARCH", cfg["web_search"]),
                     "WEB_SEARCH_ENGINE": cfg["web_search_engine"],
+                    "WEB_SEARCH_GUARDRAIL": setting.get("WEB_SEARCH_GUARDRAIL", cfg["web_search_guardrail"]),
                     "INSERT_CITATIONS":  setting.get("INSERT_CITATIONS", cfg["insert_citations"]),
+                    # Formatting/citation toggles from the WebUI. Without
+                    # these lines the per-chain execution dict silently
+                    # dropped them and `_parse_execution_settings` fell
+                    # back to False — Diagrams / Emphasis / Reference
+                    # Knowledge never fired even when the boxes were on.
+                    "CITE_KNOWLEDGE":    cfg["cite_knowledge"],
+                    "DIAGRAM_MODE":      cfg["diagram_mode"],
+                    "EMPHASIS_MODE":     cfg["emphasis_mode"],
                     "PRIVATE_MODE":      cfg["private_mode"],
                     "THINKING_MODE":     cfg["thinking_mode"],
                     "_THINKING_LOG":     in_execution.get("_THINKING_LOG", {}),

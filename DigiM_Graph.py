@@ -5,7 +5,7 @@
 # The graph is *pure structure*: Entity nodes + predicate edges. It carries
 # no chunk bodies and no free-text descriptions — body text stays in the
 # Vector RAG (ChromaDB) side. Both nodes and edges may carry "props"
-# (states) such as 生年月日 / 居住地 (node) or 役職 / 期間 (edge).
+# (states) such as birthday / residence (node) or role / period (edge).
 #
 # Storage: one folder per graph (rags master data_type="graph"):
 #     <graph_dir>/graph.json       node-link JSON (this module's schema)
@@ -1168,7 +1168,7 @@ def build_graph_context(query, rag, exec_info=None, query_vecs=None, meta_search
 
         block = header
 
-        # ■経路 — follow BFS edge order, orienting each edge relative to the
+        # === Path === follow BFS edge order, orienting each edge relative to the
         # previous node in the walk: (A) --[r]--> (B) <--[r]-- (C) …
         path_lines = []
         for p in result["paths"]:
@@ -1199,7 +1199,7 @@ def build_graph_context(query, rag, exec_info=None, query_vecs=None, meta_search
         if path_lines:
             block += "■経路（質問に関わるつながり）\n" + "".join(dict.fromkeys(path_lines))
 
-        # ■関係（近傍・path外のエッジ）
+        # === Relations (neighbouring edges outside the path) ===
         rel_lines = []
         for ei, hop, kind in result["selected"]:
             if kind == "path":
@@ -1208,7 +1208,7 @@ def build_graph_context(query, rag, exec_info=None, query_vecs=None, meta_search
         if rel_lines:
             block += "■関係（近傍・関連度順）\n" + "".join(rel_lines)
 
-        # ■状態（シードノードのみ）
+        # === States (seed nodes only) ===
         state_lines = []
         for nid in result["seeds"]:
             node = graph["nodes"].get(nid, {})

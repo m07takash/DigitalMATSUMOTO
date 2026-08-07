@@ -15,17 +15,17 @@
             "Agreeableness": 0.5,
             "Neuroticism": 0.1
         },
-        "LANGUAGE": "日本語",
+        "LANGUAGE": "Japanese",
         "SPEAKING_STYLE": "",
         "CHARACTER": "DialogDigest.txt"
     },
     "ENGINE": {
         "LLM": {
             "DEFAULT": "Gemini-3.5-Flash-Lite",
-            "GPT-5-nano": {
-                "NAME": "GPT-5-nano",
+            "GPT-5.4-nano": {
+                "NAME": "GPT-5.4-nano",
                 "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5-nano-2025-08-07",
+                "MODEL": "gpt-5.4-nano",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {

@@ -276,7 +276,23 @@ class DigiM_Agent:
 
             # Speaking style
             if 'LANGUAGE' in self.personality:
-                system_prompt += f"\n使用する言語: {self.personality['LANGUAGE']}" if self.personality['LANGUAGE'] else ""
+                _lang = self.personality['LANGUAGE']
+                if _lang == "__AUTO__":
+                    # Auto-match mode: mirror the user's input language, but
+                    # still honor an explicit in-prompt request for a
+                    # different language (e.g. Japanese input that asks
+                    # "Reply in English" should get an English reply).
+                    system_prompt += (
+                        "\nLanguage policy: Reply in the same language as the user's "
+                        "most recent input. If the user explicitly asks in that input "
+                        "for a reply in a specific language, honor that request instead."
+                    )
+                elif _lang:
+                    # Explicit forced language.
+                    system_prompt += (
+                        f"\nLanguage: {_lang} "
+                        f"(you MUST respond in this language)."
+                    )
             if 'SPEAKING_STYLE' in self.personality:
                 if self.personality['SPEAKING_STYLE']:
                     prompt_temps_json = dmu.read_json_file(prompt_temp_mst_path)

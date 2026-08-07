@@ -4,7 +4,7 @@
     "NAME": "GraphExtract",
     "ACT": "知識グラフの三つ組・状態抽出器",
     "PERSONALITY": {
-        "LANGUAGE": "日本語",
+        "LANGUAGE": "Japanese",
         "SPEAKING_STYLE": "No"
     },
     "ENGINE": {
@@ -18,10 +18,24 @@
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "N"}
             },
-            "GPT-5-mini": {
-                "NAME": "GPT-5-mini",
+            "Gemini-3.5-Flash-Lite": {
+                "NAME": "Gemini-3.5-Flash-Lite",
+                "FUNC_NAME": "generate_response_T_gemini",
+                "MODEL": "gemini-3.5-flash-lite",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {
+                    "limit": 8000,
+                    "role": "both",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "Y"
+                }
+            },
+            "GPT-5.4-mini": {
+                "NAME": "GPT-5.4-mini",
                 "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5-mini-2025-08-07",
+                "MODEL": "gpt-5.4-mini",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "N"}

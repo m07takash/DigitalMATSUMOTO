@@ -15,17 +15,17 @@
             "Agreeableness": 0.85,
             "Neuroticism": 0.2
         },
-        "LANGUAGE": "日本語",
+        "LANGUAGE": "Japanese",
         "SPEAKING_STYLE": "Polite",
         "CHARACTER": "ArtCritic.txt"
     },
     "ENGINE": {
         "LLM": {
-            "DEFAULT": "GPT-5-mini",
-            "GPT-5-mini": {
-                "NAME": "GPT-5-mini",
+            "DEFAULT": "GPT-5.4-mini",
+            "GPT-5.4-mini": {
+                "NAME": "GPT-5.4-mini",
                 "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5-mini-2025-08-07",
+                "MODEL": "gpt-5.4-mini",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {

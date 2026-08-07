@@ -99,6 +99,32 @@ def parse_log_template(ref_str: str) -> dict:
                 result[key] = raw_val
     return result
 
+# Strip display-only sections from an assistant response before feeding it
+# back into the LLM (memory context, dialog digest, etc.). These headers
+# always appear at the tail of a response, so cut from the earliest marker.
+# Also removes ```mermaid``` blocks (diagram source is UI-only).
+_DISPLAY_ONLY_HEADERS = (
+    "## Reference Info",
+    "## References",
+    "## Reference Knowledge",
+    "## 参照した知識",
+)
+_MERMAID_BLOCK_RE = re.compile(r"```mermaid\s.*?```", re.DOTALL)
+
+def strip_display_only_sections(text: str) -> str:
+    if not text or not isinstance(text, str):
+        return text or ""
+    cut_at = len(text)
+    for marker in _DISPLAY_ONLY_HEADERS:
+        for probe in ("\n" + marker, marker):
+            idx = text.find(probe)
+            if idx >= 0 and idx < cut_at:
+                cut_at = idx
+                break
+    stripped = text[:cut_at].rstrip()
+    stripped = _MERMAID_BLOCK_RE.sub("", stripped).rstrip()
+    return stripped
+
 # Sanitize text (remove JSON/XML-forbidden and control characters)
 def sanitize_text(text: str) -> str:
     """Strip control characters that would break JSON/XML in LLM response text.
@@ -218,7 +244,7 @@ def extract_list_pattern(text, pattern=r"(\[\s*{.*?}\s*\])"):
 # Trim a list of date ranges
 def merge_periods(periods):
     # The upstream extract_date LLM occasionally returns items that lack one
-    # or both date fields (e.g. `{"end": "2026/06/20"}` or `{"label": "今"}`).
+    # or both date fields (e.g. `{"end": "2026/06/20"}` or `{"label": "now"}`).
     # Silently skip those rather than KeyError-ing the entire turn — Meta
     # Search is supplemental, not load-bearing.
     converted = []

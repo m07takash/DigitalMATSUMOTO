@@ -2,14 +2,14 @@
 
 Takes a finished LLM response plus a list of web-search source URLs and
 returns the same response with `[N]` citation markers inserted at the
-end of sentences whose content matches a source, plus a `## References`
+end of sentences whose content matches a source, plus a `## Reference Info`
 section listing the URLs at the bottom.
 
 Behaviour contract:
   * The main body text is NOT rewritten. Only [N] markers are inserted.
   * If the underlying LLM call fails for any reason (timeout, exception,
     parse error, empty result), we fall back to appending a plain
-    `## References` section to the original response. The original body
+    `## Reference Info` section to the original response. The original body
     text is left untouched in every failure path.
 
 Usage (from DigiM_Execute after the main LLM call):
@@ -91,12 +91,12 @@ def _normalise_sources(sources):
 
 
 def _build_references_block(sources):
-    """Return a plain `## References` block from a heterogeneous sources list."""
+    """Return a plain `## Reference Info` block from a heterogeneous sources list."""
     norm = _normalise_sources(sources)
     if not norm:
         return ""
     lines = [f"[{i}] {n['label']}" for i, n in enumerate(norm, 1)]
-    return "## References\n" + "\n".join(lines)
+    return "## Reference Info\n" + "\n".join(lines)
 
 
 def _fallback_response(original_text, sources):

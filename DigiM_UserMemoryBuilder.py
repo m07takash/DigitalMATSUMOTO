@@ -83,7 +83,7 @@ def _format_persona(rec: dict) -> str:
     def _items_to_text(label, items):
         if not isinstance(items, list):
             return None
-        # approved/edited are kept verbatim; pending items are suffixed with "(暗定)" (tentative). Only `deleted` is excluded.
+        # approved/edited are kept verbatim; pending items are suffixed with "(暗定)" (tentative marker). Only `deleted` is excluded.
         kept = []
         for it in items:
             if not isinstance(it, dict):
@@ -114,7 +114,7 @@ def _format_persona(rec: dict) -> str:
         if line:
             parts.append(line)
 
-    # Big5: approved/edited are kept verbatim; pending items are suffixed with "(暗定)" (tentative). Only `deleted` is excluded.
+    # Big5: approved/edited are kept verbatim; pending items are suffixed with "(暗定)" (tentative marker). Only `deleted` is excluded.
     big5 = rec.get("big5") or {}
     if isinstance(big5, dict) and big5:
         big5_parts = []

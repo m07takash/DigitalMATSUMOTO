@@ -533,8 +533,7 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
 |------|------|
 | `Session Archive` | Session archive feature |
 | `RAG Management` | RAG data management (Update RAG Data, etc.) |
-| `Exec Setting` | Show/change execution settings |
-| `RAG Setting` | Show/change RAG settings |
+| `Conversation Settings` | Gates the whole "**Conversation Settings**" expander on the Chat screen (Streaming/Memory/Web/BOOK/Personality Override/User Memory/Session Summary/Time/Situation/Skills). Default `true`.<br>Note: the legacy `Exec Setting` / `RAG Setting` keys were absorbed into this one and are ignored if present. |
 | `Feedback` | Feedback feature |
 | `Details` | Show detailed information |
 | `Analytics Knowledge` | Knowledge usage analysis |
@@ -718,6 +717,8 @@ To set a fixed value (do not mark all records as private):
 Enter `True` / `False` in the `private` column inside the CSV.
 
 > Data with no `private` flag set is automatically treated as `false` (public). There is no impact on existing data.
+
+> **Notion pages are not skipped on empty properties**: when `item_dict` includes a `"select"` or `"date"`-typed property that is unset on some Notion pages, those pages are still imported with the value as `""` (previously they returned `None` and the whole page was silently skipped). Databases with optional category or date columns therefore ingest as long as the required fields are present ([DigiM_Notion.py `get_select_by_id` / `get_date_by_id`](DigiM_Notion.py)).
 
 **Filtering data with category_items:**
 
@@ -1028,7 +1029,7 @@ The model with the key name specified in `DEFAULT` is used. It can also be switc
 | API | FUNC | Supported model examples |
 |-----|------|------------|
 | OpenAI | `generate_response_T_gpt` | GPT-4.1, GPT-4.1-mini, etc. |
-| Google | `generate_response_T_gemini` | Gemini-2.5-Flash, Gemini-3.1, etc. |
+| Google | `generate_response_T_gemini` | Gemini-3.5-Flash, Gemini-3.1, etc. |
 | Anthropic | `generate_response_T_claude` | Claude-Sonnet-4.5, Claude-Haiku, etc. |
 | XAI | `generate_response_T_grok` | Grok-4, etc. |
 | **Azure OpenAI** | `generate_response_T_azure_openai` | gpt-* deployments on Azure (specify the deployment name in `MODEL`) |
@@ -1210,9 +1211,9 @@ Specifies Support Agents that assist the main dialogue. Each Support Agent is de
 | `ART_CRITICS` | Generates explanation / critique after image generation |
 | `EXTRACT_DATE` | Extracts date information from user input (used for RAG metadata search) |
 | `RAG_QUERY_GENERATOR` | Generates auxiliary queries for RAG search from user input |
-| `THINKING` | Analyzes the user's question and dynamically decides on Habit selection / Web search / RAG query generation / Book addition (when Thinking Mode is enabled). **Multi-turn support**: setting `Max Thinking Turns > 1` enables the B-type loop — each turn's JSON carries a `sufficient` flag; when it is `false` the pipeline runs a **preview Web search** and feeds the result into the next Thinking turn. The loop breaks on `sufficient=true` or when the turn cap is reached. The preview search is reused by the main response path via `_WEB_SEARCH_CACHE` (no double-fire) |
+| `THINKING` | Analyzes the user's question and dynamically decides on Habit selection / Web search / RAG query generation / Book addition (when Thinking Mode is enabled). **Multi-turn support**: setting `Max Thinking Turns > 1` enables the B-type loop — each turn's JSON carries a `sufficient` flag; when it is `false` the pipeline runs a **preview Web search** and feeds the result into the next Thinking turn. The loop breaks on `sufficient=true` or when the turn cap is reached. The preview search is reused by the main response path via `_WEB_SEARCH_CACHE` (no double-fire).<br>**Prompt-template placeholders**: `PROMPT_TEMPLATE."Thinking Agent"` embeds `{PreviousThinking}` (last turn's decision JSON) and `{WebSearchPreview}` (preview search text) — [user/common/tool/thinking.py](user/common/tool/thinking.py) substitutes them at runtime via `.replace()`. Preserve both placeholders + the `sufficient` field in the output JSON when customizing the template (removing them would cost the loop its memory across turns) |
 | `KNOWLEDGE_INTERPRET` | Invoked by the "Interpret with LLM" buttons under Analytics Results - Knowledge Utility. Reads the inventory CSV / similarity rank (+ optional scatter / bar images) and returns three sections: overall composition vs. this-query selection, contribution analysis using delta = response_sim − question_sim, and notable / improvement points. Back-data centric; images are optional for vision-capable models. |
-| `CITATION_INJECT` | After the main response is generated, this agent inserts `[N]` markers at sentences grounded in web URLs or BOOK chunks and appends a `## References` section. Fires automatically whenever a web URL or a BOOK chunk was used (KNOWLEDGE entries are not cited — they are treated as the agent's internalised knowledge). Defaults to a lightweight model (Claude-Haiku-4.5 / Gemini Flash Lite / GPT-5-mini). On LLM failure, falls back to leaving the body untouched and appending only the References list. **If the LLM output contains neither `[N]` markers nor a `## References` section, it is treated as "no correspondence" and the original body is kept verbatim** (protects the real answer when the LLM returns an apology instead of citations). |
+| `CITATION_INJECT` | After the main response is generated, this agent inserts `[N]` markers at sentences grounded in web URLs or BOOK chunks and appends a `## References` section. Fires automatically whenever a web URL or a BOOK chunk was used (KNOWLEDGE entries are not cited — they are treated as the agent's internalised knowledge). Defaults to a lightweight model (Claude-Haiku-4.5 / Gemini Flash Lite / GPT-5.4-mini). On LLM failure, falls back to leaving the body untouched and appending only the References list. **If the LLM output contains neither `[N]` markers nor a `## References` section, it is treated as "no correspondence" and the original body is kept verbatim** (protects the real answer when the LLM returns an apology instead of citations). |
 
 **Support-agent Date inheritance**: Support agents such as `THINKING` / `RAG_QUERY_GENERATOR` / `EXTRACT_DATE` inherit the parent (main chat) agent's Date setting (Real Date / Custom Date) as-is. However, when the parent is in **No Date** mode, support agents alone **fall back to the current real clock** (so relative expressions like "recently" / "just now" and `EXTRACT_DATE` date-range resolution keep working). The user-facing main response stays No Date — roleplay and persona settings are not affected.
 
@@ -1569,6 +1570,9 @@ A Practice is a JSON file that defines the processing pipeline of an agent. Plac
 | `USER_INPUT` | Fixed value of the input text (used instead of user input when specified) |
 | `CONTENTS` | Reference to the previous step's output (`EXPORT_1` for the output of the first step) |
 | `SITUATION` | Situation information settings |
+| `WEB_SEARCH` / `META_SEARCH` / `RAG_QUERY_GENE` / `INSERT_CITATIONS` | Can be **forced false per chain step**; `true` only takes effect when the parent's value is also true (AND-combined). Other toggles propagate the parent value if left unset in the setting. |
+
+**Toggles auto-inherited by every chain step** (no need to specify in the setting): `MEMORY_USE / MEMORY_SAVE / MEMORY_SIMILARITY / MAGIC_WORD_USE / STREAM_MODE / SAVE_DIGEST / WEB_SEARCH_ENGINE / **CITE_KNOWLEDGE / DIAGRAM_MODE / EMPHASIS_MODE** / PRIVATE_MODE / THINKING_MODE`. The three formatting toggles (**Reference Knowledge / Diagrams / Emphasis**) are now propagated correctly by `DigiMatsuExecute_Practice` (a past bug silently dropped them so the toggles were no-ops inside multi-step chains — fixed).
 
 #### Multi-step example (image generation + critique)
 
@@ -1651,7 +1655,7 @@ OPENAI_SEARCH_SYSTEM_PROMPT: "Be precise and concise."
 OPENAI_SEARCH_USER_PROMPT: "Based on the following input, provide related information."
 
 # Google Grounding Search
-GOOGLE_SEARCH_MODEL: "gemini-2.5-flash-preview-05-20"
+GOOGLE_SEARCH_MODEL: "gemini-3.5-flash"
 GOOGLE_SEARCH_USER_PROMPT: "Based on the following input, provide related information."
 
 # Claude Web Search (web_search_20260209)
@@ -1857,6 +1861,7 @@ BOOK is distinguished from KNOWLEDGE by filtering on `agent.agent["BOOK"]` `RAG_
 
 - **Default ON**: `_parse_execution_settings.insert_citations` defaults to `True`. There is no WebUI toggle — the injector fires automatically whenever there is at least one citation source (a Web URL or a BOOK chunk).
 - **Explicit OFF** (API etc.): pass `execution["INSERT_CITATIONS"] = false` to disable.
+- **Per-chain override in Practice**: `CHAINS[i].SETTING.INSERT_CITATIONS = false` disables the injector for one chain step only (e.g. multi-step Practice where the first chain should keep its own "参照した知識" section intact and only the last chain adds `## References` for the web sources). Unset = inherits parent ([DigiM_Execute.py:1500](DigiM_Execute.py)).
 - **Engine override**: `SUPPORT_AGENT.CITATION_INJECT` selects the agent_file. Default is `agent_79DigiMCitationInject.json` (Claude-Haiku-4.5 family).
 
 #### Graceful fallback
@@ -2340,6 +2345,8 @@ The Knowledge Utility scatter's **background dots** ("all chunks") are now scope
 - **Vector**: the existing `similarity_utility` (`similarity_Q - similarity_A` family)
 - **Graph**: the ③ combined score below (`node_recall + edge_recall`, N/A counted as 0)
 
+**`{title}_KUtilRanking.txt` is Vector-only**: The ranking file written by `analytics_knowledge` (also reused by Insight Analytics) drops rows where `DB=Graph` because Graph refs have hardcoded `similarity_Q/A = 0` — mixing them in would fill the top of the "lowest similarity" ranking with zeros. Filtered at [DigiM_VAnalytics.py:496-502](DigiM_VAnalytics.py#L496-L502). Graph coverage is tracked separately via the Recall scores above.
+
 **Additional GraphRAG per-turn analysis (when the turn's refs include Graph):** on button click, the button inspects the turn's `knowledge_rag` refs for `'DB': 'Graph'` and, when present, renders a **unified Graph view** inside the same expander:
 
 - **Score line**: `① NodeRecall = X (a/b) ＋ ② EdgeRecall = Y (c/d) = ③ combined = Z` per-RAG. ① / ② are the recall of "of the nodes / edges the LLM's output actually mentioned, how many were retrieved". ③ is their **sum** (N/A on either side counted as 0)
@@ -2380,7 +2387,7 @@ The "**Detail Information**" expander under each turn is split into four tabs:
 
 ### Session Summary (user-defined session dossier)
 
-**Distinct from memory digest** — a **user-formatted session state document** that gets updated by a lightweight LLM (default: `agent_65SessionSummary.json` → Gemini-2.5-Flash) after each turn in the background, and injected into subsequent prompts as a `[Current Session Summary]` block.
+**Distinct from memory digest** — a **user-formatted session state document** that gets updated by a lightweight LLM (default: `agent_65SessionSummary.json` → Gemini-3.5-Flash) after each turn in the background, and injected into subsequent prompts as a `[Current Session Summary]` block.
 
 **Example use cases**:
 - **Customer meeting**: Accumulate "Company / Contact / Issue / Next action" across turns → after a few exchanges the agent naturally holds the whole picture
@@ -2405,7 +2412,7 @@ Summary updates and digest generation run in **completely separate background th
 
 **Lightweight agent override**:
 
-By default `agent_65SessionSummary.json` (Gemini-2.5-Flash) is picked up as a global fallback, so **every chat agent gets lightweight summary updates without extra configuration**. To use a different model for a specific agent, add to its `SUPPORT_AGENT`:
+By default `agent_65SessionSummary.json` (Gemini-3.5-Flash) is picked up as a global fallback, so **every chat agent gets lightweight summary updates without extra configuration**. To use a different model for a specific agent, add to its `SUPPORT_AGENT`:
 
 ```json
 "SUPPORT_AGENT": {
@@ -2414,7 +2421,7 @@ By default `agent_65SessionSummary.json` (Gemini-2.5-Flash) is picked up as a gl
 }
 ```
 
-(`agent_01DigitalMATSUMOTO.json` and `agent_10Sample.json` already have this wired up.) To switch models globally, change the `DEFAULT` engine inside `agent_65SessionSummary.json` (e.g. `GPT-5-nano`, `Claude-Haiku-4.5`).
+(`agent_01DigitalMATSUMOTO.json` and `agent_10Sample.json` already have this wired up.) To switch models globally, change the `DEFAULT` engine inside `agent_65SessionSummary.json` (e.g. `GPT-5.4-nano`, `Claude-Haiku-4.5`).
 
 **Prompt injection order**:
 
@@ -2450,6 +2457,10 @@ The chat input is **always editable** even while a previous turn is running. On 
 - **Busy** → stashed into `draft_input`, a `📝 下書き:` banner appears above the chat input
 
 The banner has `Send draft` / `Discard` buttons. Send becomes enabled once the previous turn finishes. Re-submitting overwrites the draft; slash commands (`/skill_name …`) are preserved verbatim.
+
+### Activate Sessions selector (sidebar)
+
+A multiselect for restoring previously hidden sessions (`Del` toggles `active=N`). Labels show the **session name** (not the id) and the list is **sorted by `last_update_date` descending** (via `get_session_list_inactive_visible`; the multiselect value stays the session id internally so same-named sessions are still uniquely selectable). Non-admin users see only their own sessions. Selection + **`Activate`** button reactivates them in bulk.
 
 ---
 
@@ -2724,7 +2735,7 @@ If the same session is in execution (LOCKED), it waits up to 60 seconds and runs
 | `session_id` | | Auto-issued | Session ID. For LINE integration, specifying the LINE user ID continues the conversation |
 | `session_name` | | Auto-generated | Session name |
 | `agent_file` | | `API_AGENT_FILE` | The agent to use (e.g., `agent_10Sample.json`) |
-| `engine` | | Agent's DEFAULT | LLM engine name (e.g., `Gemini-2.5-Flash`). Specify a name defined in the agent's ENGINE.LLM |
+| `engine` | | Agent's DEFAULT | LLM engine name (e.g., `Gemini-3.5-Flash`). Specify a name defined in the agent's ENGINE.LLM |
 | `situation` | | `{"TIME":"","SITUATION":""}` | Date/time / situation settings. If `TIME` is empty, executes without date/time |
 
 **Execution settings (Exec Setting):**
@@ -2944,7 +2955,7 @@ curl -s -X POST http://localhost:8899/run \
     "session_id": "API_TEST_002",
     "user_input": "Tell me about quantum computers",
     "agent_file": "agent_10Sample.json",
-    "engine": "Gemini-2.5-Flash"
+    "engine": "Gemini-3.5-Flash"
   }' | python3 -m json.tool --no-ensure-ascii
 
 # Run with all parameters explicitly set to defaults

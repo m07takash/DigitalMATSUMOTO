@@ -116,9 +116,9 @@ def call_function_by_name(func_name, *args, **kwargs):
 #   gpt-4o family (image input supported below via image_paths)
 # For GPT-5.6 the caller controls the reasoning tier through PARAMETER —
 # in agent_10Sample.json the three named modes map as:
-#   Sol   → {"reasoning_effort": "high"}   (太陽: 最大出力)
-#   Terra → {"reasoning_effort": "medium"} (地球: 標準)
-#   Luna  → {"reasoning_effort": "low"}    (月:   最小/最速)
+#   Sol   → {"reasoning_effort": "high"}   (Sun: max effort)
+#   Terra → {"reasoning_effort": "medium"} (Earth: default)
+#   Luna  → {"reasoning_effort": "low"}    (Moon: min/fastest)
 # If the installed OpenAI SDK is too old to accept `reasoning_effort`, the call
 # raises TypeError on unknown kwarg — bump `openai>=1.55` or higher, or drop
 # the PARAMETER key in the agent JSON.
