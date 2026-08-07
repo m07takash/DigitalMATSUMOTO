@@ -52,9 +52,76 @@ def _parse_execution_settings(execution):
         # citable sources (web URLs or Book chunks). API callers can opt out
         # explicitly via execution["INSERT_CITATIONS"] = False.
         "insert_citations":  execution.get("INSERT_CITATIONS", True),
+        # Default OFF: KNOWLEDGE is the agent's internalised knowledge and is
+        # excluded from `## References` by policy. Turning this on appends a
+        # separate section listing the KNOWLEDGE chunks the turn actually used.
+        "cite_knowledge":    execution.get("CITE_KNOWLEDGE", False),
+        # Default OFF: when on, the main prompt asks for Markdown tables and
+        # Mermaid diagrams where they clarify the explanation.
+        "diagram_mode":      execution.get("DIAGRAM_MODE", False),
         "private_mode":      execution.get("PRIVATE_MODE", False),
         "thinking_mode":     execution.get("THINKING_MODE", False),
     }
+
+
+# Instruction appended to the main prompt when DIAGRAM_MODE is on. Mermaid is
+# fenced so the WebUI renderer can pick the blocks out of the Markdown body.
+DIAGRAM_INSTRUCTION = (
+    "\n\n【図解の指示】\n"
+    "説明の理解を助ける箇所では、文章に加えて図解を用いてください。\n"
+    "・比較・分類・一覧は Markdown の表にする\n"
+    "・関係性/流れ/構造は Mermaid のコードブロック（```mermaid）で図示する\n"
+    "　（flowchart, sequenceDiagram, graph TD などを用途に応じて使い分ける）\n"
+    "・図解が不要な内容に無理に図を付けない。文章だけで足りる場合はそのままでよい\n"
+)
+
+
+def _build_knowledge_section(knowledge_selected, agent_data, limit=20):
+    """List the KNOWLEDGE chunks used this turn as a standalone section.
+
+    Built deterministically from the retrieval log — no LLM involved — so it is
+    unaffected by citation-injector failures and works even when there is
+    nothing citable for `## References`. BOOK entries are skipped because they
+    already flow into `## References` via the citation path.
+    """
+    if not isinstance(knowledge_selected, list) or not knowledge_selected:
+        return ""
+    import re as _re_ks
+    _book_names = {(b or {}).get("RAG_NAME")
+                   for b in (agent_data.get("BOOK") or [])
+                   if isinstance(b, dict) and b.get("RAG_NAME")}
+    _kv_re = _re_ks.compile(r"'([^']+)'\s*:\s*'((?:[^'\\]|\\.)*)'")
+    seen = set()
+    rows = []
+    for c in knowledge_selected:
+        if isinstance(c, dict):
+            rag = c.get("rag", "") or c.get("rag_name", "")
+            title = c.get("title", "") or c.get("ID", "") or c.get("id", "")
+            snippet = (c.get("value_text_short") or c.get("value_text") or "")[:80]
+        elif isinstance(c, str):
+            # LOG_TEMPLATE 'key':'value' string (PageIndex / Graph entries)
+            kv = dict(_kv_re.findall(c))
+            rag = kv.get("rag", "")
+            title = kv.get("title", "") or kv.get("page_id", "") or kv.get("ID", "")
+            snippet = (kv.get("summary") or kv.get("text_short") or "")[:80]
+        else:
+            continue
+        if not rag or rag in _book_names:
+            continue
+        key = (rag, title)
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append((rag, title, snippet))
+    if not rows:
+        return ""
+    lines = []
+    for rag, title, snippet in rows[:limit]:
+        label = f"（{rag}）{title}" if title else f"（{rag}）"
+        if snippet:
+            label += f" — {snippet}"
+        lines.append(f"- {label}")
+    return "## 参照した知識\n" + "\n".join(lines)
 
 # B-3: Common USER_INPUT resolution
 def _resolve_user_input(user_input_setting, user_query, results):
@@ -655,6 +722,10 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             "---\n"
         )
 
+    # Diagram instruction rides at the tail so it applies to the whole turn
+    # without displacing the persona/template voice set above.
+    _diagram_prompt = DIAGRAM_INSTRUCTION if cfg.get("diagram_mode") else ""
+
     if model_type == "LLM":
         # Order: Session summary -> Dialogue partner info -> Knowledge ->
         #        Template -> User query -> Situation
@@ -662,10 +733,10 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         # confirmed facts that should override generic memory retrieval.
         query = (
             f'{session_summary_context}{user_memory_context}{knowledge_context}'
-            f'{prompt_template}{user_query}{situation_prompt}'
+            f'{prompt_template}{user_query}{situation_prompt}{_diagram_prompt}'
         )
     else:
-        query = f'{prompt_template}{user_query}{situation_prompt}'
+        query = f'{prompt_template}{user_query}{situation_prompt}{_diagram_prompt}'
     output_reference["prompt"] = {
         "query": query, "user_query": user_query, "contents_context": contents_context,
         "web_context": web_context, "knowledge_context": knowledge_context,
@@ -892,6 +963,19 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                     session.save_error_log(_ce, context=_ctx)
                 except Exception:
                     pass
+
+        # Referenced KNOWLEDGE, listed in its own section below `## References`.
+        # Deterministic (no LLM), so it survives citation-injector failures and
+        # also fires when there was nothing citable at all.
+        if cfg.get("cite_knowledge"):
+            try:
+                _ks = _build_knowledge_section(knowledge_selected, agent.agent)
+                if _ks and "## 参照した知識" not in response:
+                    response = f"{(response or '').rstrip()}\n\n{_ks}"
+            except Exception as _kse:
+                import logging as _lg_ks
+                _lg_ks.getLogger(__name__).warning(
+                    f"Knowledge reference section skipped: {_kse}")
 
         # Image log (IMAGEGEN)
         img_dict = {}
