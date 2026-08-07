@@ -689,7 +689,7 @@ class DigiMSession:
                                     v2["response"]["vec_text"] = self.get_vec_file(k, k2, "response")
                                     similarity_prompt = dmu.calculate_similarity_vec(query_vec, v2["response"]["vec_text"], memory_similarity_logic)
                                 _agent_name = (v2.get("setting") or {}).get("name", "")
-                                _atxt = _prefix("assistant", _agent_name) + (v2["response"]["text"] or "")
+                                _atxt = _prefix("assistant", _agent_name) + dmu.strip_display_only_sections(v2["response"]["text"] or "")
                                 memories_list.append({"seq": k, "sub_seq": k2, "type": v2["response"]["role"], "role": v2["response"]["role"], "timestamp": v2["response"]["timestamp"], "token": v2["response"]["token"], "similarity_prompt": similarity_prompt, "text": _atxt, "vec_text": v2["response"]["vec_text"]})
 
             # Sort each entry by priority
@@ -1183,15 +1183,15 @@ class DigiMSession:
                                 _mention = _m.get("mention", "")
                                 _mapped = _m.get("mapped_to_name", "")
                                 if _mention == _mapped:
-                                    chat_detail_info += f"    - {_mention}  (直接一致)\n"
+                                    chat_detail_info += f"    - {_mention}  (direct match)\n"
                                 else:
-                                    chat_detail_info += f"    - {_mention}  →  {_mapped}  (辞書変換)\n"
+                                    chat_detail_info += f"    - {_mention}  ->  {_mapped}  (dictionary mapping)\n"
                         else:
-                            chat_detail_info += "    (該当なし)\n"
+                            chat_detail_info += "    (none)\n"
                     _final = _info.get("final_seed_names") or []
                     chat_detail_info += (
-                        f"  ⇒ 最終シード ({len(_final)}件): "
-                        + (", ".join(_final) if _final else "(なし)") + "\n"
+                        f"  => Final seeds ({len(_final)}): "
+                        + (", ".join(_final) if _final else "(none)") + "\n"
                     )
 
             chat_detail_info += "\n[RAG context]\n["

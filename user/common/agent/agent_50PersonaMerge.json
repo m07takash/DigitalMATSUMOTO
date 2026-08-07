@@ -15,17 +15,17 @@
             "Agreeableness": 0.8,
             "Neuroticism": 0.1
         },
-        "LANGUAGE": "日本語",
+        "LANGUAGE": "Japanese",
         "SPEAKING_STYLE": "",
         "CHARACTER": "全ペルソナの主張を等しく扱い、特定の視点に偏らず統合することに特化している"
     },
     "ENGINE": {
         "LLM": {
-            "DEFAULT": "GPT-5-nano",
-            "GPT-5-nano": {
-                "NAME": "GPT-5-nano",
+            "DEFAULT": "GPT-5.4-nano",
+            "GPT-5.4-nano": {
+                "NAME": "GPT-5.4-nano",
                 "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5-nano-2025-08-07",
+                "MODEL": "gpt-5.4-nano",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {

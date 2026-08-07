@@ -93,7 +93,7 @@ def get_chk_by_id(pages, page_id, item):
 
 # Fetch the select (rating) field for a page ID. Returns "" when unset —
 # get_chunk_notion treats None as "page has missing required field, skip",
-# so returning "" keeps optional selects (e.g. カテゴリ) from silently
+# so returning "" keeps optional selects (e.g. Category) from silently
 # dropping otherwise-valid pages.
 def get_select_by_id(pages, page_id, item):
     for page in pages:

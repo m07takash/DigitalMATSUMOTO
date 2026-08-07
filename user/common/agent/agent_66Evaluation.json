@@ -4,16 +4,16 @@
     "NAME": "Evaluation Judge",
     "ACT": "Evaluation プラグイン (Personal Evaluation 等) から Run analysis / LLM Evaluation で呼び出される専用エージェント。再現性を最優先とし、同一入力に対しては常に同一のスコアと講評を返すよう安定した判定を行う。",
     "PERSONALITY": {
-        "LANGUAGE": "日本語",
+        "LANGUAGE": "Japanese",
         "SPEAKING_STYLE": "Polite"
     },
     "ENGINE": {
         "LLM": {
-            "DEFAULT": "GPT-5-mini",
-            "GPT-5-mini": {
-                "NAME": "GPT-5-mini",
+            "DEFAULT": "GPT-5.4-mini",
+            "GPT-5.4-mini": {
+                "NAME": "GPT-5.4-mini",
                 "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5-mini-2025-08-07",
+                "MODEL": "gpt-5.4-mini",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {
@@ -24,10 +24,10 @@
                     "digest": "Y"
                 }
             },
-            "GPT-5-nano": {
-                "NAME": "GPT-5-nano",
+            "GPT-5.4-nano": {
+                "NAME": "GPT-5.4-nano",
                 "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5-nano-2025-08-07",
+                "MODEL": "gpt-5.4-nano",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {
@@ -38,10 +38,18 @@
                     "digest": "Y"
                 }
             },
-            "Gemini-2.5-Flash": {
-                "NAME": "Gemini-2.5-Flash",
+            "Gemini-3.5-Flash": {
+                "NAME": "Gemini-3.5-Flash",
                 "FUNC_NAME": "generate_response_T_gemini",
-                "MODEL": "gemini-2.5-flash",
+                "MODEL": "gemini-3.5-flash",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "N"}
+            },
+            "Gemini-3.5-Flash-Lite": {
+                "NAME": "Gemini-3.5-Flash-Lite",
+                "FUNC_NAME": "generate_response_T_gemini",
+                "MODEL": "gemini-3.5-flash-lite",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {

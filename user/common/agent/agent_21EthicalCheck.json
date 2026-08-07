@@ -15,15 +15,15 @@
             "Agreeableness": 0.2,
             "Neuroticism": 0.2
         },
-        "LANGUAGE": "日本語",
+        "LANGUAGE": "Japanese",
         "SPEAKING_STYLE": "Polite",
         "CHARACTER": "テキストに対して、不適切な表現が含まれていないかを厳しめに検証する。"
     },
     "ENGINE": {
         "LLM": {
-            "DEFAULT": "GPT-5-nano",
-            "GPT-5-nano": {
-                "NAME": "GPT-5-nano",
+            "DEFAULT": "GPT-5.4-nano",
+            "GPT-5.4-nano": {
+                "NAME": "GPT-5.4-nano",
                 "FUNC_NAME": "generate_response_T_gpt",
                 "MODEL": "gpt-4.1-mini-2025-04-14",
                 "PARAMETER": {},

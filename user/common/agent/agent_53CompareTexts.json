@@ -6,11 +6,11 @@
     "PERSONALITY": {},
     "ENGINE": {
         "LLM": {
-            "DEFAULT": "GPT-5-nano",
-            "GPT-5-nano": {
-                "NAME": "GPT-5-nano",
+            "DEFAULT": "GPT-5.4-nano",
+            "GPT-5.4-nano": {
+                "NAME": "GPT-5.4-nano",
                 "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5-nano-2025-08-07",
+                "MODEL": "gpt-5.4-nano",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {

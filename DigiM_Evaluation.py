@@ -432,8 +432,8 @@ def llm_extract_goals_structured(g1_answer: str, g1_gt: str,
     except Exception:
         data = skeleton
     # Deterministic fallback: LLMs frequently drop edges (esp. Gemini/Haiku on
-    # under-specified prompts). Parse the raw G3 text for "X と Y: シナジー /
-    # トレードオフ" patterns and merge with whatever the LLM produced so the
+    # under-specified prompts). Parse the raw G3 text for "X and Y: synergy /
+    # trade-off" patterns and merge with whatever the LLM produced so the
     # 2×2 harmony/conflict grid is not empty when the input clearly lists
     # relations. Never removes an LLM edge — only adds ones the LLM missed.
     try:
@@ -454,7 +454,7 @@ def llm_extract_goals_structured(g1_answer: str, g1_gt: str,
 # --- G3 deterministic parser ------------------------------------------------
 # LLMs are inconsistent about extracting edges from the G3 relations question.
 # When the operator's G3 text is a structured list like
-#   「運動と家族: シナジー / 読書と勉強会: シナジー / 運動と勉強会: トレードオフ」
+#   "exercise and family: synergy / reading and study group: synergy / exercise and study group: trade-off"
 # a regex parser can pull the pairs reliably and match them back to the LLM's
 # goal labels (via substring). Used as a fallback after `llm_extract_goals_
 # structured` returns to fill in edges the LLM missed.
