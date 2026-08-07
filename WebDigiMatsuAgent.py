@@ -991,6 +991,8 @@ def initialize_session_states():
         st.session_state.cite_knowledge = False
     if 'diagram_mode' not in st.session_state:
         st.session_state.diagram_mode = False
+    if 'emphasis_mode' not in st.session_state:
+        st.session_state.emphasis_mode = False
     if 'book_selected' in st.session_state:
         st.session_state.book_selected = []
     if 'dl_type' not in st.session_state:
@@ -8737,7 +8739,7 @@ def main():
 
         # Output options: reference the KNOWLEDGE actually used, and ask for
         # tables / Mermaid diagrams in the explanation.
-        _out_col1, _out_col2 = st.columns(2)
+        _out_col1, _out_col2, _out_col3 = st.columns(3)
         st.session_state.cite_knowledge = _out_col1.checkbox(
             "Reference Knowledge", value=st.session_state.cite_knowledge,
             help="回答の末尾に、そのターンで実際に参照した KNOWLEDGE を「## 参照した知識」として列挙します（Web/BOOK の ## References とは別セクション）。",
@@ -8745,6 +8747,10 @@ def main():
         st.session_state.diagram_mode = _out_col2.checkbox(
             "Diagrams", value=st.session_state.diagram_mode,
             help="説明の中で Markdown の表と Mermaid 図（```mermaid）を使うようLLMに指示します。図は WebUI 上でレンダリングされます。",
+        )
+        st.session_state.emphasis_mode = _out_col3.checkbox(
+            "Emphasis", value=st.session_state.emphasis_mode,
+            help="要点を **太字** で強調し、長い回答では見出し・箇条書きで整理するようLLMに指示します（書式のみで、口調や人格設定は変えません）。",
         )
 
         # Private Mode / Thinking Mode
@@ -9934,6 +9940,7 @@ def main():
                     "WEB_SEARCH_ENGINE": st.session_state.get("web_search_engine", ""),
                     "CITE_KNOWLEDGE":    st.session_state.cite_knowledge,
                     "DIAGRAM_MODE":      st.session_state.diagram_mode,
+                    "EMPHASIS_MODE":     st.session_state.emphasis_mode,
                     "PRIVATE_MODE":      st.session_state.private_mode,
                     "THINKING_MODE":     st.session_state.thinking_mode,
                 }
@@ -10402,6 +10409,7 @@ def main():
             # fires automatically whenever there are citable sources.
             execution["CITE_KNOWLEDGE"] = st.session_state.cite_knowledge
             execution["DIAGRAM_MODE"] = st.session_state.diagram_mode
+            execution["EMPHASIS_MODE"] = st.session_state.emphasis_mode
             execution["PRIVATE_MODE"] = st.session_state.private_mode
             execution["THINKING_MODE"] = st.session_state.thinking_mode
             # User Memory: current checkbox state takes top priority (reflected immediately regardless of Save)

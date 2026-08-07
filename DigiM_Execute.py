@@ -59,6 +59,9 @@ def _parse_execution_settings(execution):
         # Default OFF: when on, the main prompt asks for Markdown tables and
         # Mermaid diagrams where they clarify the explanation.
         "diagram_mode":      execution.get("DIAGRAM_MODE", False),
+        # Default OFF: when on, the prompt asks for bold/heading emphasis on
+        # the points that carry the answer.
+        "emphasis_mode":     execution.get("EMPHASIS_MODE", False),
         "private_mode":      execution.get("PRIVATE_MODE", False),
         "thinking_mode":     execution.get("THINKING_MODE", False),
     }
@@ -73,6 +76,19 @@ DIAGRAM_INSTRUCTION = (
     "・関係性/流れ/構造は Mermaid のコードブロック（```mermaid）で図示する\n"
     "　（flowchart, sequenceDiagram, graph TD などを用途に応じて使い分ける）\n"
     "・図解が不要な内容に無理に図を付けない。文章だけで足りる場合はそのままでよい\n"
+)
+
+# Instruction appended when EMPHASIS_MODE is on. Bounded on purpose: emphasis
+# only reads as emphasis while it stays rare, so the rules cap how much of the
+# text may be marked up rather than just asking for "more emphasis".
+EMPHASIS_INSTRUCTION = (
+    "\n\n【強調の指示】\n"
+    "読み手が要点を拾えるよう、本文中の重要箇所に Markdown の強調を用いてください。\n"
+    "・結論・判断・数値・固有名詞など、その回答の核心となる語句を **太字** にする\n"
+    "・特に注意すべき点や例外は **太字** に加えて簡潔な理由を添える\n"
+    "・回答が長くなる場合は見出し（##／###）で区切り、箇条書きを併用する\n"
+    "・強調は多用しない。1段落あたり1〜2箇所を目安とし、文全体を太字にしない\n"
+    "・口調や人格設定は変えない。あくまで書式のみの指示\n"
 )
 
 
@@ -722,9 +738,10 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             "---\n"
         )
 
-    # Diagram instruction rides at the tail so it applies to the whole turn
+    # Formatting instructions ride at the tail so they apply to the whole turn
     # without displacing the persona/template voice set above.
-    _diagram_prompt = DIAGRAM_INSTRUCTION if cfg.get("diagram_mode") else ""
+    _format_prompt = DIAGRAM_INSTRUCTION if cfg.get("diagram_mode") else ""
+    _format_prompt += EMPHASIS_INSTRUCTION if cfg.get("emphasis_mode") else ""
 
     if model_type == "LLM":
         # Order: Session summary -> Dialogue partner info -> Knowledge ->
@@ -733,10 +750,10 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         # confirmed facts that should override generic memory retrieval.
         query = (
             f'{session_summary_context}{user_memory_context}{knowledge_context}'
-            f'{prompt_template}{user_query}{situation_prompt}{_diagram_prompt}'
+            f'{prompt_template}{user_query}{situation_prompt}{_format_prompt}'
         )
     else:
-        query = f'{prompt_template}{user_query}{situation_prompt}{_diagram_prompt}'
+        query = f'{prompt_template}{user_query}{situation_prompt}{_format_prompt}'
     output_reference["prompt"] = {
         "query": query, "user_query": user_query, "contents_context": contents_context,
         "web_context": web_context, "knowledge_context": knowledge_context,
