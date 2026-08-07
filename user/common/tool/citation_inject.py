@@ -32,6 +32,8 @@ Usage (from DigiM_Execute after the main LLM call):
 """
 from pathlib import Path
 
+import re
+
 import DigiM_Agent as dma
 import DigiM_Util as dmu
 import DigiM_ToolRegistry as dmtr
@@ -79,7 +81,19 @@ def _normalise_sources(sources):
             if key in seen:
                 continue
             seen.add(key)
-            snippet = (s.get("snippet") or "").strip()
+            # Flatten snippet: book chunks often carry raw markdown
+            # (# headings, | tables, ``` code fences) that would render as
+            # nested widgets under the Reference Info list and break the
+            # numbered layout. Collapse to a single-line prose fragment.
+            _raw = (s.get("snippet") or "").strip()
+            snippet = _raw
+            if snippet:
+                snippet = re.sub(r"```.*?```", " ", snippet, flags=re.DOTALL)
+                snippet = re.sub(r"(^|\n)\s*(#+|>|\-|\*|\+|\d+\.)\s+", r"\1", snippet)
+                snippet = snippet.replace("|", " ")
+                snippet = re.sub(r"\s+", " ", snippet).strip()
+                if len(snippet) > 60:
+                    snippet = snippet[:60].rstrip() + "..."
             tag = f"(book: {rag_name})" if rag_name else "(book)"
             label_parts = [tag, title]
             if snippet:

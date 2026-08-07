@@ -246,6 +246,7 @@ nohup.out
 
 # Claude
 .claude
+CLAUDE.md
 
 # Custom (site-local) tool plugins under user/common/tool/local/
 # are user-authored and intentionally excluded from the repo.

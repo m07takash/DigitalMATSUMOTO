@@ -42,6 +42,13 @@
       "Conversation Settings": true
     },
     "Defaults": {
+      "Streaming Mode": true,
+      "Memory Use": true,
+      "Save Digest": true,
+      "Private Mode": false,
+      "RAG Query Gen": true,
+      "Meta Search": true,
+      "Magic Word": true,
       "Thinking Mode": true,
       "Thinking Targets": [
         "Habit",
@@ -49,7 +56,16 @@
         "RAG Query",
         "Books"
       ],
-      "Max Thinking Turns": 1
+      "Max Thinking Turns": 1,
+      "Max Personas": 3,
+      "WEB Search": false,
+      "Web Search Guardrail": true,
+      "Include URL Subpages": false,
+      "Reference Knowledge": true,
+      "Diagrams": true,
+      "Emphasis": true,
+      "Match Input Language": true,
+      "Books": []
     }
   }
 }
