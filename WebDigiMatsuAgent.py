@@ -1,6 +1,7 @@
 import os
 import re
 import ast
+import html
 import json
 import hmac
 import hashlib
@@ -986,6 +987,10 @@ def initialize_session_states():
         st.session_state.overwrite_flg_rag = False
     if 'web_search' not in st.session_state:
         st.session_state.web_search = False
+    if 'cite_knowledge' not in st.session_state:
+        st.session_state.cite_knowledge = False
+    if 'diagram_mode' not in st.session_state:
+        st.session_state.diagram_mode = False
     if 'book_selected' in st.session_state:
         st.session_state.book_selected = []
     if 'dl_type' not in st.session_state:
@@ -1340,6 +1345,63 @@ def _render_attachment_link_row(seq_key, uploaded_file_path, file_name, file_typ
         f'</div>',
         unsafe_allow_html=True,
     )
+
+
+_MERMAID_LOCAL_PATH = "static/mermaid.min.js"
+
+
+def _mermaid_runtime():
+    """Return (script_tag, ok). Prefer a vendored copy so closed networks work;
+    fall back to the CDN when it is absent."""
+    try:
+        if os.path.exists(_MERMAID_LOCAL_PATH):
+            with open(_MERMAID_LOCAL_PATH, encoding="utf-8") as f:
+                return f"<script>{f.read()}</script>", True
+    except Exception:
+        pass
+    return ('<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js">'
+            '</script>'), False
+
+
+def _render_mermaid(code, height=420):
+    """Render one Mermaid diagram in an iframe, with the source as a fallback."""
+    script, _local = _mermaid_runtime()
+    _esc = html.escape(code)
+    st.components.v1.html(
+        f"""{script}
+<div class="mermaid">{_esc}</div>
+<script>
+  try {{
+    mermaid.initialize({{ startOnLoad: true, securityLevel: 'loose' }});
+  }} catch (e) {{
+    // Runtime unavailable (offline without a vendored copy): show the source
+    document.querySelector('.mermaid').innerHTML =
+      '<pre style="white-space:pre-wrap;font-size:12px">{_esc}</pre>';
+  }}
+</script>
+<style>body {{ margin:0; background:transparent; }}</style>""",
+        height=height,
+    )
+
+
+def render_response_markdown(text, allow_html=True):
+    """st.markdown the body, but hand ```mermaid fences to the diagram renderer.
+
+    Falls back to plain markdown when the text has no mermaid fence, so every
+    existing call site behaves exactly as before.
+    """
+    text = text or ""
+    if "```mermaid" not in text:
+        st.markdown(text, unsafe_allow_html=allow_html)
+        return
+    for i, part in enumerate(re.split(r"```mermaid\s*\n(.*?)```", text, flags=re.S)):
+        if i % 2 == 1:                      # capture group = diagram source
+            code = part.strip()
+            if code:
+                # Grow the frame with the diagram so tall graphs are not clipped
+                _render_mermaid(code, height=min(900, 220 + 26 * code.count("\n")))
+        elif part.strip():
+            st.markdown(part, unsafe_allow_html=allow_html)
 
 
 def show_uploaded_files_memory(seq_key, file_path, file_name, file_type):
@@ -7868,7 +7930,7 @@ def main():
                         content_text = "**"+v2["setting"]["name"]+" ("+v2["response"]["timestamp"]+"):**\n\n"+v2["response"]["text"]
                         download_data.append({"role": v2["response"]["role"], "content": content_text})
 #                        st.markdown(content_text.replace("\n", "<br>").replace("#", ""), unsafe_allow_html=True)
-                        st.markdown(content_text, unsafe_allow_html=True)
+                        render_response_markdown(content_text)
                         if "image" in v2:
                             for gen_content in v2["image"].values():
                                 download_data.append({"role": v2["response"]["role"], "image": st.session_state.session.session_folder_path +"contents/"+ gen_content["file_name"]})
@@ -8672,6 +8734,18 @@ def main():
             )
         else:
             st.session_state.include_query = False
+
+        # Output options: reference the KNOWLEDGE actually used, and ask for
+        # tables / Mermaid diagrams in the explanation.
+        _out_col1, _out_col2 = st.columns(2)
+        st.session_state.cite_knowledge = _out_col1.checkbox(
+            "Reference Knowledge", value=st.session_state.cite_knowledge,
+            help="回答の末尾に、そのターンで実際に参照した KNOWLEDGE を「## 参照した知識」として列挙します（Web/BOOK の ## References とは別セクション）。",
+        )
+        st.session_state.diagram_mode = _out_col2.checkbox(
+            "Diagrams", value=st.session_state.diagram_mode,
+            help="説明の中で Markdown の表と Mermaid 図（```mermaid）を使うようLLMに指示します。図は WebUI 上でレンダリングされます。",
+        )
 
         # Private Mode / Thinking Mode
         _mode_col1, _mode_col2 = st.columns(2)
@@ -9858,6 +9932,8 @@ def main():
                     "RAG_QUERY_GENE":    st.session_state.RAG_query_gene,
                     "WEB_SEARCH":        st.session_state.web_search,
                     "WEB_SEARCH_ENGINE": st.session_state.get("web_search_engine", ""),
+                    "CITE_KNOWLEDGE":    st.session_state.cite_knowledge,
+                    "DIAGRAM_MODE":      st.session_state.diagram_mode,
                     "PRIVATE_MODE":      st.session_state.private_mode,
                     "THINKING_MODE":     st.session_state.thinking_mode,
                 }
@@ -10324,6 +10400,8 @@ def main():
             # INSERT_CITATIONS not set explicitly — defaults to True in
             # DigiM_Execute._parse_execution_settings, so the citation injector
             # fires automatically whenever there are citable sources.
+            execution["CITE_KNOWLEDGE"] = st.session_state.cite_knowledge
+            execution["DIAGRAM_MODE"] = st.session_state.diagram_mode
             execution["PRIVATE_MODE"] = st.session_state.private_mode
             execution["THINKING_MODE"] = st.session_state.thinking_mode
             # User Memory: current checkbox state takes top priority (reflected immediately regardless of Save)

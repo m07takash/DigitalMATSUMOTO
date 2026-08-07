@@ -1802,6 +1802,19 @@ Practice JSON のチェーンで以下の TYPE が使えます：
 
 **プロンプト側の強制**: `Citation Injector` プロンプト末尾に「References が 0 件になる場合は本文の本文だけを一字一句そのまま返す。**説明・弁解・メタコメントは一切出力しない**」を厳守指示として明記。加えて Execute 側で **`[N]` マーカーも `## References` も含まれない出力** は採用せず元本文を維持するガードあり（[DigiM_Execute.py `citation_inject` ブロック](DigiM_Execute.py) の length + marker 判定）。プロンプトを無視して LLM が「対応関係が見つかりません」等の弁解文を返しても本文が守られる。
 
+#### Reference Knowledge / Diagrams（サイドバーの出力オプション）
+
+Chat サイドバーの2つのチェックボックスで、回答への付加要素を切り替えます。
+
+| チェックボックス | execution キー | 動作 |
+|---|---|---|
+| **Reference Knowledge** | `CITE_KNOWLEDGE` | 回答末尾に、そのターンで実際に参照した **KNOWLEDGE** を `## 参照した知識` として列挙。`## References`（Web/BOOK）とは**別セクション**。BOOK は References 側に出るため除外 |
+| **Diagrams** | `DIAGRAM_MODE` | 説明の中で **Markdown の表**と **Mermaid 図**（```mermaid フェンス）を使うようメインプロンプト末尾に指示を追加 |
+
+**Reference Knowledge**: `## References` が LLM による追加パスなのに対し、こちらは検索ログ（`knowledge_selected`）から**コードで決定的に生成**します。したがって引用インジェクタが失敗しても影響を受けず、引用対象（Web/BOOK）が皆無のターンでも単独で機能します。Vector チャンク（dict）と PageIndex / Graph の LOG_TEMPLATE 文字列の両形式に対応し、`(RAG名, タイトル)` で重複排除して最大20件。
+
+**Diagrams**: Mermaid ブロックは WebUI 側の [`render_response_markdown`](WebDigiMatsuAgent.py) が本文から切り出し、iframe 内でレンダリングします（表は Markdown のまま素通し）。Mermaid ランタイムは **`static/mermaid.min.js` があればそれをインライン展開**し、無ければ CDN を参照します。**閉域環境では `static/mermaid.min.js` を配置**してください（未配置かつオフラインの場合は図のソースをそのまま表示するフォールバック）。```mermaid フェンスを含まない回答は従来どおり `st.markdown` に素通しされるため、既存表示への影響はありません。
+
 #### 動作モデル
 
 ```

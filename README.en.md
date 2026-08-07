@@ -1807,6 +1807,19 @@ After the main LLM generates its response, a lightweight LLM runs an **additiona
                           Visible in chat / digest pipeline / next-turn memory
 ```
 
+#### Reference Knowledge / Diagrams (sidebar output options)
+
+Two Chat-sidebar checkboxes control what gets appended to the answer.
+
+| Checkbox | execution key | Behaviour |
+|---|---|---|
+| **Reference Knowledge** | `CITE_KNOWLEDGE` | Appends a `## 参照した知識` section listing the **KNOWLEDGE** chunks the turn actually used - a **separate section** from `## References` (web/BOOK). BOOK entries are skipped since they already appear under References |
+| **Diagrams** | `DIAGRAM_MODE` | Appends an instruction to the main prompt asking for **Markdown tables** and **Mermaid diagrams** (```mermaid fences) where they clarify the explanation |
+
+**Reference Knowledge**: unlike `## References` (an extra LLM pass), this section is built **deterministically in code** from the retrieval log (`knowledge_selected`). It is therefore unaffected by citation-injector failures and still fires on turns with nothing citable. Handles both Vector chunks (dicts) and PageIndex / Graph LOG_TEMPLATE strings, de-duplicated by `(rag_name, title)`, capped at 20 entries.
+
+**Diagrams**: Mermaid blocks are split out of the body by [`render_response_markdown`](WebDigiMatsuAgent.py) and rendered inside an iframe (tables pass through as plain Markdown). The Mermaid runtime is **inlined from `static/mermaid.min.js` when that file exists**, falling back to the CDN otherwise - **place `static/mermaid.min.js` for closed networks** (without it and offline, the diagram source is shown verbatim). Responses with no ```mermaid fence go straight to `st.markdown`, so existing rendering is untouched.
+
 #### What is and isn't cited
 
 | Kind | Meaning | Cited? |
