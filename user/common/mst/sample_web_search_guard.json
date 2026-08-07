@@ -1,0 +1,24 @@
+{
+    "_comment": "Web検索APIへ送る前のガードレール設定。運用時は web_search_guard.json にコピーして編集する（このsampleは配布用）。MODE: mask=マスクして検索続行 / block=検索中止 / off=無効。RULES を省略すると DigiM_Guardrail.DEFAULT_RULES が使われる。",
+    "MODE": "mask",
+    "REPLACEMENT": "[REDACTED:{name}]",
+    "KEYWORDS": [],
+    "KEYWORD_RULE_NAME": "custom_keyword",
+    "RULES": [
+        {"name": "anthropic_api_key", "pattern": "sk-ant-[A-Za-z0-9_\\-]{20,}"},
+        {"name": "openai_api_key", "pattern": "sk-(?!ant-)[A-Za-z0-9_\\-]{20,}"},
+        {"name": "github_token", "pattern": "gh[pousr]_[A-Za-z0-9]{30,}"},
+        {"name": "aws_access_key_id", "pattern": "AKIA[0-9A-Z]{16}"},
+        {"name": "google_api_key", "pattern": "AIza[0-9A-Za-z_\\-]{35}"},
+        {"name": "slack_token", "pattern": "xox[baprs]-[0-9A-Za-z\\-]{10,}"},
+        {"name": "jwt", "pattern": "eyJ[A-Za-z0-9_\\-]+\\.eyJ[A-Za-z0-9_\\-]+\\.[A-Za-z0-9_\\-]+"},
+        {"name": "private_key_block", "pattern": "-----BEGIN[A-Z ]*PRIVATE KEY-----[\\s\\S]*?-----END[A-Z ]*PRIVATE KEY-----"},
+        {"name": "bearer_token", "pattern": "[Bb]earer\\s+[A-Za-z0-9._\\-]{20,}"},
+        {"name": "credential_assignment", "pattern": "(?i)\\b(api[_\\-]?key|secret[_\\-]?key|secret|token|password|passwd|pwd)\\b\\s*[:=]\\s*[\"']?[^\\s\"',;]{6,}"},
+        {"name": "email", "pattern": "[A-Za-z0-9._%+\\-]+@[A-Za-z0-9.\\-]+\\.[A-Za-z]{2,}"},
+        {"name": "jp_mobile", "pattern": "\\b0[789]0[-\\s]?\\d{4}[-\\s]?\\d{4}\\b"},
+        {"name": "jp_landline", "pattern": "\\b0\\d{1,4}-\\d{1,4}-\\d{4}\\b"},
+        {"name": "credit_card", "pattern": "\\b(?:\\d[ \\-]?){13,19}\\b", "validator": "luhn"},
+        {"name": "jp_mynumber", "pattern": "\\b\\d{12}\\b", "enabled": false}
+    ]
+}

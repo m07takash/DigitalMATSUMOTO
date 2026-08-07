@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 
 import DigiM_Util as dmu
 import DigiM_ToolRegistry as dmtr
+import DigiM_Guardrail as dmg
 
 
 _INPUT_TEXT = {
@@ -28,6 +29,14 @@ _INPUT_TEXT = {
 # Web search (Perplexity AI)
 def WebSearch_PerplexityAI(service_info, user_info, session_id, session_name, agent_file,
                            input, import_contents=[], add_info={}):
+    # Outbound guardrail: the query is built from the user's chat input, so
+    # redact secrets/PII before it reaches this third-party API. Applied per
+    # engine (not just in the dispatcher) because each engine is also
+    # registered as its own tool and can be invoked directly.
+    input, _guard_findings, _guard_blocked = dmg.guard_web_query(input)
+    if _guard_blocked:
+        return service_info, user_info, dmg.block_message(_guard_findings), []
+
     if os.path.exists("system.env"):
         load_dotenv("system.env")
     api_key = os.getenv("PERPLEXITY_API_KEY")
@@ -68,6 +77,14 @@ def WebSearch_PerplexityAI(service_info, user_info, session_id, session_name, ag
 # Web search (OpenAI web_search)
 def WebSearch_OpenAI(service_info, user_info, session_id, session_name, agent_file,
                      input, import_contents=[], add_info={}):
+    # Outbound guardrail: the query is built from the user's chat input, so
+    # redact secrets/PII before it reaches this third-party API. Applied per
+    # engine (not just in the dispatcher) because each engine is also
+    # registered as its own tool and can be invoked directly.
+    input, _guard_findings, _guard_blocked = dmg.guard_web_query(input)
+    if _guard_blocked:
+        return service_info, user_info, dmg.block_message(_guard_findings), []
+
     from openai import OpenAI
     if os.path.exists("system.env"):
         load_dotenv("system.env")
@@ -104,6 +121,14 @@ def WebSearch_OpenAI(service_info, user_info, session_id, session_name, agent_fi
 # Web search (Azure OpenAI Service — Responses API with web_search_preview)
 def WebSearch_AzureOpenAI(service_info, user_info, session_id, session_name, agent_file,
                           input, import_contents=[], add_info={}):
+    # Outbound guardrail: the query is built from the user's chat input, so
+    # redact secrets/PII before it reaches this third-party API. Applied per
+    # engine (not just in the dispatcher) because each engine is also
+    # registered as its own tool and can be invoked directly.
+    input, _guard_findings, _guard_blocked = dmg.guard_web_query(input)
+    if _guard_blocked:
+        return service_info, user_info, dmg.block_message(_guard_findings), []
+
     from openai import AzureOpenAI
     if os.path.exists("system.env"):
         load_dotenv("system.env")
@@ -150,6 +175,14 @@ def WebSearch_AzureOpenAI(service_info, user_info, session_id, session_name, age
 # Web search (Google Grounding Search)
 def WebSearch_Google(service_info, user_info, session_id, session_name, agent_file,
                      input, import_contents=[], add_info={}):
+    # Outbound guardrail: the query is built from the user's chat input, so
+    # redact secrets/PII before it reaches this third-party API. Applied per
+    # engine (not just in the dispatcher) because each engine is also
+    # registered as its own tool and can be invoked directly.
+    input, _guard_findings, _guard_blocked = dmg.guard_web_query(input)
+    if _guard_blocked:
+        return service_info, user_info, dmg.block_message(_guard_findings), []
+
     from google import genai
     from google.genai import types
     if os.path.exists("system.env"):
@@ -184,6 +217,14 @@ def WebSearch_Google(service_info, user_info, session_id, session_name, agent_fi
 # Web search (Anthropic Claude server-side web_search tool)
 def WebSearch_Claude(service_info, user_info, session_id, session_name, agent_file,
                      input, import_contents=[], add_info={}):
+    # Outbound guardrail: the query is built from the user's chat input, so
+    # redact secrets/PII before it reaches this third-party API. Applied per
+    # engine (not just in the dispatcher) because each engine is also
+    # registered as its own tool and can be invoked directly.
+    input, _guard_findings, _guard_blocked = dmg.guard_web_query(input)
+    if _guard_blocked:
+        return service_info, user_info, dmg.block_message(_guard_findings), []
+
     import anthropic
     if os.path.exists("system.env"):
         load_dotenv("system.env")

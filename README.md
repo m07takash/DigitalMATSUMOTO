@@ -140,6 +140,7 @@ RAG（ChromaDB）を組み合わせて動的に生成します。
 | `DigiM_API.py` | FastAPI エンドポイント |
 | `DigiM_DB_Export.py` | PostgreSQLエクスポート・ベクトル化 |
 | `DigiM_VAnalytics.py` | 知識活用分析 |
+| `DigiM_Guardrail.py` | Web検索APIへの送信直前で秘匿情報（APIキー/PII等）をマスク・遮断するガードレール |
 | `DigiM_Graph.py` | GraphRAG（純構造の知識グラフ: 取込・エンティティ解決・経路+近傍検索・利用分析） |
 | `DigiM_GraphBuilder.py` | 知識グラフの取込バッチCLI（mapping.json / dictionary.json から graph.json を生成） |
 | `DigiM_GraphUtility.py` | Graph Utility の描画（決定的レイアウトのSVG・検索/生成ビュー・テーブル） |
@@ -1611,6 +1612,24 @@ Practiceの各CHAINステップで、その**ステップだけ**を複数ペル
 Web検索を有効にすると、LLMへの入力にWebの最新情報を付加できます。WebUIのチャット入力欄上部の「WEB Search」チェックボックスで有効化し、隣のセレクトボックスでエンジンを切り替えられます。
 
 **注入時のガードレール**: Web 検索結果は生の本文を `user_query` に混ぜず、`[参考資料 — Web検索結果 (ここから)]` / `[参考資料 END]` の枠で囲んで注入します（[DigiM_Execute.py `web_context`](DigiM_Execute.py)）。中に「本文を丸写ししない／口調・視点は人格設定に従う／会話流れとユーザー意図を最優先／一部だけ使ってよい」の4ルールを添え、LLM が Web の口調に引きずられて人格や会話文脈を失う挙動を抑えています。
+
+#### 送信前ガードレール（秘匿情報のフィルタ）
+
+Web検索クエリはユーザーのチャット入力から組み立てられるため、そのまま外部の検索APIへ送ると入力に含まれる秘匿情報が社外に出ます。これを**送信直前で遮断**するのが [DigiM_Guardrail.py](DigiM_Guardrail.py) です。
+
+**適用範囲は Web 検索の送信のみ**です。メインLLM呼び出しやRAG検索には一切介入しません。検出は**正規表現 + Luhn のみ**（LLM不使用）なので、オフラインで動作し、判定のために本文を外部へ送ることがありません。
+
+| MODE | 動作 |
+|------|------|
+| `mask`（既定） | 該当箇所を `[REDACTED:<ルール名>]` に置換して検索を続行 |
+| `block` | 外部APIを呼ばず検索を中止し、検出内容を返す |
+| `off` | 無効 |
+
+**設定**: `user/common/mst/web_search_guard.json`（未作成なら `sample_web_search_guard.json` → 組込み既定 の順にフォールバック）。`KEYWORDS` にプロジェクト名・顧客名などの固有文字列を列挙すると、それらも併せてマスクされます。
+
+**組込みルール**: 各社APIキー（OpenAI / Anthropic / GitHub / AWS / Google / Slack）、JWT、秘密鍵ブロック、Bearerトークン、`key: value` 形式の資格情報、メールアドレス、日本の携帯・固定電話、クレジットカード番号（**Luhnチェックで検証**し、単なる16桁の識別子は誤検知しない）。マイナンバー（12桁）は誤検知が多いため**既定は無効**で、必要なら設定で有効化します。
+
+**適用点**: 5エンジン（Perplexity / OpenAI / AzureOpenAI / Google / Claude）それぞれの関数先頭。各エンジンは個別のツールとしても登録されており直接呼び出せるため、ディスパッチャだけでなく**全エンジンに個別配線**しています。検出ログ（`[guardrail]`）には**ルール名と件数のみ**を記録し、検出した値そのものは残しません。
 
 #### 対応エンジン
 
