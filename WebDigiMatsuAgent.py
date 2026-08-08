@@ -7921,7 +7921,7 @@ def main():
     # Search / Situation / Personality Override / User Memory / Session
     # Summary / Skills all consolidated into the "Conversation Settings"
     # expander further down (see the block after the file uploader).
-    _hdr_history_cols = st.columns([1, 1, 1])
+    _hdr_history_cols = st.columns([1, 1, 1, 1])
     with _hdr_history_cols[0]:
         num_seq_visible = 10
         _sub_a, _sub_b = st.columns(2)
@@ -7939,6 +7939,14 @@ def main():
         elif option == "SUMMARY":
             st.session_state.chat_history_visible_dict = st.session_state.session.chat_history_active_omit_dict
     with _hdr_history_cols[2]:
+        # Timestamp next to speaker name in chat history — default off so
+        # long history reads clean, opt-in when the user needs precise timing.
+        st.session_state.chat_show_timestamps = st.checkbox(
+            "Show timestamps",
+            value=st.session_state.get("chat_show_timestamps", False),
+            help="When on, each chat bubble's header shows the message timestamp next to the speaker name.",
+        )
+    with _hdr_history_cols[3]:
         if st.button("Delete Chat History(Chk)", key="delete_chat_history"):
             if st.session_state.seq_memory:
                 for del_seq in st.session_state.seq_memory:
@@ -7972,8 +7980,14 @@ def main():
                     prompt_role = v2["prompt"]["role"]
                     if v.get("SETTING", {}).get("user_info", {}).get("USER_ID") is not None:
                         prompt_role = v["SETTING"]["user_info"]["USER_ID"]
+                    # Toggled by the "Show timestamps" checkbox at the top
+                    # of the chat header. Default is off — timestamps clutter
+                    # long histories; opt-in when timing matters.
+                    _show_ts = st.session_state.get("chat_show_timestamps", False)
+                    _u_ts = f" ({v2['prompt']['timestamp']})" if _show_ts else ""
+                    _a_ts = f" ({v2['response']['timestamp']})" if _show_ts else ""
                     with st.chat_message("human"):
-                        content_text = "**"+prompt_role+" ("+v2["prompt"]["timestamp"]+"):**\n\n"+v2["prompt"]["query"]["input"]
+                        content_text = f"**{prompt_role}{_u_ts}:**\n\n" + v2["prompt"]["query"]["input"]
                         download_data.append({"role": v2["prompt"]["role"], "content": content_text})
 #                        st.markdown(content_text.replace("\n", "<br>"), unsafe_allow_html=True)
                         st.markdown(content_text, unsafe_allow_html=True)
@@ -7981,7 +7995,7 @@ def main():
                             download_data.append({"role": v2["prompt"]["role"], "image": st.session_state.session.session_folder_path +"contents/"+ uploaded_content["file_name"]})
                             show_uploaded_files_memory(seq_key, st.session_state.session.session_folder_path +"contents/", uploaded_content["file_name"], uploaded_content["file_type"])
                     with st.chat_message("ai"):
-                        content_text = "**"+v2["setting"]["name"]+" ("+v2["response"]["timestamp"]+"):**\n\n"+v2["response"]["text"]
+                        content_text = f"**{v2['setting']['name']}{_a_ts}:**\n\n" + v2["response"]["text"]
                         download_data.append({"role": v2["response"]["role"], "content": content_text})
 #                        st.markdown(content_text.replace("\n", "<br>").replace("#", ""), unsafe_allow_html=True)
                         render_response_markdown(content_text)
