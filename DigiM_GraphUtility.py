@@ -256,12 +256,19 @@ def _unified_edge_style(ei, usage):
 
 
 def render_unified_svg(usage, width=880, height=560, font_size=11,
-                        show_legend=False):
+                        show_legend=False, show_labels=True):
     """Unified retrieval+generation view. See _unified_node_style /
     _unified_edge_style for the color precedence. Seeds get an underlined
     label to distinguish them from other emphasized nodes. Callers should
     render the legend externally via `unified_legend_html()` and pass
-    `show_legend=False` (the default)."""
+    `show_legend=False` (the default).
+
+    `show_labels=True` (default) draws every node / edge label inline.
+    `show_labels=False` hides them by default and reveals a single label on
+    hover — used when the graph carries sensitive / niche node names that
+    shouldn't be visible during demos. Both modes still expose the label
+    via a native SVG `<title>` tooltip on the circle, so accessibility
+    (screen readers, browser hover) still works either way."""
     graph = usage["graph"]
     pos = spring_layout(graph)
     pad = 60
@@ -270,9 +277,26 @@ def render_unified_svg(usage, width=880, height=560, font_size=11,
     def sx(nid): return pad + pos[nid][0] * (width - 2 * pad)
     def sy(nid): return pad + pos[nid][1] * (height - 2 * pad)
 
+    # SVG-scoped CSS: when show_labels is off, hide the .gu-label class by
+    # default and reveal only the one whose parent <g class="gu-item"> is
+    # being hovered. Kept inside the SVG so it doesn't leak to the rest of
+    # the page.
+    hover_css = ""
+    if not show_labels:
+        hover_css = (
+            '<style>'
+            '.gu-label{opacity:0;pointer-events:none;transition:opacity 80ms}'
+            '.gu-item:hover .gu-label{opacity:1}'
+            '.gu-item:hover circle,.gu-item:hover line{stroke-width:2.4}'
+            '</style>'
+        )
+
     parts = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" '
              f'height="{height}" viewBox="0 0 {width} {height}" '
-             f'style="background:#ffffff;font-family:sans-serif;max-width:100%">']
+             f'style="background:#ffffff;font-family:sans-serif;max-width:100%">',
+             hover_css]
+
+    label_cls = ' class="gu-label"' if not show_labels else ""
 
     # Edges: bg → search-only → emphasized (missed/output) so hot edges stay on top.
     _tier = {"bg": 0, "search": 1, "hi": 2, "lo": 2, "missed": 3}
@@ -282,17 +306,25 @@ def render_unified_svg(usage, width=880, height=560, font_size=11,
             continue
         stroke, w, opacity, tier = _unified_edge_style(ei, usage)
         x1, y1, x2, y2 = sx(e["source"]), sy(e["source"]), sx(e["target"]), sy(e["target"])
-        line = (f'<line x1="{x1:.0f}" y1="{y1:.0f}" x2="{x2:.0f}" y2="{y2:.0f}" '
-                f'stroke="{stroke}" stroke-width="{w}" '
-                f'stroke-opacity="{opacity:.2f}">'
-                f'<title>{html.escape(e["relation"])}</title></line>')
+        # When hover-labels are on, each edge is a group so hover on the
+        # line reveals its own label. When labels are always on, keep the
+        # simpler line + optional label structure.
+        line_inner = (f'<line x1="{x1:.0f}" y1="{y1:.0f}" x2="{x2:.0f}" y2="{y2:.0f}" '
+                      f'stroke="{stroke}" stroke-width="{w}" '
+                      f'stroke-opacity="{opacity:.2f}">'
+                      f'<title>{html.escape(e["relation"])}</title></line>')
         emph_label = ""
         if tier in ("hi", "lo", "missed"):
             mx, my = (x1 + x2) / 2, (y1 + y2) / 2
-            emph_label = (f'<text x="{mx:.0f}" y="{my - 4:.0f}" '
+            emph_label = (f'<text{label_cls} x="{mx:.0f}" y="{my - 4:.0f}" '
                           f'font-size="{font_size - 2}" fill="{stroke}" '
                           f'text-anchor="middle">{html.escape(e["relation"])}</text>')
-        _tiered_edges.append((_tier[tier], line, emph_label))
+        if show_labels:
+            grouped = line_inner
+        else:
+            grouped = f'<g class="gu-item">{line_inner}{emph_label}</g>'
+            emph_label = ""  # label already inside the group
+        _tiered_edges.append((_tier[tier], grouped, emph_label))
     _tiered_edges.sort(key=lambda t: t[0])
     for _, line, label in _tiered_edges:
         parts.append(line)
@@ -310,12 +342,13 @@ def render_unified_svg(usage, width=880, height=560, font_size=11,
         label_fill = COL_TEXT if emph else COL_TEXT_DIM
         weight = "600" if emph else "400"
         text_deco = ' text-decoration="underline"' if nid in seeds else ""
-        g = (f'<g><circle cx="{x:.0f}" cy="{y:.0f}" r="{r}" fill="{fill}" '
+        _group_cls = ' class="gu-item"' if not show_labels else ""
+        g = (f'<g{_group_cls}><circle cx="{x:.0f}" cy="{y:.0f}" r="{r}" fill="{fill}" '
              f'stroke="{stroke}" stroke-width="1.5" '
              f'fill-opacity="{fop:.2f}" stroke-opacity="{sop:.2f}">'
              f'<title>{html.escape(n["name"])} ({html.escape(n.get("type", ""))})</title>'
              f'</circle>'
-             f'<text x="{x:.0f}" y="{y + r + font_size:.0f}" font-size="{font_size}" '
+             f'<text{label_cls} x="{x:.0f}" y="{y + r + font_size:.0f}" font-size="{font_size}" '
              f'fill="{label_fill}" font-weight="{weight}" text-anchor="middle"'
              f'{text_deco}>{html.escape(n["name"])}</text></g>')
         _tiered_nodes.append((_tier[tier], g))
@@ -580,11 +613,16 @@ def unified_usage_tables_html(usage):
     return {"nodes_html": nodes_table, "edges_html": edges_table}
 
 
-def render_unified_png(usage, width=880, height=560, dpi=150):
+def render_unified_png(usage, width=880, height=560, dpi=150,
+                        show_labels=True):
     """PNG rendering of the unified view via matplotlib. Same color scheme
     as render_unified_svg. Returns raw PNG bytes suitable for
     st.download_button. matplotlib is already a project dependency so no
-    new install is needed."""
+    new install is needed.
+
+    `show_labels=False` produces a labels-hidden variant used when the
+    graph carries sensitive names (e.g. a personal Identity DB during
+    demos). Nodes / edges are still drawn — just the text is omitted."""
     import io
     import matplotlib
     matplotlib.use("Agg")
@@ -625,7 +663,7 @@ def render_unified_png(usage, width=880, height=560, dpi=150):
         x2, y2 = sx(e["source"]) + 0, sy(e["source"]) + 0  # placeholder; overwritten below
         x2, y2 = sx(e["target"]), sy(e["target"])
         ax.plot([x1, x2], [y1, y2], color=stroke, linewidth=w, alpha=opacity, zorder=1 + _tier[tier])
-        if tier in ("hi", "lo", "missed"):
+        if show_labels and tier in ("hi", "lo", "missed"):
             mx, my = (x1 + x2) / 2, (y1 + y2) / 2
             ax.text(mx, my + 0.008, e.get("relation", ""),
                     ha="center", va="bottom", fontsize=6, color=stroke,
@@ -644,6 +682,8 @@ def render_unified_png(usage, width=880, height=560, dpi=150):
         size = (r * 5) ** 1.4
         ax.scatter([x], [y], s=size, c=fill, edgecolors=stroke, linewidths=1.2,
                     alpha=fop, zorder=5 + _tier[tier])
+        if not show_labels:
+            continue  # sensitive-name demo mode — skip node labels entirely
         emph = tier in ("hi", "lo", "search", "missed")
         label_color = COL_TEXT if emph else COL_TEXT_DIM
         label_weight = "bold" if emph else "normal"
