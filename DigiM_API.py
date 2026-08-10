@@ -83,8 +83,29 @@ class InputData(BaseModel):
     rag_query_gene: Optional[bool] = None
     web_search: Optional[bool] = None
     web_search_engine: Optional[str] = None
+    # When ON (default in DigiM_Execute), web-search results are wrapped in
+    # an instruction telling the LLM to treat them as reference material
+    # only. Turn OFF to pass the raw snippet through unwrapped.
+    web_search_guardrail: Optional[bool] = None
     private_mode: Optional[bool] = None
     thinking_mode: Optional[bool] = None
+    # Multi-turn Thinking upper bound (1-5). Only relevant when
+    # thinking_mode is on. 1 = legacy single-pass behaviour.
+    max_thinking_turns: Optional[int] = None
+    # Output-side toggles added in the recent WebUI refresh — each maps to a
+    # corresponding execution dict key consumed by DigiM_Execute.
+    #   insert_citations   → INSERT_CITATIONS (Reference Info section with
+    #                         [N] markers for Web / Book sources)
+    #   cite_knowledge     → CITE_KNOWLEDGE  (Reference Knowledge section
+    #                         built by the second-pass selector agent)
+    #   diagram_mode       → DIAGRAM_MODE    (asks LLM to use tables +
+    #                         Mermaid diagrams where they clarify)
+    #   emphasis_mode      → EMPHASIS_MODE   (asks LLM to bold key points
+    #                         and use headings on long answers)
+    insert_citations: Optional[bool] = None
+    cite_knowledge: Optional[bool] = None
+    diagram_mode: Optional[bool] = None
+    emphasis_mode: Optional[bool] = None
     # User memory (information about the dialogue partner)
     #   user_memory_layers takes top priority when set (subset of ["persona","nowaday","history"] / [] turns all off)
     #   If unset and user_memory=True, all layers are ON; False turns all off
@@ -436,12 +457,25 @@ def _build_execution_dict(data: InputData) -> dict:
         "RAG_QUERY_GENE": data.rag_query_gene,
         "WEB_SEARCH": data.web_search,
         "WEB_SEARCH_ENGINE": data.web_search_engine,
+        "WEB_SEARCH_GUARDRAIL": data.web_search_guardrail,
         "PRIVATE_MODE": data.private_mode,
         "THINKING_MODE": data.thinking_mode,
+        "INSERT_CITATIONS": data.insert_citations,
+        "CITE_KNOWLEDGE": data.cite_knowledge,
+        "DIAGRAM_MODE": data.diagram_mode,
+        "EMPHASIS_MODE": data.emphasis_mode,
     }
     for key, val in _flag_map.items():
         if val is not None:
             execution[key] = val
+    # Multi-turn Thinking cap: mirror the WebUI clamp so a stray large
+    # value from an API caller can't blow up cost / latency.
+    if data.max_thinking_turns is not None:
+        try:
+            _mt = int(data.max_thinking_turns)
+        except (TypeError, ValueError):
+            _mt = 1
+        execution["MAX_THINKING_TURNS"] = max(1, min(_mt, 5))
 
     # User memory enable/disable (Execute reads execution["USER_MEMORY_LAYERS"]
     # as top priority; if unset, falls back to users.json / USER_MEMORY_DEFAULT_LAYERS)

@@ -170,7 +170,7 @@ location /demo/ {
 2. **Agent file** ドロップダウンから使うエージェントを選択
 3. **Engine (LLM)** ドロップダウンからモデルを選択（未選択の場合はエージェント既定）
 4. **Session ID** は空のままにすると新規セッションを自動採番。同じ会話を続ける場合は既存 ID を貼付
-5. 実行フラグ（`memory_use` / `rag_query_gene` / `meta_search` / `web_search` / `thinking_mode` / `private_mode`）で挙動を切替
+5. 実行フラグ（`memory_use` / `rag_query_gene` / `meta_search` / `web_search` / `web_search_guardrail` / `thinking_mode` / `max_thinking_turns` / `private_mode` / `insert_citations` / `cite_knowledge` / `diagram_mode` / `emphasis_mode`）で挙動を切替
 6. 入力欄にメッセージを入力し **Send** ボタン、または `Ctrl+Enter`（Mac: `⌘+Enter`）
 
 **チャット履歴表示**:
@@ -182,6 +182,10 @@ location /demo/ {
 - **web_search** を ON にしてリアルタイム性を見せる
 - **thinking_mode** を ON にして「エージェントが考えている感」を強調
 - **private_mode** ON で「メモリに残らない機微な会話」を示す
+- **insert_citations** ON で応答末尾の `## Reference Info` に Web / Book のソース一覧を表示
+- **cite_knowledge** ON で実際に参照した内部 KNOWLEDGE を `## Reference Knowledge` として一覧化（Knowledge Utility スコア付き）
+- **diagram_mode** ON で回答内に Markdown 表と Mermaid 図を織り込ませる
+- **emphasis_mode** ON で要点の太字強調と長い回答の見出し整理を促す
 
 **添付ファイル（📎 Attach）**:
 - 入力欄の上に **📎 Attach** ボタンがあり、複数ファイルを選択できます

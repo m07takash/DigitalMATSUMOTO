@@ -2742,7 +2742,13 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
   "rag_query_gene": true,
   "web_search": false,
   "web_search_engine": "OpenAI",
+  "web_search_guardrail": true,
   "thinking_mode": false,
+  "max_thinking_turns": 1,
+  "insert_citations": true,
+  "cite_knowledge": false,
+  "diagram_mode": false,
+  "emphasis_mode": false,
   "user_memory": true,
   "user_memory_layers": ["persona", "nowaday", "history"],
   "session_summary_enabled": true,
@@ -2782,8 +2788,14 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
 | `rag_query_gene` | `true` | RAG検索用クエリ生成 |
 | `web_search` | `false` | Web検索（`true` にすると `web_search_engine` で指定したエンジンで検索） |
 | `web_search_engine` | `"OpenAI"` | Web検索エンジン（`Perplexity` / `OpenAI` / `Google`）。`web_search` が `false` の場合は使用されない |
+| `web_search_guardrail` | `true` | Web検索結果を「参考資料」ラップで囲み、LLMがトーン/文脈を保つよう指示。`false` にすると素の検索結果テキストがそのまま渡る |
 | `private_mode` | `false` | Private Mode。`true` にすると `private: true` のRAGデータが検索対象外になる |
 | `thinking_mode` | `false` | Thinking Mode。`true` にするとAIが質問を分析してHabit・Web検索・RAGクエリ生成・Book追加を動的に判定する |
+| `max_thinking_turns` | `1` | Thinking を何ターンまで走らせるか（1〜5に自動 clamp）。2以上にすると、sufficient=false のとき予備Web検索→次ターンThinkingを繰り返す。`thinking_mode=true` の時のみ意味を持つ |
+| `insert_citations` | `true` | 応答本文に `[N]` 引用マーカーを挿入し、末尾に `## Reference Info` セクション（Web / Book のソース一覧）を付ける |
+| `cite_knowledge` | `false` | 応答生成後に判定エージェント（`agent_80DigiMKnowledgeUsageSelector.json`）が実際に参照したKNOWLEDGEチャンクを判定し、末尾に `## Reference Knowledge` セクションを付ける（Knowledge Utility スコア併記） |
+| `diagram_mode` | `false` | LLMにMarkdownの表と Mermaid 図（```mermaid）を用いた説明を指示 |
+| `emphasis_mode` | `false` | LLMに要点の**太字**強調 + 見出し・箇条書き整理を指示 |
 | `user_memory` | （未指定） | ユーザーメモリ（対話相手についての情報）を使うか。`true`=全層ON / `false`=全Off / 未指定= `users.json` の `Allowed["User Memory Layers"]`（無ければ `USER_MEMORY_DEFAULT_LAYERS`）に従う |
 | `user_memory_layers` | （未指定） | 有効化する層を明示指定（`["persona","nowaday","history"]` のサブセット、`[]` で全Off）。指定すると `user_memory` より優先。不正な層名は無視 |
 | `session_summary_enabled` | （未指定） | セッションサマリーを有効化するか（インライン切替）。指定すると `status.yaml` に保存され、この同じターンから注入が有効になる。未指定なら既存のセッション状態を維持 |
@@ -3007,7 +3019,13 @@ curl -s -X POST http://localhost:8899/run \
     "rag_query_gene": true,
     "web_search": false,
     "web_search_engine": "OpenAI",
-    "thinking_mode": false
+    "web_search_guardrail": true,
+    "thinking_mode": false,
+    "max_thinking_turns": 1,
+    "insert_citations": true,
+    "cite_knowledge": false,
+    "diagram_mode": false,
+    "emphasis_mode": false
   }' | python3 -m json.tool --no-ensure-ascii
 
 # 軽量実行（RAGクエリ生成OFF + メタ検索OFF）

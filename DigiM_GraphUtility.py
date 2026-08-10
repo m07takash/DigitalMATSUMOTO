@@ -256,19 +256,32 @@ def _unified_edge_style(ei, usage):
 
 
 def render_unified_svg(usage, width=880, height=560, font_size=11,
-                        show_legend=False, show_labels=True):
+                        show_legend=False, show_labels=None,
+                        label_mode="all"):
     """Unified retrieval+generation view. See _unified_node_style /
     _unified_edge_style for the color precedence. Seeds get an underlined
     label to distinguish them from other emphasized nodes. Callers should
     render the legend externally via `unified_legend_html()` and pass
     `show_legend=False` (the default).
 
-    `show_labels=True` (default) draws every node / edge label inline.
-    `show_labels=False` hides them by default and reveals a single label on
-    hover — used when the graph carries sensitive / niche node names that
-    shouldn't be visible during demos. Both modes still expose the label
-    via a native SVG `<title>` tooltip on the circle, so accessibility
-    (screen readers, browser hover) still works either way."""
+    `label_mode`:
+      * "all"     — every node/edge label inline (previous default).
+      * "colored" — only emphasized (hi/lo/search/missed) nodes and edges
+                    carry an inline label; background (unused) nodes stay
+                    unlabeled. Good for demos where you want to see WHICH
+                    coloured cluster relates to what without exposing every
+                    node's name.
+      * "hover"   — everything hidden by default, single label revealed on
+                    mouse-hover per node/edge. Safest for sensitive DBs.
+
+    `show_labels` is a legacy alias kept for backward compat:
+        True  → label_mode="all"; False → label_mode="hover".
+    When both are passed, `label_mode` wins."""
+    if show_labels is not None and label_mode == "all":
+        label_mode = "all" if show_labels else "hover"
+    if label_mode not in ("all", "colored", "hover"):
+        label_mode = "all"
+
     graph = usage["graph"]
     pos = spring_layout(graph)
     pad = 60
@@ -277,12 +290,12 @@ def render_unified_svg(usage, width=880, height=560, font_size=11,
     def sx(nid): return pad + pos[nid][0] * (width - 2 * pad)
     def sy(nid): return pad + pos[nid][1] * (height - 2 * pad)
 
-    # SVG-scoped CSS: when show_labels is off, hide the .gu-label class by
-    # default and reveal only the one whose parent <g class="gu-item"> is
-    # being hovered. Kept inside the SVG so it doesn't leak to the rest of
-    # the page.
+    # SVG-scoped CSS: in "hover" mode we hide any label by default and
+    # reveal only the one whose parent <g class="gu-item"> is being hovered.
+    # In "colored" mode we DON'T need hover CSS at all — emphasized labels
+    # are emitted inline, background labels are simply not drawn.
     hover_css = ""
-    if not show_labels:
+    if label_mode == "hover":
         hover_css = (
             '<style>'
             '.gu-label{opacity:0;pointer-events:none;transition:opacity 80ms}'
@@ -296,7 +309,15 @@ def render_unified_svg(usage, width=880, height=560, font_size=11,
              f'style="background:#ffffff;font-family:sans-serif;max-width:100%">',
              hover_css]
 
-    label_cls = ' class="gu-label"' if not show_labels else ""
+    # In hover mode every label gets the .gu-label class so the CSS above
+    # can toggle it. In other modes labels are always-visible plain <text>.
+    label_cls = ' class="gu-label"' if label_mode == "hover" else ""
+
+    def _keep_label(tier):
+        # Whether a label should be emitted at all for this tier.
+        if label_mode == "colored":
+            return tier in ("hi", "lo", "search", "missed")
+        return True  # all / hover both emit labels (hover just styles them hidden)
 
     # Edges: bg → search-only → emphasized (missed/output) so hot edges stay on top.
     _tier = {"bg": 0, "search": 1, "hi": 2, "lo": 2, "missed": 3}
@@ -306,24 +327,24 @@ def render_unified_svg(usage, width=880, height=560, font_size=11,
             continue
         stroke, w, opacity, tier = _unified_edge_style(ei, usage)
         x1, y1, x2, y2 = sx(e["source"]), sy(e["source"]), sx(e["target"]), sy(e["target"])
-        # When hover-labels are on, each edge is a group so hover on the
-        # line reveals its own label. When labels are always on, keep the
-        # simpler line + optional label structure.
         line_inner = (f'<line x1="{x1:.0f}" y1="{y1:.0f}" x2="{x2:.0f}" y2="{y2:.0f}" '
                       f'stroke="{stroke}" stroke-width="{w}" '
                       f'stroke-opacity="{opacity:.2f}">'
                       f'<title>{html.escape(e["relation"])}</title></line>')
         emph_label = ""
-        if tier in ("hi", "lo", "missed"):
+        # Only emphasized tiers have relation labels historically; that stays
+        # true across all modes (bg edges are visual clutter without a name).
+        if tier in ("hi", "lo", "missed") and _keep_label(tier):
             mx, my = (x1 + x2) / 2, (y1 + y2) / 2
             emph_label = (f'<text{label_cls} x="{mx:.0f}" y="{my - 4:.0f}" '
                           f'font-size="{font_size - 2}" fill="{stroke}" '
                           f'text-anchor="middle">{html.escape(e["relation"])}</text>')
-        if show_labels:
-            grouped = line_inner
-        else:
+        if label_mode == "hover":
+            # Wrap line + label in a hoverable group.
             grouped = f'<g class="gu-item">{line_inner}{emph_label}</g>'
             emph_label = ""  # label already inside the group
+        else:
+            grouped = line_inner
         _tiered_edges.append((_tier[tier], grouped, emph_label))
     _tiered_edges.sort(key=lambda t: t[0])
     for _, line, label in _tiered_edges:
@@ -342,15 +363,20 @@ def render_unified_svg(usage, width=880, height=560, font_size=11,
         label_fill = COL_TEXT if emph else COL_TEXT_DIM
         weight = "600" if emph else "400"
         text_deco = ' text-decoration="underline"' if nid in seeds else ""
-        _group_cls = ' class="gu-item"' if not show_labels else ""
+        _group_cls = ' class="gu-item"' if label_mode == "hover" else ""
+        # circle is always emitted; the <text> label is optional per mode.
+        _label_el = ""
+        if _keep_label(tier):
+            _label_el = (
+                f'<text{label_cls} x="{x:.0f}" y="{y + r + font_size:.0f}" '
+                f'font-size="{font_size}" fill="{label_fill}" font-weight="{weight}" '
+                f'text-anchor="middle"{text_deco}>{html.escape(n["name"])}</text>'
+            )
         g = (f'<g{_group_cls}><circle cx="{x:.0f}" cy="{y:.0f}" r="{r}" fill="{fill}" '
              f'stroke="{stroke}" stroke-width="1.5" '
              f'fill-opacity="{fop:.2f}" stroke-opacity="{sop:.2f}">'
              f'<title>{html.escape(n["name"])} ({html.escape(n.get("type", ""))})</title>'
-             f'</circle>'
-             f'<text{label_cls} x="{x:.0f}" y="{y + r + font_size:.0f}" font-size="{font_size}" '
-             f'fill="{label_fill}" font-weight="{weight}" text-anchor="middle"'
-             f'{text_deco}>{html.escape(n["name"])}</text></g>')
+             f'</circle>{_label_el}</g>')
         _tiered_nodes.append((_tier[tier], g))
     _tiered_nodes.sort(key=lambda t: t[0])
     for _, g in _tiered_nodes:
@@ -614,15 +640,21 @@ def unified_usage_tables_html(usage):
 
 
 def render_unified_png(usage, width=880, height=560, dpi=150,
-                        show_labels=True):
+                        show_labels=None, label_mode="all"):
     """PNG rendering of the unified view via matplotlib. Same color scheme
     as render_unified_svg. Returns raw PNG bytes suitable for
-    st.download_button. matplotlib is already a project dependency so no
-    new install is needed.
+    st.download_button.
 
-    `show_labels=False` produces a labels-hidden variant used when the
-    graph carries sensitive names (e.g. a personal Identity DB during
-    demos). Nodes / edges are still drawn — just the text is omitted."""
+    `label_mode` mirrors render_unified_svg:
+      * "all"     — label every node/edge
+      * "colored" — label only emphasized (hi/lo/search/missed) nodes/edges
+      * "hover"   — no labels drawn (PNG is static; hover isn't a thing —
+                    hover mode reduces to "no labels" for the PNG export)
+    `show_labels` is a legacy alias: True → "all", False → "hover"."""
+    if show_labels is not None and label_mode == "all":
+        label_mode = "all" if show_labels else "hover"
+    if label_mode not in ("all", "colored", "hover"):
+        label_mode = "all"
     import io
     import matplotlib
     matplotlib.use("Agg")
@@ -663,7 +695,10 @@ def render_unified_png(usage, width=880, height=560, dpi=150,
         x2, y2 = sx(e["source"]) + 0, sy(e["source"]) + 0  # placeholder; overwritten below
         x2, y2 = sx(e["target"]), sy(e["target"])
         ax.plot([x1, x2], [y1, y2], color=stroke, linewidth=w, alpha=opacity, zorder=1 + _tier[tier])
-        if show_labels and tier in ("hi", "lo", "missed"):
+        # Edge label rules match the SVG side: "all" and "colored" both
+        # emit only for emphasized tiers (bg edges have no readable name);
+        # "hover" mode emits nothing on the static PNG.
+        if label_mode in ("all", "colored") and tier in ("hi", "lo", "missed"):
             mx, my = (x1 + x2) / 2, (y1 + y2) / 2
             ax.text(mx, my + 0.008, e.get("relation", ""),
                     ha="center", va="bottom", fontsize=6, color=stroke,
@@ -682,9 +717,15 @@ def render_unified_png(usage, width=880, height=560, dpi=150,
         size = (r * 5) ** 1.4
         ax.scatter([x], [y], s=size, c=fill, edgecolors=stroke, linewidths=1.2,
                     alpha=fop, zorder=5 + _tier[tier])
-        if not show_labels:
-            continue  # sensitive-name demo mode — skip node labels entirely
+        # Node label rules per mode:
+        #   "hover"   — nothing (PNG is static)
+        #   "colored" — only emphasized tiers get a label; bg unlabeled
+        #   "all"     — everyone gets a label
         emph = tier in ("hi", "lo", "search", "missed")
+        if label_mode == "hover":
+            continue
+        if label_mode == "colored" and not emph:
+            continue
         label_color = COL_TEXT if emph else COL_TEXT_DIM
         label_weight = "bold" if emph else "normal"
         label_kwargs = dict(ha="center", va="top", fontsize=7,
