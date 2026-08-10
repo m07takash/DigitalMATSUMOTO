@@ -1621,10 +1621,21 @@ def generate_rag():
     cnt_add = 0
     cnt_extent = 0
 
+    # Per-RAG timing so "Update RAG が遅い" investigations have concrete data:
+    # each RAG logs its fetch / save / fin_flg phases separately, and a
+    # summary is printed at the end. All timings in seconds.
+    import time as _time_gr
+    _run_start = _time_gr.time()
+    _per_rag_timings = []
+
     # Fetch chunk data
     rag_data = []
     for rag_id, rag_setting in rag_mst_dict.items():
         if rag_setting["active"] == "Y":
+            _rag_start = _time_gr.time()
+            _t_fetch = _t_save = _t_fin = 0.0
+            _n_fetched = 0
+            _t0 = _time_gr.time()
             if rag_setting["input"] == "notion":
                 if rag_setting.get("data_type") == "pageindex":
                     rag_data = get_chunk_notion_pageindex(rag_setting["bucket"], rag_setting["data_name"], rag_setting["item_dict"], rag_setting.get("chk_dict"), rag_setting.get("date_dict"), rag_setting.get("category_dict"))
@@ -1649,6 +1660,9 @@ def generate_rag():
                     logger.warning("Excel input currently supports only pageindex")
             else:
                 logger.warning("No valid mode configured.")
+            _t_fetch = _time_gr.time() - _t0
+            _n_fetched = len(rag_data or [])
+            logger.info(f"[rag_timing] {rag_id}: fetch={_t_fetch:.2f}s pages={_n_fetched}")
 
             if rag_data:
                 # Keep the page IDs (copy before save_rag_chunk_db removes id)
@@ -1656,13 +1670,16 @@ def generate_rag():
 
                 # Save into ChromaDB
                 if rag_setting["data_type"] == "chromadb":
+                    _t0 = _time_gr.time()
                     cnt_add, cnt_extent = save_rag_chunk_db(rag_id, rag_data)
+                    _t_save = _time_gr.time() - _t0
                     cnt_total = cnt_add + cnt_extent
-                    logger.info(f"{rag_id} DB write done. added: {cnt_add}, total: {cnt_total}")
+                    logger.info(f"[rag_timing] {rag_id}: save={_t_save:.2f}s added={cnt_add} unchanged={cnt_extent}")
 
                     # Reflect the RAG-registration complete flag back to Notion (targets pages without fin_flg, so update all)
                     fin_flg = rag_setting.get("fin_flg", {})
                     if fin_flg and rag_setting["input"] == "notion":
+                        _t0 = _time_gr.time()
                         fin_cnt = 0
                         for page_id in page_ids_map.values():
                             for prop_name, prop_value in fin_flg.items():
@@ -1674,12 +1691,15 @@ def generate_rag():
                                     fin_cnt += 1
                                 except Exception as e:
                                     logger.warning(f"fin_flg update failed (page={page_id}, {prop_name}): {e}")
-                        logger.info(f"{rag_id}: fin_flg reflected to {fin_cnt} Notion pages")
+                        _t_fin = _time_gr.time() - _t0
+                        logger.info(f"[rag_timing] {rag_id}: fin_flg={_t_fin:.2f}s pages={fin_cnt}")
 
                 # Save into PageIndex (Notion-derived)
                 elif rag_setting["data_type"] == "pageindex":
+                    _t0 = _time_gr.time()
                     processed = save_rag_pageindex(rag_setting["bucket"], rag_data)
-                    logger.info(f"{rag_id} PageIndex write done. count: {len(processed)}")
+                    _t_save = _time_gr.time() - _t0
+                    logger.info(f"[rag_timing] {rag_id}: save={_t_save:.2f}s count={len(processed)}")
 
                     # Reflect the RAG-registration complete flag back to Notion (Notion input only)
                     fin_flg = rag_setting.get("fin_flg", {})
@@ -1702,8 +1722,10 @@ def generate_rag():
 
                 # Legacy PageIndex (CSV-style chunks with page_id)
                 elif rag_setting["data_type"] == "page_index":
+                    _t0 = _time_gr.time()
                     cnt_add, cnt_total = save_rag_pages(rag_id, rag_data)
-                    logger.info(f"{rag_id} page write done. pages: {cnt_total}")
+                    _t_save = _time_gr.time() - _t0
+                    logger.info(f"[rag_timing] {rag_id}: save={_t_save:.2f}s pages={cnt_total}")
 
                     # Reflect the RAG-registration complete flag back to Notion
                     fin_flg = rag_setting.get("fin_flg", {})
@@ -1753,6 +1775,9 @@ def generate_rag():
                                 sid for e in graph.get("edges", [])
                                 for sid in (e.get("source_ids") or [])
                             }
+                            _t_llm = 0.0
+                            _n_llm = 0
+                            _t_save_start = _time_gr.time()
                             for chunk in rag_data:
                                 _pid = chunk.get("id", "")
                                 if not _pid:
@@ -1773,7 +1798,10 @@ def generate_rag():
                                 _prompt = _dmg.GRAPH_EXTRACT_PROMPT % (
                                     ", ".join(_known[:50]), _text)
                                 try:
+                                    _t_llm_start = _time_gr.time()
                                     _raw = _extract_call(_prompt)
+                                    _t_llm += _time_gr.time() - _t_llm_start
+                                    _n_llm += 1
                                     _clean = _re_g.sub(
                                         r"^```(json)?|```$", "",
                                         str(_raw).strip(), flags=_re_g.M)
@@ -1806,8 +1834,11 @@ def generate_rag():
                                 _processed_pids.append(_pid)
                             _dmg.promote_props_to_edges(graph, dictionary)
                             _dmg.save_graph_atomic(graph_dir, graph)
+                            _t_save = _time_gr.time() - _t_save_start
                             logger.info(
-                                f"{rag_id} Graph incremental write done. pages: {len(_processed_pids)} "
+                                f"[rag_timing] {rag_id}: save={_t_save:.2f}s "
+                                f"llm_extract={_t_llm:.2f}s llm_calls={_n_llm} "
+                                f"new_pages={len(_processed_pids)} "
                                 f"(nodes now={len(graph.get('nodes', {}))}, edges now={len(graph.get('edges', []))})")
                         except Exception as _ge:
                             logger.exception(f"{rag_id} GraphRAG ingestion failed: {_ge}")
@@ -1815,6 +1846,7 @@ def generate_rag():
                         # Reflect fin_flg on Notion for the pages we ingested this run.
                         fin_flg = rag_setting.get("fin_flg", {})
                         if fin_flg and rag_setting["input"] == "notion" and _processed_pids:
+                            _t0 = _time_gr.time()
                             _fin_cnt = 0
                             for _pid in _processed_pids:
                                 for _pn, _pv in fin_flg.items():
@@ -1828,8 +1860,20 @@ def generate_rag():
                                     except Exception as _e:
                                         logger.warning(
                                             f"fin_flg update failed (page={_pid}, {_pn}): {_e}")
+                            _t_fin = _time_gr.time() - _t0
                             logger.info(
-                                f"{rag_id}: fin_flg reflected to {_fin_cnt} Notion pages")
+                                f"[rag_timing] {rag_id}: fin_flg={_t_fin:.2f}s pages={_fin_cnt}")
+
+            # Per-RAG total (Notion pull + save + fin_flg)
+            _rag_total = _time_gr.time() - _rag_start
+            _per_rag_timings.append((rag_id, _rag_total, _n_fetched))
+
+    # Summary sorted by total time so the slow RAG is at the top.
+    _per_rag_timings.sort(key=lambda t: -t[1])
+    _run_total = _time_gr.time() - _run_start
+    logger.info(f"[rag_timing] === Update RAG summary (total {_run_total:.1f}s, {len(_per_rag_timings)} RAGs) ===")
+    for rag_id, secs, npages in _per_rag_timings:
+        logger.info(f"[rag_timing]   {secs:6.2f}s  {rag_id}  (pages_fetched={npages})")
 
 # Delete a RAG database (Collection)
 def del_rag_db(ragdb_selected=[]):
