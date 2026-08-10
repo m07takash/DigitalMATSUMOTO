@@ -8533,26 +8533,32 @@ def main():
                                                             "<sub>(N/A counts as 0)</sub>",
                                                             unsafe_allow_html=True,
                                                         )
-                                                        _gu_header_cols = st.columns([3, 1])
+                                                        _gu_header_cols = st.columns([2, 2])
                                                         _gu_header_cols[0].markdown("**Knowledge Graph utilisation (unified view)**", unsafe_allow_html=True)
-                                                        # Sensitive-name safety: default OFF so an Identity DB
-                                                        # (which may hold personal / niche terms) doesn't display
-                                                        # its labels during demos. Mouse-hover on a node still
-                                                        # reveals that node's label individually.
-                                                        _gu_show_labels = _gu_header_cols[1].checkbox(
-                                                            "Show labels",
-                                                            value=st.session_state.get("gu_show_labels", False),
-                                                            key=f"gu_show_labels_ck_{_gu_rag_name}_{k}_{k2}",
-                                                            help="Off (default): labels appear only when you hover a node/edge. On: all labels shown at once. PNG export follows this setting.",
+                                                        # Sensitive-name safety: default is "hover" so an
+                                                        # Identity DB (which may hold personal / niche terms)
+                                                        # doesn't display its labels during demos.
+                                                        #   hover   — nothing shown; mouse-over reveals one label
+                                                        #   colored — labels only on colored (used-in-retrieval /
+                                                        #             used-in-output) nodes and edges
+                                                        #   all     — every node/edge label shown
+                                                        _gu_label_opts = ["hover", "colored", "all"]
+                                                        _gu_label_mode = _gu_header_cols[1].selectbox(
+                                                            "Labels",
+                                                            _gu_label_opts,
+                                                            index=_gu_label_opts.index(
+                                                                st.session_state.get("gu_label_mode", "hover")),
+                                                            key=f"gu_label_mode_sel_{_gu_rag_name}_{k}_{k2}",
+                                                            help="hover: nothing shown; mouse-over to reveal one. colored: label only coloured nodes/edges. all: every label shown. PNG export follows this setting.",
                                                         )
-                                                        st.session_state["gu_show_labels"] = _gu_show_labels
+                                                        st.session_state["gu_label_mode"] = _gu_label_mode
                                                         st.markdown(
                                                             _dgu_main.unified_legend_html(),
                                                             unsafe_allow_html=True,
                                                         )
                                                         st.markdown(
                                                             _dgu_main.render_unified_svg(_gu_usage, show_legend=False,
-                                                                                          show_labels=_gu_show_labels),
+                                                                                          label_mode=_gu_label_mode),
                                                             unsafe_allow_html=True,
                                                         )
                                                         # Seeds horizontal chip row + PNG download button
@@ -8560,7 +8566,7 @@ def main():
                                                         if _chip_html:
                                                             st.markdown(_chip_html, unsafe_allow_html=True)
                                                         try:
-                                                            _png_bytes = _dgu_main.render_unified_png(_gu_usage, show_labels=_gu_show_labels)
+                                                            _png_bytes = _dgu_main.render_unified_png(_gu_usage, label_mode=_gu_label_mode)
                                                             from datetime import datetime as _dt_dl
                                                             _dl_stamp = _dt_dl.now().strftime("%Y%m%d_%H%M%S")
                                                             st.download_button(

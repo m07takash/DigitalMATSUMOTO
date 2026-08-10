@@ -2731,7 +2731,13 @@ If the same session is in execution (LOCKED), it waits up to 60 seconds and runs
   "rag_query_gene": true,
   "web_search": false,
   "web_search_engine": "OpenAI",
+  "web_search_guardrail": true,
   "thinking_mode": false,
+  "max_thinking_turns": 1,
+  "insert_citations": true,
+  "cite_knowledge": false,
+  "diagram_mode": false,
+  "emphasis_mode": false,
   "user_memory": true,
   "user_memory_layers": ["persona", "nowaday", "history"],
   "session_summary_enabled": true,
@@ -2771,8 +2777,14 @@ API default values are used for omitted parameters. These correspond to the WebU
 | `rag_query_gene` | `true` | Query generation for RAG search |
 | `web_search` | `false` | Web search (when `true`, searches with the engine specified by `web_search_engine`) |
 | `web_search_engine` | `"OpenAI"` | Web search engine (`Perplexity` / `OpenAI` / `Google`). Not used when `web_search` is `false` |
+| `web_search_guardrail` | `true` | Wrap web-search results in a "reference material" instruction that keeps the LLM's persona and conversation context in charge. Set `false` to pass the raw snippet through unwrapped |
 | `private_mode` | `false` | Private Mode. When `true`, RAG data with `private: true` is excluded from search |
 | `thinking_mode` | `false` | Thinking Mode. When `true`, the AI analyzes the question and dynamically decides Habit / Web search / RAG query generation / Book addition |
+| `max_thinking_turns` | `1` | Upper bound on Thinking iterations (auto-clamped to 1–5). With 2+ turns, if Thinking returns `sufficient=false` a reserve web search runs and feeds the next Thinking turn. Only meaningful when `thinking_mode=true` |
+| `insert_citations` | `true` | Insert `[N]` citation markers into the response body and append a `## Reference Info` section listing Web / Book sources |
+| `cite_knowledge` | `false` | After the response, a dedicated selector agent (`agent_80DigiMKnowledgeUsageSelector.json`) decides which KNOWLEDGE chunks were actually referenced and appends a `## Reference Knowledge` section (Knowledge Utility scores included) |
+| `diagram_mode` | `false` | Ask the LLM to use Markdown tables and Mermaid diagrams (```mermaid) inside the explanation |
+| `emphasis_mode` | `false` | Ask the LLM to emphasise key points in **bold** and organise long answers with headings and bullet lists |
 | `user_memory` | (unspecified) | Whether to use User Memory (information about the dialogue partner). `true` = all layers ON / `false` = all Off / unspecified = follows `Allowed["User Memory Layers"]` in `users.json` (or `USER_MEMORY_DEFAULT_LAYERS` if absent) |
 | `user_memory_layers` | (unspecified) | Explicitly specify enabled layers (subset of `["persona","nowaday","history"]`, `[]` to turn all off). When specified, takes priority over `user_memory`. Invalid layer names are ignored |
 | `session_summary_enabled` | (unspecified) | Toggle the session summary feature inline. When set, the value is written to `status.yaml` and takes effect starting on the same turn. Unspecified = keep whatever the session already has |
@@ -2996,7 +3008,13 @@ curl -s -X POST http://localhost:8899/run \
     "rag_query_gene": true,
     "web_search": false,
     "web_search_engine": "OpenAI",
-    "thinking_mode": false
+    "web_search_guardrail": true,
+    "thinking_mode": false,
+    "max_thinking_turns": 1,
+    "insert_citations": true,
+    "cite_knowledge": false,
+    "diagram_mode": false,
+    "emphasis_mode": false
   }' | python3 -m json.tool --no-ensure-ascii
 
 # Lightweight execution (RAG query generation OFF + meta search OFF)

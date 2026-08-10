@@ -200,8 +200,13 @@
       rag_query_gene:  $("#flag-rag_query_gene").checked,
       meta_search:     $("#flag-meta_search").checked,
       web_search:      $("#flag-web_search").checked,
+      web_search_guardrail: $("#flag-web_search_guardrail").checked,
       thinking_mode:   $("#flag-thinking_mode").checked,
       private_mode:    $("#flag-private_mode").checked,
+      insert_citations:$("#flag-insert_citations").checked,
+      cite_knowledge:  $("#flag-cite_knowledge").checked,
+      diagram_mode:    $("#flag-diagram_mode").checked,
+      emphasis_mode:   $("#flag-emphasis_mode").checked,
     };
 
     // Session Summary — send both fields only when the operator opted in for
