@@ -42,14 +42,39 @@ def dialog_digest(service_info, user_info, session_id, session_name, agent_file,
         prompt_temp_cd = "Dialog Digest"
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
 
-    # Convert memory to text
-    digest_memories_text = ", ".join(
-        f'{{"role": "{item["role"]}", "content": "{item["text"]}"}}'
-        for item in memories_selected
-    )
+    # Split the incoming memories into two clearly-labelled sections. The
+    # incremental caller (DigiM_Execute) tags each item with `kind`:
+    #   prev_digest  — the accumulated digest from prior turns; MUST be
+    #                  preserved verbatim so older topics don't quietly
+    #                  fall out of the running memory.
+    #   latest_turn  — the user + assistant messages from THIS turn only;
+    #                  the LLM should extract new bullets from these and
+    #                  append them to the accumulation.
+    # Legacy callers without `kind` are treated as latest_turn (backward
+    # compat — behaviour then matches the pre-tag version).
+    prev_digest_text = ""
+    latest_turn_lines = []
+    for item in memories_selected:
+        kind = item.get("kind") or "latest_turn"
+        text = item.get("text", "")
+        if kind == "prev_digest":
+            prev_digest_text = text
+        else:
+            latest_turn_lines.append(
+                f'{{"role": "{item.get("role","")}", "content": "{text}"}}'
+            )
+    latest_turn_text = ", ".join(latest_turn_lines)
 
-    # Build the prompt
-    query = f'{prompt_template}{user_query}\n{digest_memories_text}'
+    # Build the prompt with explicitly separated sections so the LLM can't
+    # accidentally re-summarise the previous digest and drop old topics.
+    _prev_block = (
+        f"\n\n【これまでの累積ダイジェスト — この内容は絶対に一字一句そのまま保持し、"
+        f"要約しなおしたり短縮したり項目を減らしたりしない】\n{prev_digest_text}\n"
+    ) if prev_digest_text else "\n\n【これまでの累積ダイジェスト】\n(初回のためまだ無し)\n"
+    _latest_block = (
+        f"\n【最新の会話（この分だけを新規に箇条書きで追記対象とする）】\n{latest_turn_text}\n"
+    )
+    query = f"{prompt_template}{user_query}{_prev_block}{_latest_block}"
 
     # Execute the LLM
     response = ""
