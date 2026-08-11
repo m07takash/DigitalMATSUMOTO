@@ -1483,20 +1483,32 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             _unlock_on_complete = execution.get("_UNLOCK_ON_DIGEST", True)
             timestamp_log += "[18.Memory digest generation started in background]" + str(datetime.now()) + "<br>"
 
-            # Incremental form: feed only the previous digest + the current single turn for speed
-            # Feed in with speaker names so the digest side can keep track of who said what
+            # Incremental form: feed the previous digest + the current turn.
+            # The `kind` field tags each item so dialog_digest can hand the
+            # LLM two DISTINCT sections — the accumulated prior digest
+            # (which must be preserved verbatim so old topics don't drop
+            # out) and the latest turn (which the LLM appends to the
+            # accumulation). Without the tag the tool used to concatenate
+            # everything and let the LLM re-summarise, which quietly ate
+            # older topics.
             _slim_memories = []
             try:
                 _, _, _prev_digest = session.get_history_digest(str(seq), str(sub_seq))
                 if _prev_digest and _prev_digest.get("text"):
-                    _slim_memories.append({"role": "assistant", "text": _prev_digest["text"]})
+                    _slim_memories.append({
+                        "role": "assistant",
+                        "kind": "prev_digest",
+                        "text": _prev_digest["text"],
+                    })
             except Exception:
                 pass
             # Use user_info.NAME for the speaker; fall back to USER_ID when absent (no master lookup)
             _udisp = (user_info or {}).get("NAME") or (user_info or {}).get("USER_ID") or "(unknown)"
             _aname = getattr(agent, "name", "") or "AI"
-            _slim_memories.append({"role": "user", "text": f"[User: {_udisp}] {user_query}"})
-            _slim_memories.append({"role": "assistant", "text": f"[Agent: {_aname}] {response}"})
+            _slim_memories.append({"role": "user", "kind": "latest_turn",
+                                     "text": f"[User: {_udisp}] {user_query}"})
+            _slim_memories.append({"role": "assistant", "kind": "latest_turn",
+                                     "text": f"[Agent: {_aname}] {response}"})
 
             _digest_job_id = djr.new_job_id()
             _digest_args = (session, service_info, user_info, session_id, session_name,

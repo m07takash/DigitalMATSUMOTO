@@ -572,24 +572,60 @@ class DigiMSession:
 
     # Get the digest just before the given seq
     def get_history_digest(self, seq="", sub_seq=""):
+        """Return the (seq, sub_seq, digest_dict) of the most recent
+        non-logically-deleted turn that still carries a `digest` field,
+        strictly BEFORE the (seq, sub_seq) coordinate the caller supplied.
+
+        Two changes vs the older look-up:
+          * `chat_history_active_dict` (returned by `get_history_active`)
+            already excludes turns whose `active` flag is "N". We no longer
+            KeyError when `seq-1` was deleted — we simply skip it and
+            walk further back.
+          * If no digest exists in `seq-1` (deleted or never generated),
+            we keep walking back through seq-2, seq-3, ... until we hit
+            an active turn with a digest or run out of history. This is
+            what makes "logically-delete the bad turns → next turn picks
+            up an older good digest" actually work end-to-end."""
         chat_history_active_dict = self.get_history_active()
         set_seq = ""
         set_sub_seq = ""
-        if chat_history_active_dict:
-            chat_history_digest_dict = {}
-            if int(sub_seq) <= 1:
-                set_seq = str(int(seq)-1)
-                if int(set_seq) > 0:
-                    sub_seq_candidates = [k for k, v in chat_history_active_dict[set_seq].items() if isinstance(v, dict) and "digest" in v]
-                    if sub_seq_candidates:
-                        set_sub_seq = max(sub_seq_candidates, key=int)
-                        chat_history_digest_dict = chat_history_active_dict[set_seq][set_sub_seq]["digest"]
-            else:
-                set_seq = seq
-                sub_seq_candidates = [k for k, v in chat_history_active_dict[set_seq].items() if k < sub_seq and isinstance(v, dict) and "digest" in v]
-                if sub_seq_candidates:
-                    set_sub_seq = max(sub_seq_candidates, key=int)
-                    chat_history_digest_dict = chat_history_active_dict[set_seq][set_sub_seq]["digest"]
+        chat_history_digest_dict = {}
+        if not chat_history_active_dict:
+            return set_seq, set_sub_seq, chat_history_digest_dict
+        try:
+            _seq_i = int(seq)
+            _sub_i = int(sub_seq)
+        except (TypeError, ValueError):
+            return set_seq, set_sub_seq, chat_history_digest_dict
+
+        # Same-seq lookback: prefer an earlier sub_seq of the same seq.
+        if _sub_i > 1 and str(_seq_i) in chat_history_active_dict:
+            _bucket = chat_history_active_dict[str(_seq_i)]
+            sub_seq_candidates = [
+                k for k, v in _bucket.items()
+                if k < sub_seq and isinstance(v, dict) and "digest" in v
+            ]
+            if sub_seq_candidates:
+                set_seq = str(_seq_i)
+                set_sub_seq = max(sub_seq_candidates, key=int)
+                chat_history_digest_dict = _bucket[set_sub_seq]["digest"]
+                return set_seq, set_sub_seq, chat_history_digest_dict
+
+        # Cross-seq walk-back: search seq-1, seq-2, ... down to 1, taking
+        # the highest sub_seq that has a digest inside each candidate seq.
+        for _cand in range(_seq_i - 1, 0, -1):
+            _bucket = chat_history_active_dict.get(str(_cand))
+            if not isinstance(_bucket, dict):
+                continue  # deleted (active=N) or gap in numbering
+            sub_seq_candidates = [
+                k for k, v in _bucket.items()
+                if isinstance(v, dict) and "digest" in v
+            ]
+            if sub_seq_candidates:
+                set_seq = str(_cand)
+                set_sub_seq = max(sub_seq_candidates, key=int)
+                chat_history_digest_dict = _bucket[set_sub_seq]["digest"]
+                return set_seq, set_sub_seq, chat_history_digest_dict
         return set_seq, set_sub_seq, chat_history_digest_dict
 
     # Get the latest agent
