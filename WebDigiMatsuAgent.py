@@ -8856,19 +8856,43 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                             help="Upper bound for PersonaSelector in chain.PERSONAS=\"THINKING\" steps.",
                         )
 
-                # --- Row 4: WEB Search + Engine (hidden when Thinking Mode ON;
-                # Thinking judges web_search / engine dynamically in that case) ---
-                if not st.session_state.thinking_mode and st.session_state.allowed_web_search:
+                # --- Row 4: WEB Search / Engine ---
+                # Thinking Mode ON  → the WEB Search toggle is dynamic (Thinking
+                #                     decides per-turn), so we hide it. But the
+                #                     ENGINE selector is still meaningful because
+                #                     Thinking's internal search uses this engine
+                #                     — surface it as a standalone row.
+                # Thinking Mode OFF → normal WEB Search checkbox + nested engine
+                #                     (only visible when the checkbox is on).
+                def _resolve_ws_engines():
+                    _ws_setting = dmu.read_yaml_file("setting.yaml")
+                    _ws_default = _ws_setting.get("WEB_SEARCH_DEFAULT", "Perplexity")
+                    _ws_all = list(dmt.WEB_SEARCH_ENGINES.keys())
+                    _ws_allow = _ws_setting.get("WEB_SEARCH_ENGINES_AVAILABLE") or []
+                    _ws_engines = [e for e in _ws_allow if e in _ws_all] or _ws_all
+                    if ("web_search_engine" not in st.session_state
+                            or st.session_state.web_search_engine not in _ws_engines):
+                        st.session_state.web_search_engine = _ws_default if _ws_default in _ws_engines else _ws_engines[0]
+                    return _ws_engines
+                if st.session_state.thinking_mode:
+                    # Standalone engine selector for Thinking Mode's internal
+                    # web search. Only render when the agent is allowed to do
+                    # web search at all (respects the same Allowed key).
+                    if st.session_state.allowed_web_search:
+                        _ws_engines = _resolve_ws_engines()
+                        _ws_col1, _ws_col2 = st.columns([1, 2])
+                        _ws_col1.markdown("**WEB Search Engine** (Thinking)")
+                        _ws_col2.selectbox(
+                            "Engine:", _ws_engines,
+                            key="web_search_engine",
+                            label_visibility="collapsed",
+                            help="Engine used when Thinking Mode decides to run web search this turn.",
+                        )
+                elif st.session_state.allowed_web_search:
                     _ws_col1, _ws_col2 = st.columns([1, 2])
                     if _ws_col1.checkbox("WEB Search", value=st.session_state.web_search):
                         st.session_state.web_search = True
-                        _ws_setting = dmu.read_yaml_file("setting.yaml")
-                        _ws_default = _ws_setting.get("WEB_SEARCH_DEFAULT", "Perplexity")
-                        _ws_all = list(dmt.WEB_SEARCH_ENGINES.keys())
-                        _ws_allow = _ws_setting.get("WEB_SEARCH_ENGINES_AVAILABLE") or []
-                        _ws_engines = [e for e in _ws_allow if e in _ws_all] or _ws_all
-                        if "web_search_engine" not in st.session_state or st.session_state.web_search_engine not in _ws_engines:
-                            st.session_state.web_search_engine = _ws_default if _ws_default in _ws_engines else _ws_engines[0]
+                        _ws_engines = _resolve_ws_engines()
                         _ws_col2.selectbox("Engine:", _ws_engines, key="web_search_engine", label_visibility="collapsed")
                     else:
                         st.session_state.web_search = False
