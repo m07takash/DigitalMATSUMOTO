@@ -436,13 +436,19 @@ def _build_knowledge_section(entries, chunk_lookup, title_cap=20,
                     _build_cite_knowledge_manifest.
 
     Format per line:
-        - (RAG_NAME)Title-truncated: note-truncated (Knowledge Utility: X.XXXX)
+        - (RAG_NAME)Title-truncated: note-truncated
+
+    (The Knowledge Utility score is intentionally omitted here — the
+    numeric value routed via the manifest didn't reliably correspond to
+    the actual chunk the selector picked, so showing it was misleading.
+    The util is still stored in the debug dict for [Reference Knowledge
+    Debug] in Detail Information if needed.)
 
     Entries whose (rag, id) doesn't map back to the manifest are dropped
     silently — the selector occasionally hallucinates an ID, and showing
-    those rows with util=N/A confused the user more than it helped. If
-    every entry drops, the whole section is suppressed (returns ""); the
-    caller must NOT emit a bare header in that case."""
+    those rows confused the user more than it helped. If every entry
+    drops, the whole section is suppressed (returns ""); the caller must
+    NOT emit a bare header in that case."""
     import logging as _lg_ks
     if not entries:
         return ""
@@ -453,16 +459,13 @@ def _build_knowledge_section(entries, chunk_lookup, title_cap=20,
         if meta is None:
             dropped += 1
             continue
-        util = meta.get("util", 0.0)
         display_rag = meta.get("rag", rag)
         display_title = meta.get("title", cid)
         _t = display_title[:title_cap] + "..." if len(display_title) > title_cap else display_title
         _n = (note or "").replace("\n", " ").strip()
         if len(_n) > note_cap:
             _n = _n[:note_cap] + "..."
-        lines.append(
-            f"- ({display_rag}){_t}: {_n} (Knowledge Utility: {util:.4f})"
-        )
+        lines.append(f"- ({display_rag}){_t}: {_n}")
     _lg_ks.getLogger(__name__).info(
         f"[cite_knowledge] emitting {len(lines)} rows "
         f"({len(entries) - dropped}/{len(entries)} matched against manifest of "
