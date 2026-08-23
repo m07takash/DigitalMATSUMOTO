@@ -8517,20 +8517,19 @@ def main():
                                                                 expanded=False,
                                                             ):
                                                                 st.markdown(_prov_html, unsafe_allow_html=True)
-                                                        # Per-DB score line (① / ② / ③)
+                                                        # Per-DB Recall — nodes only. Numerator = coloured
+                                                        # nodes that were also retrieved (blue/skyblue),
+                                                        # denominator = every node used in the answer
+                                                        # (blue/skyblue + red). Edge recall is intentionally
+                                                        # dropped from the headline.
                                                         _scores_this = _dgu_main.graph_recall_scores(_gu_usage)
                                                         def _fmt(_x):
                                                             return "N/A" if _x is None else f"{_x:.3f}"
+                                                        _num = _scores_this['output_node_count'] - _scores_this['missed_node_count']
+                                                        _den = _scores_this['output_node_count']
                                                         st.markdown(
-                                                            "**Scores**: "
-                                                            f"(1) Node Recall = {_fmt(_scores_this['node_recall'])} "
-                                                            f"({_scores_this['output_node_count'] - _scores_this['missed_node_count']}/{_scores_this['output_node_count']})"
-                                                            f" ＋ "
-                                                            f"(2) Edge Recall = {_fmt(_scores_this['edge_recall'])} "
-                                                            f"({_scores_this['output_edge_count'] - _scores_this['missed_edge_count']}/{_scores_this['output_edge_count']})"
-                                                            f" = "
-                                                            f"(3) Combined = **{_fmt(_scores_this['combined'])}** "
-                                                            "<sub>(N/A counts as 0)</sub>",
+                                                            f"**Recall** = **{_fmt(_scores_this['node_recall'])}** "
+                                                            f"（分子: 検索でも認識したノード {_num} / 分母: 回答に用いたノード {_den}）",
                                                             unsafe_allow_html=True,
                                                         )
                                                         _gu_header_cols = st.columns([2, 2])

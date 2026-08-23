@@ -435,19 +435,27 @@ def unified_legend_html():
 
 
 def graph_recall_scores(usage):
-    """Compute the three per-turn Graph scores displayed in the Knowledge
-    Utility summary:
+    """Compute the per-turn Graph Recall shown in the Knowledge Utility
+    summary. Nodes only (per user spec: edges intentionally excluded — the
+    edge signal was noisy and the previous "combined = node + edge" score
+    landed in the 0-2 range which reads badly as a Recall).
 
-      ① node_recall = |retrieved ∩ output_nodes| / |output_nodes|
-                    = 1 - (missed_nodes / output_nodes)
-      ② edge_recall = |retrieved ∩ output_edges| / |output_edges|
-                    = 1 - (missed_edges / output_edges)
-      ③ combined    = ① + ②   (undefined side counted as 0)
+      Recall = |retrieved ∩ output_nodes| / |output_nodes|
+             = 1 - (missed_nodes / output_nodes)
 
-    node_recall / edge_recall are None when the output contains 0 items of
-    that kind (nothing to hit — vacuous). The combined score always sums
-    them by counting None as 0 so "the LLM didn't cite any edges" pulls
-    combined down instead of quietly disappearing."""
+    In the coloured graph this is:
+      numerator   = coloured nodes that WERE also retrieved (blue/skyblue,
+                    including the freq-gradient nodes)
+      denominator = every node that appears in the output = blue/skyblue
+                    (retrieved-and-used) + red (used-but-not-retrieved)
+
+    edge_recall is retained in the return dict for backward compat but
+    the top-level `combined` now equals `node_recall` so downstream code
+    that renders "Combined" as the headline score gets a proper 0..1
+    Recall value.
+
+    Recall is None when the output contains 0 nodes (nothing to hit —
+    vacuous)."""
     output_nodes = usage.get("output_nodes") or {}
     output_edges = usage.get("output_edges") or []
     missed_nodes = usage.get("missed_nodes") or []
@@ -462,12 +470,12 @@ def graph_recall_scores(usage):
     else:
         edge_recall = None
 
-    combined = (0.0 if node_recall is None else node_recall) \
-             + (0.0 if edge_recall is None else edge_recall)
     return {
         "node_recall": node_recall,
         "edge_recall": edge_recall,
-        "combined": combined,
+        # Headline Recall is node-only. Callers that read `combined` get
+        # the same value as node_recall (0..1 range).
+        "combined": node_recall,
         "output_node_count": len(output_nodes),
         "output_edge_count": len(output_edges),
         "missed_node_count": len(missed_nodes),
