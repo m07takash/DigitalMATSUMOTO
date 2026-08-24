@@ -104,10 +104,12 @@ def call_function_by_name(func_name, *args, **kwargs):
     else:
         return "Function not found"
 
-# Run GPT (OpenAI Chat Completions).
+# Run GPT (OpenAI Responses API).
 #
 # Model-agnostic: `model["MODEL"]` is the model id string and `model["PARAMETER"]`
-# is forwarded verbatim as kwargs to `openai_client.chat.completions.create`.
+# is forwarded as kwargs to `openai_client.responses.create` — verbatim except
+# for `max_tokens`, auto-renamed below to the Responses spelling
+# `max_output_tokens` so agent JSONs written for Chat Completions still work.
 # That means new GPT-family models slot in with an ENGINE-block entry alone —
 # no code change here. Currently exercised by (non-exhaustive):
 #   gpt-5.6-sol / -terra / -luna         → reasoning tier chosen by model id
