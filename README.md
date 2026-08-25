@@ -630,9 +630,15 @@ RAGデータの構築は「データの準備」→「RAGマスターの設定�
 
 | ファイル | 主要カラム | 用途 |
 |---------|-----------|------|
-| `Sample01_Quote.csv` | speaker, situation, quote | 名言集 |
-| `Sample02_Memo.csv` | create_date, memo | メモ |
-| `Sample03_Feedback.csv` | emp_code, speaker, create_date, feedback | フィードバック |
+| `Sample02_Experience.csv` | create_date, category, title, experience | 幼少期からの人生・仕事の経験（Knowledge / Vector） |
+| `Sample03_Impressions.csv` | create_date, subject, place, impression | 印象に残った発言・場所（Knowledge / Vector） |
+| `Sample04_Tweets.csv` | create_date, media, tweet | 自分のつぶやき・ぼやき（Knowledge / Vector） |
+| `Sample10_Articles.csv` | create_date, theme, publisher, title, summary | 過去に書いた記事の要旨（Book / Vector） |
+| `Sample00_Feedback.csv` | title, category, create_date, memo ほか | フィードバックの保存先（知識ソースではない） |
+
+> 日付カラムは **`create_date` という名前で `YYYY/M/D` 形式**にしてください。`get_chunk_csv` はこの列名を固定で参照しており、名前が違うと取込日時が現在時刻になり `META_SEARCH` の `DATE` 条件が効きません。
+
+> ナレッジグラフのソースCSVだけは `user/common/csv/` ではなく **グラフフォルダ配下** (`user/common/rag/graph/Sample01_Relations/source/Sample01_Relations.csv`) に置きます。`mapping.json` の `FILE` がグラフフォルダ基準の相対パスで解決されるためです。
 
 **Notionの場合（オプション）：**
 
@@ -658,19 +664,19 @@ NOTION_MST_FILE=notion_db.json
 
 ```json
 {
-  "Sample01_Quote": {
+  "Sample02_Experience": {
     "active": "Y",
     "input": "csv",
     "data_type": "chromadb",
-    "bucket": "Sample01_Quote",
-    "data_name": "名言集",
-    "file_path": "",
-    "file_name": "Sample01_Quote.csv",
-    "field_items": ["speaker", "situation", "quote"],
-    "title": ["speaker", "quote"],
-    "key_text": ["speaker", "situation", "quote"],
-    "value_text": ["quote"],
-    "category_items": []
+    "bucket": "Sample02_Experience",
+    "data_name": "経験（幼少期からの人生と仕事）",
+    "file_path": "user/common/csv/",
+    "file_name": "Sample02_Experience.csv",
+    "field_items": ["create_date", "category", "title", "experience"],
+    "category_items": [],
+    "title": ["create_date", "title"],
+    "key_text": ["category", "title", "experience"],
+    "value_text": ["experience"]
   }
 }
 ```
@@ -1128,14 +1134,15 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/{DATA_NAME} --use-llm --embe
     "MAGIC_WORD": ["簡潔に回答して", "簡潔に答えて"],
     "PRACTICE": "practice_01Chat.json"
   },
-  "SENRYU_SENSEI": {
-    "PURPOSE": "川柳を詠んでほしい／川柳形式で応答してほしいという依頼。",
-    "MAGIC_WORD": ["川柳を詠んでください。"],
-    "PRACTICE": "practice_05Senryu.json",
-    "KNOWLEDGE": [
+  "WRITING": {
+    "PURPOSE": "記事・原稿を書いてほしいという依頼。アウトライン→初稿の2ターンで応じる。",
+    "MAGIC_WORDS": ["記事を書いて", "原稿を書いて"],
+    "PRACTICE": "practice_20Writing.json",
+    "ADD_KNOWLEDGE": [
       {
-        "NAME": "Quote",
-        "RAG_DATA": [{"DATA_NAME": "Sample01_Quote", "BUCKET": "Sample01_Quote"}],
+        "RAG_NAME": "Tweets",
+        "RETRIEVER": "Vector",
+        "DATA": [{"DATA_TYPE": "DB", "DATA_NAME": "Sample04_Tweets"}],
         "TEXT_LIMITS": 1000,
         "DISTANCE_LOGIC": "Cosine"
       }
@@ -1158,8 +1165,8 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/{DATA_NAME} --use-llm --embe
   {
     "NAME": "Experience",
     "RAG_DATA": [
-      {"DATA_NAME": "Sample02_Memo", "BUCKET": "Sample02_Memo"},
-      {"DATA_NAME": "Sample03_Feedback", "BUCKET": "Sample03_Feedback"}
+      {"DATA_TYPE": "DB", "DATA_NAME": "Sample02_Experience"},
+      {"DATA_TYPE": "DB", "DATA_NAME": "Sample03_Impressions"}
     ],
     "TEXT_LIMITS": 2000,
     "DISTANCE_LOGIC": "Cosine"
@@ -1258,7 +1265,7 @@ Notion保存時は `notion_name` でプロパティ名を個別に指定でき�
   {
     "RAG_NAME": "Quote",
     "PURPOSE": "会話の中で著名人の名言を引きたい／格言や含蓄のある一言で締めくくりたいときに参照する。",
-    "RAG_DATA": [{"DATA_NAME": "Sample01_Quote", "BUCKET": "Sample01_Quote"}],
+    "DATA": [{"DATA_TYPE": "DB", "DATA_NAME": "Sample10_Articles"}],
     "HEADER_TEMPLATE": "以下はあなたが気に入っている著名人による名言です。\n",
     "CHUNK_TEMPLATE": "・{speaker}「{value_text}」\n\n",
     "TEXT_LIMITS": 1000,
@@ -1463,7 +1470,7 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/sample --use-llm --embed
 - **KNOWLEDGE に置く**: 毎ターン自動 retrieve。エージェント内在の知識として扱われ、citation_inject の対象外。
 - **BOOK に置く**: Thinking 経路で名前指定された時のみ retrieve（または常時参照したければ KNOWLEDGE に）。出典明示用なので `citation_inject` の引用対象になる。
 
-**サンプル**: `user/common/agent/agent_11Sample.json` に Vector / AgentSearch / FunctionSearch を `KNOWLEDGE` に同居させたサンプルエージェントがあります。
+**サンプル**: `user/common/agent/agent_11Sample.json` に Graph / Vector / AgentSearch / FunctionSearch を `KNOWLEDGE` に同居させたサンプルエージェントがあります（`BOOK` 側は Vector と PageIndex）。
 
 **Analytics Result - Knowledge Utility 連携**: PageIndex / AgentSearch / FunctionSearch も Vector と同じく、各チャンクごとに `similarity_Q`（質問との類似度）と `similarity_A`（回答との類似度）を内部で算出するため、Chat タブ下部の **「Analytics Results - Knowledge Utility」** ボタンに RAG 種別を問わず混在表示できます。これにより「ベクトル検索だけでなく、他エージェント参照や外部関数結果が回答にどれくらい寄与したか」を比較可能。`knowledge_utility = similarity_Q − similarity_A` の値が高いほど質問へのフィット度が高く回答に活かしきれていない＝今後の改善余地、と読みます。
 

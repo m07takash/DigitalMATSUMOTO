@@ -104,24 +104,24 @@ def call_function_by_name(func_name, *args, **kwargs):
     else:
         return "Function not found"
 
-# Run GPT (OpenAI Chat Completions).
+# Run GPT (OpenAI Responses API).
 #
 # Model-agnostic: `model["MODEL"]` is the model id string and `model["PARAMETER"]`
-# is forwarded verbatim as kwargs to `openai_client.chat.completions.create`.
+# is forwarded as kwargs to `openai_client.responses.create` — verbatim except
+# for `max_tokens`, auto-renamed below to the Responses spelling
+# `max_output_tokens` so agent JSONs written for Chat Completions still work.
 # That means new GPT-family models slot in with an ENGINE-block entry alone —
 # no code change here. Currently exercised by (non-exhaustive):
-#   gpt-5.6                              → reasoning_effort low/medium/high
+#   gpt-5.6-sol / -terra / -luna         → reasoning tier chosen by model id
 #   gpt-5.5, gpt-5.4                     → default reasoning
 #   gpt-5-mini-2025-08-07, gpt-5-nano-2025-08-07
 #   gpt-4o family (image input supported below via image_paths)
-# For GPT-5.6 the caller controls the reasoning tier through PARAMETER —
-# in agent_10Sample.json the three named modes map as:
-#   Sol   → {"reasoning_effort": "high"}   (Sun: max effort)
-#   Terra → {"reasoning_effort": "medium"} (Earth: default)
-#   Luna  → {"reasoning_effort": "low"}    (Moon: min/fastest)
-# If the installed OpenAI SDK is too old to accept `reasoning_effort`, the call
-# raises TypeError on unknown kwarg — bump `openai>=1.55` or higher, or drop
-# the PARAMETER key in the agent JSON.
+# GPT-5.6 ships one model id per reasoning tier, so MODEL alone selects the
+# tier and PARAMETER stays empty — in agent_10Sample.json the three named
+# modes map as:
+#   Sol   → "gpt-5.6-sol"   (Sun:   max effort)
+#   Terra → "gpt-5.6-terra" (Earth: balanced)
+#   Luna  → "gpt-5.6-luna"  (Moon:  min/fastest)
 def generate_response_T_gpt(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
     # Migrated to the Responses API (`openai_client.responses.create`).
     # The upstream 3-tuple yield contract `(prompt, response_chunk, event)`

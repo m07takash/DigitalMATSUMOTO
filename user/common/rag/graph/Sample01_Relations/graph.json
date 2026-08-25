@@ -1,0 +1,2581 @@
+{
+ "nodes": {
+  "ent_99e2846e896d": {
+   "id": "ent_99e2846e896d",
+   "name": "駒木乃英人",
+   "type": "人物",
+   "aliases": [
+    "エイト",
+    "Eight",
+    "英人",
+    "コマキノ",
+    "Hideto Komakino"
+   ],
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ"
+   ],
+   "props": {
+    "役割": {
+     "value": "フリージャーナリスト（ペンネーム Eight）",
+     "as_of": "2026/5/12",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_707ba17c7ef8": {
+   "id": "ent_707ba17c7ef8",
+   "name": "東京",
+   "type": "場所",
+   "aliases": [],
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ",
+    "編集",
+    "プライベート",
+    "スポーツ",
+    "IT",
+    "取材",
+    "労働",
+    "媒体",
+    "学生時代",
+    "拠点",
+    "日本",
+    "転機",
+    "被害"
+   ],
+   "props": {
+    "役割": {
+     "value": "生活と仕事の拠点",
+     "as_of": "1986/5/12",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_17cfb1e34cf1": {
+   "id": "ent_17cfb1e34cf1",
+   "name": "ATLAS日本版",
+   "type": "媒体",
+   "aliases": [
+    "ATLAS"
+   ],
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ",
+    "編集",
+    "媒体"
+   ],
+   "props": {
+    "役割": {
+     "value": "国際誌の日本版",
+     "as_of": "2018/1/26",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_15c96fce58fa": {
+   "id": "ent_15c96fce58fa",
+   "name": "Frontline Review",
+   "type": "媒体",
+   "aliases": [
+    "Frontline"
+   ],
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ",
+    "媒体"
+   ],
+   "props": {
+    "役割": {
+     "value": "調査報道系のオンライン誌",
+     "as_of": "2018/6/12",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_22931b709fc5": {
+   "id": "ent_22931b709fc5",
+   "name": "季刊SOIL",
+   "type": "媒体",
+   "aliases": [
+    "SOIL"
+   ],
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ",
+    "媒体"
+   ],
+   "props": {
+    "役割": {
+     "value": "季刊の論考誌",
+     "as_of": "2018/11/29",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_0c1de8295a03": {
+   "id": "ent_0c1de8295a03",
+   "name": "独立",
+   "type": "出来事",
+   "aliases": [
+    "フリーランス独立",
+    "退職"
+   ],
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ",
+    "編集",
+    "IT",
+    "転機"
+   ],
+   "props": {
+    "役割": {
+     "value": "日之出システムズを辞めてフリーになった転機",
+     "as_of": "2019/4/15",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_9df2b5a903e9": {
+   "id": "ent_9df2b5a903e9",
+   "name": "結婚詐欺被害",
+   "type": "出来事",
+   "aliases": [
+    "結婚詐欺"
+   ],
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ",
+    "プライベート",
+    "被害"
+   ],
+   "props": {
+    "役割": {
+     "value": "貯金の大半を失った私的な事件",
+     "as_of": "2021/6/17",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_38c1bc8927c8": {
+   "id": "ent_38c1bc8927c8",
+   "name": "シチリアでの脅迫",
+   "type": "出来事",
+   "aliases": [
+    "脅迫",
+    "マフィア"
+   ],
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ",
+    "海外",
+    "イタリア",
+    "取材"
+   ],
+   "props": {
+    "役割": {
+     "value": "廃棄物取材中に受けた脅し",
+     "as_of": "2022/5/23",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_a099a5c125b6": {
+   "id": "ent_a099a5c125b6",
+   "name": "移民・難民",
+   "type": "テーマ",
+   "aliases": [
+    "難民",
+    "移民"
+   ],
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ",
+    "取材",
+    "教育",
+    "海外",
+    "媒体",
+    "取材テーマ"
+   ],
+   "props": {
+    "役割": {
+     "value": "国境を越える人と制度",
+     "as_of": "2024/2/20",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_b547161508b9": {
+   "id": "ent_b547161508b9",
+   "name": "労働",
+   "type": "テーマ",
+   "aliases": [
+    "働き方",
+    "労働問題"
+   ],
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ",
+    "取材",
+    "労働",
+    "海外",
+    "媒体",
+    "プライベート",
+    "取材テーマ"
+   ],
+   "props": {
+    "役割": {
+     "value": "働く場の構造と待遇",
+     "as_of": "2019/12/20",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_31d88d20e69a": {
+   "id": "ent_31d88d20e69a",
+   "name": "気候変動",
+   "type": "テーマ",
+   "aliases": [
+    "気候"
+   ],
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ",
+    "取材",
+    "気候",
+    "海外",
+    "媒体",
+    "取材テーマ"
+   ],
+   "props": {
+    "役割": {
+     "value": "環境変化と生活の接点",
+     "as_of": "2025/10/1",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_b4bdaa166417": {
+   "id": "ent_b4bdaa166417",
+   "name": "廃棄物",
+   "type": "テーマ",
+   "aliases": [
+    "ごみ",
+    "廃棄物処理"
+   ],
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ",
+    "海外",
+    "イタリア",
+    "取材",
+    "媒体",
+    "取材テーマ"
+   ],
+   "props": {
+    "役割": {
+     "value": "処理と越境輸出の経路",
+     "as_of": "2024/11/12",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_45d12f4fbd27": {
+   "id": "ent_45d12f4fbd27",
+   "name": "AIと人権",
+   "type": "テーマ",
+   "aliases": [
+    "AI",
+    "自動判定"
+   ],
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ",
+    "取材",
+    "労働",
+    "海外",
+    "政策",
+    "媒体",
+    "人権",
+    "取材テーマ"
+   ],
+   "props": {
+    "役割": {
+     "value": "自動化された判断と異議申し立て",
+     "as_of": "2026/6/24",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_e33270733417": {
+   "id": "ent_e33270733417",
+   "name": "情報環境",
+   "type": "テーマ",
+   "aliases": [
+    "メディア",
+    "報道倫理"
+   ],
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ",
+    "編集",
+    "IT",
+    "媒体",
+    "プライベート",
+    "被害",
+    "取材テーマ"
+   ],
+   "props": {
+    "役割": {
+     "value": "書くことと書かないことの判断",
+     "as_of": "2026/4/9",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_7edc4e9dcdd1": {
+   "id": "ent_7edc4e9dcdd1",
+   "name": "エドゥアルド・アヤラ",
+   "type": "人物",
+   "aliases": [
+    "アヤラ",
+    "祖父アヤラ",
+    "エドゥアルド"
+   ],
+   "domains": [
+    "家族",
+    "ルーツ"
+   ],
+   "props": {
+    "役割": {
+     "value": "父方の祖父・タンゴダンサー",
+     "as_of": "2002/3/25",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_3af239a24d7b": {
+   "id": "ent_3af239a24d7b",
+   "name": "ブエノスアイレス",
+   "type": "場所",
+   "aliases": [
+    "BsAs"
+   ],
+   "domains": [
+    "家族",
+    "ルーツ",
+    "海外"
+   ],
+   "props": {
+    "役割": {
+     "value": "祖父アヤラが踊っていた街・未訪問",
+     "as_of": "2026/1/16",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_0a7052809e4f": {
+   "id": "ent_0a7052809e4f",
+   "name": "ハビエル・アヤラ",
+   "type": "人物",
+   "aliases": [
+    "ハビエル",
+    "実父"
+   ],
+   "domains": [
+    "家族",
+    "ルーツ"
+   ],
+   "props": {
+    "役割": {
+     "value": "実父・日系アルゼンチン二世",
+     "as_of": "1992/6/20",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_804ac8b27bd4": {
+   "id": "ent_804ac8b27bd4",
+   "name": "両親の離婚",
+   "type": "出来事",
+   "aliases": [
+    "離婚"
+   ],
+   "domains": [
+    "家族",
+    "ルーツ"
+   ],
+   "props": {
+    "役割": {
+     "value": "六歳のときの家族の分岐点",
+     "as_of": "1992/6/20",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_3e4cf9a95ba9": {
+   "id": "ent_3e4cf9a95ba9",
+   "name": "駒木乃佳代",
+   "type": "人物",
+   "aliases": [
+    "佳代",
+    "母"
+   ],
+   "domains": [
+    "家族"
+   ],
+   "props": {
+    "役割": {
+     "value": "母",
+     "as_of": "1994/11/3",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_5e793835c10c": {
+   "id": "ent_5e793835c10c",
+   "name": "母の再婚",
+   "type": "出来事",
+   "aliases": [
+    "再婚"
+   ],
+   "domains": [
+    "家族"
+   ],
+   "props": {
+    "役割": {
+     "value": "継父・駒木乃真吾を迎えた出来事",
+     "as_of": "1994/11/3",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_68c2c9847561": {
+   "id": "ent_68c2c9847561",
+   "name": "駒木乃真吾",
+   "type": "人物",
+   "aliases": [
+    "真吾",
+    "継父",
+    "マスター"
+   ],
+   "domains": [
+    "家族"
+   ],
+   "props": {
+    "役割": {
+     "value": "継父・バーテンダー",
+     "as_of": "1994/11/3",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_01d1bdd444e0": {
+   "id": "ent_01d1bdd444e0",
+   "name": "墨田",
+   "type": "場所",
+   "aliases": [
+    "墨田区"
+   ],
+   "domains": [
+    "家族",
+    "プライベート",
+    "日本"
+   ],
+   "props": {
+    "役割": {
+     "value": "継父の店がある街",
+     "as_of": "1994/11/3",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_0b4a63a48100": {
+   "id": "ent_0b4a63a48100",
+   "name": "バー Cielo",
+   "type": "組織",
+   "aliases": [
+    "Cielo",
+    "シエロ",
+    "親父の店"
+   ],
+   "domains": [
+    "家族",
+    "プライベート"
+   ],
+   "props": {
+    "役割": {
+     "value": "継父が営む個人経営のバー",
+     "as_of": "1994/11/3",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_191b5103c811": {
+   "id": "ent_191b5103c811",
+   "name": "佐野源蔵",
+   "type": "人物",
+   "aliases": [
+    "源蔵",
+    "母方の祖父"
+   ],
+   "domains": [
+    "家族",
+    "ルーツ"
+   ],
+   "props": {
+    "役割": {
+     "value": "母方の祖父・満州からの引揚者",
+     "as_of": "1993/8/15",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_08d643d5c5ce": {
+   "id": "ent_08d643d5c5ce",
+   "name": "ハルビン",
+   "type": "場所",
+   "aliases": [
+    "哈爾浜"
+   ],
+   "domains": [
+    "家族",
+    "ルーツ",
+    "海外"
+   ],
+   "props": {
+    "役割": {
+     "value": "母方の祖父母が引き揚げてきた土地・祖母の撮影所があった街",
+     "as_of": "1993/8/15",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_64b30cd6491b": {
+   "id": "ent_64b30cd6491b",
+   "name": "佐野綾子",
+   "type": "人物",
+   "aliases": [
+    "綾子",
+    "英綾子",
+    "ハナブサアヤコ",
+    "母方の祖母"
+   ],
+   "domains": [
+    "家族",
+    "ルーツ"
+   ],
+   "props": {
+    "役割": {
+     "value": "母方の祖母・満州映画の女優（芸名 英綾子）",
+     "as_of": "1993/8/15",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_c67d0fccc949": {
+   "id": "ent_c67d0fccc949",
+   "name": "三宅慧",
+   "type": "人物",
+   "aliases": [
+    "三宅",
+    "慧"
+   ],
+   "domains": [
+    "仕事",
+    "編集"
+   ],
+   "props": {
+    "役割": {
+     "value": "ATLAS日本版 編集者",
+     "as_of": "2017/3/25",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_9cca3fc8c4af": {
+   "id": "ent_9cca3fc8c4af",
+   "name": "トム・ドハティ",
+   "type": "人物",
+   "aliases": [
+    "トム"
+   ],
+   "domains": [
+    "海外",
+    "オーストラリア"
+   ],
+   "props": {
+    "役割": {
+     "value": "ライフセーバー",
+     "as_of": "2010/2/21",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_8f5c0e6a6769": {
+   "id": "ent_8f5c0e6a6769",
+   "name": "バイロンベイ",
+   "type": "場所",
+   "aliases": [
+    "Byron Bay"
+   ],
+   "domains": [
+    "海外",
+    "オーストラリア"
+   ],
+   "props": {
+    "役割": {
+     "value": "離岸流に流された海",
+     "as_of": "2010/2/21",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_c7607a0870d3": {
+   "id": "ent_c7607a0870d3",
+   "name": "オーストラリアでの遭難",
+   "type": "出来事",
+   "aliases": [
+    "遭難",
+    "崖から落ちた件"
+   ],
+   "domains": [
+    "海外",
+    "オーストラリア"
+   ],
+   "props": {
+    "役割": {
+     "value": "離岸流と滑落の二度の事故",
+     "as_of": "2010/3/18",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_1b4b0d8505ea": {
+   "id": "ent_1b4b0d8505ea",
+   "name": "マッテオ・リッツォ",
+   "type": "人物",
+   "aliases": [
+    "マッテオ"
+   ],
+   "domains": [
+    "海外",
+    "イタリア",
+    "取材"
+   ],
+   "props": {
+    "役割": {
+     "value": "現地コーディネーター",
+     "as_of": "2021/10/11",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_53fba38f8429": {
+   "id": "ent_53fba38f8429",
+   "name": "ナポリ",
+   "type": "場所",
+   "aliases": [
+    "Napoli"
+   ],
+   "domains": [
+    "海外",
+    "イタリア",
+    "取材"
+   ],
+   "props": {
+    "役割": {
+     "value": "繰り返し戻る街",
+     "as_of": "2021/9/6",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_f9282c957d30": {
+   "id": "ent_f9282c957d30",
+   "name": "観光",
+   "type": "",
+   "aliases": [],
+   "domains": [
+    "海外",
+    "イタリア",
+    "取材"
+   ],
+   "props": {}
+  },
+  "ent_90d286849b91": {
+   "id": "ent_90d286849b91",
+   "name": "桐生ケンタ",
+   "type": "人物",
+   "aliases": [
+    "ケンタ"
+   ],
+   "domains": [
+    "プライベート",
+    "スポーツ"
+   ],
+   "props": {
+    "役割": {
+     "value": "フリースタイルフットボール仲間",
+     "as_of": "2001/8/20",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_9215cfadc094": {
+   "id": "ent_9215cfadc094",
+   "name": "サッカー部退部",
+   "type": "出来事",
+   "aliases": [
+    "退部"
+   ],
+   "domains": [
+    "プライベート",
+    "スポーツ"
+   ],
+   "props": {
+    "役割": {
+     "value": "顧問と衝突して部を離れた出来事",
+     "as_of": "2000/7/3",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_687cac7e4360": {
+   "id": "ent_687cac7e4360",
+   "name": "大槻信也",
+   "type": "人物",
+   "aliases": [
+    "大槻"
+   ],
+   "domains": [
+    "仕事",
+    "IT"
+   ],
+   "props": {
+    "役割": {
+     "value": "日之出システムズ 元上司",
+     "as_of": "2018/7/30",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_9d7e1e527c94": {
+   "id": "ent_9d7e1e527c94",
+   "name": "日之出システムズ",
+   "type": "組織",
+   "aliases": [
+    "日之出",
+    "前職"
+   ],
+   "domains": [
+    "仕事",
+    "IT"
+   ],
+   "props": {
+    "役割": {
+     "value": "中堅システム開発会社",
+     "as_of": "2019/3/29",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_e5d8de27d8ea": {
+   "id": "ent_e5d8de27d8ea",
+   "name": "関口一夫",
+   "type": "人物",
+   "aliases": [
+    "関口さん"
+   ],
+   "domains": [
+    "取材",
+    "労働"
+   ],
+   "props": {
+    "役割": {
+     "value": "茨城の農園経営者・取材対象",
+     "as_of": "2016/2/14",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_553ca5727a8e": {
+   "id": "ent_553ca5727a8e",
+   "name": "ラフィア・ベグム",
+   "type": "人物",
+   "aliases": [
+    "ラフィア"
+   ],
+   "domains": [
+    "取材",
+    "労働",
+    "海外"
+   ],
+   "props": {
+    "役割": {
+     "value": "縫製工・取材対象",
+     "as_of": "2019/11/12",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_229f54ae8c65": {
+   "id": "ent_229f54ae8c65",
+   "name": "ダッカ",
+   "type": "場所",
+   "aliases": [
+    "Dhaka"
+   ],
+   "domains": [
+    "取材",
+    "労働",
+    "海外"
+   ],
+   "props": {
+    "役割": {
+     "value": "縫製産業の集積地",
+     "as_of": "2019/11/9",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_63cb9fe9a4c3": {
+   "id": "ent_63cb9fe9a4c3",
+   "name": "ヌール・ハッダード",
+   "type": "人物",
+   "aliases": [
+    "ヌール"
+   ],
+   "domains": [
+    "取材",
+    "教育",
+    "海外"
+   ],
+   "props": {
+    "役割": {
+     "value": "難民キャンプの生徒・取材対象",
+     "as_of": "2024/2/2",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_b88d7e5e8618": {
+   "id": "ent_b88d7e5e8618",
+   "name": "ザアタリ難民キャンプ",
+   "type": "場所",
+   "aliases": [
+    "ザアタリ"
+   ],
+   "domains": [
+    "取材",
+    "教育",
+    "海外"
+   ],
+   "props": {
+    "役割": {
+     "value": "ヨルダンの難民キャンプ",
+     "as_of": "2024/1/29",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_8640cb1581c2": {
+   "id": "ent_8640cb1581c2",
+   "name": "教育",
+   "type": "",
+   "aliases": [],
+   "domains": [
+    "取材",
+    "教育",
+    "海外",
+    "仕事",
+    "媒体"
+   ],
+   "props": {}
+  },
+  "ent_a49780a4319d": {
+   "id": "ent_a49780a4319d",
+   "name": "ミン・ヴァン・タム",
+   "type": "人物",
+   "aliases": [
+    "ミンさん",
+    "ミン"
+   ],
+   "domains": [
+    "取材",
+    "気候",
+    "海外"
+   ],
+   "props": {
+    "役割": {
+     "value": "農民・取材対象",
+     "as_of": "2025/9/12",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_a989ea7de830": {
+   "id": "ent_a989ea7de830",
+   "name": "メコンデルタ",
+   "type": "場所",
+   "aliases": [
+    "メコン"
+   ],
+   "domains": [
+    "取材",
+    "気候",
+    "海外"
+   ],
+   "props": {
+    "役割": {
+     "value": "塩害が進む稲作地帯",
+     "as_of": "2025/9/9",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_ba1e77043a25": {
+   "id": "ent_ba1e77043a25",
+   "name": "カルロス・メンドーサ",
+   "type": "人物",
+   "aliases": [
+    "カルロス"
+   ],
+   "domains": [
+    "取材",
+    "労働",
+    "海外"
+   ],
+   "props": {
+    "役割": {
+     "value": "ギグワーカー・取材対象",
+     "as_of": "2023/9/17",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_a64c2ffe3d18": {
+   "id": "ent_a64c2ffe3d18",
+   "name": "サンパウロ",
+   "type": "",
+   "aliases": [],
+   "domains": [
+    "取材",
+    "労働",
+    "海外"
+   ],
+   "props": {}
+  },
+  "ent_b6a4682d1653": {
+   "id": "ent_b6a4682d1653",
+   "name": "アンナ・フェルステル",
+   "type": "人物",
+   "aliases": [
+    "アンナ"
+   ],
+   "domains": [
+    "取材",
+    "政策",
+    "海外"
+   ],
+   "props": {
+    "役割": {
+     "value": "ロビイスト・取材対象",
+     "as_of": "2025/3/8",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_73e537447355": {
+   "id": "ent_73e537447355",
+   "name": "ブリュッセル",
+   "type": "",
+   "aliases": [],
+   "domains": [
+    "取材",
+    "政策",
+    "海外"
+   ],
+   "props": {}
+  },
+  "ent_b9c249167c7d": {
+   "id": "ent_b9c249167c7d",
+   "name": "ブログ「南半球の風向き」",
+   "type": "媒体",
+   "aliases": [
+    "南半球の風向き",
+    "自分のブログ"
+   ],
+   "domains": [
+    "仕事",
+    "媒体",
+    "プライベート"
+   ],
+   "props": {
+    "役割": {
+     "value": "個人ブログ",
+     "as_of": "2014/11/12",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_6a9295d8c09a": {
+   "id": "ent_6a9295d8c09a",
+   "name": "城南学院大学",
+   "type": "組織",
+   "aliases": [
+    "城南学院",
+    "大学"
+   ],
+   "domains": [
+    "学生時代"
+   ],
+   "props": {
+    "役割": {
+     "value": "文系私立大学",
+     "as_of": "2013/3/25",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_454700621e2f": {
+   "id": "ent_454700621e2f",
+   "name": "半年の入院",
+   "type": "出来事",
+   "aliases": [
+    "入院"
+   ],
+   "domains": [
+    "学生時代",
+    "プライベート",
+    "転機"
+   ],
+   "props": {
+    "役割": {
+     "value": "滑落による長期入院と留年",
+     "as_of": "2010/9/30",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_2e80c8b3ce2e": {
+   "id": "ent_2e80c8b3ce2e",
+   "name": "都市",
+   "type": "",
+   "aliases": [],
+   "domains": [
+    "海外",
+    "イタリア"
+   ],
+   "props": {}
+  },
+  "ent_46398f86afcb": {
+   "id": "ent_46398f86afcb",
+   "name": "大学受験三浪",
+   "type": "出来事",
+   "aliases": [
+    "三浪"
+   ],
+   "domains": [
+    "学生時代"
+   ],
+   "props": {
+    "役割": {
+     "value": "三年の浪人を経て大学に入った期間",
+     "as_of": "2008/4/5",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_86e35022b134": {
+   "id": "ent_86e35022b134",
+   "name": "駿英予備校",
+   "type": "",
+   "aliases": [],
+   "domains": [
+    "学生時代"
+   ],
+   "props": {}
+  },
+  "ent_5bb64655f0ad": {
+   "id": "ent_5bb64655f0ad",
+   "name": "中米での誤認逮捕",
+   "type": "出来事",
+   "aliases": [
+    "誤認逮捕",
+    "拘束"
+   ],
+   "domains": [
+    "海外",
+    "取材",
+    "人権"
+   ],
+   "props": {
+    "役割": {
+     "value": "空港で別人と間違われ三日間拘束された事件",
+     "as_of": "2023/2/9",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
+  },
+  "ent_b633f722bd7a": {
+   "id": "ent_b633f722bd7a",
+   "name": "人権",
+   "type": "",
+   "aliases": [],
+   "domains": [
+    "海外",
+    "取材",
+    "人権"
+   ],
+   "props": {}
+  }
+ },
+ "edges": [
+  {
+   "source": "ent_99e2846e896d",
+   "target": "ent_707ba17c7ef8",
+   "relation": "拠点",
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2026/5/12"
+  },
+  {
+   "source": "ent_99e2846e896d",
+   "target": "ent_17cfb1e34cf1",
+   "relation": "所属",
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2026/5/12"
+  },
+  {
+   "source": "ent_99e2846e896d",
+   "target": "ent_15c96fce58fa",
+   "relation": "所属",
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2026/5/12"
+  },
+  {
+   "source": "ent_99e2846e896d",
+   "target": "ent_22931b709fc5",
+   "relation": "所属",
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2026/5/12"
+  },
+  {
+   "source": "ent_99e2846e896d",
+   "target": "ent_0c1de8295a03",
+   "relation": "関与",
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2026/5/12"
+  },
+  {
+   "source": "ent_99e2846e896d",
+   "target": "ent_9df2b5a903e9",
+   "relation": "関与",
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2026/5/12"
+  },
+  {
+   "source": "ent_99e2846e896d",
+   "target": "ent_38c1bc8927c8",
+   "relation": "関与",
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2026/5/12"
+  },
+  {
+   "source": "ent_99e2846e896d",
+   "target": "ent_a099a5c125b6",
+   "relation": "取材テーマ",
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2026/5/12"
+  },
+  {
+   "source": "ent_99e2846e896d",
+   "target": "ent_b547161508b9",
+   "relation": "取材テーマ",
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2026/5/12"
+  },
+  {
+   "source": "ent_99e2846e896d",
+   "target": "ent_31d88d20e69a",
+   "relation": "取材テーマ",
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2026/5/12"
+  },
+  {
+   "source": "ent_99e2846e896d",
+   "target": "ent_b4bdaa166417",
+   "relation": "取材テーマ",
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2026/5/12"
+  },
+  {
+   "source": "ent_99e2846e896d",
+   "target": "ent_45d12f4fbd27",
+   "relation": "取材テーマ",
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2026/5/12"
+  },
+  {
+   "source": "ent_99e2846e896d",
+   "target": "ent_e33270733417",
+   "relation": "取材テーマ",
+   "domains": [
+    "家族",
+    "仕事",
+    "ルーツ"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2026/5/12"
+  },
+  {
+   "source": "ent_7edc4e9dcdd1",
+   "target": "ent_3af239a24d7b",
+   "relation": "拠点",
+   "domains": [
+    "家族",
+    "ルーツ"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2002/3/25"
+  },
+  {
+   "source": "ent_0a7052809e4f",
+   "target": "ent_707ba17c7ef8",
+   "relation": "拠点",
+   "domains": [
+    "家族",
+    "ルーツ"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "1992/6/20"
+  },
+  {
+   "source": "ent_0a7052809e4f",
+   "target": "ent_804ac8b27bd4",
+   "relation": "関与",
+   "domains": [
+    "家族",
+    "ルーツ"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "1992/6/20"
+  },
+  {
+   "source": "ent_3e4cf9a95ba9",
+   "target": "ent_707ba17c7ef8",
+   "relation": "拠点",
+   "domains": [
+    "家族"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "1994/11/3"
+  },
+  {
+   "source": "ent_3e4cf9a95ba9",
+   "target": "ent_804ac8b27bd4",
+   "relation": "関与",
+   "domains": [
+    "家族"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "1994/11/3"
+  },
+  {
+   "source": "ent_3e4cf9a95ba9",
+   "target": "ent_5e793835c10c",
+   "relation": "関与",
+   "domains": [
+    "家族"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "1994/11/3"
+  },
+  {
+   "source": "ent_68c2c9847561",
+   "target": "ent_01d1bdd444e0",
+   "relation": "拠点",
+   "domains": [
+    "家族"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "1994/11/3"
+  },
+  {
+   "source": "ent_68c2c9847561",
+   "target": "ent_0b4a63a48100",
+   "relation": "所属",
+   "domains": [
+    "家族"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "1994/11/3"
+  },
+  {
+   "source": "ent_68c2c9847561",
+   "target": "ent_5e793835c10c",
+   "relation": "関与",
+   "domains": [
+    "家族"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "1994/11/3"
+  },
+  {
+   "source": "ent_191b5103c811",
+   "target": "ent_08d643d5c5ce",
+   "relation": "拠点",
+   "domains": [
+    "家族",
+    "ルーツ"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "1993/8/15"
+  },
+  {
+   "source": "ent_64b30cd6491b",
+   "target": "ent_08d643d5c5ce",
+   "relation": "拠点",
+   "domains": [
+    "家族",
+    "ルーツ"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "1993/8/15"
+  },
+  {
+   "source": "ent_c67d0fccc949",
+   "target": "ent_707ba17c7ef8",
+   "relation": "拠点",
+   "domains": [
+    "仕事",
+    "編集"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2017/3/25"
+  },
+  {
+   "source": "ent_c67d0fccc949",
+   "target": "ent_17cfb1e34cf1",
+   "relation": "所属",
+   "domains": [
+    "仕事",
+    "編集"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2017/3/25"
+  },
+  {
+   "source": "ent_c67d0fccc949",
+   "target": "ent_0c1de8295a03",
+   "relation": "関与",
+   "domains": [
+    "仕事",
+    "編集"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2017/3/25"
+  },
+  {
+   "source": "ent_c67d0fccc949",
+   "target": "ent_e33270733417",
+   "relation": "取材テーマ",
+   "domains": [
+    "仕事",
+    "編集"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2017/3/25"
+  },
+  {
+   "source": "ent_9cca3fc8c4af",
+   "target": "ent_8f5c0e6a6769",
+   "relation": "拠点",
+   "domains": [
+    "海外",
+    "オーストラリア"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2010/2/21"
+  },
+  {
+   "source": "ent_9cca3fc8c4af",
+   "target": "ent_c7607a0870d3",
+   "relation": "関与",
+   "domains": [
+    "海外",
+    "オーストラリア"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2010/2/21"
+  },
+  {
+   "source": "ent_1b4b0d8505ea",
+   "target": "ent_53fba38f8429",
+   "relation": "拠点",
+   "domains": [
+    "海外",
+    "イタリア",
+    "取材"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2021/10/11"
+  },
+  {
+   "source": "ent_1b4b0d8505ea",
+   "target": "ent_38c1bc8927c8",
+   "relation": "関与",
+   "domains": [
+    "海外",
+    "イタリア",
+    "取材"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2021/10/11"
+  },
+  {
+   "source": "ent_1b4b0d8505ea",
+   "target": "ent_b4bdaa166417",
+   "relation": "取材テーマ",
+   "domains": [
+    "海外",
+    "イタリア",
+    "取材"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2021/10/11"
+  },
+  {
+   "source": "ent_1b4b0d8505ea",
+   "target": "ent_f9282c957d30",
+   "relation": "取材テーマ",
+   "domains": [
+    "海外",
+    "イタリア",
+    "取材"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2021/10/11"
+  },
+  {
+   "source": "ent_90d286849b91",
+   "target": "ent_707ba17c7ef8",
+   "relation": "拠点",
+   "domains": [
+    "プライベート",
+    "スポーツ"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2001/8/20"
+  },
+  {
+   "source": "ent_90d286849b91",
+   "target": "ent_9215cfadc094",
+   "relation": "関与",
+   "domains": [
+    "プライベート",
+    "スポーツ"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2001/8/20"
+  },
+  {
+   "source": "ent_687cac7e4360",
+   "target": "ent_707ba17c7ef8",
+   "relation": "拠点",
+   "domains": [
+    "仕事",
+    "IT"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2018/7/30"
+  },
+  {
+   "source": "ent_687cac7e4360",
+   "target": "ent_9d7e1e527c94",
+   "relation": "所属",
+   "domains": [
+    "仕事",
+    "IT"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2018/7/30"
+  },
+  {
+   "source": "ent_687cac7e4360",
+   "target": "ent_0c1de8295a03",
+   "relation": "関与",
+   "domains": [
+    "仕事",
+    "IT"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2018/7/30"
+  },
+  {
+   "source": "ent_687cac7e4360",
+   "target": "ent_e33270733417",
+   "relation": "取材テーマ",
+   "domains": [
+    "仕事",
+    "IT"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2018/7/30"
+  },
+  {
+   "source": "ent_e5d8de27d8ea",
+   "target": "ent_707ba17c7ef8",
+   "relation": "拠点",
+   "domains": [
+    "取材",
+    "労働"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2016/2/14"
+  },
+  {
+   "source": "ent_e5d8de27d8ea",
+   "target": "ent_b547161508b9",
+   "relation": "取材テーマ",
+   "domains": [
+    "取材",
+    "労働"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2016/2/14"
+  },
+  {
+   "source": "ent_553ca5727a8e",
+   "target": "ent_229f54ae8c65",
+   "relation": "拠点",
+   "domains": [
+    "取材",
+    "労働",
+    "海外"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2019/11/12"
+  },
+  {
+   "source": "ent_553ca5727a8e",
+   "target": "ent_b547161508b9",
+   "relation": "取材テーマ",
+   "domains": [
+    "取材",
+    "労働",
+    "海外"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2019/11/12"
+  },
+  {
+   "source": "ent_63cb9fe9a4c3",
+   "target": "ent_b88d7e5e8618",
+   "relation": "拠点",
+   "domains": [
+    "取材",
+    "教育",
+    "海外"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2024/2/2"
+  },
+  {
+   "source": "ent_63cb9fe9a4c3",
+   "target": "ent_a099a5c125b6",
+   "relation": "取材テーマ",
+   "domains": [
+    "取材",
+    "教育",
+    "海外"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2024/2/2"
+  },
+  {
+   "source": "ent_63cb9fe9a4c3",
+   "target": "ent_8640cb1581c2",
+   "relation": "取材テーマ",
+   "domains": [
+    "取材",
+    "教育",
+    "海外"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2024/2/2"
+  },
+  {
+   "source": "ent_a49780a4319d",
+   "target": "ent_a989ea7de830",
+   "relation": "拠点",
+   "domains": [
+    "取材",
+    "気候",
+    "海外"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2025/9/12"
+  },
+  {
+   "source": "ent_a49780a4319d",
+   "target": "ent_31d88d20e69a",
+   "relation": "取材テーマ",
+   "domains": [
+    "取材",
+    "気候",
+    "海外"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2025/9/12"
+  },
+  {
+   "source": "ent_ba1e77043a25",
+   "target": "ent_a64c2ffe3d18",
+   "relation": "拠点",
+   "domains": [
+    "取材",
+    "労働",
+    "海外"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2023/9/17"
+  },
+  {
+   "source": "ent_ba1e77043a25",
+   "target": "ent_b547161508b9",
+   "relation": "取材テーマ",
+   "domains": [
+    "取材",
+    "労働",
+    "海外"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2023/9/17"
+  },
+  {
+   "source": "ent_ba1e77043a25",
+   "target": "ent_45d12f4fbd27",
+   "relation": "取材テーマ",
+   "domains": [
+    "取材",
+    "労働",
+    "海外"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2023/9/17"
+  },
+  {
+   "source": "ent_b6a4682d1653",
+   "target": "ent_73e537447355",
+   "relation": "拠点",
+   "domains": [
+    "取材",
+    "政策",
+    "海外"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2025/3/8"
+  },
+  {
+   "source": "ent_b6a4682d1653",
+   "target": "ent_45d12f4fbd27",
+   "relation": "取材テーマ",
+   "domains": [
+    "取材",
+    "政策",
+    "海外"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2025/3/8"
+  },
+  {
+   "source": "ent_17cfb1e34cf1",
+   "target": "ent_707ba17c7ef8",
+   "relation": "拠点",
+   "domains": [
+    "仕事",
+    "媒体"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2018/1/26"
+  },
+  {
+   "source": "ent_17cfb1e34cf1",
+   "target": "ent_a099a5c125b6",
+   "relation": "取材テーマ",
+   "domains": [
+    "仕事",
+    "媒体"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2018/1/26"
+  },
+  {
+   "source": "ent_17cfb1e34cf1",
+   "target": "ent_b547161508b9",
+   "relation": "取材テーマ",
+   "domains": [
+    "仕事",
+    "媒体"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2018/1/26"
+  },
+  {
+   "source": "ent_17cfb1e34cf1",
+   "target": "ent_31d88d20e69a",
+   "relation": "取材テーマ",
+   "domains": [
+    "仕事",
+    "媒体"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2018/1/26"
+  },
+  {
+   "source": "ent_17cfb1e34cf1",
+   "target": "ent_b4bdaa166417",
+   "relation": "取材テーマ",
+   "domains": [
+    "仕事",
+    "媒体"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2018/1/26"
+  },
+  {
+   "source": "ent_17cfb1e34cf1",
+   "target": "ent_45d12f4fbd27",
+   "relation": "取材テーマ",
+   "domains": [
+    "仕事",
+    "媒体"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2018/1/26"
+  },
+  {
+   "source": "ent_15c96fce58fa",
+   "target": "ent_707ba17c7ef8",
+   "relation": "拠点",
+   "domains": [
+    "仕事",
+    "媒体"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2018/6/12"
+  },
+  {
+   "source": "ent_15c96fce58fa",
+   "target": "ent_e33270733417",
+   "relation": "取材テーマ",
+   "domains": [
+    "仕事",
+    "媒体"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2018/6/12"
+  },
+  {
+   "source": "ent_15c96fce58fa",
+   "target": "ent_45d12f4fbd27",
+   "relation": "取材テーマ",
+   "domains": [
+    "仕事",
+    "媒体"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2018/6/12"
+  },
+  {
+   "source": "ent_15c96fce58fa",
+   "target": "ent_b4bdaa166417",
+   "relation": "取材テーマ",
+   "domains": [
+    "仕事",
+    "媒体"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2018/6/12"
+  },
+  {
+   "source": "ent_22931b709fc5",
+   "target": "ent_707ba17c7ef8",
+   "relation": "拠点",
+   "domains": [
+    "仕事",
+    "媒体"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2018/11/29"
+  },
+  {
+   "source": "ent_22931b709fc5",
+   "target": "ent_8640cb1581c2",
+   "relation": "取材テーマ",
+   "domains": [
+    "仕事",
+    "媒体"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2018/11/29"
+  },
+  {
+   "source": "ent_22931b709fc5",
+   "target": "ent_31d88d20e69a",
+   "relation": "取材テーマ",
+   "domains": [
+    "仕事",
+    "媒体"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2018/11/29"
+  },
+  {
+   "source": "ent_22931b709fc5",
+   "target": "ent_a099a5c125b6",
+   "relation": "取材テーマ",
+   "domains": [
+    "仕事",
+    "媒体"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2018/11/29"
+  },
+  {
+   "source": "ent_b9c249167c7d",
+   "target": "ent_707ba17c7ef8",
+   "relation": "拠点",
+   "domains": [
+    "仕事",
+    "媒体",
+    "プライベート"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2014/11/12"
+  },
+  {
+   "source": "ent_b9c249167c7d",
+   "target": "ent_b547161508b9",
+   "relation": "取材テーマ",
+   "domains": [
+    "仕事",
+    "媒体",
+    "プライベート"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2014/11/12"
+  },
+  {
+   "source": "ent_b9c249167c7d",
+   "target": "ent_e33270733417",
+   "relation": "取材テーマ",
+   "domains": [
+    "仕事",
+    "媒体",
+    "プライベート"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2014/11/12"
+  },
+  {
+   "source": "ent_9d7e1e527c94",
+   "target": "ent_707ba17c7ef8",
+   "relation": "拠点",
+   "domains": [
+    "仕事",
+    "IT"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2019/3/29"
+  },
+  {
+   "source": "ent_9d7e1e527c94",
+   "target": "ent_0c1de8295a03",
+   "relation": "関与",
+   "domains": [
+    "仕事",
+    "IT"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2019/3/29"
+  },
+  {
+   "source": "ent_9d7e1e527c94",
+   "target": "ent_e33270733417",
+   "relation": "取材テーマ",
+   "domains": [
+    "仕事",
+    "IT"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2019/3/29"
+  },
+  {
+   "source": "ent_6a9295d8c09a",
+   "target": "ent_707ba17c7ef8",
+   "relation": "拠点",
+   "domains": [
+    "学生時代"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2013/3/25"
+  },
+  {
+   "source": "ent_6a9295d8c09a",
+   "target": "ent_454700621e2f",
+   "relation": "関与",
+   "domains": [
+    "学生時代"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2013/3/25"
+  },
+  {
+   "source": "ent_0b4a63a48100",
+   "target": "ent_01d1bdd444e0",
+   "relation": "拠点",
+   "domains": [
+    "家族",
+    "プライベート"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "1994/11/3"
+  },
+  {
+   "source": "ent_01d1bdd444e0",
+   "target": "ent_707ba17c7ef8",
+   "relation": "拠点",
+   "domains": [
+    "家族",
+    "日本"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "1994/11/3"
+  },
+  {
+   "source": "ent_8f5c0e6a6769",
+   "target": "ent_c7607a0870d3",
+   "relation": "関与",
+   "domains": [
+    "海外",
+    "オーストラリア"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2010/2/21"
+  },
+  {
+   "source": "ent_53fba38f8429",
+   "target": "ent_f9282c957d30",
+   "relation": "取材テーマ",
+   "domains": [
+    "海外",
+    "イタリア"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2021/9/6"
+  },
+  {
+   "source": "ent_53fba38f8429",
+   "target": "ent_2e80c8b3ce2e",
+   "relation": "取材テーマ",
+   "domains": [
+    "海外",
+    "イタリア"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2021/9/6"
+  },
+  {
+   "source": "ent_229f54ae8c65",
+   "target": "ent_b547161508b9",
+   "relation": "取材テーマ",
+   "domains": [
+    "海外",
+    "取材"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2019/11/9"
+  },
+  {
+   "source": "ent_b88d7e5e8618",
+   "target": "ent_a099a5c125b6",
+   "relation": "取材テーマ",
+   "domains": [
+    "海外",
+    "取材"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2024/1/29"
+  },
+  {
+   "source": "ent_b88d7e5e8618",
+   "target": "ent_8640cb1581c2",
+   "relation": "取材テーマ",
+   "domains": [
+    "海外",
+    "取材"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2024/1/29"
+  },
+  {
+   "source": "ent_a989ea7de830",
+   "target": "ent_31d88d20e69a",
+   "relation": "取材テーマ",
+   "domains": [
+    "海外",
+    "取材"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2025/9/9"
+  },
+  {
+   "source": "ent_804ac8b27bd4",
+   "target": "ent_707ba17c7ef8",
+   "relation": "拠点",
+   "domains": [
+    "家族"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "1992/6/20"
+  },
+  {
+   "source": "ent_5e793835c10c",
+   "target": "ent_01d1bdd444e0",
+   "relation": "拠点",
+   "domains": [
+    "家族"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "1994/11/3"
+  },
+  {
+   "source": "ent_9215cfadc094",
+   "target": "ent_707ba17c7ef8",
+   "relation": "拠点",
+   "domains": [
+    "プライベート",
+    "スポーツ"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2000/7/3"
+  },
+  {
+   "source": "ent_46398f86afcb",
+   "target": "ent_707ba17c7ef8",
+   "relation": "拠点",
+   "domains": [
+    "学生時代"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2008/4/5"
+  },
+  {
+   "source": "ent_46398f86afcb",
+   "target": "ent_86e35022b134",
+   "relation": "所属",
+   "domains": [
+    "学生時代"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2008/4/5"
+  },
+  {
+   "source": "ent_c7607a0870d3",
+   "target": "ent_8f5c0e6a6769",
+   "relation": "拠点",
+   "domains": [
+    "海外",
+    "オーストラリア"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2010/3/18"
+  },
+  {
+   "source": "ent_0c1de8295a03",
+   "target": "ent_707ba17c7ef8",
+   "relation": "拠点",
+   "domains": [
+    "仕事",
+    "転機"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2019/4/15"
+  },
+  {
+   "source": "ent_9df2b5a903e9",
+   "target": "ent_707ba17c7ef8",
+   "relation": "拠点",
+   "domains": [
+    "プライベート",
+    "被害"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2021/6/17"
+  },
+  {
+   "source": "ent_9df2b5a903e9",
+   "target": "ent_e33270733417",
+   "relation": "取材テーマ",
+   "domains": [
+    "プライベート",
+    "被害"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2021/6/17"
+  },
+  {
+   "source": "ent_38c1bc8927c8",
+   "target": "ent_b4bdaa166417",
+   "relation": "取材テーマ",
+   "domains": [
+    "海外",
+    "イタリア",
+    "取材"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2022/5/23"
+  },
+  {
+   "source": "ent_5bb64655f0ad",
+   "target": "ent_b633f722bd7a",
+   "relation": "取材テーマ",
+   "domains": [
+    "海外",
+    "取材",
+    "人権"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2023/2/9"
+  },
+  {
+   "source": "ent_5bb64655f0ad",
+   "target": "ent_45d12f4fbd27",
+   "relation": "取材テーマ",
+   "domains": [
+    "海外",
+    "取材",
+    "人権"
+   ],
+   "props": {},
+   "source_ids": [
+    "source/Sample01_Relations.csv"
+   ],
+   "create_date": "2023/2/9"
+  }
+ ]
+}

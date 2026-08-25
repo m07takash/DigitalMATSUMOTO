@@ -1,0 +1,28 @@
+{
+    "GRAPH_NAME": "Sample01_Relations",
+    "MULTI_VALUE_SEPARATOR": ";",
+    "SOURCES": [
+        {
+            "FILE": "source/Sample01_Relations.csv",
+            "LANE": "STRUCTURED",
+            "MAPPING": {
+                "ENTITY": {
+                    "name": "name",
+                    "type": "type",
+                    "aliases": "aliases"
+                },
+                "DOMAINS": "domains",
+                "AS_OF": "as_of",
+                "PROPS": {
+                    "役割": "role"
+                },
+                "RELATIONS": [
+                    {"target_col": "based_in", "relation": "拠点", "direction": "OUT"},
+                    {"target_col": "affiliation", "relation": "所属", "direction": "OUT"},
+                    {"target_col": "related_event", "relation": "関与", "direction": "OUT"},
+                    {"target_col": "related_topic", "relation": "取材テーマ", "direction": "OUT"}
+                ]
+            }
+        }
+    ]
+}

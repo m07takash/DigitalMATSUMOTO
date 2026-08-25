@@ -1,0 +1,31 @@
+{
+    "NAME": "Writing",
+    "CHAINS": [
+        {
+            "TYPE": "LLM",
+            "SETTING": {
+                "AGENT_FILE": "USER",
+                "OVERWRITE_ITEMS": "USER",
+                "ADD_KNOWLEDGE": ["USER"],
+                "PROMPT_TEMPLATE": "Article Outline",
+                "USER_INPUT": "USER",
+                "CONTENTS": "USER",
+                "SITUATION": "USER",
+                "MEMORY_USE": true
+            }
+        },
+        {
+            "TYPE": "LLM",
+            "SETTING": {
+                "AGENT_FILE": "USER",
+                "OVERWRITE_ITEMS": "USER",
+                "ADD_KNOWLEDGE": ["USER"],
+                "PROMPT_TEMPLATE": "Article Draft",
+                "USER_INPUT": "USER",
+                "CONTENTS": "EXPORT_1",
+                "SITUATION": "USER",
+                "MEMORY_USE": true
+            }
+        }
+    ]
+}
