@@ -463,12 +463,9 @@
     ],
     "SKILL": {
         "TOOL_LIST": [
-            "WebSearch",
-            "current_time",
-            "extract_date",
-            "compare_texts",
-            "inject_citations",
-            "dialog_digest"
+            "forget_history",
+            "remember_history",
+            "WebSearch"
         ]
     },
     "DEFINE_CODE": {
