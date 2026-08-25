@@ -1367,6 +1367,154 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/Sample01_Relations --use-llm
 
 サンプル一式（`user/common/csv/Sample01_Relations.csv` の50行・mapping/dictionary・ビルド済み graph.json）は `user/common/rag/graph/Sample01_Relations/` に同梱しています。人物/場所/出来事/テーマを1つのCSVに同居させ、`所属` / `拠点` / `関与` / `取材テーマ` の4述語を生やす構成です。
 
+#### レーンAの例：構造を最初からCSVで書く（LLM不要）
+
+「誰が・何に・どう関わるか」が既に分かっているときは、レーンAが確実で速くて無料です。**1行＝1エンティティ**とし、関係は列で表します。
+
+`user/common/csv/Sample01_Relations.csv`（抜粋）:
+
+```csv
+name,type,aliases,domains,as_of,role,based_in,affiliation,related_event,related_topic
+駒木乃英人,人物,エイト;Eight,家族;仕事,2026/5/12,フリージャーナリスト,東京,ATLAS日本版;季刊SOIL,独立,労働;気候変動
+エドゥアルド・アヤラ,人物,アヤラ;祖父アヤラ,家族;ルーツ,2002/3/25,父方の祖父・タンゴダンサー,ブエノスアイレス,,,
+```
+
+`mapping.json` で、どの列がエンティティで、どの列が関係かを宣言します。
+
+```json
+{
+    "GRAPH_NAME": "Sample01_Relations",
+    "MULTI_VALUE_SEPARATOR": ";",
+    "SOURCES": [{
+        "FILE": "../../../csv/Sample01_Relations.csv",
+        "LANE": "STRUCTURED",
+        "MAPPING": {
+            "ENTITY":  {"name": "name", "type": "type", "aliases": "aliases"},
+            "DOMAINS": "domains",
+            "AS_OF":   "as_of",
+            "PROPS":   {"役割": "role"},
+            "RELATIONS": [
+                {"target_col": "based_in",      "relation": "拠点",       "direction": "OUT"},
+                {"target_col": "affiliation",   "relation": "所属",       "direction": "OUT"},
+                {"target_col": "related_event", "relation": "関与",       "direction": "OUT"},
+                {"target_col": "related_topic", "relation": "取材テーマ", "direction": "OUT"}
+            ]
+        }
+    }]
+}
+```
+
+1行目から、こう展開されます。
+
+```
+(駒木乃英人) --[拠点]--> (東京)
+(駒木乃英人) --[所属]--> (ATLAS日本版)
+(駒木乃英人) --[所属]--> (季刊SOIL)          ← ";" 区切りは複数エッジに展開
+(駒木乃英人) --[関与]--> (独立)
+(駒木乃英人) --[取材テーマ]--> (労働)
+(駒木乃英人) --[取材テーマ]--> (気候変動)
+props: 役割="フリージャーナリスト"            ← PROPS はエッジではなく状態
+```
+
+**関係先のノードは自動で作られます。** 上の例なら `東京` や `ATLAS日本版` の行を別途書かなくてもノードになります（`type` は空のまま）。型や別名を持たせたいものだけ行を足せば済みます。
+
+`dictionary.json` で表記ゆれを正規化します。CSV側は好きに書いてよく、ここで名寄せします。
+
+```json
+{
+    "aliases": {"エイト": "駒木乃英人", "Eight": "駒木乃英人", "ATLAS": "ATLAS日本版"},
+    "seeds":   [{"name": "駒木乃英人", "type": "人物", "domains": ["家族", "仕事"]}]
+}
+```
+
+```bash
+python3 DigiM_GraphBuilder.py user/common/rag/graph/Sample01_Relations
+# => {"nodes": 57, "edges": 97}
+```
+
+50行のCSVから57ノード97エッジが**数ミリ秒・APIコールゼロ**で構築されます。ノードIDは正規化名から決まるので、何度実行しても同じ `graph.json` になります。
+
+#### レーンBの例：文章からLLMで分解する
+
+台帳が無く、手元にあるのが文章だけのときはレーンBです。`agent_67GraphExtract.json` が本文から三つ組を抜き出します。
+
+ソースCSV（自由文の列を持つ）:
+
+```csv
+id,create_date,category,body
+c001,2026/2/20,取材メモ,ATLAS日本版の三宅慧は、ザアタリ難民キャンプの教育記事について「就学率だけでは足りない」と指摘し、五年後の再取材を提案した。
+```
+
+`mapping.json` に `LANE: "TEXT"` のソースを足します。
+
+```json
+{
+    "FILE": "../../../csv/Sample20_Columns.csv",
+    "LANE": "TEXT",
+    "MAPPING": {
+        "TEXT":      "body",
+        "AS_OF":     "create_date",
+        "DOMAINS":   "category",
+        "SOURCE_ID": "id"
+    }
+}
+```
+
+LLMが返す形式と、そこから作られるエッジ:
+
+```json
+{"triples": [
+    {"subject": "三宅慧", "subject_type": "人物", "relation": "指摘",
+     "object": "就学率だけでは足りない", "object_type": "論点"},
+    {"subject": "三宅慧", "subject_type": "人物", "relation": "提案",
+     "object": "五年後の再取材", "object_type": "施策"}
+], "node_props": []}
+```
+
+```bash
+python3 DigiM_GraphBuilder.py user/common/rag/graph/Sample01_Relations --use-llm
+```
+
+レーンBのMAPPINGは**すべて列名**を指します（固定値ではありません）。既定値は `TEXT`→`text`、`DOMAINS`→`category`、`AS_OF`→`create_date`、`SOURCE_ID`→未指定ならファイル名。`DOMAINS` の列は `;` 区切りで複数指定でき、そのままエッジのドメインになります。
+
+述語は「関連」のような曖昧語ではなく、**指摘 / 提案 / 参画 / 策定 / 懸念** のような具体動詞になるようプロンプトで指示しています。曖昧な述語ばかりのグラフは検索時に役に立たないためです。
+
+#### どちらを使うか
+
+| | レーンA（STRUCTURED） | レーンB（TEXT） |
+|---|---|---|
+| 入力 | 台帳・マスタ・表形式のデータ | 記事・議事録・メモなどの自由文 |
+| コスト | ゼロ（APIキー不要） | **1行につき1回のLLM呼び出し** |
+| 再現性 | 完全に決定的。何度やっても同じ | 実行ごとに揺れる |
+| 述語 | 自分で決める（`mapping.json`） | LLMが決める |
+| 向き | 構造が既に分かっている | 構造を発見したい |
+
+**両方を1つのグラフに混ぜられます。** `SOURCES` に両レーンのソースを並べれば、台帳から骨格を作り、文章から肉付けする構成になります。同じ事実が衝突したときの優先順位は **STRUCTURED > 辞書シード > TEXT**、同順位なら `AS_OF` が新しいほうが勝ちます。手で整備した台帳がLLMの抽出結果に上書きされることはありません。
+
+迷ったらレーンAから始めるのが安全です。レーンBはコストが行数に比例するので、まず数十行で試してから広げてください。
+
+#### 再ビルドのスキップ（ソースのfingerprint）
+
+`build_graph()` は毎回ゼロから作り直します。レーンAなら数ミリ秒ですが、レーンBは**全行をLLMに投げ直す**ので、ボタンを押すたびに課金されます。
+
+そこで、ビルドが読むもの全部（`mapping.json` / `dictionary.json` / 全ソースCSV / `use_llm`・`embed` フラグ / レーンBの抽出エージェントJSON）の内容ハッシュを `graph.json` に記録しています。
+
+```json
+"_build": {
+    "fingerprint": "0404a1cafacd78e7...",
+    "use_llm": false,
+    "embed": false
+}
+```
+
+`Update RAG data` はこれを照合し、一致していればビルドをスキップします（ログに `graph skipped (sources unchanged)`）。
+
+- **mtimeではなく内容のハッシュ**です。`git pull` はファイルのmtimeを更新するので、mtime比較だと中身が同じでもレーンBが走ってしまいます
+- **フラグもハッシュに含みます**。`use_llm: false` → `true` に変えれば、ソースが同じでも再ビルドされます
+- **毎回作り直したいときは** rags エントリに `"rebuild": "always"` を書きます。`DigiM_GraphBuilder.py` を直接叩いた場合も常に再ビルドです
+- スキップされた回は `graph.json` を書き換えないので、**Knowledge Explorer で手編集した内容が保持されます**（従来は次のUpdateで消えていました）
+
+
 **CSV取り込み（`Update RAG data` でのレーンAリビルド）：**
 
 `rags.json` に `input: "csv"` + `data_type: "graph"` のエントリを置くと、サイドバーの **`Update RAG data`** ボタンで graph.json を再構築できます。`DigiM_GraphBuilder.py` を手で叩くのと同じレーンA処理です。
@@ -1391,6 +1539,7 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/Sample01_Relations --use-llm
 | `use_llm` | `true` でレーンB（自由文からのLLM抽出）も実行。既定は `false`（APIキー不要） |
 | `embed` | `true` でノード埋め込みも生成。既定は `false` |
 | `extractor_agent` | レーンBで使うエージェント。`use_llm: false` なら無視される |
+| `rebuild` | `always` で毎回強制リビルド。既定の `if_changed` はソースのfingerprintが一致すればスキップ（後述） |
 
 - **ソースCSVはここでは指定しません**。`mapping.json` の `SOURCES[].FILE` が持っています（グラフフォルダ基準の相対パス）。`field_items` / `title` / `key_text` / `value_text` も不要です
 - リビルドは**全件・冪等**です（ノードIDが正規化名から決まるため）。何度実行しても同じ graph.json になります
