@@ -165,7 +165,6 @@ cython_debug/
 *_modified*
 VAnalytics*
 user/common/agent/*.json
-!user/common/agent/agent_X*.json
 !user/common/agent/agent_1*.json
 !user/common/agent/agent_2*.json
 !user/common/agent/agent_5*.json

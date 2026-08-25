@@ -140,5 +140,37 @@
             "category": "カテゴリ",
             "body": "本文"
         }
+    },
+    "Communication_Memo":{
+        "active": "N",
+        "input" : "csv",
+        "data_type" : "chromadb",
+        "bucket": "Communication_Memo",
+        "file_path": "user/common/csv/",
+        "file_name": "Sample00_Feedback.csv",
+        "field_items": ["title", "RAG_Category", "category", "create_date", "memo", "service_id", "user_id", "session_name", "seq", "sub_seq", "query", "response"],
+        "category_items": [
+            {"RAG_Category":["memo"]},
+            {"category":["Feedback"]}
+        ],
+        "title": ["title"],
+        "key_text": ["memo"],
+        "value_text": ["memo"]
+    },
+    "Communication_Comment":{
+        "active": "N",
+        "input" : "csv",
+        "data_type" : "chromadb",
+        "bucket": "Communication_Comment",
+        "file_path": "user/common/csv/",
+        "file_name": "Sample00_Feedback.csv",
+        "field_items": ["title", "RAG_Category", "category", "create_date", "memo", "service_id", "user_id", "session_name", "seq", "sub_seq", "query", "response"],
+        "category_items": [
+            {"RAG_Category":["comment"]},
+            {"category":["Feedback"]}
+        ],
+        "title": ["title"],
+        "key_text": ["memo"],
+        "value_text": ["memo"]
     }
 }
