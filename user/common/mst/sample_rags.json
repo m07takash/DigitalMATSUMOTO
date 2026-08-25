@@ -1,162 +1,114 @@
 {
-    "Sample01_Quote": {
+    "Sample02_Experience": {
         "active": "Y",
         "input": "csv",
         "data_type": "chromadb",
-        "bucket": "Sample01_Quote",
+        "bucket": "Sample02_Experience",
+        "data_name": "経験（幼少期からの人生と仕事）",
         "file_path": "user/common/csv/",
-        "file_name": "Sample01_Quote.csv",
-        "field_items": [
-            "speaker",
-            "situation",
-            "quote"
-        ],
-        "category_items": [],
-        "title": [
-            "speaker",
-            "quote"
-        ],
-        "key_text": [
-            "speaker",
-            "situation",
-            "quote"
-        ],
-        "value_text": [
-            "quote"
-        ]
-    },
-    "Sample02_Memo": {
-        "active": "Y",
-        "input": "csv",
-        "data_type": "chromadb",
-        "bucket": "Sample02_Memo",
-        "file_path": "user/common/csv/",
-        "file_name": "Sample02_Memo.csv",
+        "file_name": "Sample02_Experience.csv",
         "field_items": [
             "create_date",
-            "memo"
-        ],
-        "category_items": [],
-        "title": [
-            "create_date"
-        ],
-        "key_text": [
-            "memo"
-        ],
-        "value_text": [
-            "memo"
-        ]
-    },
-    "Sample03_Feedback": {
-        "active": "Y",
-        "input": "csv",
-        "data_type": "chromadb",
-        "bucket": "Sample03_Feedback",
-        "file_path": "user/common/csv/",
-        "file_name": "Sample03_Feedback.csv",
-        "field_items": [
-            "emp_code",
-            "speaker",
-            "create_date",
-            "feedback"
-        ],
-        "category_items": [],
-        "title": [
-            "speaker",
-            "create_date"
-        ],
-        "key_text": [
-            "speaker",
-            "feedback"
-        ],
-        "value_text": [
-            "feedback"
-        ]
-    },
-    "Communication_Memo": {
-        "active": "N",
-        "input": "csv",
-        "data_type": "chromadb",
-        "bucket": "Communication_Memo",
-        "file_path": "user/common/csv/",
-        "file_name": "Sample00_Feedback.csv",
-        "field_items": [
-            "title",
-            "RAG_Category",
             "category",
-            "create_date",
-            "memo",
-            "service_id",
-            "user_id",
-            "session_name",
-            "seq",
-            "sub_seq",
-            "query",
-            "response"
+            "title",
+            "experience"
         ],
-        "category_items": [
-            {
-                "RAG_Category": [
-                    "memo"
-                ]
-            },
-            {
-                "category": [
-                    "Feedback"
-                ]
-            }
-        ],
+        "category_items": [],
         "title": [
+            "create_date",
             "title"
         ],
         "key_text": [
-            "memo"
+            "category",
+            "title",
+            "experience"
         ],
         "value_text": [
-            "memo"
+            "experience"
         ]
     },
-    "Communication_Comment": {
-        "active": "N",
+    "Sample03_Impressions": {
+        "active": "Y",
         "input": "csv",
         "data_type": "chromadb",
-        "bucket": "Communication_Comment",
+        "bucket": "Sample03_Impressions",
+        "data_name": "印象に残ったもの（発言・場所）",
         "file_path": "user/common/csv/",
-        "file_name": "Sample00_Feedback.csv",
+        "file_name": "Sample03_Impressions.csv",
         "field_items": [
-            "title",
-            "RAG_Category",
-            "category",
             "create_date",
-            "memo",
-            "service_id",
-            "user_id",
-            "session_name",
-            "seq",
-            "sub_seq",
-            "query",
-            "response"
+            "subject",
+            "place",
+            "impression"
         ],
-        "category_items": [
-            {
-                "RAG_Category": [
-                    "comment"
-                ]
-            },
-            {
-                "category": [
-                    "Feedback"
-                ]
-            }
-        ],
+        "category_items": [],
         "title": [
+            "create_date",
+            "subject"
+        ],
+        "key_text": [
+            "subject",
+            "place",
+            "impression"
+        ],
+        "value_text": [
+            "impression"
+        ]
+    },
+    "Sample04_Tweets": {
+        "active": "Y",
+        "input": "csv",
+        "data_type": "chromadb",
+        "bucket": "Sample04_Tweets",
+        "data_name": "自分のつぶやき・ぼやき",
+        "file_path": "user/common/csv/",
+        "file_name": "Sample04_Tweets.csv",
+        "field_items": [
+            "create_date",
+            "media",
+            "tweet"
+        ],
+        "category_items": [],
+        "title": [
+            "create_date",
+            "tweet"
+        ],
+        "key_text": [
+            "media",
+            "tweet"
+        ],
+        "value_text": [
+            "tweet"
+        ]
+    },
+    "Sample10_Articles": {
+        "active": "Y",
+        "input": "csv",
+        "data_type": "chromadb",
+        "bucket": "Sample10_Articles",
+        "data_name": "過去に書いた記事の要旨",
+        "file_path": "user/common/csv/",
+        "file_name": "Sample10_Articles.csv",
+        "field_items": [
+            "create_date",
+            "theme",
+            "publisher",
+            "title",
+            "summary"
+        ],
+        "category_items": [],
+        "title": [
+            "create_date",
             "title"
         ],
         "key_text": [
-            "memo"
+            "theme",
+            "publisher",
+            "title",
+            "summary"
         ],
         "value_text": [
-            "memo"
+            "summary"
         ]
     },
     "DigiMPGSystemGuide": {

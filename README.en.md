@@ -629,9 +629,15 @@ Place CSV files under `user/common/csv/`. Create them in UTF-8 (with BOM).
 
 | File | Main columns | Purpose |
 |---------|-----------|------|
-| `Sample01_Quote.csv` | speaker, situation, quote | Quote collection |
-| `Sample02_Memo.csv` | create_date, memo | Memo |
-| `Sample03_Feedback.csv` | emp_code, speaker, create_date, feedback | Feedback |
+| `Sample02_Experience.csv` | create_date, category, title, experience | Life and work experience (Knowledge / Vector) |
+| `Sample03_Impressions.csv` | create_date, subject, place, impression | Memorable remarks and places (Knowledge / Vector) |
+| `Sample04_Tweets.csv` | create_date, media, tweet | The agent's own posts and grumbles (Knowledge / Vector) |
+| `Sample10_Articles.csv` | create_date, theme, publisher, title, summary | Summaries of past articles (Book / Vector) |
+| `Sample00_Feedback.csv` | title, category, create_date, memo, ... | Feedback sink (not a knowledge source) |
+
+> The date column must be named **`create_date` and formatted `YYYY/M/D`**. `get_chunk_csv` reads that exact column name; any other name silently falls back to the current time and the `DATE` condition in `META_SEARCH` stops working.
+
+> The knowledge-graph source CSV lives under the **graph folder**, not `user/common/csv/`: `user/common/rag/graph/Sample01_Relations/source/Sample01_Relations.csv`. `mapping.json` resolves `FILE` relative to the graph folder.
 
 **For Notion (optional):**
 
@@ -657,19 +663,19 @@ Define RAG data sources in `rags.json`.
 
 ```json
 {
-  "Sample01_Quote": {
+  "Sample02_Experience": {
     "active": "Y",
     "input": "csv",
     "data_type": "chromadb",
-    "bucket": "Sample01_Quote",
-    "data_name": "Quote collection",
-    "file_path": "",
-    "file_name": "Sample01_Quote.csv",
-    "field_items": ["speaker", "situation", "quote"],
-    "title": ["speaker", "quote"],
-    "key_text": ["speaker", "situation", "quote"],
-    "value_text": ["quote"],
-    "category_items": []
+    "bucket": "Sample02_Experience",
+    "data_name": "経験（幼少期からの人生と仕事）",
+    "file_path": "user/common/csv/",
+    "file_name": "Sample02_Experience.csv",
+    "field_items": ["create_date", "category", "title", "experience"],
+    "category_items": [],
+    "title": ["create_date", "title"],
+    "key_text": ["category", "title", "experience"],
+    "value_text": ["experience"]
   }
 }
 ```
@@ -1124,7 +1130,7 @@ When a specific trigger word (`MAGIC_WORD`) is included in the user's input, the
     "KNOWLEDGE": [
       {
         "NAME": "Quote",
-        "RAG_DATA": [{"DATA_NAME": "Sample01_Quote", "BUCKET": "Sample01_Quote"}],
+        "DATA": [{"DATA_TYPE": "DB", "DATA_NAME": "Sample04_Tweets"}],
         "TEXT_LIMITS": 1000,
         "DISTANCE_LOGIC": "Cosine"
       }
@@ -1147,8 +1153,8 @@ Defines the RAG data sources referenced in ordinary dialogue.
   {
     "NAME": "Experience",
     "RAG_DATA": [
-      {"DATA_NAME": "Sample02_Memo", "BUCKET": "Sample02_Memo"},
-      {"DATA_NAME": "Sample03_Feedback", "BUCKET": "Sample03_Feedback"}
+      {"DATA_TYPE": "DB", "DATA_NAME": "Sample02_Experience"},
+      {"DATA_TYPE": "DB", "DATA_NAME": "Sample03_Impressions"}
     ],
     "TEXT_LIMITS": 2000,
     "DISTANCE_LOGIC": "Cosine"
@@ -1247,7 +1253,7 @@ The agent obtains information from RAG data as "books and quotes it knows" and d
   {
     "RAG_NAME": "Quote",
     "PURPOSE": "Consult when you want to invoke a famous person's quote, close a reply with a maxim, or lean on a proverb.",
-    "RAG_DATA": [{"DATA_NAME": "Sample01_Quote", "BUCKET": "Sample01_Quote"}],
+    "DATA": [{"DATA_TYPE": "DB", "DATA_NAME": "Sample10_Articles"}],
     "HEADER_TEMPLATE": "The following are quotes by famous people you appreciate.\n",
     "CHUNK_TEMPLATE": "- {speaker}: \"{value_text}\"\n\n",
     "TEXT_LIMITS": 1000,
