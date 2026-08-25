@@ -1632,6 +1632,13 @@ def generate_rag():
     rag_data = []
     for rag_id, rag_setting in rag_mst_dict.items():
         if rag_setting["active"] == "Y":
+            # Start each RAG from an empty buffer. Without this, a fetch that
+            # assigns nothing (an unknown `input`, or Excel without pageindex —
+            # both only log a warning) would leave the previous RAG's chunks in
+            # rag_data and save them again under this rag_id. The csv branch
+            # below appends across a `file_name` list, so the reset belongs
+            # here, once per entry, not inside the fetch branches.
+            rag_data = []
             _rag_start = _time_gr.time()
             _t_fetch = _t_save = _t_fin = 0.0
             _n_fetched = 0
