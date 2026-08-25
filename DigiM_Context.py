@@ -1642,7 +1642,38 @@ def generate_rag():
                 else:
                     rag_data = get_chunk_notion(rag_setting["bucket"], rag_setting["data_name"], rag_setting["item_dict"], rag_setting["chk_dict"], rag_setting["date_dict"], rag_setting["category_dict"])
             elif rag_setting["input"] == "csv":
-                if isinstance(rag_setting["file_name"], list):
+                # GraphRAG — Lane A (deterministic, no LLM) rebuild from the
+                # graph folder's mapping.json / dictionary.json. mapping.json
+                # names its own source CSV (a path relative to the graph
+                # folder), so nothing goes through get_chunk_csv and no chunks
+                # reach the save stage below — hence rag_data is cleared.
+                # Optional keys: "use_llm": true adds Lane B free-text
+                # extraction via "extractor_agent", "embed": true regenerates
+                # node embeddings. Rebuild is full and idempotent (node ids
+                # derive from canonical names), so re-running is safe.
+                if rag_setting.get("data_type") == "graph":
+                    graph_dir = rag_setting.get("file_path", "")
+                    if not graph_dir:
+                        logger.warning(f"{rag_id}: graph rag missing 'file_path'; skip")
+                    else:
+                        try:
+                            import DigiM_Graph as _dmg
+                            _t_graph = _time_gr.time()
+                            _report = _dmg.build_graph(
+                                graph_dir,
+                                use_llm=bool(rag_setting.get("use_llm", False)),
+                                embed=bool(rag_setting.get("embed", False)),
+                                llm_agent_file=rag_setting.get(
+                                    "extractor_agent", "agent_67GraphExtract.json"),
+                            )
+                            logger.info(
+                                f"[rag_timing] {rag_id}: graph build={_time_gr.time() - _t_graph:.2f}s "
+                                f"nodes={_report.get('nodes')} edges={_report.get('edges')} "
+                                f"sources={_report.get('sources')}")
+                        except Exception as _ge:
+                            logger.exception(f"{rag_id} GraphRAG (Lane A) build failed: {_ge}")
+                    rag_data = []
+                elif isinstance(rag_setting["file_name"], list):
                     for rag_data_file_name in rag_setting["file_name"]:
                         rag_data += get_chunk_csv(rag_setting["bucket"], rag_setting["file_path"], rag_data_file_name, rag_setting["field_items"], rag_setting["title"], rag_setting["key_text"], rag_setting["value_text"], rag_setting["category_items"])
                 else:
