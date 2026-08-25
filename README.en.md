@@ -1355,6 +1355,150 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/Sample01_Relations --use-llm
 
 A complete sample (the 50 rows of `user/common/csv/Sample01_Relations.csv`, mapping/dictionary, prebuilt graph.json) ships under `user/common/rag/graph/Sample01_Relations/`. People, places, events and themes share one CSV, and each row grows edges over four predicates: 所属 / 拠点 / 関与 / 取材テーマ.
 
+#### Lane A example — writing the structure directly as CSV (no LLM)
+
+When you already know who relates to what, Lane A is exact, fast and free. **One row is one entity**; relations are columns.
+
+```csv
+name,type,aliases,domains,as_of,role,based_in,affiliation,related_event,related_topic
+駒木乃英人,人物,エイト;Eight,家族;仕事,2026/5/12,フリージャーナリスト,東京,ATLAS日本版;季刊SOIL,独立,労働;気候変動
+エドゥアルド・アヤラ,人物,アヤラ;祖父アヤラ,家族;ルーツ,2002/3/25,父方の祖父・タンゴダンサー,ブエノスアイレス,,,
+```
+
+`mapping.json` declares which column is the entity and which columns are relations:
+
+```json
+{
+    "GRAPH_NAME": "Sample01_Relations",
+    "MULTI_VALUE_SEPARATOR": ";",
+    "SOURCES": [{
+        "FILE": "../../../csv/Sample01_Relations.csv",
+        "LANE": "STRUCTURED",
+        "MAPPING": {
+            "ENTITY":  {"name": "name", "type": "type", "aliases": "aliases"},
+            "DOMAINS": "domains",
+            "AS_OF":   "as_of",
+            "PROPS":   {"役割": "role"},
+            "RELATIONS": [
+                {"target_col": "based_in",      "relation": "拠点",       "direction": "OUT"},
+                {"target_col": "affiliation",   "relation": "所属",       "direction": "OUT"},
+                {"target_col": "related_event", "relation": "関与",       "direction": "OUT"},
+                {"target_col": "related_topic", "relation": "取材テーマ", "direction": "OUT"}
+            ]
+        }
+    }]
+}
+```
+
+The first row expands to:
+
+```
+(駒木乃英人) --[拠点]--> (東京)
+(駒木乃英人) --[所属]--> (ATLAS日本版)
+(駒木乃英人) --[所属]--> (季刊SOIL)          <- ";" splits into separate edges
+(駒木乃英人) --[関与]--> (独立)
+(駒木乃英人) --[取材テーマ]--> (労働)
+(駒木乃英人) --[取材テーマ]--> (気候変動)
+props: 役割="フリージャーナリスト"            <- PROPS become state, not edges
+```
+
+**Relation targets become nodes automatically**, so `東京` and `ATLAS日本版` need no rows of their own (they just carry no `type`). Add a row only for the entities that need a type or aliases.
+
+`dictionary.json` normalises spelling, so the CSV can say whatever is natural:
+
+```json
+{
+    "aliases": {"エイト": "駒木乃英人", "Eight": "駒木乃英人", "ATLAS": "ATLAS日本版"},
+    "seeds":   [{"name": "駒木乃英人", "type": "人物", "domains": ["家族", "仕事"]}]
+}
+```
+
+```bash
+python3 DigiM_GraphBuilder.py user/common/rag/graph/Sample01_Relations
+# => {"nodes": 57, "edges": 97}
+```
+
+57 nodes and 97 edges out of 50 CSV rows, in **a few milliseconds with zero API calls**. Node ids derive from canonical names, so re-running produces the identical `graph.json`.
+
+#### Lane B example — letting the LLM decompose prose
+
+With no ledger and only prose to work from, Lane B has `agent_67GraphExtract.json` pull triples out of the text.
+
+```csv
+id,create_date,category,body
+c001,2026/2/20,取材メモ,ATLAS日本版の三宅慧は、ザアタリ難民キャンプの教育記事について「就学率だけでは足りない」と指摘し、五年後の再取材を提案した。
+```
+
+Add a `LANE: "TEXT"` source to `mapping.json`:
+
+```json
+{
+    "FILE": "../../../csv/Sample20_Columns.csv",
+    "LANE": "TEXT",
+    "MAPPING": {
+        "TEXT":      "body",
+        "AS_OF":     "create_date",
+        "DOMAINS":   "category",
+        "SOURCE_ID": "id"
+    }
+}
+```
+
+Every Lane B MAPPING value is a **column name**, never a literal. Defaults: `TEXT`→`text`, `DOMAINS`→`category`, `AS_OF`→`create_date`, `SOURCE_ID`→the file name when unset. The `DOMAINS` column may hold several `;`-separated values, which become the edges' domains.
+
+What the LLM returns, and the edges built from it:
+
+```json
+{"triples": [
+    {"subject": "三宅慧", "subject_type": "人物", "relation": "指摘",
+     "object": "就学率だけでは足りない", "object_type": "論点"},
+    {"subject": "三宅慧", "subject_type": "人物", "relation": "提案",
+     "object": "五年後の再取材", "object_type": "施策"}
+], "node_props": []}
+```
+
+```bash
+python3 DigiM_GraphBuilder.py user/common/rag/graph/Sample01_Relations --use-llm
+```
+
+The prompt pushes for concrete verbs — 指摘 / 提案 / 参画 / 策定 / 懸念 — rather than a vague 関連, because a graph of vague predicates retrieves nothing useful.
+
+#### Choosing a lane
+
+| | Lane A (STRUCTURED) | Lane B (TEXT) |
+|---|---|---|
+| Input | Ledgers, masters, anything tabular | Articles, minutes, notes — free text |
+| Cost | Zero, no API key | **One LLM call per row** |
+| Reproducibility | Fully deterministic | Varies run to run |
+| Predicates | You choose them in `mapping.json` | The LLM chooses them |
+| Use when | The structure is already known | You want to discover the structure |
+
+**Both lanes can feed one graph.** List sources of either lane under `SOURCES` to build the skeleton from a ledger and flesh it out from prose. When the same fact arrives twice, priority is **STRUCTURED > dictionary seed > TEXT**, and within a tier the newer `AS_OF` wins — a hand-maintained ledger is never overwritten by an extraction.
+
+Start with Lane A when in doubt. Lane B's cost scales with row count, so try a few dozen rows before widening it.
+
+#### Skipping the rebuild (source fingerprint)
+
+`build_graph()` rebuilds from scratch every time. That is milliseconds for Lane A, but Lane B **re-sends every row to the LLM**, so each button press bills again.
+
+So everything a build reads — `mapping.json`, `dictionary.json`, every source CSV, the `use_llm` / `embed` flags, and Lane B's extractor agent JSON — is hashed into `graph.json`:
+
+```json
+"_build": {
+    "fingerprint": "0404a1cafacd78e7...",
+    "use_llm": false,
+    "embed": false
+}
+```
+
+`Update RAG data` compares it and skips the build on a match, logging `graph skipped (sources unchanged)`.
+
+- **Content hash, not mtime.** `git pull` refreshes mtimes even when bytes are unchanged, and an mtime check would re-run Lane B for nothing
+- **The flags are part of the hash**, so flipping `use_llm` from `false` to `true` forces a rebuild even with identical sources
+- **To rebuild unconditionally**, set `"rebuild": "always"` on the rags entry. Running `DigiM_GraphBuilder.py` directly always rebuilds too
+- A skipped run does not rewrite `graph.json`, so **manual edits made in the Knowledge Explorer survive** (previously the next update wiped them)
+
+
 **CSV ingestion (Lane A rebuild from `Update RAG data`):**
 
 An `input: "csv"` + `data_type: "graph"` entry in `rags.json` lets the sidebar **`Update RAG data`** button rebuild `graph.json` — the same Lane A pass as running `DigiM_GraphBuilder.py` by hand.
@@ -1379,6 +1523,7 @@ An `input: "csv"` + `data_type: "graph"` entry in `rags.json` lets the sidebar *
 | `use_llm` | `true` also runs Lane B (LLM extraction from free text). Defaults to `false`, so no API key is needed |
 | `embed` | `true` regenerates node embeddings. Defaults to `false` |
 | `extractor_agent` | Agent used by Lane B; ignored when `use_llm` is `false` |
+| `rebuild` | `always` forces a rebuild every run. The default `if_changed` skips when the source fingerprint matches (see below) |
 
 - **The source CSV is not named here** — `mapping.json`'s `SOURCES[].FILE` owns it (a path relative to the graph folder). `field_items` / `title` / `key_text` / `value_text` are not needed either
 - The rebuild is **full and idempotent** (node ids derive from canonical names), so re-running always yields the same `graph.json`

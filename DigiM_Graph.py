@@ -40,6 +40,10 @@ LANE_PRIORITY = {"STRUCTURED": 3, "SEED": 2, "TEXT": 1}
 _setting = dmu.read_yaml_file("setting.yaml") or {}
 rag_folder_graph_path = _setting.get("RAG_FOLDER_GRAPH", "user/common/rag/graph/")
 mst_folder_path = _setting.get("MST_FOLDER", "user/common/mst/")
+agent_folder_path = _setting.get("AGENT_FOLDER", "user/common/agent/")
+
+# Key under which build_graph records what the last build was made from.
+BUILD_META_KEY = "_build"
 
 
 # ---------------------------------------------------------------- storage --
@@ -755,8 +759,71 @@ def embed_nodes(graph):
     return {"embedded": done, "failed": failed}
 
 
-def build_graph(graph_dir, use_llm=False, embed=False, llm_agent_file="agent_67GraphExtract.json"):
-    """Full build from mapping.json + dictionary.json. Returns a report dict."""
+def source_fingerprint(graph_dir, use_llm=False, embed=False,
+                       llm_agent_file="agent_67GraphExtract.json"):
+    """Content hash of everything a build reads: mapping.json, dictionary.json,
+    every SOURCES[].FILE, the two build flags, and — for Lane B — the extractor
+    agent's JSON.
+
+    Content-based rather than mtime-based on purpose: `git pull` rewrites files
+    with a fresh mtime even when the bytes are identical, and an mtime check
+    would then re-run Lane B (one LLM call per free-text row) for nothing.
+
+    A file that is missing hashes as a distinct marker, so a source appearing
+    or disappearing changes the fingerprint too."""
+    h = hashlib.sha256()
+
+    def feed(label, data):
+        h.update(str(label).encode("utf-8"))
+        h.update(b"\0")
+        h.update(data if isinstance(data, bytes) else str(data).encode("utf-8"))
+        h.update(b"\0")
+
+    def feed_file(label, path):
+        try:
+            feed(label, Path(path).read_bytes())
+        except OSError:
+            feed(label, b"\0<missing>")
+
+    for name in ("mapping.json", "dictionary.json"):
+        feed_file(name, Path(graph_dir) / name)
+
+    mapping = dmu.read_json_file(str(Path(graph_dir) / "mapping.json")) or {}
+    for source in mapping.get("SOURCES", []):
+        rel = source.get("FILE", "")
+        feed_file("SOURCE:" + rel, Path(graph_dir) / rel)
+
+    # Flags change the output even when the sources do not, so they are part of
+    # the identity: flipping use_llm on must invalidate a Lane-A-only graph.
+    feed("use_llm", bool(use_llm))
+    feed("embed", bool(embed))
+    if use_llm:
+        feed_file("extractor:" + llm_agent_file,
+                  Path(agent_folder_path) / llm_agent_file)
+    return h.hexdigest()
+
+
+def build_graph(graph_dir, use_llm=False, embed=False,
+                llm_agent_file="agent_67GraphExtract.json",
+                skip_unchanged=False):
+    """Full build from mapping.json + dictionary.json. Returns a report dict.
+
+    With skip_unchanged=True the build is skipped when graph.json already
+    records the same source fingerprint, and the report carries
+    {"skipped": True}. Manual edits made through the Knowledge Explorer
+    survive such a run, because nothing is rewritten."""
+    fingerprint = source_fingerprint(graph_dir, use_llm, embed, llm_agent_file)
+    graph_path = str(Path(graph_dir) / "graph.json")
+    if skip_unchanged and os.path.exists(graph_path):
+        _existing = load_graph(graph_dir)
+        if (_existing.get(BUILD_META_KEY) or {}).get("fingerprint") == fingerprint:
+            return {"graph_name": (dmu.read_json_file(str(Path(graph_dir) / "mapping.json")) or {}).get("GRAPH_NAME", ""),
+                    "skipped": True, "reason": "sources unchanged",
+                    "fingerprint": fingerprint,
+                    "nodes": len(_existing.get("nodes") or {}),
+                    "edges": len(_existing.get("edges") or []),
+                    "path": graph_path}
+
     mapping = dmu.read_json_file(str(Path(graph_dir) / "mapping.json")) or {}
     dictionary = load_dictionary(graph_dir)
     sep = mapping.get("MULTI_VALUE_SEPARATOR", ";")
@@ -787,6 +854,15 @@ def build_graph(graph_dir, use_llm=False, embed=False, llm_agent_file="agent_67G
     if embed:
         report["embedding"] = embed_nodes(graph)
 
+    # Record what this build was made from, so a later skip_unchanged run can
+    # tell whether anything it reads has actually changed. Kept under a single
+    # top-level key; load_graph only setdefaults nodes/edges, so it round-trips
+    # through the Knowledge Explorer edit path untouched.
+    graph[BUILD_META_KEY] = {"fingerprint": fingerprint,
+                             "use_llm": bool(use_llm),
+                             "embed": bool(embed)}
+    report["fingerprint"] = fingerprint
+    report["skipped"] = False
     report["nodes"] = len(graph["nodes"])
     report["edges"] = len(graph["edges"])
     report["path"] = save_graph(graph_dir, graph)

@@ -1666,17 +1666,31 @@ def generate_rag():
                         try:
                             import DigiM_Graph as _dmg
                             _t_graph = _time_gr.time()
+                            # "rebuild": "always" forces a rebuild every run.
+                            # The default compares a content hash of everything
+                            # the build reads (mapping / dictionary / source
+                            # CSVs / flags / Lane B agent) against the one
+                            # recorded in graph.json and skips when they match —
+                            # so pressing the button repeatedly does not re-run
+                            # Lane B's per-row LLM calls.
+                            _skip = str(rag_setting.get("rebuild", "if_changed")).lower() != "always"
                             _report = _dmg.build_graph(
                                 graph_dir,
                                 use_llm=bool(rag_setting.get("use_llm", False)),
                                 embed=bool(rag_setting.get("embed", False)),
                                 llm_agent_file=rag_setting.get(
                                     "extractor_agent", "agent_67GraphExtract.json"),
+                                skip_unchanged=_skip,
                             )
-                            logger.info(
-                                f"[rag_timing] {rag_id}: graph build={_time_gr.time() - _t_graph:.2f}s "
-                                f"nodes={_report.get('nodes')} edges={_report.get('edges')} "
-                                f"sources={_report.get('sources')}")
+                            if _report.get("skipped"):
+                                logger.info(
+                                    f"[rag_timing] {rag_id}: graph skipped ({_report.get('reason')}) "
+                                    f"nodes={_report.get('nodes')} edges={_report.get('edges')}")
+                            else:
+                                logger.info(
+                                    f"[rag_timing] {rag_id}: graph build={_time_gr.time() - _t_graph:.2f}s "
+                                    f"nodes={_report.get('nodes')} edges={_report.get('edges')} "
+                                    f"sources={_report.get('sources')}")
                         except Exception as _ge:
                             logger.exception(f"{rag_id} GraphRAG (Lane A) build failed: {_ge}")
                     rag_data = []
