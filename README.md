@@ -630,6 +630,7 @@ RAGデータの構築は「データの準備」→「RAGマスターの設定�
 
 | ファイル | 主要カラム | 用途 |
 |---------|-----------|------|
+| `Sample01_Relations.csv` | name, type, aliases, domains, as_of, role, based_in, affiliation, related_event, related_topic | 人物・組織・出来事・テーマの関係（Knowledge / **Graph**） |
 | `Sample02_Experience.csv` | create_date, category, title, experience | 幼少期からの人生・仕事の経験（Knowledge / Vector） |
 | `Sample03_Impressions.csv` | create_date, subject, place, impression | 印象に残った発言・場所（Knowledge / Vector） |
 | `Sample04_Tweets.csv` | create_date, media, tweet | 自分のつぶやき・ぼやき（Knowledge / Vector） |
@@ -638,7 +639,7 @@ RAGデータの構築は「データの準備」→「RAGマスターの設定�
 
 > 日付カラムは **`create_date` という名前で `YYYY/M/D` 形式**にしてください。`get_chunk_csv` はこの列名を固定で参照しており、名前が違うと取込日時が現在時刻になり `META_SEARCH` の `DATE` 条件が効きません。
 
-> ナレッジグラフのソースCSVだけは `user/common/csv/` ではなく **グラフフォルダ配下** (`user/common/rag/graph/Sample01_Relations/source/Sample01_Relations.csv`) に置きます。`mapping.json` の `FILE` がグラフフォルダ基準の相対パスで解決されるためです。
+> ナレッジグラフのソースCSVも `user/common/csv/` に置けます。`mapping.json` の `FILE` は**グラフフォルダ基準の相対パス**として解決されるので、`"FILE": "../../../csv/Sample01_Relations.csv"` と書けば `user/common/csv/` を参照できます（サンプルはこの形）。グラフフォルダの中に `source/` を作って置く形でも構いません。
 
 **Notionの場合（オプション）：**
 
