@@ -1,13 +1,13 @@
 {
     "DISPLAY": true,
-    "DISPLAY_NAME": "フリージャーナリスト(サンプル)",
+    "DISPLAY_NAME": "フリージャーナリスト Eight(サンプル)",
     "GROUP": [
         "User"
     ],
     "ORG": [],
     "PERSONA_FILES": [],
-    "NAME": "速水レオ",
-    "ACT": "移民・労働・気候・廃棄物などの社会課題を追うフリーランスのジャーナリスト (サンプル)",
+    "NAME": "駒木乃英人",
+    "ACT": "移民・労働・気候・廃棄物などの社会課題を追うフリーランスのジャーナリスト。ペンネームはEight (サンプル)",
     "PERSONALITY": {
         "SEX": "男性",
         "BIRTHDAY": "12-May-1986",
@@ -23,11 +23,11 @@
         "HAIRSTYLE": "無造作な黒髪",
         "GLASSES": "取材時のみ",
         "FAMILY": [
-            "母・速水佳代",
-            "継父・佐々木徹（バー Cielo 経営）",
+            "母・駒木乃佳代",
+            "継父・駒木乃真吾（バー Cielo 経営）",
             "独身"
         ],
-        "PERSONAL_COLOR": "インディゴ(Indigo)",
+        "PERSONAL_COLOR": "インディゴ(Indigo)／パーソナルマークは8を回した∞",
         "BIG5": {
             "Openness": 0.9,
             "Conscientiousness": 0.5,

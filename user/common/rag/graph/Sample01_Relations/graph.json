@@ -1,13 +1,15 @@
 {
  "nodes": {
-  "ent_dd748237a9b0": {
-   "id": "ent_dd748237a9b0",
-   "name": "速水レオ",
+  "ent_99e2846e896d": {
+   "id": "ent_99e2846e896d",
+   "name": "駒木乃英人",
    "type": "人物",
    "aliases": [
-    "レオ",
-    "Leo Hayami",
-    "速水"
+    "エイト",
+    "Eight",
+    "英人",
+    "コマキノ",
+    "Hideto Komakino"
    ],
    "domains": [
     "家族",
@@ -16,7 +18,7 @@
    ],
    "props": {
     "役割": {
-     "value": "フリージャーナリスト",
+     "value": "フリージャーナリスト（ペンネーム Eight）",
      "as_of": "2026/5/12",
      "source_id": "source/Sample01_Relations.csv",
      "lane": "STRUCTURED"
@@ -365,7 +367,8 @@
    "type": "人物",
    "aliases": [
     "アヤラ",
-    "祖父アヤラ"
+    "祖父アヤラ",
+    "エドゥアルド"
    ],
    "domains": [
     "家族",
@@ -373,27 +376,37 @@
    ],
    "props": {
     "役割": {
-     "value": "父方の祖父・船舶技師",
+     "value": "父方の祖父・タンゴダンサー",
      "as_of": "2002/3/25",
      "source_id": "source/Sample01_Relations.csv",
      "lane": "STRUCTURED"
     }
    }
   },
-  "ent_e31419a43a2c": {
-   "id": "ent_e31419a43a2c",
-   "name": "横浜",
-   "type": "",
-   "aliases": [],
+  "ent_3af239a24d7b": {
+   "id": "ent_3af239a24d7b",
+   "name": "ブエノスアイレス",
+   "type": "場所",
+   "aliases": [
+    "BsAs"
+   ],
    "domains": [
     "家族",
-    "ルーツ"
+    "ルーツ",
+    "海外"
    ],
-   "props": {}
+   "props": {
+    "役割": {
+     "value": "祖父アヤラが踊っていた街・未訪問",
+     "as_of": "2026/1/16",
+     "source_id": "source/Sample01_Relations.csv",
+     "lane": "STRUCTURED"
+    }
+   }
   },
-  "ent_d6dd1f334307": {
-   "id": "ent_d6dd1f334307",
-   "name": "速水ハビエル",
+  "ent_0a7052809e4f": {
+   "id": "ent_0a7052809e4f",
+   "name": "ハビエル・アヤラ",
    "type": "人物",
    "aliases": [
     "ハビエル",
@@ -432,9 +445,9 @@
     }
    }
   },
-  "ent_04732a69696e": {
-   "id": "ent_04732a69696e",
-   "name": "速水佳代",
+  "ent_3e4cf9a95ba9": {
+   "id": "ent_3e4cf9a95ba9",
+   "name": "駒木乃佳代",
    "type": "人物",
    "aliases": [
     "佳代",
@@ -464,19 +477,19 @@
    ],
    "props": {
     "役割": {
-     "value": "継父・佐々木徹を迎えた出来事",
+     "value": "継父・駒木乃真吾を迎えた出来事",
      "as_of": "1994/11/3",
      "source_id": "source/Sample01_Relations.csv",
      "lane": "STRUCTURED"
     }
    }
   },
-  "ent_12c40076c367": {
-   "id": "ent_12c40076c367",
-   "name": "佐々木徹",
+  "ent_68c2c9847561": {
+   "id": "ent_68c2c9847561",
+   "name": "駒木乃真吾",
    "type": "人物",
    "aliases": [
-    "徹",
+    "真吾",
     "継父",
     "マスター"
    ],
@@ -570,19 +583,21 @@
    ],
    "props": {
     "役割": {
-     "value": "母方の祖父母が引き揚げてきた土地",
+     "value": "母方の祖父母が引き揚げてきた土地・祖母の撮影所があった街",
      "as_of": "1993/8/15",
      "source_id": "source/Sample01_Relations.csv",
      "lane": "STRUCTURED"
     }
    }
   },
-  "ent_e8dada1eb885": {
-   "id": "ent_e8dada1eb885",
-   "name": "佐野ミツ",
+  "ent_64b30cd6491b": {
+   "id": "ent_64b30cd6491b",
+   "name": "佐野綾子",
    "type": "人物",
    "aliases": [
-    "ミツ",
+    "綾子",
+    "英綾子",
+    "ハナブサアヤコ",
     "母方の祖母"
    ],
    "domains": [
@@ -591,7 +606,7 @@
    ],
    "props": {
     "役割": {
-     "value": "母方の祖母・満州からの引揚者",
+     "value": "母方の祖母・満州映画の女優（芸名 英綾子）",
      "as_of": "1993/8/15",
      "source_id": "source/Sample01_Relations.csv",
      "lane": "STRUCTURED"
@@ -1105,26 +1120,6 @@
     }
    }
   },
-  "ent_3af239a24d7b": {
-   "id": "ent_3af239a24d7b",
-   "name": "ブエノスアイレス",
-   "type": "場所",
-   "aliases": [
-    "BsAs"
-   ],
-   "domains": [
-    "ルーツ",
-    "海外"
-   ],
-   "props": {
-    "役割": {
-     "value": "祖父アヤラの出身地・未訪問",
-     "as_of": "2026/1/16",
-     "source_id": "source/Sample01_Relations.csv",
-     "lane": "STRUCTURED"
-    }
-   }
-  },
   "ent_2e80c8b3ce2e": {
    "id": "ent_2e80c8b3ce2e",
    "name": "都市",
@@ -1202,7 +1197,7 @@
  },
  "edges": [
   {
-   "source": "ent_dd748237a9b0",
+   "source": "ent_99e2846e896d",
    "target": "ent_707ba17c7ef8",
    "relation": "拠点",
    "domains": [
@@ -1217,7 +1212,7 @@
    "create_date": "2026/5/12"
   },
   {
-   "source": "ent_dd748237a9b0",
+   "source": "ent_99e2846e896d",
    "target": "ent_17cfb1e34cf1",
    "relation": "所属",
    "domains": [
@@ -1232,7 +1227,7 @@
    "create_date": "2026/5/12"
   },
   {
-   "source": "ent_dd748237a9b0",
+   "source": "ent_99e2846e896d",
    "target": "ent_15c96fce58fa",
    "relation": "所属",
    "domains": [
@@ -1247,7 +1242,7 @@
    "create_date": "2026/5/12"
   },
   {
-   "source": "ent_dd748237a9b0",
+   "source": "ent_99e2846e896d",
    "target": "ent_22931b709fc5",
    "relation": "所属",
    "domains": [
@@ -1262,7 +1257,7 @@
    "create_date": "2026/5/12"
   },
   {
-   "source": "ent_dd748237a9b0",
+   "source": "ent_99e2846e896d",
    "target": "ent_0c1de8295a03",
    "relation": "関与",
    "domains": [
@@ -1277,7 +1272,7 @@
    "create_date": "2026/5/12"
   },
   {
-   "source": "ent_dd748237a9b0",
+   "source": "ent_99e2846e896d",
    "target": "ent_9df2b5a903e9",
    "relation": "関与",
    "domains": [
@@ -1292,7 +1287,7 @@
    "create_date": "2026/5/12"
   },
   {
-   "source": "ent_dd748237a9b0",
+   "source": "ent_99e2846e896d",
    "target": "ent_38c1bc8927c8",
    "relation": "関与",
    "domains": [
@@ -1307,7 +1302,7 @@
    "create_date": "2026/5/12"
   },
   {
-   "source": "ent_dd748237a9b0",
+   "source": "ent_99e2846e896d",
    "target": "ent_a099a5c125b6",
    "relation": "取材テーマ",
    "domains": [
@@ -1322,7 +1317,7 @@
    "create_date": "2026/5/12"
   },
   {
-   "source": "ent_dd748237a9b0",
+   "source": "ent_99e2846e896d",
    "target": "ent_b547161508b9",
    "relation": "取材テーマ",
    "domains": [
@@ -1337,7 +1332,7 @@
    "create_date": "2026/5/12"
   },
   {
-   "source": "ent_dd748237a9b0",
+   "source": "ent_99e2846e896d",
    "target": "ent_31d88d20e69a",
    "relation": "取材テーマ",
    "domains": [
@@ -1352,7 +1347,7 @@
    "create_date": "2026/5/12"
   },
   {
-   "source": "ent_dd748237a9b0",
+   "source": "ent_99e2846e896d",
    "target": "ent_b4bdaa166417",
    "relation": "取材テーマ",
    "domains": [
@@ -1367,7 +1362,7 @@
    "create_date": "2026/5/12"
   },
   {
-   "source": "ent_dd748237a9b0",
+   "source": "ent_99e2846e896d",
    "target": "ent_45d12f4fbd27",
    "relation": "取材テーマ",
    "domains": [
@@ -1382,7 +1377,7 @@
    "create_date": "2026/5/12"
   },
   {
-   "source": "ent_dd748237a9b0",
+   "source": "ent_99e2846e896d",
    "target": "ent_e33270733417",
    "relation": "取材テーマ",
    "domains": [
@@ -1398,7 +1393,7 @@
   },
   {
    "source": "ent_7edc4e9dcdd1",
-   "target": "ent_e31419a43a2c",
+   "target": "ent_3af239a24d7b",
    "relation": "拠点",
    "domains": [
     "家族",
@@ -1411,7 +1406,7 @@
    "create_date": "2002/3/25"
   },
   {
-   "source": "ent_d6dd1f334307",
+   "source": "ent_0a7052809e4f",
    "target": "ent_707ba17c7ef8",
    "relation": "拠点",
    "domains": [
@@ -1425,7 +1420,7 @@
    "create_date": "1992/6/20"
   },
   {
-   "source": "ent_d6dd1f334307",
+   "source": "ent_0a7052809e4f",
    "target": "ent_804ac8b27bd4",
    "relation": "関与",
    "domains": [
@@ -1439,7 +1434,7 @@
    "create_date": "1992/6/20"
   },
   {
-   "source": "ent_04732a69696e",
+   "source": "ent_3e4cf9a95ba9",
    "target": "ent_707ba17c7ef8",
    "relation": "拠点",
    "domains": [
@@ -1452,7 +1447,7 @@
    "create_date": "1994/11/3"
   },
   {
-   "source": "ent_04732a69696e",
+   "source": "ent_3e4cf9a95ba9",
    "target": "ent_804ac8b27bd4",
    "relation": "関与",
    "domains": [
@@ -1465,7 +1460,7 @@
    "create_date": "1994/11/3"
   },
   {
-   "source": "ent_04732a69696e",
+   "source": "ent_3e4cf9a95ba9",
    "target": "ent_5e793835c10c",
    "relation": "関与",
    "domains": [
@@ -1478,7 +1473,7 @@
    "create_date": "1994/11/3"
   },
   {
-   "source": "ent_12c40076c367",
+   "source": "ent_68c2c9847561",
    "target": "ent_01d1bdd444e0",
    "relation": "拠点",
    "domains": [
@@ -1491,7 +1486,7 @@
    "create_date": "1994/11/3"
   },
   {
-   "source": "ent_12c40076c367",
+   "source": "ent_68c2c9847561",
    "target": "ent_0b4a63a48100",
    "relation": "所属",
    "domains": [
@@ -1504,7 +1499,7 @@
    "create_date": "1994/11/3"
   },
   {
-   "source": "ent_12c40076c367",
+   "source": "ent_68c2c9847561",
    "target": "ent_5e793835c10c",
    "relation": "関与",
    "domains": [
@@ -1531,7 +1526,7 @@
    "create_date": "1993/8/15"
   },
   {
-   "source": "ent_e8dada1eb885",
+   "source": "ent_64b30cd6491b",
    "target": "ent_08d643d5c5ce",
    "relation": "拠点",
    "domains": [
