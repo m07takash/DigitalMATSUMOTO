@@ -1,4 +1,15 @@
 {
+    "Sample01_Relations": {
+        "active": "Y",
+        "input": "csv",
+        "data_type": "graph",
+        "bucket": "Sample01_Relations",
+        "data_name": "人物・組織・出来事・テーマの関係",
+        "file_path": "user/common/rag/graph/Sample01_Relations/",
+        "use_llm": false,
+        "embed": false,
+        "extractor_agent": "agent_67GraphExtract.json"
+    },
     "Sample02_Experience": {
         "active": "Y",
         "input": "csv",

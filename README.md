@@ -963,7 +963,7 @@ WebUIのサイドバー **RAG Management → Page Index Export** から、既存
 
 **Step 1: フォルダ準備**
 
-CSV バッチ (Lane A) を使う場合は `user/common/rag/graph/{DATA_NAME}/source/` に構造化 CSV を置き、`mapping.json` に列 → entity/relation/prop のマッピングを書きます。Notion 直接取り込みだけなら `source/` は不要 (上記 rags.json + `dictionary.json` (エイリアス正規化 + シード + prop_schema) を用意)。サンプル一式は `user/common/rag/graph/sample/` に同梱。
+CSV バッチ (Lane A) を使う場合は構造化 CSV を用意し、`mapping.json` に列 → entity/relation/prop のマッピングを書きます。CSV の置き場所は自由で、`mapping.json` の `SOURCES[].FILE` がグラフフォルダ基準の相対パスとして解決します (サンプルは `../../../csv/Sample01_Relations.csv` で `user/common/csv/` を参照)。Notion 直接取り込みだけなら CSV は不要 (上記 rags.json + `dictionary.json` (エイリアス正規化 + シード + prop_schema) を用意)。サンプル一式は `user/common/rag/graph/Sample01_Relations/` に同梱。
 
 **Step 2: 初回ビルド (CLI)**
 
@@ -1350,7 +1350,7 @@ Notion保存時は `notion_name` でプロパティ名を個別に指定でき�
 
 **データ取込（2レーン方式）：**
 
-グラフフォルダ（例: `user/common/rag/graph/sample/`）に `mapping.json`（ソース定義）と `dictionary.json`（エイリアス正規化・シード・prop_schema）を置き、取込バッチで `graph.json` を生成します。
+グラフフォルダ（例: `user/common/rag/graph/Sample01_Relations/`）に `mapping.json`（ソース定義）と `dictionary.json`（エイリアス正規化・シード・prop_schema）を置き、取込バッチで `graph.json` を生成します。
 
 - **レーンA（STRUCTURED）**: CSV列 / Notionプロパティ / RDBカラムを列マッピングで**決定的に**変換（LLM不要）。状態（props）・関係列・複数値セル（`;`区切り）・方向指定に対応
 - **レーンB（TEXT）**: 自由文列から `agent_67GraphExtract.json` が三つ組・状態候補をLLM抽出（述語は「評価/懸念/参画/策定」等の具体動詞）
@@ -1359,13 +1359,43 @@ Notion保存時は `notion_name` でプロパティ名を個別に指定でき�
 
 ```bash
 # レーンAのみ（LLM/APIキー不要）
-python3 DigiM_GraphBuilder.py user/common/rag/graph/sample
+python3 DigiM_GraphBuilder.py user/common/rag/graph/Sample01_Relations
 
 # レーンB（LLM抽出）+ ノード埋め込みも生成
-python3 DigiM_GraphBuilder.py user/common/rag/graph/sample --use-llm --embed
+python3 DigiM_GraphBuilder.py user/common/rag/graph/Sample01_Relations --use-llm --embed
 ```
 
-サンプル一式（人物/組織/取り組みマスタCSV・考察コラム・mapping/dictionary・ビルド済み graph.json）は `user/common/rag/graph/sample/` に同梱しています。
+サンプル一式（`user/common/csv/Sample01_Relations.csv` の50行・mapping/dictionary・ビルド済み graph.json）は `user/common/rag/graph/Sample01_Relations/` に同梱しています。人物/場所/出来事/テーマを1つのCSVに同居させ、`所属` / `拠点` / `関与` / `取材テーマ` の4述語を生やす構成です。
+
+**CSV取り込み（`Update RAG data` でのレーンAリビルド）：**
+
+`rags.json` に `input: "csv"` + `data_type: "graph"` のエントリを置くと、サイドバーの **`Update RAG data`** ボタンで graph.json を再構築できます。`DigiM_GraphBuilder.py` を手で叩くのと同じレーンA処理です。
+
+```json
+"Sample01_Relations": {
+    "active": "Y",
+    "input": "csv",
+    "data_type": "graph",
+    "bucket": "Sample01_Relations",
+    "data_name": "人物・組織・出来事・テーマの関係",
+    "file_path": "user/common/rag/graph/Sample01_Relations/",
+    "use_llm": false,
+    "embed": false,
+    "extractor_agent": "agent_67GraphExtract.json"
+}
+```
+
+| 項目 | 説明 |
+|------|------|
+| `file_path` | グラフフォルダ。`mapping.json` / `dictionary.json` / `graph.json` の置き場所 |
+| `use_llm` | `true` でレーンB（自由文からのLLM抽出）も実行。既定は `false`（APIキー不要） |
+| `embed` | `true` でノード埋め込みも生成。既定は `false` |
+| `extractor_agent` | レーンBで使うエージェント。`use_llm: false` なら無視される |
+
+- **ソースCSVはここでは指定しません**。`mapping.json` の `SOURCES[].FILE` が持っています（グラフフォルダ基準の相対パス）。`field_items` / `title` / `key_text` / `value_text` も不要です
+- リビルドは**全件・冪等**です（ノードIDが正規化名から決まるため）。何度実行しても同じ graph.json になります
+- このエントリはチャンクを生成しないので、ChromaDBには一切書き込まれません
+- `data_type: "graph"` かつ `active: "Y"` のエントリは、Knowledge Explorer などのグラフ選択UIにも自動的に並びます
 
 **Notion 直接取り込み（`Update RAG data` の増分ビルド）：**
 

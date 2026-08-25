@@ -958,7 +958,7 @@ Build a **pure-structure knowledge graph** (Entity nodes + predicate edges only,
 | `chk_dict` | Notion pull filter. Do NOT share `RAGChk` with the sibling ChromaDB entry — whichever runs first flips it and starves the other. Use `確定Chk` only on the graph side, or add a separate Notion column (e.g. `GraphChk`) to fully isolate |
 | `fin_flg` | Notion-side completion flag write-back. Graph is idempotent via `graph.json.edge.source_ids` self-dedup, so `{}` is safe |
 
-**Step 1: Folder setup** — For Lane A (structured CSV), place source CSVs under `user/common/rag/graph/{DATA_NAME}/source/` and describe the column → entity/relation/prop mapping in `mapping.json`. For Notion-only, `source/` is unnecessary — the rags.json entry above plus `dictionary.json` (alias / seed / prop_schema) suffices. A ready-made sample lives at `user/common/rag/graph/sample/`.
+**Step 1: Folder setup** — For Lane A (structured CSV), prepare the source CSV and describe the column → entity/relation/prop mapping in `mapping.json`. The CSV can live anywhere: `SOURCES[].FILE` resolves relative to the graph folder (the sample uses `../../../csv/Sample01_Relations.csv` to reach `user/common/csv/`). For Notion-only no CSV is needed — the rags.json entry above plus `dictionary.json` (alias / seed / prop_schema) suffices. A ready-made sample lives at `user/common/rag/graph/Sample01_Relations/`.
 
 **Step 2: Initial build (CLI)** — for a first-time or large-scale build:
 
@@ -1338,7 +1338,7 @@ Context is injected as three blocks: `paths` (oriented chains), `relations` (edg
 
 **Data ingestion (two lanes):**
 
-Place `mapping.json` (source definitions) and `dictionary.json` (alias normalization / seeds / prop_schema) in the graph folder (e.g. `user/common/rag/graph/sample/`) and run the ingestion batch to build `graph.json`.
+Place `mapping.json` (source definitions) and `dictionary.json` (alias normalization / seeds / prop_schema) in the graph folder (e.g. `user/common/rag/graph/Sample01_Relations/`) and run the ingestion batch to build `graph.json`.
 
 - **Lane A (STRUCTURED)**: CSV columns / Notion properties / RDB columns convert **deterministically** through column mapping (no LLM). Supports props, relation columns with edge props, multi-value cells (`;`), and IN/OUT direction
 - **Lane B (TEXT)**: free-text columns go through `agent_67GraphExtract.json` LLM extraction of triples and state candidates (predicates as concrete verbs: 評価/懸念/参画/策定 …)
@@ -1347,13 +1347,43 @@ Place `mapping.json` (source definitions) and `dictionary.json` (alias normaliza
 
 ```bash
 # Lane A only (no LLM / API key required)
-python3 DigiM_GraphBuilder.py user/common/rag/graph/sample
+python3 DigiM_GraphBuilder.py user/common/rag/graph/Sample01_Relations
 
 # With Lane B (LLM extraction) + node embeddings
-python3 DigiM_GraphBuilder.py user/common/rag/graph/sample --use-llm --embed
+python3 DigiM_GraphBuilder.py user/common/rag/graph/Sample01_Relations --use-llm --embed
 ```
 
-A complete sample (person/org/initiative master CSVs, insight columns, mapping/dictionary, prebuilt graph.json) ships under `user/common/rag/graph/sample/`.
+A complete sample (the 50 rows of `user/common/csv/Sample01_Relations.csv`, mapping/dictionary, prebuilt graph.json) ships under `user/common/rag/graph/Sample01_Relations/`. People, places, events and themes share one CSV, and each row grows edges over four predicates: 所属 / 拠点 / 関与 / 取材テーマ.
+
+**CSV ingestion (Lane A rebuild from `Update RAG data`):**
+
+An `input: "csv"` + `data_type: "graph"` entry in `rags.json` lets the sidebar **`Update RAG data`** button rebuild `graph.json` — the same Lane A pass as running `DigiM_GraphBuilder.py` by hand.
+
+```json
+"Sample01_Relations": {
+    "active": "Y",
+    "input": "csv",
+    "data_type": "graph",
+    "bucket": "Sample01_Relations",
+    "data_name": "人物・組織・出来事・テーマの関係",
+    "file_path": "user/common/rag/graph/Sample01_Relations/",
+    "use_llm": false,
+    "embed": false,
+    "extractor_agent": "agent_67GraphExtract.json"
+}
+```
+
+| Key | Meaning |
+|------|------|
+| `file_path` | The graph folder holding `mapping.json` / `dictionary.json` / `graph.json` |
+| `use_llm` | `true` also runs Lane B (LLM extraction from free text). Defaults to `false`, so no API key is needed |
+| `embed` | `true` regenerates node embeddings. Defaults to `false` |
+| `extractor_agent` | Agent used by Lane B; ignored when `use_llm` is `false` |
+
+- **The source CSV is not named here** — `mapping.json`'s `SOURCES[].FILE` owns it (a path relative to the graph folder). `field_items` / `title` / `key_text` / `value_text` are not needed either
+- The rebuild is **full and idempotent** (node ids derive from canonical names), so re-running always yields the same `graph.json`
+- The entry produces no chunks, so nothing is written to ChromaDB
+- Entries with `data_type: "graph"` and `active: "Y"` also appear in the graph selectors (Knowledge Explorer and friends)
 
 **Notion direct ingestion (incremental via `Update RAG data`):**
 
