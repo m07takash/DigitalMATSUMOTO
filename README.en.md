@@ -629,6 +629,7 @@ Place CSV files under `user/common/csv/`. Create them in UTF-8 (with BOM).
 
 | File | Main columns | Purpose |
 |---------|-----------|------|
+| `Sample01_Relations.csv` | name, type, aliases, domains, as_of, role, based_in, affiliation, related_event, related_topic | People / organisations / events / themes and their relations (Knowledge / **Graph**) |
 | `Sample02_Experience.csv` | create_date, category, title, experience | Life and work experience (Knowledge / Vector) |
 | `Sample03_Impressions.csv` | create_date, subject, place, impression | Memorable remarks and places (Knowledge / Vector) |
 | `Sample04_Tweets.csv` | create_date, media, tweet | The agent's own posts and grumbles (Knowledge / Vector) |
@@ -637,7 +638,7 @@ Place CSV files under `user/common/csv/`. Create them in UTF-8 (with BOM).
 
 > The date column must be named **`create_date` and formatted `YYYY/M/D`**. `get_chunk_csv` reads that exact column name; any other name silently falls back to the current time and the `DATE` condition in `META_SEARCH` stops working.
 
-> The knowledge-graph source CSV lives under the **graph folder**, not `user/common/csv/`: `user/common/rag/graph/Sample01_Relations/source/Sample01_Relations.csv`. `mapping.json` resolves `FILE` relative to the graph folder.
+> The knowledge-graph source CSV can live in `user/common/csv/` too. `mapping.json` resolves `FILE` **relative to the graph folder**, so `"FILE": "../../../csv/Sample01_Relations.csv"` reaches `user/common/csv/` (this is what the sample does). Keeping it in a `source/` folder inside the graph folder works just as well.
 
 **For Notion (optional):**
 

@@ -3,7 +3,7 @@
     "MULTI_VALUE_SEPARATOR": ";",
     "SOURCES": [
         {
-            "FILE": "source/Sample01_Relations.csv",
+            "FILE": "../../../csv/Sample01_Relations.csv",
             "LANE": "STRUCTURED",
             "MAPPING": {
                 "ENTITY": {
@@ -17,10 +17,26 @@
                     "役割": "role"
                 },
                 "RELATIONS": [
-                    {"target_col": "based_in", "relation": "拠点", "direction": "OUT"},
-                    {"target_col": "affiliation", "relation": "所属", "direction": "OUT"},
-                    {"target_col": "related_event", "relation": "関与", "direction": "OUT"},
-                    {"target_col": "related_topic", "relation": "取材テーマ", "direction": "OUT"}
+                    {
+                        "target_col": "based_in",
+                        "relation": "拠点",
+                        "direction": "OUT"
+                    },
+                    {
+                        "target_col": "affiliation",
+                        "relation": "所属",
+                        "direction": "OUT"
+                    },
+                    {
+                        "target_col": "related_event",
+                        "relation": "関与",
+                        "direction": "OUT"
+                    },
+                    {
+                        "target_col": "related_topic",
+                        "relation": "取材テーマ",
+                        "direction": "OUT"
+                    }
                 ]
             }
         }
