@@ -175,7 +175,7 @@ user/common/agent/character/*.md
 !user/common/agent/character/characterファイル(txt)を格納
 !user/common/agent/character/Sample/
 !user/common/agent/character/Sample/*
-!user/common/agent/character/Sample.txt
+!user/common/agent/character/Sample*.txt
 !user/common/agent/character/DataAnalyst.txt
 !user/common/agent/character/DialogDigest.txt
 !user/common/agent/character/ArtCritic.txt

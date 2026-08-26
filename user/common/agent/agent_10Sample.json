@@ -37,7 +37,7 @@
         },
         "LANGUAGE": "Japanese",
         "SPEAKING_STYLE": "Polite",
-        "CHARACTER": "Sample.txt"
+        "CHARACTER": "Sample_Eight.txt"
     },
     "ENGINE": {
         "LLM": {
