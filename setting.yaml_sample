@@ -4,6 +4,24 @@ SESSION_FILE_NAME: "chat_memory.json"
 SESSION_STATUS_FILE_NAME: "status.yaml"
 SESSION_CONTENTS_FOLDER: "contents/"
 SESSION_ANALYTICS_FOLDER: "analytics/"
+# Chat-history storage backend. See README §Chat history storage backends.
+#   JSON        — one chat_memory.json per session under user/<prefix><id>/ (default)
+#   PostgreSQL  — writes each turn to the digim_chat_history table (JSONB payload).
+#                 Requires POSTGRES_HOST / POSTGRES_PORT / POSTGRES_DB / POSTGRES_USER /
+#                 POSTGRES_PASSWORD env vars (system.env). Optional POSTGRES_SSLMODE.
+#                 Table + indexes are auto-created on first write.
+#   CosmosDB    — writes each turn as a document to a Cosmos SQL API container.
+#                 Requires COSMOS_ENDPOINT / COSMOS_KEY env vars (system.env).
+#                 COSMOS_DATABASE / COSMOS_CONTAINER default to digimatsu / chat_history.
+#                 Container must exist beforehand with partition key /session_id.
+# Non-chat-history side data (status.yaml / vec/*.npy / contents/ / analytics/)
+# always remains on disk under user/<prefix><id>/ regardless of this setting.
+# Existing on-disk sessions keep being read/written as JSON — the backend
+# choice only applies to newly-created sessions after switching.
+SESSION_STORE_METHOD: "JSON"
+# CosmosDB defaults (only used when SESSION_STORE_METHOD=CosmosDB)
+COSMOS_DATABASE: "digimatsu"
+COSMOS_CONTAINER: "chat_history"
 ARCHIVE_FOLDER: "user/archive/"
 ARCHIVE_DAYS: 30
 AGENT_FOLDER: "user/common/agent/"

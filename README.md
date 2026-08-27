@@ -23,6 +23,7 @@
   - [8. 閉域ネットワーク（Azure）への構築](#8-閉域ネットワークazureへの構築)
 - [セットアップガイド](#セットアップガイド)
   - [マスターデータの設定](#マスターデータの設定)
+  - [会話履歴の保存バックエンド](#会話履歴の保存バックエンド)
   - [RAGデータの設定](#ragデータの設定)
   - [エージェントの設定](#エージェントの設定)
   - [プラクティスの設定](#プラクティスの設定)
@@ -146,7 +147,8 @@ RAG（ChromaDB）を組み合わせて動的に生成します。
 | モジュール | 役割 |
 |-----------|------|
 | `DigiM_Execute.py` | メイン実行エンジン |
-| `DigiM_Session.py` | セッション・チャット履歴管理 |
+| `DigiM_Session.py` | セッション・チャット履歴管理（保存バックエンドを `DigiM_SessionStore` に委譲） |
+| `DigiM_SessionStore.py` | チャット履歴の保存バックエンド抽象化（`JSON` / `PostgreSQL` / `CosmosDB` を `setting.yaml` の `SESSION_STORE_METHOD` で切替） |
 | `DigiM_Context.py` | コンテキスト生成・RAG処理 |
 | `DigiM_FoundationModel.py` | LLM抽象化（マルチLLM対応） |
 | `DigiM_Agent.py` | エージェント設定管理（テンプレート + persona上書き対応） |
@@ -502,6 +504,116 @@ USER_MST_FILE=users.json
 RAG_MST_FILE=rags.json
 PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
 ```
+
+### 会話履歴の保存バックエンド
+
+`setting.yaml` の `SESSION_STORE_METHOD` で選択します。デフォルトは **JSON**（従来通り 1 セッション 1 ファイル）。数百ターン規模のセッションを扱う場合や複数プロセスから同時に書き込む場合は PostgreSQL / CosmosDB を推奨。
+
+| モード | 保存先 | 特徴 |
+|---|---|---|
+| **JSON**（既定） | `user/<prefix><session_id>/chat_memory.json` を丸ごと read/write | 追加依存なし。小規模セッション向き。大規模化するとファイル全読み・全書きで遅くなる |
+| **PostgreSQL** | `digim_chat_history` テーブル（JSONB payload / turn 1 行）| turn 単位の UPSERT なので長期セッションでも速い。`digim_dialogs` (analytics ミラー) とは別テーブル |
+| **CosmosDB** | Cosmos SQL API コンテナ（partition_key=`/session_id`, doc 1 = 1 turn）| Azure 環境向け。企業チャットボット構成の定番 |
+
+**共通ルール**：
+- `SESSION_STORE_METHOD` を切り替えても、**既にディスクに存在する `chat_memory.json` は引き続き JSON 経路で R/W されます**（既存セッションは壊れない）
+- 新規セッションのみ選択したバックエンドに書かれます
+- サイドファイル（`status.yaml` / `vec/*.npy` / `contents/` / `analytics/`）は選択に関わらずディスク側で維持されます
+
+#### PostgreSQL バックエンドのセットアップ
+
+**1. `system.env` に接続情報を追加**
+
+```env
+POSTGRES_HOST=your-host.example.com
+POSTGRES_PORT=5432
+POSTGRES_DB=digimatsu
+POSTGRES_USER=digim_app
+POSTGRES_PASSWORD=***
+# オプション: SSL 制御。デフォルト require、Azure Postgres なら必須
+POSTGRES_SSLMODE=require   # or "prefer" / "disable"
+```
+
+**2. `setting.yaml` を PostgreSQL モードに**
+
+```yaml
+SESSION_STORE_METHOD: "PostgreSQL"
+```
+
+**3. テーブルを作成**（初回書き込み時に自動作成されますが、DBA が事前に流したい場合は以下 DDL）
+
+```sql
+-- Runtime chat-history storage. Row per (seq, sub_seq); payload in JSONB.
+-- sub_seq = 0 は SETTING 行、sub_seq >= 1 は対話ターン。
+CREATE TABLE IF NOT EXISTS digim_chat_history (
+    session_id  TEXT      NOT NULL,
+    seq         INTEGER   NOT NULL,
+    sub_seq     INTEGER   NOT NULL,
+    data        JSONB     NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (session_id, seq, sub_seq)
+);
+CREATE INDEX IF NOT EXISTS idx_digim_chat_history_session
+    ON digim_chat_history (session_id);
+CREATE INDEX IF NOT EXISTS idx_digim_chat_history_session_seq
+    ON digim_chat_history (session_id, seq DESC);
+```
+
+**注意**：APE (Agent Performance Explorer) 用の `digim_sessions` / `digim_dialogs` / `digim_references` テーブルはこの `digim_chat_history` とは**別物**です。両者を混同しないでください。APE 側はバッチ export で埋める分析ミラー、`digim_chat_history` は Chat 実行中のライブ R/W 用です。
+
+**依存パッケージ**：`psycopg2-binary`（`requirements.txt` に含まれています）
+
+#### CosmosDB バックエンドのセットアップ
+
+**1. `system.env` に接続情報を追加**
+
+```env
+COSMOS_ENDPOINT=https://your-account.documents.azure.com:443/
+COSMOS_KEY=***
+```
+
+**2. `setting.yaml` を CosmosDB モードに**
+
+```yaml
+SESSION_STORE_METHOD: "CosmosDB"
+COSMOS_DATABASE: "digimatsu"      # 既定
+COSMOS_CONTAINER: "chat_history"  # 既定
+```
+
+**3. Cosmos DB 側で Database + Container を作成**（Azure Portal / az CLI いずれでも）
+
+```bash
+# Azure CLI 例
+az cosmosdb sql database create \
+    --account-name <your-cosmos-account> \
+    --resource-group <your-rg> \
+    --name digimatsu
+
+az cosmosdb sql container create \
+    --account-name <your-cosmos-account> \
+    --resource-group <your-rg> \
+    --database-name digimatsu \
+    --name chat_history \
+    --partition-key-path "/session_id" \
+    --throughput 400
+```
+
+または Data Explorer の「New Container」から手動作成でも OK です。Partition key は `/session_id` を指定してください。
+
+**依存パッケージ**：`azure-cosmos`（optional）
+
+```bash
+pip install azure-cosmos
+```
+
+CosmosDB モードで起動しつつパッケージが未インストールの場合、自動で JSON にフォールバック（警告ログ）します。
+
+#### モード切替時の運用
+
+- **既存 JSON セッションの動作**：`chat_memory.json` がディスクに残っている限り、JSON 経路でそのまま読めます。上書きも JSON ファイルに戻ります。
+- **既存セッションを PG/Cosmos に移行したい場合**：手動で JSON を読んで INSERT / upsert するスクリプトを用意する必要があります（今のところ自動移行 CLI は未提供）。
+- **元に戻したい場合**：`SESSION_STORE_METHOD: "JSON"` に戻すだけ。既に PG/Cosmos に書かれた新規セッションはそちらに残り、JSON モードでは読めなくなるので注意（バッチで JSON にエクスポートし直す運用が必要）。
 
 #### ユーザーマスター
 

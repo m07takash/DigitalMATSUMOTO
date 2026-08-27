@@ -502,6 +502,115 @@ RAG_MST_FILE=rags.json
 PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
 ```
 
+### Chat-history storage backend
+
+Selected via `SESSION_STORE_METHOD` in `setting.yaml`. Default is **JSON** (the historical one-file-per-session behaviour). For sessions that reach hundreds of turns, or when multiple processes need to write concurrently, PostgreSQL / CosmosDB are recommended.
+
+| Mode | Storage | Notes |
+|---|---|---|
+| **JSON** (default) | Rewrites the whole `user/<prefix><session_id>/chat_memory.json` on every turn | Zero extra deps. Fine for small sessions. Read/write cost scales with total turn count |
+| **PostgreSQL** | Row per turn (JSONB payload) in the `digim_chat_history` table | Turn-level UPSERT stays fast on long sessions. Separate table from the analytics `digim_dialogs` mirror |
+| **CosmosDB** | Document per turn in a SQL API container (partition key `/session_id`) | Standard enterprise chat-bot shape on Azure |
+
+**Common rules**:
+- Switching `SESSION_STORE_METHOD` never breaks existing sessions — any `chat_memory.json` still on disk keeps being read/written via the JSON path.
+- Only new sessions land in the configured backend.
+- Side files (`status.yaml`, `vec/*.npy`, `contents/`, `analytics/`) always stay on disk regardless of the setting.
+
+#### PostgreSQL backend setup
+
+**1. Connection info in `system.env`**
+
+```env
+POSTGRES_HOST=your-host.example.com
+POSTGRES_PORT=5432
+POSTGRES_DB=digimatsu
+POSTGRES_USER=digim_app
+POSTGRES_PASSWORD=***
+# Optional: SSL mode. Defaults to require (mandatory on Azure Postgres).
+POSTGRES_SSLMODE=require   # or "prefer" / "disable"
+```
+
+**2. Switch `setting.yaml`**
+
+```yaml
+SESSION_STORE_METHOD: "PostgreSQL"
+```
+
+**3. Create the table** (auto-created on first write, but DBAs can pre-provision with the DDL below)
+
+```sql
+-- Runtime chat-history storage. Row per (seq, sub_seq); payload in JSONB.
+-- sub_seq = 0 encodes the SETTING row, sub_seq >= 1 is a dialog turn.
+CREATE TABLE IF NOT EXISTS digim_chat_history (
+    session_id  TEXT      NOT NULL,
+    seq         INTEGER   NOT NULL,
+    sub_seq     INTEGER   NOT NULL,
+    data        JSONB     NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (session_id, seq, sub_seq)
+);
+CREATE INDEX IF NOT EXISTS idx_digim_chat_history_session
+    ON digim_chat_history (session_id);
+CREATE INDEX IF NOT EXISTS idx_digim_chat_history_session_seq
+    ON digim_chat_history (session_id, seq DESC);
+```
+
+**Do not confuse this with the APE (Agent Performance Explorer) tables** (`digim_sessions` / `digim_dialogs` / `digim_references`). Those are populated by the analytics export batch. `digim_chat_history` is the live R/W table for Chat itself.
+
+**Dependency**: `psycopg2-binary` (already in `requirements.txt`).
+
+#### CosmosDB backend setup
+
+**1. Connection info in `system.env`**
+
+```env
+COSMOS_ENDPOINT=https://your-account.documents.azure.com:443/
+COSMOS_KEY=***
+```
+
+**2. Switch `setting.yaml`**
+
+```yaml
+SESSION_STORE_METHOD: "CosmosDB"
+COSMOS_DATABASE: "digimatsu"      # default
+COSMOS_CONTAINER: "chat_history"  # default
+```
+
+**3. Create the Database + Container** in Cosmos DB (Azure Portal or CLI)
+
+```bash
+az cosmosdb sql database create \
+    --account-name <your-cosmos-account> \
+    --resource-group <your-rg> \
+    --name digimatsu
+
+az cosmosdb sql container create \
+    --account-name <your-cosmos-account> \
+    --resource-group <your-rg> \
+    --database-name digimatsu \
+    --name chat_history \
+    --partition-key-path "/session_id" \
+    --throughput 400
+```
+
+Or click through Data Explorer → "New Container". Partition key must be `/session_id`.
+
+**Dependency**: `azure-cosmos` (optional)
+
+```bash
+pip install azure-cosmos
+```
+
+If the package is missing when CosmosDB mode is selected, the store falls back to JSON with a warning log.
+
+#### Switching between modes
+
+- **Existing JSON sessions**: as long as `chat_memory.json` exists on disk, it is read/written via the JSON path. Overwrites go back to the same file.
+- **Migrating existing sessions to PG/Cosmos**: currently manual — no automatic migration CLI is provided.
+- **Rolling back**: set `SESSION_STORE_METHOD: "JSON"`. Sessions already stored in PG/Cosmos remain there and won't be visible in JSON mode, so plan an export first if you need to move back.
+
 #### User master
 
 ```json

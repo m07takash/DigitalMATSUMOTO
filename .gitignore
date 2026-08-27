@@ -263,3 +263,4 @@ user/common/tool/local/*
 demo/*
 !demo/sample_demo/
 !demo/sample_demo/**
+setting.yaml
