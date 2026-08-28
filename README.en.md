@@ -1400,16 +1400,37 @@ SKILL is **fully independent of HABIT**. Each SKILL entry declares a `PHASE` and
 - **CONTEXT**: runs before the HABIT practice; the wrapped tool output is appended to `user_query`, so both the RAG query generator and the main LLM see it. Same shape as the built-in Web Search injection. Designed for Web / doc search
 - **AFTER**: runs after the HABIT produced its response; receives the HABIT's final response as input. Saved as its own sub_seq
 
-**How a SKILL fires (two paths, merged)**:
-- **Slash command**: `/WebSearch <query>` — if the name resolves in `SKILL.TOOLS`, the tool fires at its declared PHASE and `<query>` becomes the HABIT's user_query
-- **Thinking Mode**: with `Tools` in Thinking Targets, the Thinking Agent picks SKILL names
-- **Both at once**: slash-picked entries win order; duplicates dedup so nothing runs twice
+**How a SKILL fires (3-tier trigger stack, priority-ordered, merged)**:
+- **1. Slash command**: `/<name> <query>` — if the name resolves in `SKILL.TOOLS`, the tool fires at its declared PHASE and `<query>` becomes the HABIT's user_query
+- **2. `SKILL.TOOLS[name].MAGIC_WORDS` match**: if any word in the list appears in the user's query, the SKILL is auto-selected (same idea as HABIT.MAGIC_WORDS — write phrases that naturally invoke this SKILL)
+- **3. Thinking Mode**: with `Tools` in Thinking Targets, the Thinking Agent picks SKILLs by reading their `description`
+- **Dedup**: same SKILL selected by multiple tiers only runs once. Order: slash → magic → thinking
+
+**Sample SKILLs on `agent_10Sample.json`** (persona-tailored for Eight, the freelance journalist):
+
+| SKILL | PHASE | Purpose | MAGIC_WORDS |
+|---|---|---|---|
+| `WebSearch` | CONTEXT | Web search on current events | (Thinking / slash) |
+| `recall_similar_experience` | BEFORE | Recall the agent's own past similar experience from Vector KNOWLEDGE | 「似た経験」「類似した経験」「過去に似た」「思い出したい」 |
+| `analyze_attachment` | BEFORE | Extract logical features from attached CSV/TXT/MD | 「添付を分析」「この資料を分析」「このデータの特徴」 |
+| `mood_score` | AFTER | Score user & assistant emotions on Plutchik's 8 axes | 「感情スコア」「今の気持ちを表示」「感情を見せて」 |
+| `self_critique` | AFTER | 3-axis devil's-advocate check on the assistant's own response | 「自分の回答に反論」「批判的に検討」「セルフクリティーク」 |
+| `translate_response` | AFTER | Translate the response into a target language (default English) | 「英訳して」「英語に翻訳」「translate to English」 |
+| `slide_deck_prompt` | AFTER | Turn the answer into a paste-ready prompt for a slide-generation AI (Gamma / Beautiful.AI / Canva Magic Studio / PowerPoint Copilot) | 「スライドにまとめて」「パワポで」「PowerPointで」「プレゼン資料にまとめる」「スライドAI向け」 |
+
+None fires "always" — the description of each tool explicitly reads `Use ONLY when ...`, so the Thinking Agent stays selective, and MAGIC_WORDS require an explicit user hint.
 
 **Retired**: `HABIT.TOOL_PICK` and `practice_55ToolPick.json` are no longer needed. Bundled agents have `HABIT.TOOL_PICK` removed. Legacy `SKILL.TOOL_LIST` + `INACTIVE_TOOLS` is auto-converted at load time (every entry lands on `PHASE: "CONTEXT"`).
 
 **Persistence & display**:
 - CONTEXT SKILL results: saved under `prompt.skills` as `{name: {phase, as_reference, raw, wrapped, export_contents}}`, rendered in Detail Information's User query pane as `--- SKILL:<name> (CONTEXT) ---`
+- **Chat bubble**: the reference-material wrap is stripped via `_strip_skill_wraps()` before rendering. **`chat_memory` keeps the wrapped `prompt.query.input` / `text`** so subsequent memory retrieval / digest still see the SKILL content
+- **URLs / citations**: when a CONTEXT SKILL returns URLs in the tool's 4-tuple 4th slot (`export_contents`), `DigiMatsuExecute` **merges them into `web_search_log["urls"]`** — the existing `citation_inject` then treats them like built-in Web Search URLs (appends `## References` at the tail and injects `[N]` markers into the body)
 - BEFORE / AFTER SKILL results: saved as separate sub_seqs with `role="skill"` and `setting.agent_name="SKILL(<name>)"`
+
+**CONTEXT SKILL reference-material wrap**: the LLM is told to keep specific facts (proper nouns, numbers, dates, quotes) accurate to the material, rephrase in its own voice (no verbatim paragraph copies), let the persona lead tone/vocabulary, and reuse numbered citations like `[1]` verbatim when the material contains them. Built-in Web Search wraps its output with the same rules.
+
+**When the `Tools` option shows up in Thinking Targets**: the multiselect adds `Tools` whenever either the new `SKILL.TOOLS` (dict) or the legacy `SKILL.TOOL_LIST` (list) is non-empty. `THINKING_TARGETS.tools` defaults to `True` (matches the other target flags) — a missing key means "honor Thinking's tool picks" rather than "block them".
 
 #### FEEDBACK (feedback settings)
 

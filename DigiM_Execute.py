@@ -624,15 +624,30 @@ def _build_meta_searches(service_info, user_info, session_id, session_name, supp
 #   AFTER   — runs after the HABIT practice; the HABIT response is passed
 #             as input. Saved as its own sub_seq like BEFORE.
 # Selection is `slash_pick > thinking-picked`, deduped, order preserved.
-def _collect_skill_selections(agent, thinking_result, slash_pick=None):
-    """Return {phase: [names]} using agent.skill_tools for phase lookup."""
+def _collect_skill_selections(agent, thinking_result, slash_pick=None,
+                                user_query=""):
+    """Return {phase: [names]} using agent.skill_tools for phase lookup.
+
+    Selection precedence (highest first, dedup preserves order):
+      1. slash_pick               — explicit /command
+      2. SKILL.MAGIC_WORDS match   — auto-fire when a magic word is in the
+                                     user's query (mirrors HABIT.MAGIC_WORDS)
+      3. thinking_result["tools"]  — Thinking Agent judged based on the
+                                     SKILL description
+    """
     skill_tools = getattr(agent, "skill_tools", {}) or {}
     slash_names = [slash_pick] if slash_pick and slash_pick in skill_tools else []
+    magic_names = []
+    if user_query:
+        for name, cfg in skill_tools.items():
+            words = cfg.get("MAGIC_WORDS") or []
+            if any(w and w in user_query for w in words):
+                magic_names.append(name)
     thinking_names = [n for n in list((thinking_result or {}).get("tools") or [])
                        if n in skill_tools]
     seen = set()
     ordered = []
-    for n in slash_names + thinking_names:
+    for n in slash_names + magic_names + thinking_names:
         if n not in seen:
             seen.add(n)
             ordered.append(n)
@@ -669,12 +684,16 @@ def _invoke_skill(service_info, user_info, session_id, session_name,
             if len(tup) >= 4 and tup[3] is not None:
                 exp = tup[3]
         return out_text, exp
-    if isinstance(result, (list, tuple)) and len(result) >= 4:
-        _, _, out_text, exp = result[:4]
-        return str(out_text or ""), (exp or [])
-    if isinstance(result, (list, tuple)) and len(result) >= 6:
-        # LLM tools return 6-tuples — take the text slot (index 2).
-        return str(result[2] or ""), []
+    if isinstance(result, (list, tuple)):
+        n = len(result)
+        # LLM tools return 6-tuples (svc, usr, text, model, ptok, rtok);
+        # direct-action tools return 4-tuples (svc, usr, text, export).
+        # Disambiguate by exact length so index 3 isn't mis-read as export.
+        if n == 6:
+            return str(result[2] or ""), []
+        if n >= 4:
+            _, _, out_text, exp = result[:4]
+            return str(out_text or ""), (exp or [])
     return str(result), []
 
 
@@ -2127,6 +2146,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
             agent,
             thinking_result if _thinking_tools_target_on else None,
             slash_pick=_slash_pick,
+            user_query=user_query,
         )
         in_execution["_SELECTED_SKILLS"] = _selected_skills
 

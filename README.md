@@ -1415,16 +1415,37 @@ SKILL は **HABIT とは完全に独立した補助能力**（外部 API・関�
 - **CONTEXT**: HABIT の practice 実行前に走り、**結果を reference material としてラップして `user_query` に append**（既存の Web Search 経路と同形）。RAG クエリ生成 + メイン LLM の入力の両方に反映される。Web 検索・ドキュメント検索を想定
 - **AFTER**: HABIT の応答生成後に走る。**HABIT の応答を入力**として受け取る。**会話履歴に別 sub_seq として保存**
 
-**SKILL の起動パス（2 経路、マージ実行）**:
-- **Slash command**: `/WebSearch <query>` — SKILL 名がヒットしたら、そのエントリの PHASE で発火。`<query>` は HABIT の user_query として使われる（rest-of-line）
-- **Thinking Mode**: `Thinking Targets` に `Tools` を含めると Thinking Agent が SKILL 名を選定。返された SKILL は登録済み PHASE で発火
-- **同時使用可**: 両経路が同じ SKILL を選んだ場合は **slash 優先で 1 回だけ実行**（順序保持 dedup）
+**SKILL の起動パス（3 段構え、優先順・マージ実行）**:
+- **1. Slash command**: `/<name> <query>` — SKILL 名がヒットしたら、そのエントリの PHASE で発火。`<query>` は HABIT の user_query として使われる（rest-of-line）
+- **2. `SKILL.TOOLS[name].MAGIC_WORDS` マッチ**: ユーザーのクエリに magic word が含まれていれば無条件で発火（HABIT.MAGIC_WORDS と同じ発想。「そのスキルを呼ぶ自然表現」を書いておく）
+- **3. Thinking Mode**: `Thinking Targets` に `Tools` を含めると Thinking Agent が SKILL の `description` を見て選定
+- **同時使用可 & dedup**: 上記 3 経路が同じ SKILL を選んでも **1 回だけ実行**。順序は slash → magic → thinking
+
+**`agent_10Sample.json` に登録済みの 5 サンプル SKILL**（Eight ペルソナ向け）:
+
+| SKILL | PHASE | 用途 | MAGIC_WORDS |
+|---|---|---|---|
+| `WebSearch` | CONTEXT | 時事情報の Web 検索 | (Thinking / slash 経由) |
+| `recall_similar_experience` | BEFORE | Vector KNOWLEDGE から自分の類似経験を思い出す | 「似た経験」「類似した経験」「過去に似た」「思い出したい」 |
+| `analyze_attachment` | BEFORE | 添付 CSV/TXT/MD の統計特徴を抽出 | 「添付を分析」「この資料を分析」「このデータの特徴」 |
+| `mood_score` | AFTER | ユーザーとアシスタントの Plutchik 8 感情スコア | 「感情スコア」「今の気持ちを表示」「感情を見せて」 |
+| `self_critique` | AFTER | 自分の応答に対する 3 軸のセルフクリティーク | 「自分の回答に反論」「批判的に検討」「セルフクリティーク」 |
+| `translate_response` | AFTER | 応答を指定言語 (既定英語) に翻訳 | 「英訳して」「英語に翻訳」「translate to English」 |
+| `slide_deck_prompt` | AFTER | 応答を PowerPoint 化するときの構成を、**スライド生成 AI (Gamma/Beautiful.AI/Canva Magic Studio/PowerPoint Copilot) 向けの投入プロンプト**として作成 | 「スライドにまとめて」「パワポで」「PowerPointで」「プレゼン資料にまとめる」「スライドAI向け」 |
+
+いずれも「常時発火」ではなく、**上記トリガーが揃った時だけ選定される**設計。tool の `description` に `Use ONLY when...` を明記しているため、Thinking Agent もむやみに拾いません。
 
 **旧設計の廃止**: `HABIT.TOOL_PICK` エントリと `practice_55ToolPick.json` は不要になりました。既存エージェント JSON から `HABIT.TOOL_PICK` は削除済み。旧 `SKILL.TOOL_LIST` + `INACTIVE_TOOLS` シェイプも自動変換されて動作（全て `PHASE: "CONTEXT"` として import）。
 
 **永続化 & 表示**:
 - CONTEXT SKILL 結果: `prompt.skills` に `{name: {phase, as_reference, raw, wrapped, export_contents}}` として保存。Detail Information の User query セクションに `--- SKILL:<name> (CONTEXT) ---` ブロックで露出
+- **チャット画面のユーザーバブル**: `_strip_skill_wraps()` で reference material の wrap を削除して表示（可読性優先）。**chat_memory の `prompt.query.input` / `text` には wrap 付きのまま保存**されるので、次ターンの memory retrieval / digest では引き続き SKILL 内容が参照可能
+- **URL / 引用**: CONTEXT SKILL が 4-tuple の 4 番目に URL リスト (`export_contents`) を返した場合、`DigiMatsuExecute` が **自動的に `web_search_log["urls"]` にマージ** → 既存の `citation_inject` が web 引用として処理し、応答本文末尾に `## References` セクション + 本文中 `[N]` マーカーを付与。built-in Web Search と完全に同じ経路
 - BEFORE / AFTER SKILL 結果: chat_memory の別 sub_seq として `role="skill"`, `setting.agent_name="SKILL(<name>)"` で保存
+
+**CONTEXT SKILL の Reference material ラッピング**: LLM がツール結果を「口調はペルソナで、固有名詞・数字・日付は忠実に、段落丸ごとコピーは NG、`[1][2]` マーカーは引用に活用可」で扱うよう指示する guardrail 文言でラップされます。built-in Web Search 側も同じ文言に統一済み。
+
+**Thinking Targets の `Tools` オプション露出条件**: 新 `SKILL.TOOLS` (dict) または旧 `SKILL.TOOL_LIST` (list) の**どちらか一方でも非空**なら multiselect に自動追加。`THINKING_TARGETS.tools` フラグの既定値は他フラグと同様 `True`（キー欠落時は tool 経路を honor する保守的 default）。
 
 #### FEEDBACK（フィードバック設定）
 

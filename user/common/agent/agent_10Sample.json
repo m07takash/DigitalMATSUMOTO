@@ -535,6 +535,74 @@
                 "PHASE": "CONTEXT",
                 "ACTIVE": true,
                 "AS_REFERENCE": true
+            },
+            "recall_similar_experience": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "MAGIC_WORDS": [
+                    "似た経験",
+                    "類似した経験",
+                    "過去に似た",
+                    "思い出したい"
+                ]
+            },
+            "analyze_attachment": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "MAGIC_WORDS": [
+                    "添付を分析",
+                    "この資料を分析",
+                    "このデータの特徴"
+                ]
+            },
+            "mood_score": {
+                "PHASE": "AFTER",
+                "ACTIVE": true,
+                "MAGIC_WORDS": [
+                    "感情スコア",
+                    "今の気持ちを表示",
+                    "感情を見せて"
+                ]
+            },
+            "self_critique": {
+                "PHASE": "AFTER",
+                "ACTIVE": true,
+                "MAGIC_WORDS": [
+                    "自分の回答に反論",
+                    "批判的に検討",
+                    "セルフクリティーク"
+                ]
+            },
+            "translate_response": {
+                "PHASE": "AFTER",
+                "ACTIVE": true,
+                "AS_REFERENCE": false,
+                "ARGS_HINT": {
+                    "target_lang": "English"
+                },
+                "MAGIC_WORDS": [
+                    "英訳して",
+                    "英語に翻訳",
+                    "translate to English"
+                ]
+            },
+            "slide_deck_prompt": {
+                "PHASE": "AFTER",
+                "ACTIVE": true,
+                "AS_REFERENCE": false,
+                "ARGS_HINT": {
+                    "slide_count": 6,
+                    "aspect": "16:9",
+                    "style": "クリーンで日本語ビジネス向け、写真・図表を効果的に",
+                    "prompt_lang": "Japanese"
+                },
+                "MAGIC_WORDS": [
+                    "スライドにまとめて",
+                    "パワポで",
+                    "PowerPointで",
+                    "プレゼン資料にまとめる",
+                    "スライドAI向け"
+                ]
             }
         }
     },
