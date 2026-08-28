@@ -311,43 +311,59 @@ def _build_where_limitation(rag_data, exec_info, define_code={}):
 def _query_collection_single(collection, query_vec, result_limit, where_limitation, rag_data, meta_searches, query_seq):
     results = []
 
-    # META_SEARCH query (date condition + similarity bonus)
-    if "META_SEARCH" in rag_data:
-        query_conditions_add = []
-        for meta_search in meta_searches:
-            if "DATE" in meta_search and "DATE" in rag_data["META_SEARCH"]["CONDITION"]:
-                for date_range in meta_search["DATE"]:
-                    try:
-                        start_date = datetime.strptime(date_range["start"], '%Y/%m/%d').timestamp()
-                        end_date = datetime.strptime(date_range["end"], '%Y/%m/%d').timestamp()
-                        query_conditions_add.append({"$and": [
-                            {"create_date_ts": {"$gte": start_date}},
-                            {"create_date_ts": {"$lte": end_date}}
-                        ]})
-                    except Exception as e:
-                        logger.warning("Exception: %s", e)
-                        continue
-        if query_conditions_add:
-            where_add = query_conditions_add[0] if len(query_conditions_add) == 1 else {"$or": query_conditions_add}
-            if where_limitation:
-                wl = where_limitation.copy()
-                wl.extend(where_add["$and"]) if "$and" in where_add else wl.append(where_add)
-                where_clause = wl[0] if len(wl) == 1 else {"$and": wl}
+    # META_SEARCH sub-query (delegated to DigiM_MetaSearch for the generic
+    # DATE / CATEGORY / NUMBER / TEXT contract; legacy CONDITION+BONUS is
+    # auto-converted inside get_conditions). Sub-query WHERE is built from
+    # the $or of all conditions expressible in Chroma WHERE. Per-chunk BONUS
+    # is applied post-hoc so multiple hits multiply, and MATCH:contains is
+    # honored via substring on fetched metadata.
+    import DigiM_MetaSearch as _dmm
+    if _dmm.has_any_condition(rag_data):
+        extracted = {}
+        for _e in (meta_searches or []):
+            if isinstance(_e, dict):
+                extracted.update(_e)
+        where_ext = _dmm.build_where_extension(rag_data, extracted)
+        need_contains = any(c.get("MATCH") == "contains"
+                             for c in _dmm.get_conditions(rag_data))
+        if where_ext is not None or need_contains:
+            if where_ext is not None:
+                if where_limitation:
+                    wl = where_limitation.copy()
+                    if isinstance(where_ext, dict) and "$and" in where_ext:
+                        wl.extend(where_ext["$and"])
+                    else:
+                        wl.append(where_ext)
+                    where_clause = wl[0] if len(wl) == 1 else {"$and": wl}
+                else:
+                    where_clause = where_ext
+                sub_limit = result_limit
             else:
-                where_clause = where_add
-            rag_data_db = collection.query(
-                query_embeddings=[query_vec], n_results=result_limit,
-                include=["metadatas", "embeddings", "distances"], where=where_clause)
+                where_clause = where_limitation[0] if where_limitation and len(where_limitation) == 1 else ({"$and": where_limitation} if where_limitation else None)
+                sub_limit = min(50, max(result_limit, result_limit * 2))
+            if where_clause is not None:
+                rag_data_db = collection.query(
+                    query_embeddings=[query_vec], n_results=sub_limit,
+                    include=["metadatas", "embeddings", "distances"], where=where_clause)
+            else:
+                rag_data_db = collection.query(
+                    query_embeddings=[query_vec], n_results=sub_limit,
+                    include=["metadatas", "embeddings", "distances"])
             for i in range(len(rag_data_db["ids"])):
                 for j in range(len(rag_data_db["ids"][i])):
+                    meta = rag_data_db["metadatas"][i][j]
+                    bonus = _dmm.compute_chunk_bonus(rag_data, extracted, meta)
+                    if bonus == 1.0 and need_contains and where_ext is None:
+                        continue
                     v = {"id": str(rag_data_db["ids"][i][j])}
-                    v |= rag_data_db["metadatas"][i][j]
+                    v |= meta
                     v["vector_data_value_text"] = ast.literal_eval(v["vector_data_value_text"])
                     v["vector_data_key_text"] = rag_data_db["embeddings"][i][j].tolist()
-                    v["similarity_prompt"] = round(rag_data_db["distances"][i][j], 3) * rag_data["META_SEARCH"]["BONUS"]
-                    v["similarity_prompt_original"] = round(rag_data_db["distances"][i][j], 3)
+                    base_dist = round(rag_data_db["distances"][i][j], 3)
+                    v["similarity_prompt"] = base_dist * bonus
+                    v["similarity_prompt_original"] = base_dist
                     v["query_seq"] = query_seq
-                    v["query_mode"] = "(META_SEARCH:" + str(rag_data["META_SEARCH"]["BONUS"]) + ")"
+                    v["query_mode"] = "(META_SEARCH:" + str(round(bonus, 3)) + ")"
                     results.append(v)
 
     # Standard query
@@ -1021,7 +1037,46 @@ def save_rag_chunk_db(rag_id, rag_data):
         logger.info(f"Updated metadata for {rag_chunk['title']} in the knowledge DB (no re-embedding).")
         cnt_add += 1
 
+    # META_SEARCH sidecar: precompute distinct values for FIELDs any agent
+    # references with EXTRACTOR_HINT="@auto" for this DATA_NAME. Kept out of
+    # the query path so runtime stays fast.
+    try:
+        _refresh_meta_sidecar(rag_id, collection)
+    except Exception as _sc_e:
+        logger.warning("meta sidecar refresh failed for %s: %s", rag_id, _sc_e)
+
     return cnt_add, cnt_extent
+
+
+def _refresh_meta_sidecar(data_name, collection):
+    """Scan all agent JSONs for META_SEARCH conditions that reference
+    `data_name` with EXTRACTOR_HINT="@auto"; for those FIELDs, write out
+    a sorted-distinct-values sidecar the meta-extractor can pick up."""
+    import DigiM_MetaSearch as _dmm
+    _system_setting = dmu.read_yaml_file("setting.yaml")
+    _agent_folder = _system_setting["AGENT_FOLDER"]
+    fields = set()
+    for fn in dmu.get_files(_agent_folder, ".json"):
+        try:
+            data = dmu.read_json_file(fn, _agent_folder)
+        except Exception:
+            continue
+        for kn in list(data.get("KNOWLEDGE") or []) + list(data.get("BOOK") or []):
+            for d in (kn.get("DATA") or []):
+                if not isinstance(d, dict) or d.get("DATA_NAME") != data_name:
+                    continue
+                for c in _dmm.get_conditions(d):
+                    if c.get("EXTRACTOR_HINT") == "@auto" and c.get("FIELD"):
+                        fields.add(c["FIELD"])
+    if not fields:
+        return
+    response = collection.get(include=["metadatas"])
+    if not response or not response.get("metadatas"):
+        return
+    values = _dmm.collect_distinct_field_values(response["metadatas"], sorted(fields))
+    if values:
+        _dmm.save_sidecar(data_name, values)
+        logger.info("Wrote META_SEARCH sidecar for %s: fields=%s", data_name, list(values.keys()))
 
 # Migration helper: bulk-add the private flag to existing RAG data
 def migrate_add_private_flag():

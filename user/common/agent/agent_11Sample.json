@@ -616,6 +616,7 @@
         "PERSONA_MERGE": "agent_50PersonaMerge.json",
         "PERSONA_SELECTOR": "agent_54PersonaSelector.json",
         "EXTRACT_DATE": "agent_55ExtractDate.json",
+        "META_EXTRACT": "agent_55MetaExtract.json",
         "RAG_QUERY_GENERATOR": "agent_56RAGQueryGenerator.json",
         "SESSION_NAME": "agent_57SessionName.json",
         "THINKING": "agent_58Thinking.json",

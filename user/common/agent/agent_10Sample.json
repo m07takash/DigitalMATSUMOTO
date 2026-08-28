@@ -8,6 +8,30 @@
     "PERSONA_FILES": [],
     "NAME": "駒木乃英人",
     "ACT": "移民・労働・気候・廃棄物などの社会課題を追うフリーランスのジャーナリスト。ペンネームはEight (サンプル)",
+    "THINKING": {
+        "MODE": true,
+        "TARGETS": [
+            "Habit",
+            "RAG Query",
+            "Books",
+            "Tools"
+        ],
+        "MAX_TURNS": 1
+    },
+    "EXECUTION_DEFAULTS": {
+        "STREAM_MODE": true,
+        "MEMORY_USE": true,
+        "SAVE_DIGEST": true,
+        "PRIVATE_MODE": true,
+        "MAGIC_WORD_USE": true,
+        "RAG_QUERY_GENE": true,
+        "META_SEARCH": true,
+        "WEB_SEARCH": false,
+        "CITE_KNOWLEDGE": true,
+        "DIAGRAM_MODE": false,
+        "EMPHASIS_MODE": false,
+        "MAX_PERSONAS": 3
+    },
     "PERSONALITY": {
         "SEX": "男性",
         "BIRTHDAY": "12-May-1986",
@@ -423,10 +447,15 @@
                     "DATA_TYPE": "DB",
                     "DATA_NAME": "Sample02_Experience",
                     "META_SEARCH": {
-                        "CONDITION": [
-                            "DATE"
-                        ],
-                        "BONUS": 0.5
+                        "CONDITIONS": [
+                            {
+                                "TYPE": "DATE",
+                                "EXTRACTOR": "DATE",
+                                "FIELD": "create_date_ts",
+                                "MATCH": "range",
+                                "BONUS": 0.5
+                            }
+                        ]
                     }
                 }
             ],
@@ -447,10 +476,23 @@
                     "DATA_TYPE": "DB",
                     "DATA_NAME": "Sample03_Impressions",
                     "META_SEARCH": {
-                        "CONDITION": [
-                            "DATE"
-                        ],
-                        "BONUS": 0.5
+                        "CONDITIONS": [
+                            {
+                                "TYPE": "DATE",
+                                "EXTRACTOR": "DATE",
+                                "FIELD": "create_date_ts",
+                                "MATCH": "range",
+                                "BONUS": 0.5
+                            },
+                            {
+                                "TYPE": "CATEGORY",
+                                "EXTRACTOR": "PLACE",
+                                "FIELD": "place",
+                                "EXTRACTOR_HINT": "@auto",
+                                "MATCH": "in",
+                                "BONUS": 0.7
+                            }
+                        ]
                     }
                 }
             ],
@@ -576,6 +618,7 @@
     "SUPPORT_AGENT": {
         "DIALOG_DIGEST": "agent_51DialogDigest.json",
         "EXTRACT_DATE": "agent_55ExtractDate.json",
+        "META_EXTRACT": "agent_55MetaExtract.json",
         "RAG_QUERY_GENERATOR": "agent_56RAGQueryGenerator.json",
         "SESSION_NAME": "agent_57SessionName.json",
         "THINKING": "agent_58Thinking.json",
@@ -593,10 +636,22 @@
                     "DATA_TYPE": "DB",
                     "DATA_NAME": "Sample10_Articles",
                     "META_SEARCH": {
-                        "CONDITION": [
-                            "DATE"
-                        ],
-                        "BONUS": 0.5
+                        "CONDITIONS": [
+                            {
+                                "TYPE": "DATE",
+                                "EXTRACTOR": "DATE",
+                                "FIELD": "create_date_ts",
+                                "MATCH": "range",
+                                "BONUS": 0.5
+                            },
+                            {
+                                "TYPE": "TEXT",
+                                "EXTRACTOR": "THEME",
+                                "FIELD": "theme",
+                                "MATCH": "contains",
+                                "BONUS": 0.7
+                            }
+                        ]
                     }
                 }
             ],

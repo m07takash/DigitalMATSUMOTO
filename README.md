@@ -642,9 +642,9 @@ CosmosDB モードで起動しつつパッケージが未インストールの�
       "User Memory Layers": ["persona", "nowaday", "history"]
     },
     "Defaults": {
-      "Thinking Mode": true,
-      "Thinking Targets": ["Habit", "Web Search", "RAG Query", "Books"],
-      "Max Thinking Turns": 1
+      "Streaming Mode": true,
+      "Memory Use": true,
+      "Language": "Japanese"
     }
   }
 }
@@ -685,11 +685,19 @@ CosmosDB モードで起動しつつパッケージが未インストールの�
 
 `Defaults` はログイン時にセッションへ適用される初期値です。ユーザーごとに好みの立ち上がり状態を保存できます。指定しなかったキーはアプリ全体のデフォルトが使われます。
 
-| キー | 型 | 説明 |
-|------|----|------|
-| `Thinking Mode` | bool | Thinking Mode（思考ステップ）の初期ON/OFF。既定 `false` |
-| `Thinking Targets` | 配列 | Thinking Mode 有効時の対象リスト初期値。`"Habit"` / `"Web Search"` / `"RAG Query"` / `"Books"` / `"Personas"` から選ぶ（`Personas` はエージェントに `ORG` が定義されている場合のみ有効。無効な値はレンダリング時に自動で除外）。既定 `["Habit", "Web Search", "RAG Query", "Books"]` |
-| `Max Thinking Turns` | int | Thinking を最大何ターンまで走らせるか（1〜5、`1` = 従来の単発Thinking）。**2 以上にすると**、各ターンの Thinking JSON に `sufficient` フィールドが含まれ、`sufficient=false` の場合は **予備 Web 検索** を実行 → その結果を次ターンの Thinking プロンプトに渡す B型ループ が有効に。予備検索は `_WEB_SEARCH_CACHE` を通じてメイン応答パスで流用される（二重発火なし）。既定 `1` |
+主なキー: `Streaming Mode` / `Memory Use` / `Save Digest` / `Private Mode` / `RAG Query Gen` / `Meta Search` / `Magic Word` / `WEB Search` / `Web Search Guardrail` / `Include URL Subpages` / `Reference Knowledge` / `Diagrams` / `Emphasis` / `Match Input Language` / `Language` / `Speaking Style` / `Web Search Engine` / `Max Personas`。
+
+> **Thinking 関連はエージェント側で管理**: `Thinking Mode` / `Thinking Targets` / `Max Thinking Turns` は Defaults ではなくエージェント JSON トップレベルの `THINKING` ブロックで指定します（ユーザー数が増えたときの管理煩雑さを避けるため）。詳細は [エージェントの設定 → THINKING](#thinkingエージェント単位の-thinking-mode-既定値) の項を参照。
+
+```json
+"THINKING": {
+    "MODE": true,
+    "TARGETS": ["Habit", "RAG Query", "Books", "Tools"],
+    "MAX_TURNS": 1
+}
+```
+
+**優先順位**: `agent.THINKING.<field>` > ハードコード fallback。エージェント切替 / セッション読み込み時に自動で再解決されます。
 
 > WebUI 上でチェックを変更すれば、そのセッションの間はユーザー操作が優先されます。次回ログイン時にまた `Defaults` の値から始まります。
 
@@ -750,6 +758,34 @@ RAGデータの構築は「データの準備」→「RAGマスターの設定�
 | `Sample00_Feedback.csv` | title, category, create_date, memo ほか | フィードバックの保存先（知識ソースではない） |
 
 > 日付カラムは **`create_date` という名前で `YYYY/M/D` 形式**にしてください。`get_chunk_csv` はこの列名を固定で参照しており、名前が違うと取込日時が現在時刻になり `META_SEARCH` の `DATE` 条件が効きません。
+
+##### META_SEARCH（汎用メタ検索：期間 / カテゴリ / 数値 / 部分一致でボーナス）
+
+KNOWLEDGE / BOOK の各 `DATA` 要素に `META_SEARCH.CONDITIONS[]` を書くと、支援エージェント `META_EXTRACT`（`agent_55MetaExtract.json`）がユーザークエリから各条件の値を 1 コールで抽出し、該当したチャンクに BONUS 倍率を乗せて類似度を調整します（`BONUS < 1` は boost、`> 1` は penalty。複数条件がヒットすると倍率が積み上がる）。旧形式 `"META_SEARCH": {"CONDITION":["DATE"],"BONUS":0.5}` は起動時に自動変換されるので既存 JSON は無修正で動きます。
+
+```json
+"META_SEARCH": {
+    "CONDITIONS": [
+        { "TYPE": "DATE",     "EXTRACTOR": "DATE",   "FIELD": "create_date_ts", "MATCH": "range",    "BONUS": 0.5 },
+        { "TYPE": "CATEGORY", "EXTRACTOR": "PLACE",  "FIELD": "place",  "EXTRACTOR_HINT": "@auto", "MATCH": "in",       "BONUS": 0.7 },
+        { "TYPE": "NUMBER",   "EXTRACTOR": "RATING", "FIELD": "rating", "EXTRACTOR_HINT": {"min":1,"max":5}, "MATCH": "range", "BONUS": 1.2 },
+        { "TYPE": "TEXT",     "EXTRACTOR": "THEME",  "FIELD": "theme",  "MATCH": "contains", "BONUS": 0.7 }
+    ]
+}
+```
+
+| キー | 意味 |
+|---|---|
+| `TYPE` | 抽出型ラベル (`DATE` / `CATEGORY` / `NUMBER` / `TEXT`) — LLM プロンプトの解釈ヒント |
+| `EXTRACTOR` | 抽出タスクの識別子（省略時は TYPE を採用）。同名エクストラクタは 1 コールに集約 |
+| `FIELD` | Chroma のメタデータ列名（チャンク取り込み時に格納されている必要あり） |
+| `EXTRACTOR_HINT` | LLM に渡す候補・レンジ情報。`"@auto"` を書くと ingestion 時に生成されるサイドカーから distinct 値を自動読み込み |
+| `MATCH` | `range` / `in` / `equals` / `contains`。`contains` は Chroma WHERE でワイルドカードが使えないので post-filter で当てる |
+| `BONUS` | 類似度距離への倍率。距離が小さいほど「似ている」ため **`BONUS < 1` は boost、`> 1` は penalty**。複数条件ヒットは積算 |
+
+- **サブクエリは 1 本**: `range` / `in` / `equals` 条件を `$or` で束ねた WHERE 追加サブクエリ 1 本 + 通常クエリ。`contains` はサブクエリ結果に post-filter で BONUS を追加適用（`contains` のみで chunk を新規発掘したい場合はサブクエリ `n_results` が自動で拡張されます）
+- **`@auto` サイドカー**: `save_rag_chunk_db` の末尾で対象 FIELD の distinct 値を集めて `<RAG_FOLDER_DB>/_meta_field_values/<DATA_NAME>.json` に保存。`UpdateRAG` すれば最新化される。UI から都度スキャンしないため runtime のオーバーヘッド無し
+- **`META_EXTRACT` 未登録の場合**: SUPPORT_AGENT に `META_EXTRACT` が無いエージェントは、従来どおり `EXTRACT_DATE` が呼ばれ DATE のみサポートされます（後方互換）
 
 > ナレッジグラフのソースCSVも `user/common/csv/` に置けます。`mapping.json` の `FILE` は**グラフフォルダ基準の相対パス**として解決されるので、`"FILE": "../../../csv/Sample01_Relations.csv"` と書けば `user/common/csv/` を参照できます（サンプルはこの形）。グラフフォルダの中に `source/` を作って置く形でも構いません。
 
@@ -1236,6 +1272,55 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/{DATA_NAME} --use-llm --embe
 | `generate_image_gemini` | Google Gemini による画像生成 |
 | `generate_image_azure_dalle` | Azure OpenAI Service 上の dall-e/gpt-image デプロイ |
 
+#### THINKING（エージェント単位の Thinking Mode 既定値）
+
+エージェント JSON トップレベルの任意ブロック。`Thinking Mode` / `Thinking Targets` / `Max Thinking Turns` のエージェント固有の推奨値を書けます。ユーザー数が増えたとき `users.json` の `Defaults` を毎回書き換えなくても、エージェント側に一元集約できます。
+
+```json
+"THINKING": {
+    "MODE": true,
+    "TARGETS": ["Habit", "RAG Query", "Books", "Tools"],
+    "MAX_TURNS": 1
+}
+```
+
+**優先順位**: `agent.THINKING.<field>` > ハードコード fallback（`Defaults` 側では Thinking は保持しません）。エージェント切替時 / セッション読み込み時に自動で再解決。
+
+**Thinking Targets の候補フィルタ**（UI レンダリング時）:
+- `Habit` / `RAG Query` / `Web Search`: 常に表示
+- `Books`: `BOOK` があるときのみ
+- `Tools`: `SKILL.TOOL_LIST` が非空のときのみ
+- `Personas`: `ORG` があるときのみ
+
+**Tools ターゲット**: Thinking Agent が `SKILL.TOOL_LIST` の `- name: description` を見て tool を選び、選ばれたら自動で HABIT を `TOOL_PICK` に切替 + narrow 済みリストを `in_execution["_THINKING_TOOL_LIST"]` に注入。`TOOL_PICK` HABIT が無いエージェントではスキップ。
+
+#### EXECUTION_DEFAULTS（エージェント単位の実行既定値）
+
+エージェント JSON トップレベルの任意ブロック。Conversation Settings のチェックボックスやセレクタの既定値を **エージェント側** で持てます。ユーザーの `Defaults` より優先されます。
+
+```json
+"EXECUTION_DEFAULTS": {
+    "STREAM_MODE": true,
+    "MEMORY_USE": true,
+    "SAVE_DIGEST": true,
+    "PRIVATE_MODE": true,
+    "MAGIC_WORD_USE": true,
+    "RAG_QUERY_GENE": true,
+    "META_SEARCH": true,
+    "WEB_SEARCH": false,
+    "WEB_SEARCH_GUARDRAIL": true,
+    "WEB_SEARCH_ENGINE": "",
+    "CITE_KNOWLEDGE": true,
+    "DIAGRAM_MODE": false,
+    "EMPHASIS_MODE": false,
+    "MAX_PERSONAS": 3
+}
+```
+
+**優先順位**: `agent.EXECUTION_DEFAULTS.<field>` > `users.json Defaults.<field>` > ハードコード fallback。エージェント切替時 / セッション読み込み時に再解決。
+
+省略されたフィールドはユーザー Defaults が生きます。「ユーザーの好み（言語 / speaking style / streaming ON/OFF 等）」は Defaults、「エージェントごとの推奨（RAG 検索の ON/OFF、Web Search をデフォルト ON にしたい支援エージェント等）」は EXECUTION_DEFAULTS、という棲み分け。
+
 #### HABIT（振る舞いの切り替え）
 
 ユーザーの入力に特定のトリガーワード（`MAGIC_WORD`）が含まれると、対応するプラクティス（処理パイプライン）に切り替わります。
@@ -1363,9 +1448,10 @@ Notion保存時は `notion_name` でプロパティ名を個別に指定でき�
 |------|------|
 | `DIALOG_DIGEST` | 会話履歴のダイジェスト（要約）を生成 |
 | `ART_CRITICS` | 画像生成後の解説・批評を生成 |
-| `EXTRACT_DATE` | ユーザー入力から日付情報を抽出（RAGのメタデータ検索に使用） |
+| `EXTRACT_DATE` | ユーザー入力から日付情報を抽出（RAGのメタデータ検索に使用）。**汎用の `META_EXTRACT` が登録されていない場合の後方互換パス** |
+| `META_EXTRACT` | 汎用メタ抽出（`DATE` / `CATEGORY` / `NUMBER` / `TEXT` を 1 コールで抽出）。登録すると `EXTRACT_DATE` より優先されます。`META_SEARCH.CONDITIONS[]` の `EXTRACTOR` キーごとに値を返す JSON を生成 |
 | `RAG_QUERY_GENERATOR` | ユーザー入力からRAG検索用の補助クエリを生成 |
-| `THINKING` | ユーザーの質問を分析し、Habit選択・Web検索・RAGクエリ生成・Book追加を動的に判定（Thinking Mode有効時）。**マルチターン対応**: `Max Thinking Turns > 1` にすると、各ターンの Thinking JSON の `sufficient=false` を検知して**予備 Web 検索**を実行 → 結果を次ターンの Thinking プロンプトに渡す B型ループ が動作。`sufficient=true` か上限到達で break。予備検索は `_WEB_SEARCH_CACHE` 経由でメイン応答パスに流用（二重発火なし）。<br>**プロンプトテンプレの placeholder**: `PROMPT_TEMPLATE.Thinking Agent` は `{PreviousThinking}` (前ターンの判定 JSON) と `{WebSearchPreview}` (予備検索結果テキスト) を含み、[user/common/tool/thinking.py](user/common/tool/thinking.py) が実行時に `.replace()` で差し込みます。カスタマイズする際はこの2つの placeholder を残してください（削除すると 2ターン目以降が前情報無しで走ることになります）。出力 JSON にも `sufficient` フィールドを含めることが必須 |
+| `THINKING` | ユーザーの質問を分析し、Habit選択・Web検索・RAGクエリ生成・Book追加・**Tool呼び出し** を動的に判定（Thinking Mode有効時）。Thinking Targets に `Tools` を含めているとき、Thinking Agent は `SKILL.TOOL_LIST` の各 tool 名 + description を見て「この質問にどの tool を呼ぶか」を判定し、選ばれた場合は自動で HABIT を `TOOL_PICK` に切り替えて engine-agnostic dispatcher に narrow 済み tool リストを渡す（`in_execution["_THINKING_TOOL_LIST"]` 経由）。**マルチターン対応**: `Max Thinking Turns > 1` にすると、各ターンの Thinking JSON の `sufficient=false` を検知して**予備 Web 検索**を実行 → 結果を次ターンの Thinking プロンプトに渡す B型ループ が動作。`sufficient=true` か上限到達で break。予備検索は `_WEB_SEARCH_CACHE` 経由でメイン応答パスに流用（二重発火なし）。<br>**プロンプトテンプレの placeholder**: `PROMPT_TEMPLATE.Thinking Agent` は `{PreviousThinking}` (前ターンの判定 JSON) と `{WebSearchPreview}` (予備検索結果テキスト) を含み、[user/common/tool/thinking.py](user/common/tool/thinking.py) が実行時に `.replace()` で差し込みます。カスタマイズする際はこの2つの placeholder を残してください（削除すると 2ターン目以降が前情報無しで走ることになります）。出力 JSON にも `sufficient` フィールドを含めることが必須 |
 | `KNOWLEDGE_INTERPRET` | Analytics Results - Knowledge Utility の「LLM解釈」ボタンが押されたときに、CSV/類似度ランク（+任意で散布図画像）を読んで「全体構成と今回の選択傾向」「貢献度分析（回答距離−質問距離）」「注目点・改善示唆」を返す（バックデータ中心・Vision任意） |
 | `CITATION_INJECT` | 本回答生成後、Web検索URLとBOOKチャンクを引用ソースとして `[N]` マーカーを本文末文に挿入し、末尾に `## References` セクションを付与する。Web検索URL or BOOKチャンクのどちらかが使われていれば自動発火（KNOWLEDGE は対象外）。デフォルトは Claude-Haiku-4.5 等の軽量モデル。LLM失敗時は本文不変で References のみ追加するフォールバックあり。**LLM出力に `[N]` マーカーも `## References` も含まれない場合は「対応関係なし」とみなして元の本文をそのまま維持**（LLMが弁解文を返しても元回答が守られる） |
 

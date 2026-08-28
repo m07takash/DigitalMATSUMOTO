@@ -35,6 +35,7 @@ def thinking_agent(service_info, user_info, session_id, session_name, agent_file
     digest_text = add_info.get("DigestText", "")
     habit_info = add_info.get("HabitInfo", "")
     book_info = add_info.get("BookInfo", "")
+    tool_info = add_info.get("ToolInfo", "")
     # Multi-turn Thinking (B型ループ) hands the previous turn's decision and
     # the mid-loop preview web-search result down through add_info. The
     # `Thinking Agent` prompt template holds `{PreviousThinking}` and
@@ -61,6 +62,8 @@ def thinking_agent(service_info, user_info, session_id, session_name, agent_file
         context += f"\n【Available habits】\n{habit_info}\n"
     if book_info:
         context += f"\n【Available books】\n{book_info}\n"
+    if tool_info:
+        context += f"\n【Available tools】\n{tool_info}\n"
     if digest_text:
         context += f"\n【Conversation digest】\n{digest_text}\n"
 

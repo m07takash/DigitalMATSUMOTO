@@ -638,9 +638,9 @@ If the package is missing when CosmosDB mode is selected, the store falls back t
       "User Memory Layers": ["persona", "nowaday", "history"]
     },
     "Defaults": {
-      "Thinking Mode": true,
-      "Thinking Targets": ["Habit", "Web Search", "RAG Query", "Books"],
-      "Max Thinking Turns": 1
+      "Streaming Mode": true,
+      "Memory Use": true,
+      "Language": "Japanese"
     }
   }
 }
@@ -681,11 +681,19 @@ If the package is missing when CosmosDB mode is selected, the store falls back t
 
 `Defaults` are initial session values applied at login. Each user can pin their preferred startup state. Any key you omit falls back to the app-wide default.
 
-| Key | Type | Description |
-|------|------|------|
-| `Thinking Mode` | bool | Whether Thinking Mode (reasoning step) starts ON. Default `false` |
-| `Thinking Targets` | array | Initial target list when Thinking Mode is ON. Pick from `"Habit"` / `"Web Search"` / `"RAG Query"` / `"Books"` / `"Personas"` (`Personas` requires an agent with `ORG` defined; invalid values are filtered at render time). Default `["Habit", "Web Search", "RAG Query", "Books"]` |
-| `Max Thinking Turns` | int | Max number of Thinking turns to run (1-5, `1` = the previous single-turn behavior). **When set to 2 or more**, every turn's Thinking JSON includes a `sufficient` flag; when it is `false`, the pipeline runs a **preview Web search** and hands the result to the next turn's Thinking prompt (B-type loop). The preview search is reused by the main response path via `_WEB_SEARCH_CACHE` (no double-fire). Default `1` |
+Common keys: `Streaming Mode` / `Memory Use` / `Save Digest` / `Private Mode` / `RAG Query Gen` / `Meta Search` / `Magic Word` / `WEB Search` / `Web Search Guardrail` / `Include URL Subpages` / `Reference Knowledge` / `Diagrams` / `Emphasis` / `Match Input Language` / `Language` / `Speaking Style` / `Web Search Engine` / `Max Personas`.
+
+> **Thinking is managed on the agent side.** `Thinking Mode` / `Thinking Targets` / `Max Thinking Turns` live in the agent JSON's top-level `THINKING` block, not in Defaults (this keeps per-user administration light as your user count grows). See [Agent setup → THINKING](#thinkingper-agent-thinking-mode-defaults) for details.
+
+```json
+"THINKING": {
+    "MODE": true,
+    "TARGETS": ["Habit", "RAG Query", "Books", "Tools"],
+    "MAX_TURNS": 1
+}
+```
+
+**Precedence**: `agent.THINKING.<field>` > hardcoded fallback. Re-resolved on every agent switch / session load.
 
 > When the user toggles a checkbox in the WebUI, that runtime choice wins for the rest of the session. On the next login the session restarts from the `Defaults` values again.
 
@@ -746,6 +754,34 @@ Place CSV files under `user/common/csv/`. Create them in UTF-8 (with BOM).
 | `Sample00_Feedback.csv` | title, category, create_date, memo, ... | Feedback sink (not a knowledge source) |
 
 > The date column must be named **`create_date` and formatted `YYYY/M/D`**. `get_chunk_csv` reads that exact column name; any other name silently falls back to the current time and the `DATE` condition in `META_SEARCH` stops working.
+
+##### META_SEARCH (generalized meta-search: period / category / number / partial match bonus)
+
+Under each KNOWLEDGE / BOOK `DATA` entry you can define `META_SEARCH.CONDITIONS[]`. The support agent `META_EXTRACT` (`agent_55MetaExtract.json`) then extracts, in a single LLM call, per-condition values from the user query; matched chunks get a BONUS multiplier applied to their distance (`BONUS < 1` boosts, `> 1` penalises; multiple hits multiply). The legacy shape `"META_SEARCH": {"CONDITION":["DATE"],"BONUS":0.5}` is auto-converted at load time — existing JSON keeps working.
+
+```json
+"META_SEARCH": {
+    "CONDITIONS": [
+        { "TYPE": "DATE",     "EXTRACTOR": "DATE",   "FIELD": "create_date_ts", "MATCH": "range",    "BONUS": 0.5 },
+        { "TYPE": "CATEGORY", "EXTRACTOR": "PLACE",  "FIELD": "place",  "EXTRACTOR_HINT": "@auto", "MATCH": "in",       "BONUS": 0.7 },
+        { "TYPE": "NUMBER",   "EXTRACTOR": "RATING", "FIELD": "rating", "EXTRACTOR_HINT": {"min":1,"max":5}, "MATCH": "range", "BONUS": 1.2 },
+        { "TYPE": "TEXT",     "EXTRACTOR": "THEME",  "FIELD": "theme",  "MATCH": "contains", "BONUS": 0.7 }
+    ]
+}
+```
+
+| Key | Meaning |
+|---|---|
+| `TYPE` | Extractor semantics (`DATE` / `CATEGORY` / `NUMBER` / `TEXT`) — hints the LLM prompt |
+| `EXTRACTOR` | Extraction task identifier (defaults to TYPE). Same-named extractors are consolidated into one call |
+| `FIELD` | Chroma metadata column name (must be populated at chunk ingestion) |
+| `EXTRACTOR_HINT` | Candidate list / range fed to the LLM. `"@auto"` reads from the sidecar generated at ingestion |
+| `MATCH` | `range` / `in` / `equals` / `contains`. `contains` is post-filter (Chroma WHERE has no wildcard) |
+| `BONUS` | Multiplier on similarity distance. Smaller distance = more similar, so **`BONUS < 1` boosts, `> 1` penalises**. Multiple hits compound |
+
+- **Single sub-query**: All `range` / `in` / `equals` conditions are combined via `$or` into one WHERE-extended sub-query alongside the normal query. `contains` is applied post-filter to the sub-query results (with an expanded `n_results` when only `contains` conditions exist for the RAG)
+- **`@auto` sidecar**: `save_rag_chunk_db` collects distinct values for the referenced FIELDs and writes them to `<RAG_FOLDER_DB>/_meta_field_values/<DATA_NAME>.json`. Regenerated by `UpdateRAG`; no runtime scan cost
+- **When `META_EXTRACT` is absent**: An agent whose SUPPORT_AGENT lacks `META_EXTRACT` still runs the legacy `EXTRACT_DATE` path (DATE only)
 
 > The knowledge-graph source CSV can live in `user/common/csv/` too. `mapping.json` resolves `FILE` **relative to the graph folder**, so `"FILE": "../../../csv/Sample01_Relations.csv"` reaches `user/common/csv/` (this is what the sample does). Keeping it in a `source/` folder inside the graph folder works just as well.
 
@@ -1222,6 +1258,55 @@ For image generation, you can similarly use Azure's `gpt-image-1`/`dall-e-3` dep
 | `generate_image_gemini` | Image generation by Google Gemini |
 | `generate_image_azure_dalle` | dall-e/gpt-image deployments on Azure OpenAI Service |
 
+#### THINKING (per-agent Thinking Mode defaults)
+
+Optional top-level block on the agent JSON. Holds this agent's recommended defaults for `Thinking Mode` / `Thinking Targets` / `Max Thinking Turns`. Keeps per-user administration light as your user count grows — you no longer need to touch every user's `Defaults`.
+
+```json
+"THINKING": {
+    "MODE": true,
+    "TARGETS": ["Habit", "RAG Query", "Books", "Tools"],
+    "MAX_TURNS": 1
+}
+```
+
+**Precedence**: `agent.THINKING.<field>` > hardcoded fallback (Defaults no longer holds Thinking). Re-resolved on every agent switch / session load.
+
+**Target-option filter (UI render time)**:
+- `Habit` / `RAG Query` / `Web Search`: always shown
+- `Books`: only when the agent has `BOOK`
+- `Tools`: only when `SKILL.TOOL_LIST` is non-empty
+- `Personas`: only when the agent has `ORG`
+
+**Tools target**: The Thinking Agent inspects each `- name: description` entry in `SKILL.TOOL_LIST` and, when it picks any, the dispatcher auto-switches the HABIT to `TOOL_PICK` and hands the narrowed list to the engine-agnostic dispatcher via `in_execution["_THINKING_TOOL_LIST"]`. Skipped if the agent has no `TOOL_PICK` HABIT.
+
+#### EXECUTION_DEFAULTS (per-agent execution defaults)
+
+Optional top-level block on the agent JSON. Holds this agent's defaults for the Conversation Settings toggles and selectors, taking precedence over user `Defaults`.
+
+```json
+"EXECUTION_DEFAULTS": {
+    "STREAM_MODE": true,
+    "MEMORY_USE": true,
+    "SAVE_DIGEST": true,
+    "PRIVATE_MODE": true,
+    "MAGIC_WORD_USE": true,
+    "RAG_QUERY_GENE": true,
+    "META_SEARCH": true,
+    "WEB_SEARCH": false,
+    "WEB_SEARCH_GUARDRAIL": true,
+    "WEB_SEARCH_ENGINE": "",
+    "CITE_KNOWLEDGE": true,
+    "DIAGRAM_MODE": false,
+    "EMPHASIS_MODE": false,
+    "MAX_PERSONAS": 3
+}
+```
+
+**Precedence**: `agent.EXECUTION_DEFAULTS.<field>` > `users.json Defaults.<field>` > hardcoded fallback. Re-resolved on every agent switch / session load.
+
+Fields you omit fall through to the user's `Defaults`. The natural split: pure user preferences (language, speaking style, Streaming on/off) live in `Defaults`; per-agent recommendations (turn RAG on/off for a lightweight assistant, default WEB_SEARCH=true for a research-oriented agent) live here.
+
 #### HABIT (behavior switching)
 
 When a specific trigger word (`MAGIC_WORD`) is included in the user's input, the agent switches to the corresponding Practice (processing pipeline).
@@ -1348,9 +1433,10 @@ Specifies Support Agents that assist the main dialogue. Each Support Agent is de
 |------|------|
 | `DIALOG_DIGEST` | Generates a digest (summary) of the conversation history |
 | `ART_CRITICS` | Generates explanation / critique after image generation |
-| `EXTRACT_DATE` | Extracts date information from user input (used for RAG metadata search) |
+| `EXTRACT_DATE` | Extracts date information from user input (used for RAG metadata search). **Legacy fallback path when `META_EXTRACT` is not registered** |
+| `META_EXTRACT` | Generalized meta extractor (`DATE` / `CATEGORY` / `NUMBER` / `TEXT` in a single call). Takes precedence over `EXTRACT_DATE` when both are registered. Produces one JSON object keyed by each `EXTRACTOR` name declared in `META_SEARCH.CONDITIONS[]` |
 | `RAG_QUERY_GENERATOR` | Generates auxiliary queries for RAG search from user input |
-| `THINKING` | Analyzes the user's question and dynamically decides on Habit selection / Web search / RAG query generation / Book addition (when Thinking Mode is enabled). **Multi-turn support**: setting `Max Thinking Turns > 1` enables the B-type loop — each turn's JSON carries a `sufficient` flag; when it is `false` the pipeline runs a **preview Web search** and feeds the result into the next Thinking turn. The loop breaks on `sufficient=true` or when the turn cap is reached. The preview search is reused by the main response path via `_WEB_SEARCH_CACHE` (no double-fire).<br>**Prompt-template placeholders**: `PROMPT_TEMPLATE."Thinking Agent"` embeds `{PreviousThinking}` (last turn's decision JSON) and `{WebSearchPreview}` (preview search text) — [user/common/tool/thinking.py](user/common/tool/thinking.py) substitutes them at runtime via `.replace()`. Preserve both placeholders + the `sufficient` field in the output JSON when customizing the template (removing them would cost the loop its memory across turns) |
+| `THINKING` | Analyzes the user's question and dynamically decides on Habit selection / Web search / RAG query generation / Book addition / **Tool invocation** (when Thinking Mode is enabled). When `Tools` is included in Thinking Targets, the Thinking Agent inspects each entry in `SKILL.TOOL_LIST` (with its description) and, when it picks any, the dispatcher auto-switches the HABIT to `TOOL_PICK` and hands the narrowed tool list to the engine-agnostic dispatcher via `in_execution["_THINKING_TOOL_LIST"]`. **Multi-turn support**: setting `Max Thinking Turns > 1` enables the B-type loop — each turn's JSON carries a `sufficient` flag; when it is `false` the pipeline runs a **preview Web search** and feeds the result into the next Thinking turn. The loop breaks on `sufficient=true` or when the turn cap is reached. The preview search is reused by the main response path via `_WEB_SEARCH_CACHE` (no double-fire).<br>**Prompt-template placeholders**: `PROMPT_TEMPLATE."Thinking Agent"` embeds `{PreviousThinking}` (last turn's decision JSON) and `{WebSearchPreview}` (preview search text) — [user/common/tool/thinking.py](user/common/tool/thinking.py) substitutes them at runtime via `.replace()`. Preserve both placeholders + the `sufficient` field in the output JSON when customizing the template (removing them would cost the loop its memory across turns) |
 | `KNOWLEDGE_INTERPRET` | Invoked by the "Interpret with LLM" buttons under Analytics Results - Knowledge Utility. Reads the inventory CSV / similarity rank (+ optional scatter / bar images) and returns three sections: overall composition vs. this-query selection, contribution analysis using delta = response_sim − question_sim, and notable / improvement points. Back-data centric; images are optional for vision-capable models. |
 | `CITATION_INJECT` | After the main response is generated, this agent inserts `[N]` markers at sentences grounded in web URLs or BOOK chunks and appends a `## References` section. Fires automatically whenever a web URL or a BOOK chunk was used (KNOWLEDGE entries are not cited — they are treated as the agent's internalised knowledge). Defaults to a lightweight model (Claude-Haiku-4.5 / Gemini Flash Lite / GPT-5.4-mini). On LLM failure, falls back to leaving the body untouched and appending only the References list. **If the LLM output contains neither `[N]` markers nor a `## References` section, it is treated as "no correspondence" and the original body is kept verbatim** (protects the real answer when the LLM returns an apology instead of citations). |
 

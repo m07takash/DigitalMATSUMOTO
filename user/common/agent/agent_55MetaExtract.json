@@ -1,0 +1,96 @@
+{
+    "DISPLAY": false,
+    "DISPLAY_NAME": "メタ抽出",
+    "NAME": "メタ抽出",
+    "ACT": "テキストから任意のメタ項目(期間/カテゴリ/数値/テキスト)を汎用抽出する専用のAI",
+    "PERSONALITY": {},
+    "ENGINE": {
+        "LLM": {
+            "DEFAULT": "GPT-5.6-Luna",
+            "GPT-5.6-Terra": {
+                "NAME": "GPT-5.6-Terra",
+                "FUNC_NAME": "generate_response_T_gpt",
+                "MODEL": "gpt-5.6-terra",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {
+                    "limit": 8000,
+                    "role": "both",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "Y"
+                },
+                "ACTIVE": true
+            },
+            "GPT-5.6-Luna": {
+                "NAME": "GPT-5.6-Luna",
+                "FUNC_NAME": "generate_response_T_gpt",
+                "MODEL": "gpt-5.6-luna",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {
+                    "limit": 8000,
+                    "role": "both",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "Y"
+                },
+                "ACTIVE": true
+            },
+            "GPT-5.4-nano": {
+                "NAME": "GPT-5.4-nano",
+                "FUNC_NAME": "generate_response_T_gpt",
+                "MODEL": "gpt-5.4-nano",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {
+                    "limit": 8000,
+                    "role": "both",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "Y"
+                },
+                "ACTIVE": true
+            },
+            "GPT-Azure": {
+                "NAME": "GPT-Azure",
+                "FUNC_NAME": "generate_response_T_azure_openai",
+                "MODEL": "gpt-5-nano",
+                "PARAMETER": {
+                    "max_completion_tokens": 20000
+                },
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {
+                    "limit": 8000,
+                    "role": "both",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "Y"
+                },
+                "ACTIVE": true
+            }
+        }
+    },
+    "HABIT": {
+        "DEFAULT": {
+            "MAGIC_WORDS": [
+                ""
+            ],
+            "PRACTICE": "practice_10MetaExtract.json",
+            "ADD_KNOWLEDGE": []
+        }
+    },
+    "KNOWLEDGE": [],
+    "SKILL": {},
+    "FEEDBACK": {
+        "ACTIVE": "N",
+        "SAVE_MODE": "CSV",
+        "SAVE_DB": "Communication",
+        "DEFAULT_CATEGORY": "Feedback",
+        "FEEDBACK_ITEM_LIST": [
+            "memo",
+            "comment"
+        ]
+    },
+    "SUPPORT_AGENT": {}
+}

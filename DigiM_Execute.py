@@ -535,22 +535,80 @@ def _build_intent_queries(service_info, user_info, session_id, session_name, sup
 
 # B-4: Metadata search phase (parallelization hook in C-1)
 def _build_meta_searches(service_info, user_info, session_id, session_name, support_agent,
-                         user_query, memories_selected, situation_prompt, query_vec, meta_search):
-    """Retrieve metadata search info from the query."""
-    if not (meta_search and "EXTRACT_DATE" in support_agent):
+                         user_query, memories_selected, situation_prompt, query_vec, meta_search,
+                         agent=None):
+    """Retrieve metadata search info from the query.
+
+    Preferred path: `support_agent["META_EXTRACT"]` + `meta_extract` tool —
+    a single generic extraction call driven by the union of META_SEARCH
+    conditions across all KNOWLEDGE/BOOK DATA entries. Legacy fallback:
+    if only `EXTRACT_DATE` is registered, run the old date-only path.
+    Output shape: `[{EXTRACTOR_name: values}]` (list-with-one-dict, mirroring
+    the pre-generalization DATE shape so downstream consumers stay uniform).
+    """
+    if not meta_search:
         return [], {}
-    t_start = datetime.now()
-    add_info = {"Memories_Selected": memories_selected, "Situation": situation_prompt, "QueryVecs": [query_vec]}
-    agent_file = support_agent["EXTRACT_DATE"]
-    _, _, response, model_name, prompt_tokens, response_tokens = dmt.call_function_by_name(
-        service_info, user_info, "extract_date",
-        session_id, session_name, agent_file, user_query, [], add_info)
-    date_list = dmu.merge_periods(dmu.extract_list_pattern(response))
-    duration = round((datetime.now() - t_start).total_seconds(), 2)
-    log = {"date": {"agent_file": agent_file, "model": model_name, "condition_list": date_list,
-                    "llm_response": response, "prompt_token": prompt_tokens, "response_token": response_tokens,
-                    "duration_sec": duration}}
-    return [{"DATE": date_list}], log
+
+    if agent is not None and "META_EXTRACT" in support_agent:
+        import DigiM_MetaSearch as _dmm
+        rag_datas = []
+        for kn in (list(agent.knowledge or []) + list(agent.book or [])):
+            for d in (kn.get("DATA") or []):
+                if isinstance(d, dict):
+                    rag_datas.append(d)
+        specs = _dmm.collect_extractor_specs(rag_datas)
+        if not specs:
+            return [], {}
+        t_start = datetime.now()
+        agent_file = support_agent["META_EXTRACT"]
+        add_info = {"Memories_Selected": memories_selected,
+                    "Situation": situation_prompt,
+                    "QueryVecs": [query_vec],
+                    "ExtractorSpecs": specs}
+        _, _, response, model_name, prompt_tokens, response_tokens = dmt.call_function_by_name(
+            service_info, user_info, "meta_extract",
+            session_id, session_name, agent_file, user_query, [], add_info)
+        extracted = {}
+        try:
+            import json as _json
+            parsed = dmu.extract_list_pattern(response)
+            if parsed and isinstance(parsed, dict):
+                extracted = parsed
+            else:
+                extracted = _json.loads(response.strip().strip("`").replace("json\n", "", 1))
+        except Exception:
+            try:
+                import re as _re
+                m = _re.search(r"\{.*\}", response, _re.S)
+                if m:
+                    import json as _json
+                    extracted = _json.loads(m.group(0))
+            except Exception:
+                extracted = {}
+        if isinstance(extracted.get("DATE"), list):
+            extracted["DATE"] = dmu.merge_periods(extracted["DATE"])
+        duration = round((datetime.now() - t_start).total_seconds(), 2)
+        log = {"date": {"agent_file": agent_file, "model": model_name,
+                        "extractor_specs": specs, "condition_list": extracted,
+                        "llm_response": response, "prompt_token": prompt_tokens,
+                        "response_token": response_tokens, "duration_sec": duration}}
+        return [extracted], log
+
+    if "EXTRACT_DATE" in support_agent:
+        t_start = datetime.now()
+        add_info = {"Memories_Selected": memories_selected, "Situation": situation_prompt, "QueryVecs": [query_vec]}
+        agent_file = support_agent["EXTRACT_DATE"]
+        _, _, response, model_name, prompt_tokens, response_tokens = dmt.call_function_by_name(
+            service_info, user_info, "extract_date",
+            session_id, session_name, agent_file, user_query, [], add_info)
+        date_list = dmu.merge_periods(dmu.extract_list_pattern(response))
+        duration = round((datetime.now() - t_start).total_seconds(), 2)
+        log = {"date": {"agent_file": agent_file, "model": model_name, "condition_list": date_list,
+                        "llm_response": response, "prompt_token": prompt_tokens, "response_token": response_tokens,
+                        "duration_sec": duration}}
+        return [{"DATE": date_list}], log
+
+    return [], {}
 
 # B-4: Run Thinking Agent (analyze the question and decide execution parameters)
 def _run_thinking_agent(service_info, user_info, session_id, session_name,
@@ -597,6 +655,23 @@ def _run_thinking_agent(service_info, user_info, session_id, session_name,
         else:
             book_info += f"- {book['RAG_NAME']}\n"
 
+    # Format the tool list. SKILL.TOOL_LIST filtered against the registry so
+    # Thinking sees name + description in the same `- name: purpose` shape as
+    # Habit / Book. When THINKING_TARGETS.tools is on and Thinking picks any
+    # tools, downstream forces habit=TOOL_PICK so the picked tools flow through
+    # the engine-agnostic dispatcher.
+    tool_info = ""
+    _tool_names = list((getattr(agent, "skill", {}) or {}).get("TOOL_LIST") or [])
+    if _tool_names:
+        try:
+            import DigiM_ToolRegistry as _dmtr
+            for _t in _dmtr.list_tools(_tool_names):
+                _desc = (_t.get("description") or "").strip().replace("\n", " ")
+                tool_info += f"- {_t['name']}: {_desc}\n"
+        except Exception:
+            for _n in _tool_names:
+                tool_info += f"- {_n}\n"
+
     # Serialize previous_thinking for the LLM (compact reasoning + key
     # decisions — the full raw dict is noisy). Falls back to empty when
     # this is the first turn.
@@ -614,6 +689,7 @@ def _run_thinking_agent(service_info, user_info, session_id, session_name,
         "DigestText": digest_text,
         "HabitInfo": habit_info,
         "BookInfo": book_info,
+        "ToolInfo": tool_info,
         "PreviousThinking": _prev_snippet,
         "WebSearchPreview": web_search_preview or "",
     }
@@ -982,7 +1058,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             timestamp_log += f"[user_memory composition failed: {_um_err}]" + str(datetime.now()) + "<br>"
 
     need_intent = cfg["RAG_query_gene"] and "RAG_QUERY_GENERATOR" in support_agent
-    need_meta = cfg["meta_search"] and "EXTRACT_DATE" in support_agent
+    need_meta = cfg["meta_search"] and ("META_EXTRACT" in support_agent or "EXTRACT_DATE" in support_agent)
     if need_intent or need_meta:
         session.save_status_message("Starting RAG search-query generation")
         yield service_info, user_info, "[STATUS]Starting RAG search-query generation", [], []
@@ -1008,7 +1084,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         # Kick off meta search in parallel
         future_meta = executor.submit(
             _build_meta_searches, service_info, user_info, session_id, session_name,
-            support_agent, _rag_input_text, [], situation_prompt_support, query_vec, cfg["meta_search"])
+            support_agent, _rag_input_text, [], situation_prompt_support, query_vec, cfg["meta_search"],
+            agent)
 
         memories_selected = future_memory.result() if future_memory else []
         intent_queries, intent_vecs, RAG_query_gene_log = future_intent.result()
@@ -1844,6 +1921,19 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
         elif cfg["magic_word_use"]:
             habit = agent.set_practice_by_command(user_query)
 
+        # Thinking picked tools → route through TOOL_PICK habit and hand the
+        # narrowed tool list to the engine-agnostic dispatcher via
+        # in_execution["_THINKING_TOOL_LIST"]. Only kicks in when the agent
+        # has a TOOL_PICK habit registered (fallback keeps unmodified agents
+        # working).
+        _thinking_tools = []
+        if (thinking_result and _targets.get("tools", False)
+                and isinstance(thinking_result.get("tools"), list)):
+            _thinking_tools = [t for t in thinking_result["tools"] if t]
+        if _thinking_tools and "TOOL_PICK" in agent.habit:
+            habit = "TOOL_PICK"
+            in_execution["_THINKING_TOOL_LIST"] = _thinking_tools
+
         # Book selection: auto-add based on Thinking output
         if thinking_result and _targets.get("books", True) and "books" in thinking_result:
             for book_data in agent.agent.get("BOOK", []):
@@ -2162,8 +2252,14 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
 
                 agent_file = setting["AGENT_FILE"] if "AGENT_FILE" in setting and setting["AGENT_FILE"] != "USER" else in_agent_file
                 add_info_base = setting.get("ADD_INFO", {})
-                # SETTING.TOOL_LIST overrides the agent's SKILL.TOOL_LIST when present.
+                # SETTING.TOOL_LIST overrides the agent's SKILL.TOOL_LIST when
+                # present. Otherwise, if Thinking picked a narrower list, use
+                # that (in_execution["_THINKING_TOOL_LIST"] set upstream).
                 allowed_names = setting.get("TOOL_LIST")
+                if allowed_names is None:
+                    _tt = in_execution.get("_THINKING_TOOL_LIST")
+                    if _tt:
+                        allowed_names = list(_tt)
 
                 timestamp_begin = str(datetime.now())
                 pick_agent = dma.DigiM_Agent(agent_file)

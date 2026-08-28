@@ -295,6 +295,12 @@ def set_login_user_to_session(user_id: str, user_info: dict):
     # general session_state init so a logged-in user's preferred toggles
     # override the app-wide defaults (which run on first render before login).
     user_default_parameter(st.session_state.login_user.get("Defaults", {}))
+    # Agent-level defaults (agent.EXECUTION_DEFAULTS / agent.THINKING) take
+    # precedence over the user's Defaults just applied. Execution defaults
+    # run first so Thinking-related fields aren't silently overwritten by
+    # a stale execution key.
+    _apply_agent_execution_defaults(default_agent_data)
+    _apply_agent_thinking_defaults(default_agent_data)
 
 # Login flow
 def ensure_login():
@@ -413,6 +419,79 @@ def ensure_login():
     st.stop()
 
 # Configure which UI features are available to the user
+def _apply_agent_execution_defaults(agent_data):
+    """Resolve Conversation Settings execution toggles from the agent JSON's
+    optional top-level `EXECUTION_DEFAULTS` block. Applied on top of the
+    user's `Defaults` (already loaded), so precedence becomes:
+
+        agent.EXECUTION_DEFAULTS.<field>  >  users.json Defaults.<field>  >  hardcoded
+
+    Fields (all optional):
+      Booleans — STREAM_MODE, MEMORY_USE, MEMORY_SAVE, SAVE_DIGEST,
+                 PRIVATE_MODE, MAGIC_WORD_USE, RAG_QUERY_GENE, META_SEARCH,
+                 WEB_SEARCH, WEB_SEARCH_GUARDRAIL, CITE_KNOWLEDGE,
+                 DIAGRAM_MODE, EMPHASIS_MODE
+      Int      — MAX_PERSONAS (clamped 1..20)
+      String   — WEB_SEARCH_ENGINE
+
+    Called on login, on every agent switch, and on session load.
+    Missing fields are left untouched (user Defaults stand)."""
+    e = (agent_data or {}).get("EXECUTION_DEFAULTS") if isinstance(agent_data, dict) else None
+    if not isinstance(e, dict):
+        return
+    _bool_map = {
+        "STREAM_MODE": "stream_mode",
+        "MEMORY_USE": "memory_use",
+        "MEMORY_SAVE": "memory_save",
+        "SAVE_DIGEST": "save_digest",
+        "PRIVATE_MODE": "private_mode",
+        "MAGIC_WORD_USE": "magic_word_use",
+        "RAG_QUERY_GENE": "RAG_query_gene",
+        "META_SEARCH": "meta_search",
+        "WEB_SEARCH": "web_search",
+        "WEB_SEARCH_GUARDRAIL": "web_search_guardrail",
+        "CITE_KNOWLEDGE": "cite_knowledge",
+        "DIAGRAM_MODE": "diagram_mode",
+        "EMPHASIS_MODE": "emphasis_mode",
+    }
+    for _k, _attr in _bool_map.items():
+        if _k in e:
+            setattr(st.session_state, _attr, bool(e[_k]))
+    if "MAX_PERSONAS" in e:
+        try:
+            _mp = int(e["MAX_PERSONAS"])
+        except (TypeError, ValueError):
+            _mp = 3
+        st.session_state.max_personas = max(1, min(_mp, 20))
+    if "WEB_SEARCH_ENGINE" in e and e["WEB_SEARCH_ENGINE"] is not None:
+        st.session_state.web_search_engine = str(e["WEB_SEARCH_ENGINE"])
+
+
+def _apply_agent_thinking_defaults(agent_data):
+    """Resolve Thinking Mode / Thinking Targets / Max Thinking Turns from
+    the agent JSON's optional top-level `THINKING` block. Applied on top of
+    whatever user Defaults left in place, so precedence becomes:
+
+        agent.THINKING.<field>  >  users.json Defaults.<field>  >  hardcoded
+
+    Called on login, on every agent switch, and on session load — anywhere
+    st.session_state.agent_data is (re)assigned. Missing fields are left
+    untouched (user Defaults stand)."""
+    t = (agent_data or {}).get("THINKING") if isinstance(agent_data, dict) else None
+    if not isinstance(t, dict):
+        return
+    if "MODE" in t:
+        st.session_state.thinking_mode = bool(t["MODE"])
+    if "TARGETS" in t and isinstance(t["TARGETS"], list):
+        st.session_state.thinking_targets = list(t["TARGETS"])
+    if "MAX_TURNS" in t:
+        try:
+            _mt = int(t["MAX_TURNS"])
+        except (TypeError, ValueError):
+            _mt = 1
+        st.session_state.max_thinking_turns = max(1, min(_mt, 5))
+
+
 def user_default_parameter(defaults_dict):
     # Per-user initial toggles from users.json → Defaults.
     # Only override when the key is present, so partial dicts don't reset
@@ -427,7 +506,6 @@ def user_default_parameter(defaults_dict):
         "RAG Query Gen":          "RAG_query_gene",
         "Meta Search":            "meta_search",
         "Magic Word":             "magic_word_use",
-        "Thinking Mode":          "thinking_mode",
         "WEB Search":             "web_search",
         "Web Search Guardrail":   "web_search_guardrail",
         "Include URL Subpages":   "url_fetch_subpages",
@@ -449,19 +527,9 @@ def user_default_parameter(defaults_dict):
         if _key in defaults_dict and defaults_dict[_key] is not None:
             setattr(st.session_state, _attr, str(defaults_dict[_key]))
 
-    if "Thinking Targets" in defaults_dict:
-        _t = defaults_dict["Thinking Targets"]
-        if isinstance(_t, list):
-            # Invalid values (agent without the option, typos) are filtered at
-            # render time — no need to validate here.
-            st.session_state.thinking_targets = list(_t)
-    if "Max Thinking Turns" in defaults_dict:
-        try:
-            _mt = int(defaults_dict["Max Thinking Turns"])
-        except (TypeError, ValueError):
-            _mt = 1
-        # Hard-clamp so a stray large value in users.json can't blow up cost.
-        st.session_state.max_thinking_turns = max(1, min(_mt, 5))
+    # Thinking Mode / Thinking Targets / Max Thinking Turns are now
+    # exclusively agent-driven — see `_apply_agent_thinking_defaults` for
+    # the resolver. users.json Defaults no longer feeds these.
     if "Max Personas" in defaults_dict:
         try:
             _mp = int(defaults_dict["Max Personas"])
@@ -1024,7 +1092,7 @@ def initialize_session_states():
     if 'thinking_mode' not in st.session_state:
         st.session_state.thinking_mode = False
     if 'thinking_targets' not in st.session_state:
-        st.session_state.thinking_targets = ["Habit", "Web Search", "RAG Query", "Books"]
+        st.session_state.thinking_targets = ["Habit", "RAG Query", "Books"]
     if 'meta_search' not in st.session_state:
         st.session_state.meta_search = True
     if 'RAG_query_gene' not in st.session_state:
@@ -1164,6 +1232,8 @@ def refresh_session(session_id, session_name, situation, new_session_flg=False):
         st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, agent_folder_path)
         st.session_state.engine_name = st.session_state.agent_data.get("ENGINE", {}).get("LLM", {}).get("DEFAULT", "")
         st.session_state.imagegen_engine_name = st.session_state.agent_data.get("ENGINE", {}).get("IMAGEGEN", {}).get("DEFAULT", "")
+        _apply_agent_execution_defaults(st.session_state.agent_data)
+        _apply_agent_thinking_defaults(st.session_state.agent_data)
     else:
         session_agent_file = dms.get_agent_file(st.session_state.session.session_id)
         # `os.path.exists` reports True for the folder path when
@@ -1187,6 +1257,8 @@ def refresh_session(session_id, session_name, situation, new_session_flg=False):
             else:
                 st.session_state.engine_name = st.session_state.agent_data.get("ENGINE", {}).get("LLM", {}).get("DEFAULT", "")
             st.session_state.imagegen_engine_name = st.session_state.agent_data.get("ENGINE", {}).get("IMAGEGEN", {}).get("DEFAULT", "")
+            _apply_agent_execution_defaults(st.session_state.agent_data)
+            _apply_agent_thinking_defaults(st.session_state.agent_data)
         else:
             st.session_state.display_name = st.session_state.default_agent
             _idx = st.session_state.agent_list.index(st.session_state.default_agent) if st.session_state.default_agent in st.session_state.agent_list else 0
@@ -1195,6 +1267,8 @@ def refresh_session(session_id, session_name, situation, new_session_flg=False):
             st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, agent_folder_path)
             st.session_state.engine_name = st.session_state.agent_data.get("ENGINE", {}).get("LLM", {}).get("DEFAULT", "")
             st.session_state.imagegen_engine_name = st.session_state.agent_data.get("ENGINE", {}).get("IMAGEGEN", {}).get("DEFAULT", "")
+            _apply_agent_execution_defaults(st.session_state.agent_data)
+            _apply_agent_thinking_defaults(st.session_state.agent_data)
     st.session_state.time_setting = situation.get("TIME", "")
     st.session_state.time_mode = "Custom Date" if situation.get("TIME") else "No Date"
     st.session_state.situation_setting = situation["SITUATION"]
@@ -7394,6 +7468,8 @@ def main():
             st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, agent_folder_path)
             st.session_state.engine_name = st.session_state.agent_data.get("ENGINE", {}).get("LLM", {}).get("DEFAULT", "")
             st.session_state.imagegen_engine_name = st.session_state.agent_data.get("ENGINE", {}).get("IMAGEGEN", {}).get("DEFAULT", "")
+            _apply_agent_execution_defaults(st.session_state.agent_data)
+            _apply_agent_thinking_defaults(st.session_state.agent_data)
 
         # ORG / Persona selection (only when the agent has ORG defined)
         _agent_orgs = st.session_state.agent_data.get("ORG") or []
@@ -9022,8 +9098,17 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                 st.session_state.thinking_mode   = _r3[0].checkbox("Thinking Mode", value=st.session_state.thinking_mode)
                 st.session_state.magic_word_use  = _r3[1].checkbox("Magic Word",    value=st.session_state.magic_word_use)
                 if st.session_state.thinking_mode:
-                    _thinking_options = ["Habit", "Web Search", "RAG Query", "Books"]
-                    _agent_orgs = st.session_state.agent_data.get("ORG") or []
+                    # Options are filtered by the currently-loaded agent's
+                    # capability: hide Books when the agent has no BOOK,
+                    # hide Tools when SKILL.TOOL_LIST is empty. Habit /
+                    # RAG Query / Web Search are always relevant.
+                    _thinking_options = ["Habit", "Web Search", "RAG Query"]
+                    _ad = st.session_state.agent_data or {}
+                    if _ad.get("BOOK"):
+                        _thinking_options.append("Books")
+                    if (_ad.get("SKILL") or {}).get("TOOL_LIST"):
+                        _thinking_options.append("Tools")
+                    _agent_orgs = _ad.get("ORG") or []
                     if isinstance(_agent_orgs, list) and _agent_orgs:
                         _thinking_options.append("Personas")
                     _saved_targets = [t for t in st.session_state.thinking_targets if t in _thinking_options]
@@ -10771,6 +10856,7 @@ f"Target sheet (sheets with Question: {len(_q_sheets)})"
                 "web_search": "Web Search" in _targets,
                 "rag_query_gene": "RAG Query" in _targets,
                 "books": "Books" in _targets,
+                "tools": "Tools" in _targets,
                 "personas": "Personas" in _targets,
             }
 

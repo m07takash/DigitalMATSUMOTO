@@ -167,7 +167,61 @@ def compare_texts(service_info, user_info, head1, text1, head2, text2, query_com
     return service_info, user_info, response, model_name, prompt_tokens, response_tokens
 
 
+# Generic meta extractor — one LLM call for DATE/CATEGORY/NUMBER/TEXT
+def meta_extract(service_info, user_info, session_id, session_name, agent_file,
+                 input, import_contents=[], add_info={}):
+    if not agent_file:
+        agent_file = "agent_55MetaExtract.json"
+    agent = dma.DigiM_Agent(agent_file)
+
+    model_type = "LLM"
+    model_name = agent.agent["ENGINE"][model_type]["MODEL"]
+    tokenizer = agent.agent["ENGINE"][model_type]["TOKENIZER"]
+
+    memories_selected = add_info.get("Memories_Selected", [])
+    situation_prompt = add_info.get("Situation", "")
+    query_vecs = add_info.get("QueryVecs", [])
+    extractor_specs = add_info.get("ExtractorSpecs", [])
+
+    practice_file = agent.agent["HABIT"]["DEFAULT"]["PRACTICE"]
+    practice = dmu.read_json_file(str(Path(practice_folder_path) / practice_file))
+    if practice["CHAINS"][0]["TYPE"] == "LLM":
+        prompt_temp_cd = practice["CHAINS"][0]["SETTING"]["PROMPT_TEMPLATE"]
+    else:
+        prompt_temp_cd = "Meta Extract"
+    prompt_template = agent.set_prompt_template(prompt_temp_cd)
+
+    import json as _json
+    specs_json = _json.dumps(extractor_specs, indent=2, ensure_ascii=False)
+    prompt_template = prompt_template.replace("{ExtractorSpecs}", specs_json)
+
+    user_query = input
+    knowledge_context, _ = agent.set_knowledge_context(user_query, query_vecs)
+    prompt = f"{knowledge_context}{prompt_template}{user_query}{situation_prompt}"
+
+    response = ""
+    for prompt, response_chunk, completion in agent.generate_response(
+            model_type, prompt, memories_selected, stream_mode=False):
+        if response_chunk:
+            response += response_chunk
+
+    prompt_tokens = dmu.count_token(tokenizer, model_name, prompt)
+    response_tokens = dmu.count_token(tokenizer, model_name, response)
+    return service_info, user_info, response, model_name, prompt_tokens, response_tokens
+
+
 # ----- registrations ---------------------------------------------------------
+
+dmtr.register_tool(
+    "meta_extract",
+    description=(
+        "Generalized meta extractor. Given a spec list (EXTRACTOR/TYPE/HINT), "
+        "extract per-key values from the input as one JSON object. Used by "
+        "META_SEARCH to boost/penalise RAG chunks by field match."
+    ),
+    schema={"type": "object", "properties": {"input": _INPUT_TEXT}, "required": ["input"]},
+    func=meta_extract,
+)
 
 dmtr.register_tool(
     "extract_date",
