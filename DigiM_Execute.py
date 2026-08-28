@@ -610,6 +610,148 @@ def _build_meta_searches(service_info, user_info, session_id, session_name, supp
 
     return [], {}
 
+# SKILL orchestrator: BEFORE / CONTEXT / AFTER phased runners around HABIT.
+# ---------------------------------------------------------------------------
+# Skills are agent capabilities independent of HABIT. Each entry declares a
+# PHASE that decides when it runs:
+#   BEFORE  — runs before the HABIT practice; each execution is saved to the
+#             chat history as its own sub_seq with role="skill" so it appears
+#             as "SKILL(<name>)" in the transcript.
+#   CONTEXT — runs before the HABIT practice; the tool's textual output is
+#             wrapped as reference material and appended to user_query so
+#             the HABIT LLM (and RAG query generator) sees it. Also logged
+#             to output_reference for the Reference Info card.
+#   AFTER   — runs after the HABIT practice; the HABIT response is passed
+#             as input. Saved as its own sub_seq like BEFORE.
+# Selection is `slash_pick > thinking-picked`, deduped, order preserved.
+def _collect_skill_selections(agent, thinking_result, slash_pick=None):
+    """Return {phase: [names]} using agent.skill_tools for phase lookup."""
+    skill_tools = getattr(agent, "skill_tools", {}) or {}
+    slash_names = [slash_pick] if slash_pick and slash_pick in skill_tools else []
+    thinking_names = [n for n in list((thinking_result or {}).get("tools") or [])
+                       if n in skill_tools]
+    seen = set()
+    ordered = []
+    for n in slash_names + thinking_names:
+        if n not in seen:
+            seen.add(n)
+            ordered.append(n)
+    out = {"BEFORE": [], "CONTEXT": [], "AFTER": []}
+    for n in ordered:
+        phase = (skill_tools.get(n, {}).get("PHASE") or "CONTEXT").upper()
+        if phase in out:
+            out[phase].append(n)
+    return out
+
+
+def _invoke_skill(service_info, user_info, session_id, session_name,
+                   agent_file, skill_name, skill_input, add_info=None):
+    """Call a registered tool by name. Normalises 4-tuple / generator returns
+    into (text, export_contents). Any exception is surfaced as a
+    `[Error]` prefixed text so the caller can still complete the turn."""
+    add_info = add_info or {}
+    try:
+        result = dmt.call_function_by_name(
+            service_info, user_info, skill_name,
+            session_id, session_name, agent_file,
+            skill_input, [], add_info,
+        )
+    except Exception as _e:
+        return f"[Error running SKILL:{skill_name}] {_e}", []
+    if inspect.isgenerator(result):
+        out_text = ""
+        exp = []
+        for tup in result:
+            if not isinstance(tup, (list, tuple)):
+                continue
+            if len(tup) >= 3 and tup[2]:
+                out_text += dmu.sanitize_text(str(tup[2]))
+            if len(tup) >= 4 and tup[3] is not None:
+                exp = tup[3]
+        return out_text, exp
+    if isinstance(result, (list, tuple)) and len(result) >= 4:
+        _, _, out_text, exp = result[:4]
+        return str(out_text or ""), (exp or [])
+    if isinstance(result, (list, tuple)) and len(result) >= 6:
+        # LLM tools return 6-tuples — take the text slot (index 2).
+        return str(result[2] or ""), []
+    return str(result), []
+
+
+def _wrap_skill_context(name, text):
+    """Guardrail wrapper around a CONTEXT skill result. Softer than the
+    original Web Search wording so the LLM keeps concrete facts (proper
+    nouns, numbers, dates) from the reference — the 'don't copy verbatim'
+    rule kept discouraging the LLM from naming specific entities like
+    player names in Web Search results. Persona still wins on tone."""
+    return (
+        f"\n[Reference material — SKILL:{name} result (start)]\n"
+        "Rules for using this block:\n"
+        "- Ground your answer in this material: keep specific facts (proper "
+        "nouns, numbers, dates, quotes) accurate to what's written here.\n"
+        "- Do NOT quote whole paragraphs verbatim — rephrase in your own voice.\n"
+        "- Tone, vocabulary, and perspective follow your own persona.\n"
+        "- The user's intent leads; use only the facts relevant to their question.\n"
+        "- If the material contains numbered citations like [1], [2], you may "
+        "reuse those markers verbatim in your answer to attribute claims.\n"
+        "---\n"
+        f"{text}\n"
+        f"---\n[SKILL:{name} END]\n"
+    )
+
+
+_SKILL_WRAP_RE = re.compile(
+    r"\n?\[Reference material — SKILL:[^\]]+ result \(start\)\].*?\[SKILL:[^\]]+ END\]\n?",
+    re.DOTALL,
+)
+
+
+def _strip_skill_wraps(text):
+    """Remove CONTEXT-SKILL guardrail-wrapped blocks from a stored prompt
+    string. The wraps are needed at LLM generation time but users don't want
+    them in the chat display or in later memory retrieval — they show up as
+    huge inline blocks in the previous-user-turn body otherwise."""
+    if not text:
+        return text
+    return _SKILL_WRAP_RE.sub("", text)
+
+
+def _skill_history_entry(name, skill_input, output_text, export_contents,
+                          seq, sub_seq, situation, agent_file, session_name):
+    """Build the save_history_batch payload for a BEFORE / AFTER SKILL turn."""
+    ts = str(datetime.now())
+    return {
+        str(sub_seq): {
+            "setting": {
+                "response_service_info": {},
+                "response_user_info": {},
+                "session_name": session_name,
+                "situation": situation,
+                "type": "SKILL",
+                "agent_file": agent_file,
+                "agent_name": f"SKILL({name})",
+                "name": f"SKILL:{name}",
+                "skill_name": name,
+                "phase": None,  # filled by caller
+            },
+            "prompt": {
+                "role": "neither",
+                "timestamp": ts,
+                "text": skill_input,
+                "query": {"token": 0, "input": skill_input, "text": skill_input,
+                          "contents": [], "situation": {}},
+            },
+            "response": {
+                "role": "skill",
+                "timestamp": ts,
+                "token": 0,
+                "text": output_text,
+                "export_contents": export_contents or [],
+            },
+        }
+    }
+
+
 # B-4: Run Thinking Agent (analyze the question and decide execution parameters)
 def _run_thinking_agent(service_info, user_info, session_id, session_name,
                         support_agent, agent, user_query, digest_text, situation_prompt,
@@ -997,10 +1139,11 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             web_context = (
                 "\n[Reference material — Web search result (start)]\n"
                 "Treat the block below as reference only. Follow these rules strictly:\n"
-                "- Do not copy the text verbatim; do not drift into a summary tone.\n"
+                "- Ground your answer in this material: keep specific facts (proper nouns, numbers, dates, quotes) accurate to what's written here.\n"
+                "- Do NOT quote whole paragraphs verbatim — rephrase in your own voice.\n"
                 "- Tone, vocabulary, and perspective must follow your own persona.\n"
-                "- The running conversation and the user's intent come first; weave in only the facts you need.\n"
-                "- You may use only a portion of the material and ignore the rest.\n"
+                "- The user's intent leads; use only the facts relevant to their question.\n"
+                "- If the material contains numbered citations like [1], [2], you may reuse those markers verbatim in your answer to attribute claims.\n"
                 "---\n"
                 + web_result_text +
                 "\n---\n[Reference material END]\n"
@@ -1009,6 +1152,33 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             web_context = "\n" + web_result_text + "\n"
         web_search_log = {"engine": web_engine, "model": web_model, "duration_sec": web_duration, "search_text": search_text, "urls": export_urls, "web_context": web_context}
         timestamp_log += f"[06.Web search done ({web_engine}/{web_model}, {web_duration}s)]" + str(datetime.now()) + "<br>"
+
+    # CONTEXT SKILLs that returned URL export_contents get merged into
+    # web_search_log["urls"] so citation_inject and the "Reference URLs"
+    # display treat them exactly like the built-in Web Search flow.
+    _skill_ctx_from_exec = execution.get("_SKILL_CONTEXT_LOGS") or {}
+    if _skill_ctx_from_exec:
+        _merged_urls = list(web_search_log.get("urls") or [])
+        for _sk_name, _sk_log in _skill_ctx_from_exec.items():
+            for _u in (_sk_log.get("export_contents") or []):
+                if isinstance(_u, dict) and _u.get("url"):
+                    _merged_urls.append({"title": _u.get("title", ""), "url": _u.get("url"),
+                                          "source": f"SKILL:{_sk_name}"})
+                elif isinstance(_u, str) and _u.startswith("http"):
+                    _merged_urls.append({"title": "", "url": _u,
+                                          "source": f"SKILL:{_sk_name}"})
+        if _merged_urls:
+            if not isinstance(web_search_log, dict):
+                web_search_log = {}
+            web_search_log["urls"] = _merged_urls
+            # Mark engine/source so citation_inject/Detail Info can label the
+            # origin even when the built-in Web Search never ran.
+            web_search_log.setdefault("engine", "SKILL")
+            web_search_log.setdefault("model", "")
+            web_search_log.setdefault("duration_sec", 0.0)
+            web_search_log.setdefault("search_text", user_query)
+            web_search_log.setdefault("web_context", "")
+
     output_reference["Web_search"] = web_search_log
     user_query += f"\n{web_context}"
 
@@ -1274,6 +1444,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             },
             "thinking": thinking_log,
             "web_search": web_search_log,
+            "skills": execution.get("_SKILL_CONTEXT_LOGS") or {},
             "agent_search": exec_info.get("_AGENT_SEARCH_LOG", []),
             "function_search": exec_info.get("_FUNCTION_SEARCH_LOG", []),
             "RAG_query_genetor": RAG_query_gene_log,
@@ -1883,6 +2054,26 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
             # Apply Thinking output to execution settings (only items enabled by THINKING_TARGETS)
             _targets = in_execution.get("THINKING_TARGETS", {})
             if thinking_result:
+                # Normalize: when Tools target is active and Thinking set
+                # web_search=true but picked no tool, promote a matching
+                # WebSearch entry from SKILL.TOOL_LIST into tools[] instead.
+                # Keeps the two paths (execution.WEB_SEARCH vs TOOL_PICK)
+                # from double-firing and stops the flag path from silently
+                # pre-empting the tool path.
+                if (_targets.get("tools")
+                        and thinking_result.get("web_search")
+                        and not (thinking_result.get("tools") or [])
+                        and "TOOL_PICK" in agent.habit):
+                    _skill_tools = list((getattr(agent, "skill", {}) or {}).get("TOOL_LIST") or [])
+                    _ws = next((n for n in _skill_tools
+                                if n == "WebSearch" or n.startswith("WebSearch_")), None)
+                    if _ws:
+                        thinking_result["tools"] = [_ws]
+                        thinking_result["web_search"] = False
+                        thinking_result["reasoning"] = (
+                            (thinking_result.get("reasoning") or "")
+                            + f" [auto-promoted: {_ws} tool available; routed via tools[] instead of web_search flag]"
+                        )
                 if _targets.get("web_search", True) and "web_search" in thinking_result:
                     # Thinking can promote OFF → ON, but should NOT silently
                     # disable a user-explicit ON toggle. Mirror semantics:
@@ -1921,18 +2112,23 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
         elif cfg["magic_word_use"]:
             habit = agent.set_practice_by_command(user_query)
 
-        # Thinking picked tools → route through TOOL_PICK habit and hand the
-        # narrowed tool list to the engine-agnostic dispatcher via
-        # in_execution["_THINKING_TOOL_LIST"]. Only kicks in when the agent
-        # has a TOOL_PICK habit registered (fallback keeps unmodified agents
-        # working).
-        _thinking_tools = []
-        if (thinking_result and _targets.get("tools", False)
-                and isinstance(thinking_result.get("tools"), list)):
-            _thinking_tools = [t for t in thinking_result["tools"] if t]
-        if _thinking_tools and "TOOL_PICK" in agent.habit:
-            habit = "TOOL_PICK"
-            in_execution["_THINKING_TOOL_LIST"] = _thinking_tools
+        # SKILL orchestrator selection: gather slash-picked skill (if any)
+        # and Thinking-picked skills. Slash takes precedence, then Thinking,
+        # dedup preserving order. Selections are split by PHASE inside
+        # agent.skill_tools[name]["PHASE"]. Actual execution happens after
+        # the practice is loaded — see the BEFORE / CONTEXT / AFTER hooks
+        # below. Replaces the previous "force habit=TOOL_PICK" flow.
+        # `THINKING_TARGETS.tools` defaults to True (matches habit / books /
+        # web_search default) — Thinking's tool choice is honored unless the
+        # user explicitly opts out via the multiselect.
+        _slash_pick = in_execution.get("_SLASH_SKILL_PICK") or None
+        _thinking_tools_target_on = bool(_targets.get("tools", True))
+        _selected_skills = _collect_skill_selections(
+            agent,
+            thinking_result if _thinking_tools_target_on else None,
+            slash_pick=_slash_pick,
+        )
+        in_execution["_SELECTED_SKILLS"] = _selected_skills
 
         # Book selection: auto-add based on Thinking output
         if thinking_result and _targets.get("books", True) and "books" in thinking_result:
@@ -1988,6 +2184,56 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
             in_execution["_THINKING_RESULT"]["personas_reason"] = _select_reason
             in_execution["_THINKING_RESULT"]["personas_selected_ids"] = _selected_ids
             yield service_info, user_info, f"[STATUS]Personas selected: {len(_thinking_personas)} ({', '.join(p.get('name','?') for p in _thinking_personas)})", {}
+
+        # -------- SKILL orchestrator (BEFORE + CONTEXT) --------
+        _sel = in_execution.get("_SELECTED_SKILLS") or {"BEFORE": [], "CONTEXT": [], "AFTER": []}
+        _skill_ctx_logs = {}
+        _seq_now = session.get_seq_history() + 1 if sub_seq == 1 else session.get_seq_history()
+
+        # BEFORE — each skill saved as its own sub_seq with role="skill".
+        # Each entry advances sub_seq, so the practice chain sub_seqs pick up
+        # from the next value automatically.
+        for _sk in _sel.get("BEFORE") or []:
+            session.save_status_message(f"SKILL[BEFORE]:{_sk}")
+            yield service_info, user_info, f"[STATUS]SKILL[BEFORE]:{_sk}", [], []
+            _skill_out, _skill_exp = _invoke_skill(
+                service_info, user_info, session_id, session_name,
+                in_agent_file, _sk, user_query,
+                add_info=(agent.skill_tools.get(_sk, {}).get("ARGS_HINT") or {}),
+            )
+            _entry = _skill_history_entry(_sk, user_query, _skill_out, _skill_exp,
+                                           _seq_now, sub_seq, in_situation,
+                                           in_agent_file, session.session_name)
+            _entry[str(sub_seq)]["setting"]["phase"] = "BEFORE"
+            session.save_history_batch(str(_seq_now), _entry)
+            sub_seq += 1
+
+        # CONTEXT — result wrapped as reference material and appended to
+        # user_query, so it flows into RAG query gen + the main LLM chain
+        # identically to the existing Web Search injection. Also logged to
+        # output_reference for the Reference Info panel.
+        for _sk in _sel.get("CONTEXT") or []:
+            session.save_status_message(f"SKILL[CONTEXT]:{_sk}")
+            yield service_info, user_info, f"[STATUS]SKILL[CONTEXT]:{_sk}", [], []
+            _skill_out, _skill_exp = _invoke_skill(
+                service_info, user_info, session_id, session_name,
+                in_agent_file, _sk, user_query,
+                add_info=(agent.skill_tools.get(_sk, {}).get("ARGS_HINT") or {}),
+            )
+            _wrapped = _wrap_skill_context(_sk, _skill_out)
+            user_query = f"{user_query}\n{_wrapped}"
+            _skill_ctx_logs[_sk] = {
+                "phase": "CONTEXT",
+                "as_reference": bool(agent.skill_tools.get(_sk, {}).get("AS_REFERENCE", True)),
+                "raw": _skill_out,
+                "wrapped": _wrapped,
+                "export_contents": _skill_exp or [],
+            }
+        # Stash CONTEXT logs on the practice-execution so downstream can
+        # persist them into `prompt.skills` (mirrors how `web_search_log`
+        # is persisted via `prompt.web_search`).
+        in_execution["_SKILL_CONTEXT_LOGS"] = _skill_ctx_logs
+
         for i, chain in enumerate(chains):
             # Reflect chain progress in the status
             if len(chains) > 1:
@@ -2069,6 +2315,10 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                     "THINKING_MODE":     cfg["thinking_mode"],
                     "_THINKING_LOG":     in_execution.get("_THINKING_LOG", {}),
                     "_THINKING_RESULT":  in_execution.get("_THINKING_RESULT", {}),
+                    # CONTEXT-phase SKILL logs — mirrors _THINKING_LOG so the
+                    # per-chain DigiMatsuExecute can persist them into
+                    # `prompt.skills` (visible in Detail Info → User query).
+                    "_SKILL_CONTEXT_LOGS": in_execution.get("_SKILL_CONTEXT_LOGS", {}),
                     "_UNLOCK_ON_DIGEST": _is_last_chain,
                     # User Memory: propagate the immediate UI override downstream (None=unspecified -> downstream falls back to user master / system default)
                     "USER_MEMORY_LAYERS": in_execution.get("USER_MEMORY_LAYERS"),
@@ -2342,6 +2592,27 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
             result["OUTPUT"] = output
             result["EXPORT_CONTENTS"] = export_contents
             results.append(result)
+            sub_seq += 1
+
+        # -------- SKILL orchestrator (AFTER) --------
+        # AFTER skills see the HABIT's final response as input, so they can
+        # e.g. post-process / archive / summarise it. Each execution is
+        # saved as its own sub_seq with role="skill".
+        _after_input_text = (results[-1]["OUTPUT"] if results else user_query) or user_query
+        _after_seq = session.get_seq_history()
+        for _sk in (_sel.get("AFTER") or []):
+            session.save_status_message(f"SKILL[AFTER]:{_sk}")
+            yield service_info, user_info, f"[STATUS]SKILL[AFTER]:{_sk}", [], []
+            _skill_out, _skill_exp = _invoke_skill(
+                service_info, user_info, session_id, session_name,
+                in_agent_file, _sk, _after_input_text,
+                add_info=(agent.skill_tools.get(_sk, {}).get("ARGS_HINT") or {}),
+            )
+            _entry = _skill_history_entry(_sk, _after_input_text, _skill_out, _skill_exp,
+                                           _after_seq, sub_seq, in_situation,
+                                           in_agent_file, session.session_name)
+            _entry[str(sub_seq)]["setting"]["phase"] = "AFTER"
+            session.save_history_batch(str(_after_seq), _entry)
             sub_seq += 1
 
         # B-5: Bulk-save SEQ-level logs

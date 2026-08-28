@@ -26,7 +26,6 @@
         "MAGIC_WORD_USE": true,
         "RAG_QUERY_GENE": true,
         "META_SEARCH": true,
-        "WEB_SEARCH": false,
         "CITE_KNOWLEDGE": true,
         "DIAGRAM_MODE": false,
         "EMPHASIS_MODE": false,
@@ -531,12 +530,13 @@
         }
     ],
     "SKILL": {
-        "TOOL_LIST": [
-            "forget_history",
-            "remember_history",
-            "WebSearch"
-        ],
-        "INACTIVE_TOOLS": []
+        "TOOLS": {
+            "WebSearch": {
+                "PHASE": "CONTEXT",
+                "ACTIVE": true,
+                "AS_REFERENCE": true
+            }
+        }
     },
     "DEFINE_CODE": {
         "COMPANY_CODE": [],

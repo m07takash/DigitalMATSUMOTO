@@ -1292,7 +1292,9 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/{DATA_NAME} --use-llm --embe
 - `Tools`: `SKILL.TOOL_LIST` が非空のときのみ
 - `Personas`: `ORG` があるときのみ
 
-**Tools ターゲット**: Thinking Agent が `SKILL.TOOL_LIST` の `- name: description` を見て tool を選び、選ばれたら自動で HABIT を `TOOL_PICK` に切替 + narrow 済みリストを `in_execution["_THINKING_TOOL_LIST"]` に注入。`TOOL_PICK` HABIT が無いエージェントではスキップ。
+**Tools ターゲット**: Thinking Agent が SKILL リストの `- name: description` を見て SKILL 名を配列で返します（`tools` キーは互換維持）。返された SKILL は、`SKILL.TOOLS[name].PHASE` に従って **BEFORE / CONTEXT / AFTER のいずれかで自動発火** します。`HABIT.TOOL_PICK` を経由する旧設計は廃止（下の SKILL 節を参照）。
+
+**`web_search` フラグ vs `tools[]` の衝突対策**: Thinking Agent の判定に `web_search: true` と `tools: []` の二重路が存在するため、時事系クエリでは `web_search: true` が採用されて Tools 経路が発火しないことがあります。プロンプト側で「ToolInfo に WebSearch 系 SKILL があるなら必ず tools[] に入れて `web_search: false`」ルールを明示 + コード側で条件が揃えば `tools=["WebSearch"]` に自動昇格します（`reasoning` に `[auto-promoted: ...]` 追記、Detail Information で確認可能）。
 
 #### EXECUTION_DEFAULTS（エージェント単位の実行既定値）
 
@@ -1379,6 +1381,50 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/{DATA_NAME} --use-llm --embe
 - `RAG_DATA`: 参照するRAGデータソース（RAGマスターの `bucket` と対応）。複数指定可
 - `TEXT_LIMITS`: コンテキストに含める最大文字数
 - `DISTANCE_LOGIC`: 類似度計算方式（`Cosine`）
+
+#### SKILL（補助能力・フェーズ制御ツール）
+
+SKILL は **HABIT とは完全に独立した補助能力**（外部 API・関数・データ取得等）です。各 SKILL には `PHASE` を設定し、**HABIT の実行前後・入力コンテキスト** のいずれかで自動的に発火します。HABIT 側から SKILL を呼ぶことはありません。
+
+```json
+"SKILL": {
+    "TOOLS": {
+        "WebSearch": {
+            "PHASE": "CONTEXT",
+            "ACTIVE": true,
+            "AS_REFERENCE": true,
+            "ARGS_HINT": {}
+        },
+        "management_analysis": {
+            "PHASE": "AFTER",
+            "ACTIVE": true
+        }
+    }
+}
+```
+
+| キー | 型 | 意味 |
+|---|---|---|
+| `PHASE` | `"BEFORE"` / `"CONTEXT"` / `"AFTER"` | HABIT に対する実行位置 |
+| `ACTIVE` | bool | 有効フラグ。`false` にすると無視される（Temporary Override 対応） |
+| `AS_REFERENCE` | bool | CONTEXT 時のみ有効。true なら Detail Information の User query に SKILL 結果を露出 |
+| `ARGS_HINT` | dict | ツール実行時に `add_info` として渡す固定引数（任意） |
+
+**PHASE 定義**:
+- **BEFORE**: HABIT の practice 実行前に走る。**会話履歴に別 sub_seq として保存**され、Detail Information の transcript には `SKILL(<name>)` と表示。HABIT には影響しない
+- **CONTEXT**: HABIT の practice 実行前に走り、**結果を reference material としてラップして `user_query` に append**（既存の Web Search 経路と同形）。RAG クエリ生成 + メイン LLM の入力の両方に反映される。Web 検索・ドキュメント検索を想定
+- **AFTER**: HABIT の応答生成後に走る。**HABIT の応答を入力**として受け取る。**会話履歴に別 sub_seq として保存**
+
+**SKILL の起動パス（2 経路、マージ実行）**:
+- **Slash command**: `/WebSearch <query>` — SKILL 名がヒットしたら、そのエントリの PHASE で発火。`<query>` は HABIT の user_query として使われる（rest-of-line）
+- **Thinking Mode**: `Thinking Targets` に `Tools` を含めると Thinking Agent が SKILL 名を選定。返された SKILL は登録済み PHASE で発火
+- **同時使用可**: 両経路が同じ SKILL を選んだ場合は **slash 優先で 1 回だけ実行**（順序保持 dedup）
+
+**旧設計の廃止**: `HABIT.TOOL_PICK` エントリと `practice_55ToolPick.json` は不要になりました。既存エージェント JSON から `HABIT.TOOL_PICK` は削除済み。旧 `SKILL.TOOL_LIST` + `INACTIVE_TOOLS` シェイプも自動変換されて動作（全て `PHASE: "CONTEXT"` として import）。
+
+**永続化 & 表示**:
+- CONTEXT SKILL 結果: `prompt.skills` に `{name: {phase, as_reference, raw, wrapped, export_contents}}` として保存。Detail Information の User query セクションに `--- SKILL:<name> (CONTEXT) ---` ブロックで露出
+- BEFORE / AFTER SKILL 結果: chat_memory の別 sub_seq として `role="skill"`, `setting.agent_name="SKILL(<name>)"` で保存
 
 #### FEEDBACK（フィードバック設定）
 

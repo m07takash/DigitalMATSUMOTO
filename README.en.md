@@ -1278,7 +1278,9 @@ Optional top-level block on the agent JSON. Holds this agent's recommended defau
 - `Tools`: only when `SKILL.TOOL_LIST` is non-empty
 - `Personas`: only when the agent has `ORG`
 
-**Tools target**: The Thinking Agent inspects each `- name: description` entry in `SKILL.TOOL_LIST` and, when it picks any, the dispatcher auto-switches the HABIT to `TOOL_PICK` and hands the narrowed list to the engine-agnostic dispatcher via `in_execution["_THINKING_TOOL_LIST"]`. Skipped if the agent has no `TOOL_PICK` HABIT.
+**Tools target**: The Thinking Agent inspects each `- name: description` entry in the SKILL list and returns SKILL names (the JSON key `tools` is kept for compat). The dispatcher then runs each selected SKILL **at the PHASE declared in `SKILL.TOOLS[name].PHASE`** (BEFORE / CONTEXT / AFTER). The old `HABIT.TOOL_PICK` routing is retired — see the SKILL section below.
+
+**`web_search` flag vs. `tools[]` conflict guard**: prompt-side rule that says "if a WebSearch-shaped SKILL appears in ToolInfo, prefer `tools=[<WebSearch>]` + `web_search=false`" + code-side auto-promotion when the LLM ignores it (`reasoning` gets a `[auto-promoted: ...]` line, visible in Detail Information).
 
 #### EXECUTION_DEFAULTS (per-agent execution defaults)
 
@@ -1364,6 +1366,50 @@ Defines the RAG data sources referenced in ordinary dialogue.
 - `RAG_DATA`: The RAG data sources to reference (corresponds to the `bucket` in the RAG master). Multiple can be specified
 - `TEXT_LIMITS`: The maximum character count included in the context
 - `DISTANCE_LOGIC`: Similarity calculation method (`Cosine`)
+
+#### SKILL (auxiliary phase-driven tools)
+
+SKILL is **fully independent of HABIT**. Each SKILL entry declares a `PHASE` and fires automatically at that position around the HABIT practice. HABITs never invoke SKILLs.
+
+```json
+"SKILL": {
+    "TOOLS": {
+        "WebSearch": {
+            "PHASE": "CONTEXT",
+            "ACTIVE": true,
+            "AS_REFERENCE": true,
+            "ARGS_HINT": {}
+        },
+        "management_analysis": {
+            "PHASE": "AFTER",
+            "ACTIVE": true
+        }
+    }
+}
+```
+
+| Key | Type | Meaning |
+|---|---|---|
+| `PHASE` | `"BEFORE"` / `"CONTEXT"` / `"AFTER"` | When the SKILL fires around the HABIT practice |
+| `ACTIVE` | bool | Enable flag; `false` skips the entry (Temporary Override respects this) |
+| `AS_REFERENCE` | bool | CONTEXT only — expose the SKILL result in Detail Information's User query pane |
+| `ARGS_HINT` | dict | Fixed arguments forwarded as the tool call's `add_info` |
+
+**Phase semantics**:
+- **BEFORE**: runs before the HABIT practice. Saved as its own sub_seq (`role="skill"`, `agent_name="SKILL(<name>)"`). Does not influence HABIT
+- **CONTEXT**: runs before the HABIT practice; the wrapped tool output is appended to `user_query`, so both the RAG query generator and the main LLM see it. Same shape as the built-in Web Search injection. Designed for Web / doc search
+- **AFTER**: runs after the HABIT produced its response; receives the HABIT's final response as input. Saved as its own sub_seq
+
+**How a SKILL fires (two paths, merged)**:
+- **Slash command**: `/WebSearch <query>` — if the name resolves in `SKILL.TOOLS`, the tool fires at its declared PHASE and `<query>` becomes the HABIT's user_query
+- **Thinking Mode**: with `Tools` in Thinking Targets, the Thinking Agent picks SKILL names
+- **Both at once**: slash-picked entries win order; duplicates dedup so nothing runs twice
+
+**Retired**: `HABIT.TOOL_PICK` and `practice_55ToolPick.json` are no longer needed. Bundled agents have `HABIT.TOOL_PICK` removed. Legacy `SKILL.TOOL_LIST` + `INACTIVE_TOOLS` is auto-converted at load time (every entry lands on `PHASE: "CONTEXT"`).
+
+**Persistence & display**:
+- CONTEXT SKILL results: saved under `prompt.skills` as `{name: {phase, as_reference, raw, wrapped, export_contents}}`, rendered in Detail Information's User query pane as `--- SKILL:<name> (CONTEXT) ---`
+- BEFORE / AFTER SKILL results: saved as separate sub_seqs with `role="skill"` and `setting.agent_name="SKILL(<name>)"`
 
 #### FEEDBACK (feedback settings)
 

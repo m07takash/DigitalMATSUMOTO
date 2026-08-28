@@ -702,7 +702,8 @@ def _render_llm_input_tab(v2: dict):
     _user_after = _q.get("text", "") or ""
     _attachments = _q.get("contents") or []
     _web = _prompt_dict.get("web_search") or {}
-    if _user_raw or _user_after or _attachments or _web.get("web_context"):
+    _skills_ctx = _prompt_dict.get("skills") or {}
+    if _user_raw or _user_after or _attachments or _web.get("web_context") or _skills_ctx:
         st.markdown("**User query**")
         _parts = []
         if _user_raw:
@@ -729,6 +730,19 @@ def _render_llm_input_tab(v2: dict):
                     else:
                         _ws += f"\n - {_u}"
             _parts.append(_ws)
+        # CONTEXT-phase SKILL outputs (each keyed by skill name; contains raw
+        # tool text, the guardrail-wrapped block that got appended to
+        # user_query, and export_contents). Rendered only when
+        # AS_REFERENCE=true on the SKILL entry.
+        if isinstance(_skills_ctx, dict):
+            for _skill_name, _skill_log in _skills_ctx.items():
+                if not isinstance(_skill_log, dict) or not _skill_log.get("as_reference", True):
+                    continue
+                _sk_text = (_skill_log.get("wrapped") or _skill_log.get("raw") or "").strip()
+                if not _sk_text:
+                    continue
+                _sk_block = f"--- SKILL:{_skill_name} ({_skill_log.get('phase', 'CONTEXT')}) ---\n{_sk_text}"
+                _parts.append(_sk_block)
         st.code("\n\n".join(_parts) or "(empty)", language=None)
 
     # ---- 4. Situation ----
@@ -1372,17 +1386,31 @@ def _render_temporary_override():
                     key=f"to_BOOK_{_sid}_{_rag}",
                 )
 
-        # SKILL.TOOL_LIST (subtract SKILL.INACTIVE_TOOLS as baseline)
+        # SKILL — supports new SKILL.TOOLS shape (with PHASE tag) and
+        # legacy SKILL.TOOL_LIST + INACTIVE_TOOLS via the normalizer.
+        import DigiM_Agent as _dma_local
         _skill = _agent_data.get("SKILL") or {}
-        _tool_list = list(_skill.get("TOOL_LIST") or [])
-        _inactive_tools = set(_skill.get("INACTIVE_TOOLS") or [])
-        if _tool_list:
-            st.markdown("**SKILL (tools)**")
-            _cols = st.columns(min(3, max(1, len(_tool_list))))
-            for _i, _t in enumerate(_tool_list):
-                _default = _t not in _inactive_tools
+        _skill_tools_norm = _dma_local.normalize_skill_tools(_skill)
+        # Merge in also the JSON-inactive names so the user can re-enable
+        # them for this session (the normalizer already dropped inactive).
+        _all_tool_names = list(_skill_tools_norm.keys())
+        if isinstance(_skill.get("TOOLS"), dict):
+            for _n in _skill["TOOLS"].keys():
+                if _n not in _all_tool_names:
+                    _all_tool_names.append(_n)
+        else:
+            for _n in (_skill.get("TOOL_LIST") or []):
+                if _n not in _all_tool_names:
+                    _all_tool_names.append(_n)
+        if _all_tool_names:
+            st.markdown("**SKILL (tools)** — PHASE shown in parens; toggle to enable/disable per session")
+            _cols = st.columns(min(3, max(1, len(_all_tool_names))))
+            for _i, _t in enumerate(_all_tool_names):
+                _cfg = _skill_tools_norm.get(_t) or {}
+                _default = bool(_cfg.get("ACTIVE", False)) or (_t in _skill_tools_norm)
+                _phase = (_cfg.get("PHASE") or "CONTEXT")
                 _cols[_i % len(_cols)].checkbox(
-                    _t, value=_default,
+                    f"{_t} ({_phase})", value=_default,
                     key=f"to_SKILL_{_sid}_{_t}",
                 )
 
@@ -8264,7 +8292,14 @@ def main():
                     _u_ts = f" ({v2['prompt']['timestamp']})" if _show_ts else ""
                     _a_ts = f" ({v2['response']['timestamp']})" if _show_ts else ""
                     with st.chat_message("human"):
-                        content_text = f"**{prompt_role}{_u_ts}:**\n\n" + v2["prompt"]["query"]["input"]
+                        # Strip CONTEXT-SKILL guardrail-wrapped blocks from the
+                        # bubble body — the augmented user_query is kept as-is
+                        # in chat_memory for LLM memory retrieval, but showing
+                        # the multi-hundred-line reference block inline makes
+                        # the transcript unreadable.
+                        _raw_input = v2["prompt"]["query"]["input"]
+                        _display_input = dme._strip_skill_wraps(_raw_input)
+                        content_text = f"**{prompt_role}{_u_ts}:**\n\n" + _display_input
                         download_data.append({"role": v2["prompt"]["role"], "content": content_text})
 #                        st.markdown(content_text.replace("\n", "<br>"), unsafe_allow_html=True)
                         st.markdown(content_text, unsafe_allow_html=True)
@@ -9106,7 +9141,9 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                     _ad = st.session_state.agent_data or {}
                     if _ad.get("BOOK"):
                         _thinking_options.append("Books")
-                    if (_ad.get("SKILL") or {}).get("TOOL_LIST"):
+                    _skill_raw = _ad.get("SKILL") or {}
+                    if (_skill_raw.get("TOOL_LIST")
+                            or (isinstance(_skill_raw.get("TOOLS"), dict) and _skill_raw["TOOLS"])):
                         _thinking_options.append("Tools")
                     _agent_orgs = _ad.get("ORG") or []
                     if isinstance(_agent_orgs, list) and _agent_orgs:
@@ -10663,7 +10700,16 @@ f"Target sheet (sheets with Question: {len(_q_sheets)})"
                     st.session_state.is_processing = True
                     _slash = _parse_slash_command(_draft_text)
                     if _slash is not None:
-                        st.session_state.pending_skill = _slash
+                        _sk_name, _sk_input = _slash
+                        import DigiM_Agent as _dma_local
+                        _skill_tools_map = _dma_local.normalize_skill_tools(
+                            (st.session_state.get("agent_data") or {}).get("SKILL") or {}
+                        )
+                        if _sk_name in _skill_tools_map and _sk_input.strip():
+                            st.session_state.pending_input = _sk_input
+                            st.session_state.pending_slash_pick = _sk_name
+                        else:
+                            st.session_state.pending_skill = _slash
                     st.rerun()
                 if _dc2.button("Discard", key="draft_discard_btn"):
                     st.session_state.draft_input = ""
@@ -10683,7 +10729,23 @@ f"Target sheet (sheets with Question: {len(_q_sheets)})"
                 # Detect skill slash command up-front so the processing branch can route.
                 _slash = _parse_slash_command(raw_input)
                 if _slash is not None:
-                    st.session_state.pending_skill = _slash
+                    _sk_name, _sk_input = _slash
+                    # If the picked skill is declared in the agent's new
+                    # SKILL.TOOLS block, route through the practice/phase
+                    # orchestrator with `_SLASH_SKILL_PICK` — HABIT runs
+                    # normally with rest-of-line as user_query, and the
+                    # skill fires in its declared PHASE. Fall back to the
+                    # direct `_execute_skill_command` path when the skill
+                    # is legacy TOOL_LIST-only or the user typed no query.
+                    import DigiM_Agent as _dma_local
+                    _skill_tools_map = _dma_local.normalize_skill_tools(
+                        (st.session_state.get("agent_data") or {}).get("SKILL") or {}
+                    )
+                    if _sk_name in _skill_tools_map and _sk_input.strip():
+                        st.session_state.pending_input = _sk_input
+                        st.session_state.pending_slash_pick = _sk_name
+                    else:
+                        st.session_state.pending_skill = _slash
                 st.rerun()
 
         if st.session_state.is_processing and st.session_state.pending_input:
@@ -10864,6 +10926,12 @@ f"Target sheet (sheets with Question: {len(_q_sheets)})"
             import threading
             st.session_state.session.save_status("LOCKED")
             execution["_PRE_LOCKED"] = True
+            # SKILL orchestrator: slash-picked skill flows here so the phased
+            # runner in DigiMatsuExecute_Practice can execute it in whatever
+            # PHASE the agent JSON declares for that name.
+            _pending_slash_pick = st.session_state.pop("pending_slash_pick", None)
+            if _pending_slash_pick:
+                execution["_SLASH_SKILL_PICK"] = _pending_slash_pick
             # Phase 7: inject PersonaSelector cap into execution
             execution["MAX_PERSONAS"] = int(st.session_state.get("max_personas", 3))
             execution["MAX_THINKING_TURNS"] = int(st.session_state.get("max_thinking_turns", 1))

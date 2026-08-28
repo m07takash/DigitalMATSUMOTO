@@ -121,6 +121,62 @@ def _filter_active_skill(skill):
     out["TOOL_LIST"] = [t for t in tool_list if t not in inactive]
     return out
 
+
+_VALID_SKILL_PHASES = ("BEFORE", "CONTEXT", "AFTER")
+
+
+def normalize_skill_tools(skill_raw):
+    """Return {name: {PHASE, ACTIVE, AS_REFERENCE, ARGS_HINT, MAGIC_WORDS}}.
+    Accepts both the new `SKILL.TOOLS` (dict of dicts) and the legacy
+    `SKILL.TOOL_LIST` (list of str) + `INACTIVE_TOOLS` shape. Every legacy
+    entry lands on PHASE=CONTEXT since that mirrors the historical Web
+    Search prepend behaviour. Inactive entries are dropped."""
+    if not isinstance(skill_raw, dict):
+        return {}
+    out = {}
+    tools_dict = skill_raw.get("TOOLS")
+    if isinstance(tools_dict, dict):
+        for name, cfg in tools_dict.items():
+            if not isinstance(name, str) or not name:
+                continue
+            cfg = cfg if isinstance(cfg, dict) else {}
+            phase = str(cfg.get("PHASE") or "CONTEXT").upper()
+            if phase not in _VALID_SKILL_PHASES:
+                phase = "CONTEXT"
+            active = cfg.get("ACTIVE", True)
+            if isinstance(active, str):
+                active = active.strip().lower() not in ("false", "no", "n", "0", "")
+            if not bool(active):
+                continue
+            out[name] = {
+                "PHASE": phase,
+                "ACTIVE": True,
+                "AS_REFERENCE": bool(cfg.get("AS_REFERENCE", True)),
+                "ARGS_HINT": cfg.get("ARGS_HINT") or {},
+                "MAGIC_WORDS": list(cfg.get("MAGIC_WORDS") or []),
+            }
+    else:
+        tool_list = skill_raw.get("TOOL_LIST") or []
+        inactive = set(skill_raw.get("INACTIVE_TOOLS") or [])
+        for name in tool_list:
+            if not isinstance(name, str) or not name or name in inactive:
+                continue
+            out[name] = {
+                "PHASE": "CONTEXT",
+                "ACTIVE": True,
+                "AS_REFERENCE": True,
+                "ARGS_HINT": {},
+                "MAGIC_WORDS": [],
+            }
+    return out
+
+
+def skill_tool_list_from_normalized(skill_tools):
+    """Flat list of active tool names for callers that still expect
+    `SKILL.TOOL_LIST` (Thinking prompt renderer, slash-command validator,
+    TOOL_PICK chain fallback)."""
+    return [n for n in (skill_tools or {}).keys()]
+
 # Set the properties of the LLM agent
 def get_agent_item(agent_file, item):
     agent_data = _read_agent_json(agent_file)
@@ -267,6 +323,16 @@ class DigiM_Agent:
         self.habit = _filter_active_habit(self.agent.get('HABIT') or {})
         self.knowledge = _filter_active_list(self.agent.get('KNOWLEDGE') or [])
         self.skill = _filter_active_skill(self.agent.get('SKILL') or {})
+        # Normalized per-tool skill config (PHASE / ACTIVE / AS_REFERENCE /
+        # ARGS_HINT / MAGIC_WORDS). Handles both new SKILL.TOOLS and legacy
+        # SKILL.TOOL_LIST — the orchestrator in DigiM_Execute reads this.
+        self.skill_tools = normalize_skill_tools(self.agent.get('SKILL') or {})
+        # Keep self.skill.TOOL_LIST in sync so slash-command validation,
+        # Thinking's ToolInfo builder, and the TOOL_PICK chain type all
+        # continue to see a flat name list regardless of source shape.
+        if isinstance(self.skill, dict) and self.skill_tools:
+            self.skill = dict(self.skill)
+            self.skill["TOOL_LIST"] = skill_tool_list_from_normalized(self.skill_tools)
         self.feedback = self.agent["FEEDBACK"]
         self.support_agent = self.agent["SUPPORT_AGENT"]
         self.define_code = self.agent["DEFINE_CODE"] if "DEFINE_CODE" in self.agent else {}
