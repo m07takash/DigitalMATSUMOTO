@@ -34,7 +34,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "GPT-5.6-Luna": {
                 "NAME": "GPT-5.6-Luna",
@@ -48,7 +49,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "GPT-5.4-nano": {
                 "NAME": "GPT-5.4-nano",
@@ -62,7 +64,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "Gemini-3.5-Flash": {
                 "NAME": "Gemini-3.5-Flash",
@@ -70,7 +73,14 @@
                 "MODEL": "gemini-3.5-flash",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
-                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+                "MEMORY": {
+                    "limit": 8000,
+                    "role": "both",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "Y"
+                },
+                "ACTIVE": true
             },
             "Gemini-3.5-Flash-Lite": {
                 "NAME": "Gemini-3.5-Flash-Lite",
@@ -78,15 +88,31 @@
                 "MODEL": "gemini-3.5-flash-lite",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
-                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+                "MEMORY": {
+                    "limit": 8000,
+                    "role": "both",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "Y"
+                },
+                "ACTIVE": true
             },
             "GPT-Azure": {
                 "NAME": "GPT-Azure",
                 "FUNC_NAME": "generate_response_T_azure_openai",
                 "MODEL": "gpt-5-nano",
-                "PARAMETER": {"max_completion_tokens": 20000},
+                "PARAMETER": {
+                    "max_completion_tokens": 20000
+                },
                 "TOKENIZER": "tiktoken",
-                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"}
+                "MEMORY": {
+                    "limit": 8000,
+                    "role": "both",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "Y"
+                },
+                "ACTIVE": true
             }
         }
     },

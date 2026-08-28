@@ -54,7 +54,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "GPT-5.6-Terra": {
                 "NAME": "GPT-5.6-Terra",
@@ -68,7 +69,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "GPT-5.6-Luna": {
                 "NAME": "GPT-5.6-Luna",
@@ -82,7 +84,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "GPT-5.5": {
                 "NAME": "GPT-5.5",
@@ -96,7 +99,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "Gemini-3.5-Flash": {
                 "NAME": "Gemini-3.5-Flash",
@@ -110,7 +114,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "Gemini-3.1": {
                 "NAME": "Gemini-3.1",
@@ -124,7 +129,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "Claude-Sonnet-5": {
                 "NAME": "Claude-Sonnet-5",
@@ -140,7 +146,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "Claude-Opus-4.8": {
                 "NAME": "Claude-Opus-4.8",
@@ -156,7 +163,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "Grok-4": {
                 "NAME": "Grok-4",
@@ -170,7 +178,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "GPT-5.4-mini": {
                 "NAME": "GPT-5.4-mini",
@@ -184,7 +193,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "GPT-5.4-nano": {
                 "NAME": "GPT-5.4-nano",
@@ -198,7 +208,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "Gemini-3.5-Flash-Lite": {
                 "NAME": "Gemini-3.5-Flash-Lite",
@@ -212,7 +223,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "Claude-Haiku-4.5": {
                 "NAME": "Claude-Haiku-4.5",
@@ -228,7 +240,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "Grok-4-Fast-Non-Reasoning": {
                 "NAME": "Grok-4-Fast-Non-Reasoning",
@@ -242,7 +255,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "Grok-4-Fast-Reasoning": {
                 "NAME": "Grok-4-Fast-Reasoning",
@@ -256,7 +270,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "GPT-Azure": {
                 "NAME": "GPT-Azure",
@@ -272,7 +287,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             }
         },
         "IMAGEGEN": {
@@ -292,7 +308,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "nano-banana-2": {
                 "NAME": "nano-banana-2",
@@ -308,7 +325,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "GPT-Image-Azure": {
                 "NAME": "GPT-Image-Azure",
@@ -325,7 +343,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             }
         }
     },
@@ -345,7 +364,8 @@
                 "記事にして"
             ],
             "PRACTICE": "practice_20Writing.json",
-            "ADD_KNOWLEDGE": []
+            "ADD_KNOWLEDGE": [],
+            "ACTIVE": true
         },
         "ETHICAL_CHECK": {
             "PURPOSE": "発言・記事・提案に対する倫理的観点でのチェックやリスク洗い出しの依頼。",
@@ -353,7 +373,8 @@
                 "エシカルチェックしてください。"
             ],
             "PRACTICE": "practice_04Ethical_Check.json",
-            "ADD_KNOWLEDGE": []
+            "ADD_KNOWLEDGE": [],
+            "ACTIVE": true
         },
         "FORGET_HISTORY": {
             "PURPOSE": "過去の会話履歴を消去してほしい／リセットしてほしいという明示的な依頼。",
@@ -361,7 +382,8 @@
                 "までの会話を忘れて",
                 "会話履歴を削除して"
             ],
-            "PRACTICE": "practice_02ForgetHistory.json"
+            "PRACTICE": "practice_02ForgetHistory.json",
+            "ACTIVE": true
         },
         "REMEMBER_HISTORY": {
             "PURPOSE": "直前に忘れた会話履歴を復元してほしいという明示的な依頼。",
@@ -369,7 +391,8 @@
                 "までの会話を思い出して",
                 "会話履歴を回復して"
             ],
-            "PRACTICE": "practice_03RememberHistory.json"
+            "PRACTICE": "practice_03RememberHistory.json",
+            "ACTIVE": true
         }
     },
     "AGENT_SEARCH_MAX_CALLS": 3,
@@ -389,7 +412,8 @@
             "DOMAIN_BONUS": 1.3,
             "PROPS_LIMIT": 5,
             "HEADER_TEMPLATE": "以下はあなたの周囲の人物・組織・出来事・取材テーマのつながりです。\n",
-            "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': 'Graph', 'QUERY_SEQ': '{query_seq}', 'QUERY_MODE': '{query_mode}', 'ID': '{id}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'relation': '{relation}', 'text_short': '{text_short}'"
+            "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': 'Graph', 'QUERY_SEQ': '{query_seq}', 'QUERY_MODE': '{query_mode}', 'ID': '{id}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'relation': '{relation}', 'text_short': '{text_short}'",
+            "ACTIVE": true
         },
         {
             "RAG_NAME": "Experience",
@@ -412,7 +436,8 @@
             "CHUNK_TEMPLATE": "・({timestamp}／{category}){title}：{value_text}\n\n",
             "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{bucket}', 'QUERY_SEQ': '{query_seq}', 'QUERY_MODE': '{query_mode}', 'ID': '{id}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}'",
             "TEXT_LIMITS": 2500,
-            "DISTANCE_LOGIC": "Cosine"
+            "DISTANCE_LOGIC": "Cosine",
+            "ACTIVE": true
         },
         {
             "RAG_NAME": "Impressions",
@@ -435,7 +460,8 @@
             "CHUNK_TEMPLATE": "・({timestamp}／{place}){subject}：{value_text}\n\n",
             "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{bucket}', 'QUERY_SEQ': '{query_seq}', 'QUERY_MODE': '{query_mode}', 'ID': '{id}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}'",
             "TEXT_LIMITS": 2000,
-            "DISTANCE_LOGIC": "Cosine"
+            "DISTANCE_LOGIC": "Cosine",
+            "ACTIVE": true
         },
         {
             "RAG_NAME": "Tweets",
@@ -458,7 +484,8 @@
             "CHUNK_TEMPLATE": "・({timestamp}／{media}){value_text}\n\n",
             "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{bucket}', 'QUERY_SEQ': '{query_seq}', 'QUERY_MODE': '{query_mode}', 'ID': '{id}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}'",
             "TEXT_LIMITS": 1500,
-            "DISTANCE_LOGIC": "Cosine"
+            "DISTANCE_LOGIC": "Cosine",
+            "ACTIVE": true
         }
     ],
     "SKILL": {
@@ -466,7 +493,8 @@
             "forget_history",
             "remember_history",
             "WebSearch"
-        ]
+        ],
+        "INACTIVE_TOOLS": []
     },
     "DEFINE_CODE": {
         "COMPANY_CODE": [],
@@ -578,7 +606,8 @@
             "CHUNK_TEMPLATE": "・({timestamp}／{publisher}／{theme})「{title}」：{value_text}\n\n",
             "LOG_TEMPLATE": "'rag':'{rag_name}', 'DB': '{bucket}', 'QUERY_SEQ': '{query_seq}', 'QUERY_MODE': '{query_mode}', 'ID': '{id}', 'similarity_Q': {similarity_prompt}, 'similarity_A': {similarity_response}, 'title': '{title}', 'text_short': '{value_text_short}'",
             "TEXT_LIMITS": 4000,
-            "DISTANCE_LOGIC": "Cosine"
+            "DISTANCE_LOGIC": "Cosine",
+            "ACTIVE": true
         },
         {
             "RAG_NAME": "Digital MATSUMOTO System Guide",
@@ -595,7 +624,8 @@
             "LOG_TEMPLATE": "'rag':'{rag_name}', 'page_id':'{page_id}', 'title':'{title}', 'category':'{category}', 'summary':'{summary}'",
             "TEXT_LIMITS": 10000,
             "MAX_PAGES": 10,
-            "DISTANCE_LOGIC": "PageIndex"
+            "DISTANCE_LOGIC": "PageIndex",
+            "ACTIVE": true
         }
     ]
 }

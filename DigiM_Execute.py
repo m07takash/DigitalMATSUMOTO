@@ -590,7 +590,7 @@ def _run_thinking_agent(service_info, user_info, session_id, session_name,
     # isn't the only judgement signal — otherwise fall back to the name only
     # so BOOK entries authored before PURPOSE existed keep working unchanged.
     book_info = ""
-    for book in agent.agent.get("BOOK", []):
+    for book in (agent.book or []):
         _purpose = (book.get("PURPOSE") or "").strip()
         if _purpose:
             book_info += f"- {book['RAG_NAME']}: {_purpose}\n"
@@ -2335,7 +2335,7 @@ def DigiMatsuExecute_MultiPersona(service_info, user_info, session_id, session_n
         except Exception:
             pass
         # Also scan all habits' practices as a fallback
-        for h_key in (agent_for_inspect.agent.get("HABIT") or {}):
+        for h_key in (agent_for_inspect.habit or {}):
             if h_key not in candidate_habits:
                 candidate_habits.append(h_key)
 

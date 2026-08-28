@@ -22,7 +22,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "N"
-                }
+                },
+                "ACTIVE": true
             },
             "GPT-5.6-Luna": {
                 "NAME": "GPT-5.6-Luna",
@@ -36,7 +37,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "N"
-                }
+                },
+                "ACTIVE": true
             },
             "Gemini-3.5-Flash": {
                 "NAME": "Gemini-3.5-Flash",
@@ -44,7 +46,14 @@
                 "MODEL": "gemini-3.5-flash",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
-                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "N"}
+                "MEMORY": {
+                    "limit": 8000,
+                    "role": "both",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "N"
+                },
+                "ACTIVE": true
             },
             "Gemini-3.5-Flash-Lite": {
                 "NAME": "Gemini-3.5-Flash-Lite",
@@ -58,7 +67,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "GPT-5.4-mini": {
                 "NAME": "GPT-5.4-mini",
@@ -66,7 +76,14 @@
                 "MODEL": "gpt-5.4-mini",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
-                "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "N"}
+                "MEMORY": {
+                    "limit": 8000,
+                    "role": "both",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "N"
+                },
+                "ACTIVE": true
             }
         }
     },

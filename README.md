@@ -1154,6 +1154,10 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/{DATA_NAME} --use-llm --embe
 
 **WebUI ランタイム上書き — Personality Override**: Chat 画面の User Memory expander の直上に **Personality Override** expander があり、その会話だけ有効な PERSONALITY 上書きが可能（エージェント JSON は変更しない）。編集した項目のみ `overwrite_items["PERSONALITY"]` に詰めて `update_dict` の deep-merge で反映されるので、`BIG5` / `CHARACTER` などの未編集フィールドは JSON 既定値を保つ。BIG5 は 5 特性を1つでも変更した場合は全 5 値をまとめて上書き（部分マージ時の混在を防ぐ）。
 
+**WebUI ランタイム上書き — Temporary Override**: Personality Override の直下に **Temporary Override** expander があり、`HABIT` / `KNOWLEDGE` / `BOOK` / `SKILL.TOOL_LIST` の各エントリをこの会話だけ有効／無効に切り替えられます（エージェント JSON は変更しない）。チェックボックスの初期状態は各 JSON エントリの `ACTIVE` 既定値（省略時は `true`）。JSON 側で `ACTIVE: false` としたエントリを一時的に復活させる方向にも使えます。実装は編集された差分だけを `overwrite_items` に詰めて `dmu.update_dict` の deep-merge で反映し、`DigiM_Agent.set_property` の ACTIVE フィルタが `self.habit` / `self.knowledge` / `self.book` / `self.skill` にだけ効くので `self.agent` の生 JSON 構造は保たれる（=再有効化のフィールドが失われない）。
+
+**JSON レベルの `ACTIVE` フラグ**: `ENGINE.LLM.<engine名>` / `ENGINE.IMAGEGEN.<engine名>` / `HABIT.<name>` / `KNOWLEDGE[]` / `BOOK[]` の各 dict に `"ACTIVE": false` を書くと、その要素は永続的に非アクティブ扱い（既定は `true`）。`SKILL.TOOL_LIST` は文字列配列なので `SKILL.INACTIVE_TOOLS: [...]` でブロックリストを別に持たせます。ランタイムは `DigiM_Agent` のロード時に `ACTIVE` を判定し、非アクティブなものは HABIT の magic-word マッチや RAG リトリーバの走査対象から外れます。`HABIT.DEFAULT` は常にアクティブ扱い（`ACTIVE: false` を書いても無視）。
+
 **ペルソナからの継承**: TheRound や Sample_personas の Excel (`personality` セル) にも同じ JSON を書けば、ペルソナ切替時にそのままエージェントの `PERSONALITY` として展開されます (`_apply_persona` は persona.personality で全置換)。
 
 #### ENGINE（LLMエンジン設定）

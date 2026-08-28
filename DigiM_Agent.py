@@ -79,7 +79,47 @@ def get_display_agents(group_cd="All"):
 # Get the list of engines an agent has (model names under LLM; takes raw JSON data)
 def get_engine_list(agent_data, model_type="LLM"):
     engine_config = agent_data.get("ENGINE", {}).get(model_type, {})
-    return [k for k in engine_config if k != "DEFAULT" and isinstance(engine_config.get(k), dict)]
+    return [k for k, v in engine_config.items()
+            if k != "DEFAULT" and isinstance(v, dict) and is_entry_active(v)]
+
+
+# ACTIVE flag helpers.
+# JSON convention: any dict entry inside HABIT / KNOWLEDGE / BOOK / ENGINE.*
+# may carry an optional "ACTIVE": true/false (default true when absent). An
+# inactive entry is invisible to runtime — habit matching skips it, RAG loops
+# skip it, engine dropdowns hide it. SKILL uses a separate "INACTIVE_TOOLS"
+# blocklist on SKILL because TOOL_LIST is a list of bare strings.
+def is_entry_active(entry, default=True):
+    if not isinstance(entry, dict):
+        return default
+    v = entry.get("ACTIVE", default)
+    if isinstance(v, str):
+        return v.strip().lower() not in ("false", "no", "n", "0", "")
+    return bool(v)
+
+
+def _filter_active_habit(habit_dict):
+    if not isinstance(habit_dict, dict):
+        return habit_dict
+    return {k: v for k, v in habit_dict.items() if k == "DEFAULT" or is_entry_active(v)}
+
+
+def _filter_active_list(items):
+    if not isinstance(items, list):
+        return items
+    return [x for x in items if is_entry_active(x)]
+
+
+def _filter_active_skill(skill):
+    if not isinstance(skill, dict):
+        return skill
+    tool_list = skill.get("TOOL_LIST") or []
+    inactive = set(skill.get("INACTIVE_TOOLS") or [])
+    if not inactive:
+        return skill
+    out = dict(skill)
+    out["TOOL_LIST"] = [t for t in tool_list if t not in inactive]
+    return out
 
 # Set the properties of the LLM agent
 def get_agent_item(agent_file, item):
@@ -217,13 +257,20 @@ class DigiM_Agent:
         self.name = self.agent['NAME']
         self.act = self.agent['ACT']
         self.personality = self.agent['PERSONALITY']
-        self.habit = self.agent['HABIT']
-        self.knowledge = self.agent["KNOWLEDGE"]
-        self.skill = self.agent["SKILL"]
+        # ACTIVE-flag filter: hide entries marked ACTIVE=false from runtime,
+        # and subtract SKILL.INACTIVE_TOOLS from SKILL.TOOL_LIST. Session-
+        # level Temporary Override reaches here via overwrite_items applied
+        # before set_property, so re-activating a JSON-inactive entry works
+        # too. We keep self.agent unmutated so a second set_property call
+        # (post-update_dict) sees the full raw structure — direct readers
+        # of self.agent[...] should prefer the filtered views below.
+        self.habit = _filter_active_habit(self.agent.get('HABIT') or {})
+        self.knowledge = _filter_active_list(self.agent.get('KNOWLEDGE') or [])
+        self.skill = _filter_active_skill(self.agent.get('SKILL') or {})
         self.feedback = self.agent["FEEDBACK"]
         self.support_agent = self.agent["SUPPORT_AGENT"]
         self.define_code = self.agent["DEFINE_CODE"] if "DEFINE_CODE" in self.agent else {}
-        self.book = self.agent["BOOK"] if "BOOK" in self.agent else []
+        self.book = _filter_active_list(self.agent.get('BOOK') or []) if 'BOOK' in self.agent else []
         self.system_prompt = self.set_system_prompt()
 
     # Build the system prompt
@@ -338,7 +385,7 @@ class DigiM_Agent:
     # Switch the agent's mode based on commands (MAGIC_WORD) in the query [magic words are migrating to tasks]
     def set_practice_by_command(self, query):
         habit = "DEFAULT"
-        for k, v in self.agent["HABIT"].items():
+        for k, v in self.habit.items():
             magic_words = v.get("MAGIC_WORDS", [])
             if any(word in query for word in magic_words if word):
                 habit = k

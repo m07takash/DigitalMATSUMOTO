@@ -1232,6 +1232,207 @@ def _load_session_summary_presets():
         return {}
 
 
+def _render_temporary_override():
+    """Chat-screen expander that lets the user flip HABIT / KNOWLEDGE /
+    BOOK / SKILL entries active/inactive for this session only. The agent
+    JSON is not modified; overrides are packed into `overwrite_items` at
+    chat-send time and applied via `dmu.update_dict` before `set_property`.
+
+    Baseline is the JSON's own `ACTIVE` flag (default true when absent).
+    Toggling either direction is supported — a JSON-inactive entry can be
+    re-enabled here, and a JSON-active entry can be silenced.
+    """
+    _agent_data = st.session_state.get("agent_data") or {}
+    _sid = getattr(st.session_state.get("session", None), "session_id", "")
+
+    def _jactive(entry, default=True):
+        if not isinstance(entry, dict):
+            return default
+        v = entry.get("ACTIVE", default)
+        if isinstance(v, str):
+            return v.strip().lower() not in ("false", "no", "n", "0", "")
+        return bool(v)
+
+    with st.expander("Temporary Override", expanded=False):
+        st.caption(
+            "Flip HABIT / KNOWLEDGE / BOOK / SKILL entries active/inactive "
+            "for this session only. Agent JSON stays unchanged."
+        )
+
+        # HABIT (skip DEFAULT — always active)
+        _habits = _agent_data.get("HABIT") or {}
+        _habit_names = [k for k in _habits.keys() if k != "DEFAULT"]
+        if _habit_names:
+            st.markdown("**HABIT**")
+            _cols = st.columns(min(3, max(1, len(_habit_names))))
+            for _i, _hn in enumerate(_habit_names):
+                _default = _jactive(_habits.get(_hn), True)
+                _cols[_i % len(_cols)].checkbox(
+                    _hn, value=_default,
+                    key=f"to_HABIT_{_sid}_{_hn}",
+                )
+
+        # KNOWLEDGE
+        _kn_list = _agent_data.get("KNOWLEDGE") or []
+        if _kn_list:
+            st.markdown("**KNOWLEDGE**")
+            _cols = st.columns(min(3, max(1, len(_kn_list))))
+            for _i, _kn in enumerate(_kn_list):
+                _rag = _kn.get("RAG_NAME") or f"#{_i}"
+                _default = _jactive(_kn, True)
+                _cols[_i % len(_cols)].checkbox(
+                    _rag, value=_default,
+                    key=f"to_KNOWLEDGE_{_sid}_{_rag}",
+                )
+
+        # BOOK
+        _bk_list = _agent_data.get("BOOK") or []
+        if _bk_list:
+            st.markdown("**BOOK**")
+            _cols = st.columns(min(3, max(1, len(_bk_list))))
+            for _i, _bk in enumerate(_bk_list):
+                _rag = _bk.get("RAG_NAME") or f"#{_i}"
+                _default = _jactive(_bk, True)
+                _cols[_i % len(_cols)].checkbox(
+                    _rag, value=_default,
+                    key=f"to_BOOK_{_sid}_{_rag}",
+                )
+
+        # SKILL.TOOL_LIST (subtract SKILL.INACTIVE_TOOLS as baseline)
+        _skill = _agent_data.get("SKILL") or {}
+        _tool_list = list(_skill.get("TOOL_LIST") or [])
+        _inactive_tools = set(_skill.get("INACTIVE_TOOLS") or [])
+        if _tool_list:
+            st.markdown("**SKILL (tools)**")
+            _cols = st.columns(min(3, max(1, len(_tool_list))))
+            for _i, _t in enumerate(_tool_list):
+                _default = _t not in _inactive_tools
+                _cols[_i % len(_cols)].checkbox(
+                    _t, value=_default,
+                    key=f"to_SKILL_{_sid}_{_t}",
+                )
+
+
+def _collect_temporary_override(agent_data):
+    """Read the Temporary Override widgets from session_state and produce
+    an overwrite_items fragment to deep-merge onto the agent JSON.
+
+      HABIT      → per-name {"ACTIVE": bool}
+      KNOWLEDGE  → full replacement list with per-item ACTIVE
+      BOOK       → full replacement list with per-item ACTIVE
+      SKILL      → INACTIVE_TOOLS list
+
+    Returns {} when there is nothing to override.
+    """
+    _sid = getattr(st.session_state.get("session", None), "session_id", "")
+
+    def _jactive(entry, default=True):
+        if not isinstance(entry, dict):
+            return default
+        v = entry.get("ACTIVE", default)
+        if isinstance(v, str):
+            return v.strip().lower() not in ("false", "no", "n", "0", "")
+        return bool(v)
+
+    out = {}
+
+    _habits = agent_data.get("HABIT") or {}
+    _habit_delta = {}
+    for _hn, _hv in _habits.items():
+        if _hn == "DEFAULT":
+            continue
+        _key = f"to_HABIT_{_sid}_{_hn}"
+        if _key not in st.session_state:
+            continue
+        _new = bool(st.session_state[_key])
+        if _new != _jactive(_hv, True):
+            _habit_delta[_hn] = {"ACTIVE": _new}
+    if _habit_delta:
+        out["HABIT"] = _habit_delta
+
+    _kn_list = agent_data.get("KNOWLEDGE") or []
+    _kn_touched = False
+    _kn_new = []
+    for _i, _kn in enumerate(_kn_list):
+        _rag = _kn.get("RAG_NAME") or f"#{_i}"
+        _key = f"to_KNOWLEDGE_{_sid}_{_rag}"
+        _entry = dict(_kn)
+        if _key in st.session_state:
+            _new = bool(st.session_state[_key])
+            if _new != _jactive(_kn, True):
+                _entry["ACTIVE"] = _new
+                _kn_touched = True
+        _kn_new.append(_entry)
+    if _kn_touched:
+        out["KNOWLEDGE"] = _kn_new
+
+    _bk_list = agent_data.get("BOOK") or []
+    _bk_touched = False
+    _bk_new = []
+    for _i, _bk in enumerate(_bk_list):
+        _rag = _bk.get("RAG_NAME") or f"#{_i}"
+        _key = f"to_BOOK_{_sid}_{_rag}"
+        _entry = dict(_bk)
+        if _key in st.session_state:
+            _new = bool(st.session_state[_key])
+            if _new != _jactive(_bk, True):
+                _entry["ACTIVE"] = _new
+                _bk_touched = True
+        _bk_new.append(_entry)
+    if _bk_touched:
+        out["BOOK"] = _bk_new
+
+    _skill = agent_data.get("SKILL") or {}
+    _tool_list = list(_skill.get("TOOL_LIST") or [])
+    _jinactive = set(_skill.get("INACTIVE_TOOLS") or [])
+    _new_inactive = set()
+    _skill_touched = False
+    for _t in _tool_list:
+        _key = f"to_SKILL_{_sid}_{_t}"
+        if _key not in st.session_state:
+            if _t in _jinactive:
+                _new_inactive.add(_t)
+            continue
+        _new = bool(st.session_state[_key])
+        if _new:
+            if _t in _jinactive:
+                _skill_touched = True
+        else:
+            _new_inactive.add(_t)
+            if _t not in _jinactive:
+                _skill_touched = True
+    if _skill_touched:
+        out["SKILL"] = {"INACTIVE_TOOLS": sorted(_new_inactive)}
+
+    return out
+
+
+def _session_active_book_names(agent_data):
+    """RAG_NAMEs whose BOOK entry is effectively active given the current
+    Temporary Override widgets. Used to filter the BOOK multiselect so the
+    user does not accidentally add a disabled book to the turn."""
+    _sid = getattr(st.session_state.get("session", None), "session_id", "")
+
+    def _jactive(entry, default=True):
+        if not isinstance(entry, dict):
+            return default
+        v = entry.get("ACTIVE", default)
+        if isinstance(v, str):
+            return v.strip().lower() not in ("false", "no", "n", "0", "")
+        return bool(v)
+
+    out = []
+    for _i, _bk in enumerate(agent_data.get("BOOK") or []):
+        _rag = _bk.get("RAG_NAME") or f"#{_i}"
+        _key = f"to_BOOK_{_sid}_{_rag}"
+        if _key in st.session_state:
+            if bool(st.session_state[_key]):
+                out.append(_rag)
+        elif _jactive(_bk, True):
+            out.append(_rag)
+    return out
+
+
 def _render_session_summary_settings():
     """Chat-screen expander with the 3-line configuration:
 
@@ -8910,8 +9111,12 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                 if not st.session_state.thinking_mode and st.session_state.allowed_book:
                     _book_list = st.session_state.agent_data.get("BOOK") or []
                     if isinstance(_book_list, list) and len(_book_list) > 0:
+                        _active_books = set(_session_active_book_names(
+                            st.session_state.agent_data))
+                        _book_opts = [item["RAG_NAME"] for item in _book_list
+                                       if item.get("RAG_NAME") in _active_books]
                         st.session_state.book_selected = st.multiselect(
-                            "BOOK", [item["RAG_NAME"] for item in _book_list]
+                            "BOOK", _book_opts,
                         )
 
                 # --- Row 6: URL fetch subpages (kept with fetch-related controls) ---
@@ -9017,6 +9222,11 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                         "Character (CHARACTER) — inline text or a filename under `character/`",
                         value=str(_cur_pers.get("CHARACTER", "") or ""), height=100, key="po_CHARACTER",
                     )
+
+                # --- Nested: Temporary Override (HABIT / KNOWLEDGE / BOOK /
+                # SKILL entries can be flipped active/inactive for this
+                # session only. Agent JSON is not modified.)
+                _render_temporary_override()
 
                 # --- Nested: User Memory ---
                 if st.session_state.allowed_user_memory:
@@ -10505,12 +10715,25 @@ f"Target sheet (sheets with Question: {len(_q_sheets)})"
             if _pers_override:
                 overwrite_items["PERSONALITY"] = _pers_override
 
+            # Temporary Override — HABIT / KNOWLEDGE / BOOK / SKILL flips
+            # for this session only, deep-merged onto the agent JSON below.
+            _tempoverride = _collect_temporary_override(st.session_state.agent_data)
+            for _sec, _val in _tempoverride.items():
+                if _sec in overwrite_items and isinstance(overwrite_items[_sec], dict) and isinstance(_val, dict):
+                    overwrite_items[_sec].update(_val)
+                else:
+                    overwrite_items[_sec] = _val
+
             # Knowledge addition
             add_knowledges = []
-            # BOOK setup
+            # BOOK setup (only include books still effectively active given
+            # the Temporary Override widgets)
             if st.session_state.book_selected:
+                _active_book_names = set(_session_active_book_names(
+                    st.session_state.agent_data))
                 for book_data in st.session_state.agent_data["BOOK"]:
-                    if book_data["RAG_NAME"] in st.session_state.book_selected:
+                    if book_data["RAG_NAME"] in st.session_state.book_selected \
+                            and book_data["RAG_NAME"] in _active_book_names:
                         add_knowledges.append(book_data)
 
             # Situation setup

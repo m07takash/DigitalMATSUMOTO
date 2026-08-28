@@ -22,7 +22,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "GPT-5.6-Luna": {
                 "NAME": "GPT-5.6-Luna",
@@ -36,7 +37,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "GPT-5.4-mini": {
                 "NAME": "GPT-5.4-mini",
@@ -50,7 +52,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "GPT-5.4-nano": {
                 "NAME": "GPT-5.4-nano",
@@ -64,7 +67,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "Gemini-3.5-Flash": {
                 "NAME": "Gemini-3.5-Flash",
@@ -78,7 +82,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "Gemini-3.5-Flash-Lite": {
                 "NAME": "Gemini-3.5-Flash-Lite",
@@ -92,7 +97,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "Claude-Haiku-4.5": {
                 "NAME": "Claude-Haiku-4.5",
@@ -108,7 +114,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             }
         }
     },

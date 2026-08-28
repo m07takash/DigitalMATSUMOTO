@@ -37,7 +37,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "GPT-5.6-Luna": {
                 "NAME": "GPT-5.6-Luna",
@@ -51,7 +52,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "GPT-5.1": {
                 "NAME": "GPT-5.1",
@@ -65,7 +67,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "GPT-5.4": {
                 "NAME": "GPT-5.4",
@@ -79,7 +82,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "Gemini-2.5": {
                 "NAME": "Gemini-2.5",
@@ -93,7 +97,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "Gemini-3.1": {
                 "NAME": "Gemini-3.1",
@@ -107,7 +112,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "Claude-4.5": {
                 "NAME": "Claude-Sonnet-4.5",
@@ -123,7 +129,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "Claude-4.6": {
                 "NAME": "Claude-Sonnet-4.6",
@@ -139,7 +146,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "Grok-4": {
                 "NAME": "Grok-4",
@@ -153,7 +161,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "GPT-5.4-mini": {
                 "NAME": "GPT-5.4-mini",
@@ -167,7 +176,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "Gemini-3.5-Flash": {
                 "NAME": "Gemini-3.5-Flash",
@@ -181,7 +191,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             },
             "Claude-Haiku-4.5": {
                 "NAME": "Claude-Haiku-4.5",
@@ -197,7 +208,8 @@
                     "priority": "latest",
                     "similarity_logic": "cosine",
                     "digest": "Y"
-                }
+                },
+                "ACTIVE": true
             }
         }
     },
@@ -216,7 +228,8 @@
                 "簡潔に答えて"
             ],
             "PRACTICE": "practice_01Chat.json",
-            "ADD_KNOWLEDGE": []
+            "ADD_KNOWLEDGE": [],
+            "ACTIVE": true
         },
         "FORGET_HISTORY": {
             "PURPOSE": "過去の会話履歴を消去してほしい／リセットしてほしいという明示的な依頼。",
@@ -224,7 +237,8 @@
                 "までの会話を忘れて",
                 "会話履歴を削除して"
             ],
-            "PRACTICE": "practice_02ForgetHistory.json"
+            "PRACTICE": "practice_02ForgetHistory.json",
+            "ACTIVE": true
         },
         "REMEMBER_HISTORY": {
             "PURPOSE": "直前に忘れた会話履歴を復元してほしいという明示的な依頼。",
@@ -232,7 +246,8 @@
                 "までの会話を思い出して",
                 "会話履歴を回復して"
             ],
-            "PRACTICE": "practice_03RememberHistory.json"
+            "PRACTICE": "practice_03RememberHistory.json",
+            "ACTIVE": true
         }
     },
     "KNOWLEDGE": [],
