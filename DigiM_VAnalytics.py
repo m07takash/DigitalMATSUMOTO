@@ -1,5 +1,6 @@
 import os
 import ast
+import re
 import logging
 import pandas as pd
 import numpy as np
@@ -69,6 +70,23 @@ def genLLMAgentSimple(service_info, user_info, session_id, session_name, agent_f
 
     return response_service_info, response_user_info, response, model_name, export_contents, knowledge_ref
 
+# META_SEARCH stamps the applied multiplier into QUERY_MODE as
+# "(META_SEARCH:0.5)"; NORMAL rows carry no multiplier.
+_META_MODE_RE = re.compile(r"META_SEARCH\s*:\s*([0-9.]+)")
+
+
+def _meta_bonus(query_mode):
+    """Multiplier a chunk received from META_SEARCH, or None when the chunk
+    was not matched by any condition."""
+    m = _META_MODE_RE.search(str(query_mode or ""))
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except ValueError:
+        return None
+
+
 # Build the knowledge-utility chart
 def create_similarity_plot_file(file_title, analytics_file_path, rag_name, group):
     fig, ax = plt.subplots(figsize=(24, 8))
@@ -85,9 +103,26 @@ def create_similarity_plot_file(file_title, analytics_file_path, rag_name, group
     ax.set_yticklabels(group['title'], fontsize=8)
     ax.legend()
 
+    # Stamp the META_SEARCH multiplier at the right edge, one per row. The
+    # y-axis transform keeps x in axes fraction (so the column stays put
+    # whatever the data range) while y stays in data coordinates. Colored by
+    # direction: distance shrinks when the multiplier is < 1 (boost) and
+    # grows when it is > 1 (penalty).
+    _bonuses = [_meta_bonus(m) for m in group["QUERY_MODE"]] if "QUERY_MODE" in group else []
+    if any(b is not None for b in _bonuses):
+        for _y, _b in zip(y_positions, _bonuses):
+            if _b is None:
+                continue
+            ax.text(1.005, _y, f"({_b:g})",
+                    transform=ax.get_yaxis_transform(),
+                    va="center", ha="left", fontsize=11, fontweight="bold",
+                    color=("seagreen" if _b < 1 else "crimson" if _b > 1 else "gray"))
+        ax.text(1.005, 1.01, "META", transform=ax.transAxes,
+                va="bottom", ha="left", fontsize=10, color="dimgray")
+
     similarity_plot_file = f"{file_title}_KUtilPlot_{rag_name}.png"    
     filename = str(Path(analytics_file_path) / similarity_plot_file)
-    plt.savefig(filename)
+    plt.savefig(filename, bbox_inches="tight")
     plt.close(fig)
 
     return similarity_plot_file
