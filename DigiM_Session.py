@@ -1164,15 +1164,28 @@ class DigiMSession:
             chat_detail_info += "\n[RAG search query]\n"
             if chat_history_dict_seq["prompt"]["RAG_query_genetor"]:
                 rag_qg = chat_history_dict_seq["prompt"]["RAG_query_genetor"]
-                chat_detail_info += "Agent: "+rag_qg["agent_file"]+"\n"
-                chat_detail_info += "Model: "+rag_qg["model"]+"\n"
-                if "duration_sec" in rag_qg:
-                    chat_detail_info += "Duration: "+str(rag_qg["duration_sec"])+"s\n"
                 if rag_qg.get("rag_query_hint"):
                     chat_detail_info += "Thinking hint: "+rag_qg["rag_query_hint"]+"\n"
-                chat_detail_info += "Prompt tokens: "+str(rag_qg["prompt_token"])+"\n"
-                chat_detail_info += "Response tokens: "+str(rag_qg["response_token"])+"\n"
-                chat_detail_info += rag_qg["llm_response"]+"\n"
+                if rag_qg.get("selection_mode"):
+                    chat_detail_info += ("Selection: "+str(rag_qg["selection_mode"])
+                                         +" (max "+str(rag_qg.get("max_calls", "-"))+")\n")
+                # Several generator agents can run per turn, each producing its
+                # own query variation. `generators` holds them all; the flat
+                # fields mirror only the first one, so iterate the list when
+                # present and fall back for pre-multi-generator history.
+                _gens = rag_qg.get("generators") or [rag_qg]
+                chat_detail_info += "Generators: "+str(len(_gens))+"\n"
+                for _i, _g in enumerate(_gens, 1):
+                    chat_detail_info += "\n--- Query "+str(_i)+"/"+str(len(_gens))+" ---\n"
+                    chat_detail_info += "Agent: "+str(_g.get("agent_file", ""))+"\n"
+                    chat_detail_info += "Model: "+str(_g.get("model", ""))+"\n"
+                    if "duration_sec" in _g:
+                        chat_detail_info += "Duration: "+str(_g["duration_sec"])+"s\n"
+                    chat_detail_info += "Prompt tokens: "+str(_g.get("prompt_token", 0))+"\n"
+                    chat_detail_info += "Response tokens: "+str(_g.get("response_token", 0))+"\n"
+                    if _g.get("error"):
+                        chat_detail_info += "Error: "+str(_g["error"])+"\n"
+                    chat_detail_info += str(_g.get("llm_response", ""))+"\n"
 
             chat_detail_info += "\n[Meta search]\n"
             if chat_history_dict_seq["prompt"]["meta_search"]:

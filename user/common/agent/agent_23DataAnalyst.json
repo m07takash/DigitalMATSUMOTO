@@ -260,10 +260,10 @@
         "FEEDBACK_ITEM_LIST": []
     },
     "SUPPORT_AGENT": {
-        "DIALOG_DIGEST": "agent_51DialogDigest.json",
-        "EXTRACT_DATE": "agent_55ExtractDate.json",
-        "META_EXTRACT": "agent_55MetaExtract.json",
-        "RAG_QUERY_GENERATOR": "agent_56RAGQueryGenerator.json"
+        "DIALOG_DIGEST": "agent_60DialogDigest.json",
+        "EXTRACT_DATE": "agent_54ExtractDate.json",
+        "META_EXTRACT": "agent_53MetaExtract.json",
+        "RAG_QUERY_GENERATOR": "agent_5AQGenUserIntent.json"
     },
     "BOOK": []
 }

@@ -8,6 +8,24 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib import rcParams
+
+# Scatter legends carry Japanese query previews, so prefer a CJK-capable
+# family over DejaVu Sans (which renders every Japanese glyph as tofu).
+# Only families actually installed are kept, otherwise matplotlib logs a
+# findfont warning for each miss on every figure.
+def _pick_cjk_font_families():
+    _wanted = ["IPAexGothic", "Noto Sans CJK JP", "Hiragino Sans",
+               "Yu Gothic", "Meiryo", "TakaoPGothic"]
+    try:
+        from matplotlib import font_manager as _fm
+        _have = {f.name for f in _fm.fontManager.ttflist}
+    except Exception:
+        _have = set()
+    return [f for f in _wanted if f in _have] + ["DejaVu Sans"]
+
+
+rcParams["font.family"] = _pick_cjk_font_families()
+rcParams["axes.unicode_minus"] = False
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from sklearn.cluster import KMeans, DBSCAN, AgglomerativeClustering
@@ -75,7 +93,70 @@ def create_similarity_plot_file(file_title, analytics_file_path, rag_name, group
     return similarity_plot_file
 
 # Compute PCA/TSNE and generate plot files
-def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, mode={"method":"PCA", "params":{}}, category_map={}):
+# Color per QUERY_SEQ (query type):
+#   "0" = raw input                       -> deepskyblue
+#   "1" = input + chat history            -> blue
+#   "2"+ = RAG-Query-Gen variations       -> purple family (one shade per generator)
+# Tuples are (NORMAL=dark color, others (e.g., period-filtered)=light color).
+# Keys are strings; normalize with str() so QUERY_SEQ as int/str both work.
+QUERY_SEQ_COLOR_MAP = {
+    "0": ("deepskyblue", "lightskyblue"),
+    "1": ("blue", "cornflowerblue"),
+    "2": ("purple", "plum"),
+    "default": ("gray", "lightgray"),
+}
+_GEN_PURPLES = [
+    ("purple", "plum"),
+    ("darkviolet", "violet"),
+    ("mediumorchid", "thistle"),
+    ("indigo", "mediumpurple"),
+]
+
+
+def _seq_color_pair(seq):
+    """(NORMAL, non-NORMAL) colors for a QUERY_SEQ. 0/1 are the raw and
+    history-augmented user queries; 2+ are generated query variations, all
+    purple with the hue rotating per generator."""
+    _s = str(seq)
+    if _s in ("0", "1"):
+        return QUERY_SEQ_COLOR_MAP[_s]
+    try:
+        _i = int(float(_s))
+    except (TypeError, ValueError):
+        return QUERY_SEQ_COLOR_MAP["default"]
+    if _i < 2:
+        return QUERY_SEQ_COLOR_MAP["default"]
+    return _GEN_PURPLES[(_i - 2) % len(_GEN_PURPLES)]
+
+
+def _plot_query_markers(ax, q_xy, query_points):
+    """Overlay the queries' own positions on a scatter and return legend
+    handles. Each query is drawn as a numbered star in the QUERY_SEQ color
+    (0 = raw input, 1 = +history, 2+ = generated variations in purple), so
+    the marker colors line up with how the retrieved chunks are colored."""
+    handles = []
+    for _i, _qp in enumerate(query_points):
+        if _i >= len(q_xy):
+            break
+        _seq = _qp.get("seq", _i)
+        _color = _seq_color_pair(_seq)[0]
+        _x, _y = float(q_xy[_i][0]), float(q_xy[_i][1])
+        ax.scatter([_x], [_y], marker="*", s=520, c=_color,
+                   edgecolors="black", linewidths=1.2, zorder=6)
+        # Number sits inside the star so the point is identifiable even
+        # when the legend is scrolled out of view in a narrow layout.
+        ax.annotate(str(_seq), (_x, _y), color="white", fontsize=9,
+                    fontweight="bold", ha="center", va="center", zorder=7)
+        _preview = (_qp.get("preview") or "").strip()[:20]
+        _kind = _qp.get("kind", "")
+        _label = f"[{_seq}] {_kind}: {_preview}" if _kind else f"[{_seq}] {_preview}"
+        handles.append(plt.Line2D([0], [0], marker="*", color="w", label=_label,
+                                   markersize=14, markerfacecolor=_color,
+                                   markeredgecolor="black"))
+    return handles
+
+
+def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, mode={"method":"PCA", "params":{}}, category_map={}, query_points=None):
     scatter_plot_file_category = ""
     scatter_plot_file_ref = ""
     scatter_plot_file_csv = ""
@@ -87,12 +168,25 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
     params = mode["params"]
     xcol, ycol = "X1", "X2"
 
+    # Query vectors projected into the same 2D space as the chunks. PCA can
+    # `transform()` unseen points directly; t-SNE has no out-of-sample
+    # transform, so the queries are fitted together with the chunks and
+    # split back out afterwards.
+    query_points = [q for q in (query_points or []) if q.get("vec") is not None]
+    q_vectors = (np.array([q["vec"] for q in query_points], dtype=np.float32)
+                 if query_points else None)
+    if q_vectors is not None and (q_vectors.ndim != 2 or q_vectors.shape[1] != vectors.shape[1]):
+        q_vectors, query_points = None, []
+    q_xy = []
+
     # Explained-variance string for the title
     pca_info_text = ""
 
     if method == "PCA":
         model = PCA(n_components=2)
         emb = model.fit_transform(vectors)
+        if q_vectors is not None:
+            q_xy = model.transform(q_vectors)
 
         # PC1/PC2 explained variance and cumulative
         pc1_ratio = model.explained_variance_ratio_[0]
@@ -106,7 +200,8 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
         )
 
     elif method == "t-SNE":
-        n = len(df)
+        _fit_input = vectors if q_vectors is None else np.vstack([vectors, q_vectors])
+        n = len(_fit_input)
         perplexity = min(params["perplexity"], max(2, n - 1))
         random_state = 0
 
@@ -117,21 +212,35 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
             learning_rate="auto",
             random_state=random_state,
         )
-        emb = model.fit_transform(vectors)
+        _emb_all = model.fit_transform(_fit_input)
+        emb = _emb_all[:len(vectors)]
+        if q_vectors is not None:
+            q_xy = _emb_all[len(vectors):]
     else:
         raise ValueError(f"Unknown method: {method} (use 'PCA' or 't-SNE')")
 
     df[xcol] = emb[:, 0]
     df[ycol] = emb[:, 1]
 
+    # Legend goes outside the axes (right side) so it never covers the plot;
+    # the figure widens when a query legend is present to keep the plotting
+    # area the same size.
+    _has_q = bool(len(q_xy)) and bool(query_points)
+    _figsize = (13.5, 8) if _has_q else (10, 8)
+
     # --- Reference scatter ---
     scatter_plot_file_ref = f"{file_title}_ScatterRefPlot({method})_{rag_name}.png"
     scatter_plot_filename_ref = str(Path(analytics_file_path) / scatter_plot_file_ref)
 
-    fig_ref, ax_ref = plt.subplots(figsize=(10, 8))
+    fig_ref, ax_ref = plt.subplots(figsize=_figsize)
     ax_ref.scatter(df[xcol], df[ycol], c=df["ref_color"], alpha=0.7)
     ax_ref.set_title(f"{method} Analysis(Ref): {rag_name}{pca_info_text}")
     ax_ref.grid(True)
+    if _has_q:
+        _q_handles = _plot_query_markers(ax_ref, q_xy, query_points)
+        ax_ref.legend(handles=_q_handles, loc="upper left", bbox_to_anchor=(1.01, 1),
+                      title=f"Queries ({len(_q_handles)})", fontsize=8, title_fontsize=9,
+                      borderaxespad=0.0)
     fig_ref.savefig(scatter_plot_filename_ref, dpi=150, bbox_inches="tight")
     plt.close(fig_ref)
 
@@ -140,11 +249,12 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
         scatter_plot_file_category = f"{file_title}_ScatterCategoryPlot({method})_{rag_name}.png"
         scatter_plot_filename_category = str(Path(analytics_file_path) / scatter_plot_file_category)
 
-        fig_cat, ax_cat = plt.subplots(figsize=(10, 8))
+        fig_cat, ax_cat = plt.subplots(figsize=_figsize)
         ax_cat.scatter(df[xcol], df[ycol], c=df["category_color"], alpha=0.7)
         ax_cat.set_title(f"{method} Analysis(Category): {rag_name}{pca_info_text}")
         ax_cat.grid(True)
 
+        category_handles = []
         if category_map:
             category_handles = [
                 plt.Line2D([0], [0], marker="o", color="w", label=key, markersize=10, markerfacecolor=color)
@@ -153,7 +263,12 @@ def plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, m
             category_handles.append(
                 plt.Line2D([0], [0], marker="o", color="w", label="Other", markersize=10, markerfacecolor="gray")
             )
-            ax_cat.legend(handles=category_handles, loc="upper left", bbox_to_anchor=(1, 1), title="Category")
+        if _has_q:
+            category_handles += _plot_query_markers(ax_cat, q_xy, query_points)
+        if category_handles:
+            ax_cat.legend(handles=category_handles, loc="upper left", bbox_to_anchor=(1.01, 1),
+                          title="Category / Queries", fontsize=8, title_fontsize=9,
+                          borderaxespad=0.0)
 
         fig_cat.savefig(scatter_plot_filename_category, dpi=150, bbox_inches="tight")
         plt.close(fig_cat)
@@ -409,7 +524,7 @@ def temporal_analysis(df, period="month", top_n_keywords=10, text_col="value_tex
 # Knowledge reference and utilization analysis
 def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_file_path,
                          ak_mode="Default", dim_mode={"method":"PCA", "params":{}},
-                         persona=None, exec_info=None):
+                         persona=None, exec_info=None, query_points=None):
 #    end_date_str = datetime.strptime(ref_timestamp, "%Y-%m-%d %H:%M:%S.%f").strftime("%Y-%m-%d")
     end_date_str = dmu.parse_date(ref_timestamp).strftime("%Y-%m-%d")
     df = pd.DataFrame(reference)
@@ -542,18 +657,6 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
     # Process each Knowledge RAG dataset (output in the agent's KNOWLEDGE -> BOOK declaration order)
     db_client = dmc.get_chroma_client()
     knowledge_map = {k.get("RAG_NAME"): k for k in agent.knowledge}
-    # Color per QUERY_SEQ (query type). Mapped to seq_label:
-    #   "0" = query 1 "raw input"                -> sky blue
-    #   "1" = query 2 "input + chat history"     -> blue
-    #   "2" = query 3 "intent of the input"       -> purple
-    # Tuples are (NORMAL=dark color, others (e.g., period-filtered)=light color).
-    # Keys are strings; normalize with str() so QUERY_SEQ as int/str both work.
-    color_map = {
-        "0": ("deepskyblue", "lightskyblue"),
-        "1": ("blue", "cornflowerblue"),
-        "2": ("purple", "plum"),
-        "default": ("gray", "lightgray"),
-    }
     cat_category = category_map_json.get("Category", {})
     cat_color = category_map_json.get("CategoryColor", {})
 
@@ -605,7 +708,7 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
 
     for rag_name, group in ordered_groups:
         group["q_colors"] = [
-            color_map.get(str(seq), color_map["default"])[0 if str(mode) == "NORMAL" else 1]
+            _seq_color_pair(seq)[0 if str(mode) == "NORMAL" else 1]
             for seq, mode in zip(group["QUERY_SEQ"], group["QUERY_MODE"])
         ]
 
@@ -641,7 +744,7 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
                     rag_data_list.append(v)
 
             if rag_data_list:
-                scatter_plot_category_file, scatter_plot_ref_file, scatter_plot_csv_file = plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, dim_mode, category_map)
+                scatter_plot_category_file, scatter_plot_ref_file, scatter_plot_csv_file = plot_rag_scatter(file_title, analytics_file_path, rag_name, rag_data_list, dim_mode, category_map, query_points)
                 if scatter_plot_category_file:
                     scatter_plot_category_files.append(scatter_plot_category_file)
                 if scatter_plot_ref_file:

@@ -1573,7 +1573,7 @@ def select_rag_page_index(query, rag, exec_info):
 
         # Let the LLM choose page IDs
         max_pages = rag.get("MAX_PAGES", 5)
-        support_agent = rd.get("SUPPORT_AGENT", "agent_59PageIndexSearch.json")
+        support_agent = rd.get("SUPPORT_AGENT", "agent_55PageIndexSearch.json")
         selected_ids = dmt.page_index_search(
             exec_info, support_agent, query, pages, max_pages)
 
@@ -1734,7 +1734,7 @@ def generate_rag():
                                 use_llm=bool(rag_setting.get("use_llm", False)),
                                 embed=bool(rag_setting.get("embed", False)),
                                 llm_agent_file=rag_setting.get(
-                                    "extractor_agent", "agent_67GraphExtract.json"),
+                                    "extractor_agent", "agent_56GraphExtract.json"),
                                 skip_unchanged=_skip,
                             )
                             if _report.get("skipped"):
@@ -1871,7 +1871,7 @@ def generate_rag():
                             if not graph.get("nodes"):
                                 _dmg.ingest_seeds(graph, dictionary)
                             extractor_agent = rag_setting.get(
-                                "extractor_agent", "agent_67GraphExtract.json")
+                                "extractor_agent", "agent_56GraphExtract.json")
                             def _extract_call(prompt, _ag=extractor_agent):
                                 _ret = _dma.ext_generate_pureLLM(_ag, prompt)
                                 if isinstance(_ret, tuple) and _ret:

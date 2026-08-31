@@ -31,9 +31,9 @@ if os.path.exists("system.env"):
 _setting = dmu.read_yaml_file("setting.yaml")
 _practice_folder = _setting["PRACTICE_FOLDER"]
 
-HISTORY_AGENT_FILE = "agent_62UserMemoryHistory.json"
-NOWADAY_AGENT_FILE = "agent_61UserMemoryNowaday.json"
-PERSONA_AGENT_FILE = "agent_60UserMemoryPersona.json"
+HISTORY_AGENT_FILE = "agent_68UserMemoryHistory.json"
+NOWADAY_AGENT_FILE = "agent_67UserMemoryNowaday.json"
+PERSONA_AGENT_FILE = "agent_66UserMemoryPersona.json"
 
 
 # ---------- Plutchik emotion vocabulary / Big5 traits ----------

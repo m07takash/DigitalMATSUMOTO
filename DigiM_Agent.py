@@ -21,6 +21,160 @@ prompt_temp_mst_path = str(Path(mst_folder_path) / prompt_template_mst_file)
 # Agent JSON cache (file path -> data)
 _agent_cache = {}
 
+# Support-agent renumbering compatibility (2026-08 reorg).
+# The bands were reorganised so that a derivative's number is always
+# `generic + 20` (2X→4X user-facing, 5X→7X knowledge/RAG, 6X→8X
+# dialogue/persona). Saved sessions, other users' private agent JSONs
+# (0X/3X/7X/8X/9X/AX/RX are gitignored, so they are invisible to this
+# repo) and personal practice files still reference the old filenames —
+# resolve those transparently instead of breaking them. Safe to drop
+# once the deprecation window closes.
+AGENT_FILE_ALIASES = {
+    # 2X — user-facing generic agents
+    "agent_52ArtCritic.json":                   "agent_24ArtCritic.json",
+    "agent_53CompareTexts.json":                "agent_25CompareTexts.json",
+    # 4X — derivatives of 2X
+    "agent_71DigiMEthicalCheck.json":           "agent_41DigiMEthicalCheck.json",
+    # 5X — knowledge retrieval & interpretation
+    "agent_58Thinking.json":                    "agent_50Thinking.json",
+    "agent_56RAGQueryGenerator.json":           "agent_5AQGenUserIntent.json",
+    "agent_51RAGQueryGenerator.json":           "agent_5AQGenUserIntent.json",
+    "agent_5ARAGQueryGenerator.json":           "agent_5AQGenUserIntent.json",
+    "agent_5AFactQueryGenerator.json":          "agent_5BQGenGeneralKeywords.json",
+    "agent_52FactQueryGenerator.json":          "agent_5BQGenGeneralKeywords.json",
+    "agent_5BFactQueryGenerator.json":          "agent_5BQGenGeneralKeywords.json",
+    "agent_55MetaExtract.json":                 "agent_53MetaExtract.json",
+    "agent_55ExtractDate.json":                 "agent_54ExtractDate.json",
+    "agent_59PageIndexSearch.json":             "agent_55PageIndexSearch.json",
+    "agent_67GraphExtract.json":                "agent_56GraphExtract.json",
+    "agent_63KnowledgeInterpret.json":          "agent_57KnowledgeInterpret.json",
+    # 6X — dialogue / session / persona
+    "agent_51DialogDigest.json":                "agent_60DialogDigest.json",
+    "agent_57SessionName.json":                 "agent_61SessionName.json",
+    "agent_65SessionSummary.json":              "agent_62SessionSummary.json",
+    "agent_50PersonaMerge.json":                "agent_64PersonaMerge.json",
+    "agent_54PersonaSelector.json":             "agent_65PersonaSelector.json",
+    "agent_60UserMemoryPersona.json":           "agent_66UserMemoryPersona.json",
+    "agent_61UserMemoryNowaday.json":           "agent_67UserMemoryNowaday.json",
+    "agent_62UserMemoryHistory.json":           "agent_68UserMemoryHistory.json",
+    "agent_66Evaluation.json":                  "agent_69Evaluation.json",
+    # 7X — derivatives of 5X (70DigiMThinking already matches 50+20)
+    "agent_76DigiMRAGQueryGenerator.json":      "agent_7ADigiMQGenUserIntent.json",
+    "agent_71DigiMRAGQueryGenerator.json":      "agent_7ADigiMQGenUserIntent.json",
+    "agent_7ADigiMRAGQueryGenerator.json":      "agent_7ADigiMQGenUserIntent.json",
+    "agent_75DigiMExtractDate.json":            "agent_74DigiMExtractDate.json",
+    "agent_78DigiMKnowledgeInterpret.json":     "agent_77DigiMKnowledgeInterpret.json",
+    "agent_80DigiMKnowledgeUsageSelector.json": "agent_78DigiMKnowledgeUsageSelector.json",
+    # 8X — derivatives of 6X
+    "agent_79DigiMCitationInject.json":         "agent_83DigiMCitationInject.json",
+}
+
+
+def resolve_agent_file(agent_file):
+    """Map a legacy agent filename onto its current name. The alias only
+    applies when the requested file is genuinely absent, so a user who
+    keeps their own file under an old number still wins."""
+    if not agent_file:
+        return agent_file
+    if os.path.exists(str(Path(agent_folder_path) / agent_file)):
+        return agent_file
+    return AGENT_FILE_ALIASES.get(agent_file, agent_file)
+
+
+class SupportAgentRef(str):
+    """A support-agent filename that also carries an inheritance overlay
+    taken from the parent (main) agent.
+
+    Subclasses `str` on purpose: every existing consumer — `if not
+    agent_file`, log dicts, `json.dumps`, `os.path.exists`, dict keys —
+    keeps treating it as the plain filename, so the overlay rides along
+    without touching the ~10 tool entry points that pass it through."""
+    def __new__(cls, agent_file, overlay=None):
+        obj = super().__new__(cls, str(agent_file))
+        obj.overlay = overlay or {}
+        return obj
+
+
+def support_agent_file(entry):
+    """Plain filename for a SUPPORT_AGENT entry (str or dict form)."""
+    if isinstance(entry, dict):
+        return entry.get("AGENT_FILE") or ""
+    return entry or ""
+
+
+def resolve_support_agent(entry, parent_agent_data=None):
+    """Turn a SUPPORT_AGENT entry into something `DigiM_Agent(...)` accepts.
+
+    Entry forms:
+        "agent_50Thinking.json"                       # as before, no inheritance
+        {"AGENT_FILE": "agent_50Thinking.json",
+         "INHERIT": {"PERSONALITY": ["CHARACTER"],     # true = every field
+                     "KNOWLEDGE":  ["Identity"],       # RAG_NAMEs to ADD
+                     "BOOK":       ["History"]}}
+
+    PERSONALITY fields are copied over the support agent's own values;
+    KNOWLEDGE / BOOK entries are **appended** (never replacing what the
+    support agent already declares) and de-duplicated by RAG_NAME. This
+    lets a generic support agent borrow the main agent's character and
+    knowledge instead of maintaining a hand-copied derivative."""
+    name = support_agent_file(entry)
+    inherit = entry.get("INHERIT") if isinstance(entry, dict) else None
+    if not name or not inherit or not isinstance(parent_agent_data, dict):
+        return name
+
+    overlay = {}
+    _p_pers = parent_agent_data.get("PERSONALITY") or {}
+    _fields = inherit.get("PERSONALITY")
+    if _fields and _p_pers:
+        if _fields is True:
+            overlay["PERSONALITY"] = dict(_p_pers)
+        elif isinstance(_fields, (list, tuple)):
+            _sel = {k: _p_pers[k] for k in _fields if k in _p_pers}
+            if _sel:
+                overlay["PERSONALITY"] = _sel
+
+    for _sec in ("KNOWLEDGE", "BOOK"):
+        _want = inherit.get(_sec)
+        if not _want:
+            continue
+        _src = parent_agent_data.get(_sec) or []
+        if _want is True:
+            _add = list(_src)
+        else:
+            _names = set(_want)
+            _add = [e for e in _src
+                    if isinstance(e, dict) and e.get("RAG_NAME") in _names]
+        if _add:
+            overlay[_sec] = _add
+
+    return SupportAgentRef(name, overlay) if overlay else name
+
+
+def _apply_support_overlay(agent_data, overlay):
+    """Merge a `SupportAgentRef.overlay` onto freshly-loaded agent data."""
+    if not overlay:
+        return agent_data
+    _pers = overlay.get("PERSONALITY")
+    if _pers:
+        merged = dict(agent_data.get("PERSONALITY") or {})
+        merged.update(_pers)
+        agent_data["PERSONALITY"] = merged
+    for _sec in ("KNOWLEDGE", "BOOK"):
+        _add = overlay.get(_sec)
+        if not _add:
+            continue
+        existing = list(agent_data.get(_sec) or [])
+        seen = {e.get("RAG_NAME") for e in existing if isinstance(e, dict)}
+        for e in _add:
+            if isinstance(e, dict) and e.get("RAG_NAME") in seen:
+                continue
+            existing.append(e)
+            if isinstance(e, dict):
+                seen.add(e.get("RAG_NAME"))
+        agent_data[_sec] = existing
+    return agent_data
+
+
 def _read_agent_json(agent_file):
     """Load the agent JSON with caching (return a deep copy so caller mutations do not pollute the cache)."""
     # Guard against empty / whitespace-only agent_file: `Path(folder) / ""`
@@ -30,6 +184,7 @@ def _read_agent_json(agent_file):
     # uniformly.
     if not agent_file or not str(agent_file).strip():
         raise FileNotFoundError("Agent file name is empty")
+    agent_file = resolve_agent_file(agent_file)
     path = str(Path(agent_folder_path) / agent_file)
     if not os.path.exists(path) or os.path.isdir(path):
         raise FileNotFoundError(f"Agent file not found: {path}")
@@ -280,6 +435,11 @@ def _apply_persona(agent_data, persona):
 class DigiM_Agent:
     def __init__(self, agent_file, persona=None):
         agent_data = _read_agent_json(agent_file)
+        # A SupportAgentRef carries PERSONALITY / KNOWLEDGE / BOOK inherited
+        # from the main agent (see resolve_support_agent). Applied before
+        # persona so an explicit persona still wins on PERSONALITY.
+        agent_data = _apply_support_overlay(
+            agent_data, getattr(agent_file, "overlay", None))
         if persona:
             agent_data = _apply_persona(agent_data, persona)
             self.persona_id = persona.get("persona_id", "")

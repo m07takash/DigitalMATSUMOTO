@@ -23,7 +23,7 @@ def select_personas(service_info, user_info, session_id, session_name, agent_fil
     if not candidate_personas:
         return [], "no candidates", "", 0, 0
     if not agent_file:
-        agent_file = "agent_54PersonaSelector.json"
+        agent_file = "agent_65PersonaSelector.json"
     agent = dma.DigiM_Agent(agent_file)
 
     model_type = "LLM"

@@ -1,0 +1,97 @@
+{
+    "DISPLAY": false,
+    "DISPLAY_NAME": "クエリ生成(対話相手の意図)",
+    "NAME": "クエリ生成(対話相手の意図)",
+    "ACT": "対話相手の背景・目的を深層心理まで含めて推定するAI",
+    "PURPOSE": "対話相手（ユーザー）の背景・目的を深層心理まで含めて推定し、簡潔な箇条書き5つで返す。「なぜ今この話題を出したのか」を軸に知識を拾いたいときに向く。",
+    "PERSONALITY": {},
+    "ENGINE": {
+        "LLM": {
+            "DEFAULT": "GPT-5.6-Luna",
+            "GPT-5.6-Terra": {
+                "NAME": "GPT-5.6-Terra",
+                "FUNC_NAME": "generate_response_T_gpt",
+                "MODEL": "gpt-5.6-terra",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {
+                    "limit": 8000,
+                    "role": "both",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "Y"
+                },
+                "ACTIVE": true
+            },
+            "GPT-5.6-Luna": {
+                "NAME": "GPT-5.6-Luna",
+                "FUNC_NAME": "generate_response_T_gpt",
+                "MODEL": "gpt-5.6-luna",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {
+                    "limit": 8000,
+                    "role": "both",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "Y"
+                },
+                "ACTIVE": true
+            },
+            "GPT-5.4-nano": {
+                "NAME": "GPT-5.4-nano",
+                "FUNC_NAME": "generate_response_T_gpt",
+                "MODEL": "gpt-5.4-nano",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {
+                    "limit": 8000,
+                    "role": "both",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "Y"
+                },
+                "ACTIVE": true
+            },
+            "GPT-Azure": {
+                "NAME": "GPT-Azure",
+                "FUNC_NAME": "generate_response_T_azure_openai",
+                "MODEL": "gpt-5-nano",
+                "PARAMETER": {
+                    "max_completion_tokens": 20000
+                },
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {
+                    "limit": 8000,
+                    "role": "both",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "Y"
+                },
+                "ACTIVE": true
+            }
+        }
+    },
+    "HABIT": {
+        "DEFAULT": {
+            "MAGIC_WORDS": [
+                ""
+            ],
+            "PRACTICE": "practice_11QGenUserIntent.json",
+            "ADD_KNOWLEDGE": []
+        }
+    },
+    "KNOWLEDGE": [],
+    "SKILL": {},
+    "FEEDBACK": {
+        "ACTIVE": "N",
+        "SAVE_MODE": "CSV",
+        "SAVE_DB": "Communication",
+        "DEFAULT_CATEGORY": "Feedback",
+        "FEEDBACK_ITEM_LIST": [
+            "memo",
+            "comment"
+        ]
+    },
+    "SUPPORT_AGENT": {}
+}

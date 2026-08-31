@@ -22,7 +22,7 @@ _INPUT_TEXT = {
 def dialog_digest(service_info, user_info, session_id, session_name, agent_file,
                   user_query, import_contents=[], add_info={}):
     if not agent_file:
-        agent_file = "agent_51DialogDigest.json"
+        agent_file = "agent_60DialogDigest.json"
     agent = dma.DigiM_Agent(agent_file)
 
     model_type = "LLM"
@@ -93,7 +93,7 @@ def dialog_digest(service_info, user_info, session_id, session_name, agent_file,
 def gene_session_name(service_info, user_info, session_id, session_name, agent_file,
                      user_query, import_contents=[], add_info={}):
     if not agent_file:
-        agent_file = "agent_57SessionName.json"
+        agent_file = "agent_61SessionName.json"
     agent = dma.DigiM_Agent(agent_file)
 
     model_type = "LLM"
@@ -135,7 +135,7 @@ def gene_session_name(service_info, user_info, session_id, session_name, agent_f
 def dialog_persona_merge(service_info, user_info, session_id, session_name, agent_file,
                           user_query, persona_responses, summary_level="medium"):
     if not agent_file:
-        agent_file = "agent_50PersonaMerge.json"
+        agent_file = "agent_64PersonaMerge.json"
     agent = dma.DigiM_Agent(agent_file)
 
     model_type = "LLM"

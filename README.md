@@ -692,7 +692,7 @@ CosmosDB モードで起動しつつパッケージが未インストールの�
 ```json
 "THINKING": {
     "MODE": true,
-    "TARGETS": ["Habit", "RAG Query", "Books", "Tools"],
+    "TARGETS": ["Habit", "RAG Query", "Books", "Skills"],
     "MAX_TURNS": 1
 }
 ```
@@ -761,7 +761,7 @@ RAGデータの構築は「データの準備」→「RAGマスターの設定�
 
 ##### META_SEARCH（汎用メタ検索：期間 / カテゴリ / 数値 / 部分一致でボーナス）
 
-KNOWLEDGE / BOOK の各 `DATA` 要素に `META_SEARCH.CONDITIONS[]` を書くと、支援エージェント `META_EXTRACT`（`agent_55MetaExtract.json`）がユーザークエリから各条件の値を 1 コールで抽出し、該当したチャンクに BONUS 倍率を乗せて類似度を調整します（`BONUS < 1` は boost、`> 1` は penalty。複数条件がヒットすると倍率が積み上がる）。旧形式 `"META_SEARCH": {"CONDITION":["DATE"],"BONUS":0.5}` は起動時に自動変換されるので既存 JSON は無修正で動きます。
+KNOWLEDGE / BOOK の各 `DATA` 要素に `META_SEARCH.CONDITIONS[]` を書くと、支援エージェント `META_EXTRACT`（`agent_53MetaExtract.json`）がユーザークエリから各条件の値を 1 コールで抽出し、該当したチャンクに BONUS 倍率を乗せて類似度を調整します（`BONUS < 1` は boost、`> 1` は penalty。複数条件がヒットすると倍率が積み上がる）。旧形式 `"META_SEARCH": {"CONDITION":["DATE"],"BONUS":0.5}` は起動時に自動変換されるので既存 JSON は無修正で動きます。
 
 ```json
 "META_SEARCH": {
@@ -1084,7 +1084,7 @@ WebUIのサイドバー **RAG Management → Page Index Export** から、既存
   "data_name": "DigiMATSU_Memo",
   "bucket": "DigiMATSU_Identity_Graph",
   "file_path": "user/common/rag/graph/digimatsu_identity/",
-  "extractor_agent": "agent_67GraphExtract.json",
+  "extractor_agent": "agent_56GraphExtract.json",
   "item_dict": {
     "db": "DigiMATSU_Identity_Graph",
     "title":       {"名前": "title"},
@@ -1105,7 +1105,7 @@ WebUIのサイドバー **RAG Management → Page Index Export** から、既存
 |------|------|
 | `data_type` | `graph` を指定。retriever 側は `resolve_graph_dir()` がここを見て graph フォルダを解決 |
 | `file_path` | graph フォルダ (`graph.json`/`mapping.json`/`dictionary.json`/`source/` の親) |
-| `extractor_agent` | Lane B (LLM 抽出) で使うサポートエージェント (既定: `agent_67GraphExtract.json`) |
+| `extractor_agent` | Lane B (LLM 抽出) で使うサポートエージェント (既定: `agent_56GraphExtract.json`) |
 | `chk_dict` | Notion 側のプル条件。ChromaDB エントリと **RAGChk を共有しない** ため graph 側は `確定Chk` のみ、または Notion に別カラム (例: `GraphChk`) を作って分離 |
 | `fin_flg` | 完了フラグの Notion 側書き戻し。graph は `graph.json.edge.source_ids` を突合キーに **自己 dedup** するため空 `{}` でも冪等 |
 
@@ -1140,6 +1140,26 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/{DATA_NAME} --use-llm --embe
 ### エージェントの設定
 
 `user/common/agent/` 配下にエージェント定義JSONを配置します。`agent_10Sample.json` をコピーしてカスタマイズするのが推奨です。
+
+##### ファイル名の番号帯
+
+`agent_<2桁><Name>.json`。番号帯は **「配布物か私物か」** と **「派生は generic + 20」** の2軸で決まります。
+
+| 帯 | 役割 | git |
+|---|---|---|
+| `0X` | メインエージェント本体（`0A` = API 版） | 私物 |
+| `1X` | Sample／テンプレート | 配布 |
+| `2X` | ユーザーに見える汎用エージェント（`20Default` `21EthicalCheck` `22SenryuSensei` `23DataAnalyst` `24ArtCritic` `25CompareTexts`） | 配布 |
+| `4X` | **2X の派生**（`41DigiMEthicalCheck`） | 私物 |
+| `5X` | **知識の取得と解釈（RAG パイプライン）** — `50Thinking` `53MetaExtract` `54ExtractDate` `55PageIndexSearch` `56GraphExtract` `57KnowledgeInterpret`（`51` `52` `58` `59` は予約）<br>**`5A` 以降は RAG クエリ生成の専用ブロック** — `5ARAGQueryGenerator` `5BFactQueryGenerator` …（切り口ごとに増える想定なので連番で伸ばす） | 配布 |
+| `6X` | **対話・セッション・人格** — `60DialogDigest` `61SessionName` `62SessionSummary` `64PersonaMerge` `65PersonaSelector` `66UserMemoryPersona` `67UserMemoryNowaday` `68UserMemoryHistory` `69Evaluation`（`63` は予約） | 配布 |
+| `7X` | **5X の派生**（`70DigiMThinking` `74DigiMExtractDate` `77DigiMKnowledgeInterpret` `78DigiMKnowledgeUsageSelector` `7ADigiMRAGQueryGenerator`） | 私物 |
+| `8X` | **6X の派生**（`83DigiMCitationInject`） | 私物 |
+| `AX` / `RX` | 他人格エージェント / シリーズ物 | 私物 |
+
+「私物」の帯は `.gitignore` で除外されているので、**各ユーザーが自分の派生エージェントを自由に置ける枠**です。帯が埋まったら `5A` `6A` のように16進サフィックスで伸ばします（`0A` の前例に倣う）。**派生の対応は「先頭桁 +2、2文字目は据え置き」**（`50`→`70`、`5A`→`7A`、`63`→`83`）。
+
+> **リネーム時の後方互換**: 支援エージェントをリネームすると、保存済みセッションの `setting.agent_file` や、他ユーザーの私物エージェントの `SUPPORT_AGENT` 参照が壊れます。`DigiM_Agent.AGENT_FILE_ALIASES`（旧名 → 新名）に登録すると、ファイルが見つからないときだけ自動で読み替えられます。2026-08 の番号帯再編分は登録済みです。
 
 #### PERSONALITY（性格設定）
 
@@ -1279,7 +1299,7 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/{DATA_NAME} --use-llm --embe
 ```json
 "THINKING": {
     "MODE": true,
-    "TARGETS": ["Habit", "RAG Query", "Books", "Tools"],
+    "TARGETS": ["Habit", "RAG Query", "Books", "Skills"],
     "MAX_TURNS": 1
 }
 ```
@@ -1289,10 +1309,10 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/{DATA_NAME} --use-llm --embe
 **Thinking Targets の候補フィルタ**（UI レンダリング時）:
 - `Habit` / `RAG Query` / `Web Search`: 常に表示
 - `Books`: `BOOK` があるときのみ
-- `Tools`: `SKILL.TOOL_LIST` が非空のときのみ
+- `Skills`: `SKILL.TOOLS` / `SKILL.TOOL_LIST` が非空のときのみ
 - `Personas`: `ORG` があるときのみ
 
-**Tools ターゲット**: Thinking Agent が SKILL リストの `- name: description` を見て SKILL 名を配列で返します（`tools` キーは互換維持）。返された SKILL は、`SKILL.TOOLS[name].PHASE` に従って **BEFORE / CONTEXT / AFTER のいずれかで自動発火** します。`HABIT.TOOL_PICK` を経由する旧設計は廃止（下の SKILL 節を参照）。
+**Skills ターゲット**: Thinking Agent が SKILL リストの `- name: description` を見て SKILL 名を配列で返します（`tools` キーは互換維持）。返された SKILL は、`SKILL.TOOLS[name].PHASE` に従って **BEFORE / CONTEXT / AFTER のいずれかで自動発火** します。`HABIT.TOOL_PICK` を経由する旧設計は廃止（下の SKILL 節を参照）。
 
 **`web_search` フラグ vs `tools[]` の衝突対策**: Thinking Agent の判定に `web_search: true` と `tools: []` の二重路が存在するため、時事系クエリでは `web_search: true` が採用されて Tools 経路が発火しないことがあります。プロンプト側で「ToolInfo に WebSearch 系 SKILL があるなら必ず tools[] に入れて `web_search: false`」ルールを明示 + コード側で条件が揃えば `tools=["WebSearch"]` に自動昇格します（`reasoning` に `[auto-promoted: ...]` 追記、Detail Information で確認可能）。
 
@@ -1415,26 +1435,31 @@ SKILL は **HABIT とは完全に独立した補助能力**（外部 API・関�
 - **CONTEXT**: HABIT の practice 実行前に走り、**結果を reference material としてラップして `user_query` に append**（既存の Web Search 経路と同形）。RAG クエリ生成 + メイン LLM の入力の両方に反映される。Web 検索・ドキュメント検索を想定
 - **AFTER**: HABIT の応答生成後に走る。**HABIT の応答を入力**として受け取る。**会話履歴に別 sub_seq として保存**
 
-**SKILL の起動パス（3 段構え、優先順・マージ実行）**:
+**SKILL の起動パス（4 段構え、優先順・マージ実行）**:
 - **1. Slash command**: `/<name> <query>` — SKILL 名がヒットしたら、そのエントリの PHASE で発火。`<query>` は HABIT の user_query として使われる（rest-of-line）
-- **2. `SKILL.TOOLS[name].MAGIC_WORDS` マッチ**: ユーザーのクエリに magic word が含まれていれば無条件で発火（HABIT.MAGIC_WORDS と同じ発想。「そのスキルを呼ぶ自然表現」を書いておく）
-- **3. Thinking Mode**: `Thinking Targets` に `Tools` を含めると Thinking Agent が SKILL の `description` を見て選定
-- **同時使用可 & dedup**: 上記 3 経路が同じ SKILL を選んでも **1 回だけ実行**。順序は slash → magic → thinking
+- **2. SKILL マルチセレクト（Thinking Mode OFF 時のみ表示）**: Conversation Settings の BOOK の下に **`SKILL`** マルチセレクトが出ます。選んだ SKILL はそのターンで登録済み PHASE で発火。選択肢は `名前 (PHASE)` 形式で、Temporary Override で無効化した SKILL は出てきません
+- **3. `SKILL.TOOLS[name].MAGIC_WORDS` マッチ**: ユーザーのクエリに magic word が含まれていれば無条件で発火（HABIT.MAGIC_WORDS と同じ発想。「そのスキルを呼ぶ自然表現」を書いておく）
+- **4. Thinking Mode**: `Thinking Targets` に `Skills` を含めると Thinking Agent が SKILL の `description` を見て選定。Thinking Mode ON のときは上記 2 のマルチセレクトは非表示になります
+- **同時使用可 & dedup**: 上記 4 経路が同じ SKILL を選んでも **1 回だけ実行**。順序は slash → 手動選択 → magic → thinking
+
+**`WEB Search` チェックボックス と `WebSearch` SKILL の関係**: Thinking Mode OFF のとき、Conversation Settings には Web 検索の入口が 2 つ並びます — Row 4 の **`WEB Search` チェックボックス**（`execution.WEB_SEARCH` の組込み経路）と、SKILL マルチセレクトの **`WebSearch (CONTEXT)`**（SKILL 経路）。**両方選んでも Web 検索は 1 回だけ**走ります: CONTEXT SKILL の WebSearch 系（`WebSearch` / `WebSearch_*`）が実行済みなら、組込み経路は自動でスキップされます（`prompt.web_search.skipped_reason` / `skipped_by` に記録）。SKILL 側を優先するのは、そちらが PHASE と `ARGS_HINT` を持っていて制御が効くためです。どちらか片方だけ選べば従来どおりその経路で走ります。
 
 **`agent_10Sample.json` に登録済みの 5 サンプル SKILL**（Eight ペルソナ向け）:
 
 | SKILL | PHASE | 用途 | MAGIC_WORDS |
 |---|---|---|---|
 | `WebSearch` | CONTEXT | 時事情報の Web 検索 | (Thinking / slash 経由) |
-| `recall_similar_experience` | BEFORE | Vector KNOWLEDGE から自分の類似経験を思い出す | 「似た経験」「類似した経験」「過去に似た」「思い出したい」 |
-| `analyze_attachment` | BEFORE | 添付 CSV/TXT/MD の統計特徴を抽出 | 「添付を分析」「この資料を分析」「このデータの特徴」 |
-| `mood_score` | AFTER | ユーザーとアシスタントの Plutchik 8 感情スコア | 「感情スコア」「今の気持ちを表示」「感情を見せて」 |
-| `self_critique` | AFTER | 自分の応答に対する 3 軸のセルフクリティーク | 「自分の回答に反論」「批判的に検討」「セルフクリティーク」 |
-| `translate_response` | AFTER | 応答を指定言語 (既定英語) に翻訳 | 「英訳して」「英語に翻訳」「translate to English」 |
-| `slide_deck_prompt` | AFTER | 応答を PowerPoint 化するときの構成を、**スライド生成 AI (Gamma/Beautiful.AI/Canva Magic Studio/PowerPoint Copilot) 向けの投入プロンプト**として作成 | 「スライドにまとめて」「パワポで」「PowerPointで」「プレゼン資料にまとめる」「スライドAI向け」 |
+| `recall_similar_experience` | BEFORE | Vector KNOWLEDGE から自分の類似経験を思い出す | 「過去の似た経験を思い出してください。」「似た経験を振り返ってください。」 |
+| `analyze_attachment` | BEFORE | 添付 CSV/TXT/MD の統計特徴を抽出 | 「添付データを分析してください。」「添付ファイルの特徴を分析してください。」 |
+| `mood_score` | AFTER | ユーザーとアシスタントの Plutchik 8 感情スコア | 「感情スコアを表示してください。」「お互いの感情を分析してください。」 |
+| `self_critique` | AFTER | 自分の応答に対する 3 軸のセルフクリティーク | 「自分の回答を批判的に検討してください。」「セルフクリティークしてください。」 |
+| `translate_response` | AFTER | 応答を指定言語 (既定英語) に翻訳 | 「回答を英訳してください。」「回答を英語に翻訳してください。」 |
+| `slide_deck_prompt` | AFTER | 応答を PowerPoint 化するときの構成を、**スライド生成 AI (Gamma/Beautiful.AI/Canva Magic Studio/PowerPoint Copilot) 向けの投入プロンプト**として作成 | 「スライド構成を作成してください。」「プレゼン資料の構成を作成してください。」 |
 
 いずれも「常時発火」ではなく、**上記トリガーが揃った時だけ選定される**設計。tool の `description` に `Use ONLY when...` を明記しているため、Thinking Agent もむやみに拾いません。
 
+
+**MAGIC_WORDS は明示的な命令文で書く**: 「英訳して」「パワポで」のような断片は通常の会話でも現れるため、SKILL が乱発します。HABIT の `エシカルチェックしてください。` `川柳を詠んでください。` と同じく、**「〜してください。」まで含んだ文**にして誤発火を防ぎます。曖昧な発火は Thinking Mode に任せる方が安全です。
 **旧設計の廃止**: `HABIT.TOOL_PICK` エントリと `practice_55ToolPick.json` は不要になりました。既存エージェント JSON から `HABIT.TOOL_PICK` は削除済み。旧 `SKILL.TOOL_LIST` + `INACTIVE_TOOLS` シェイプも自動変換されて動作（全て `PHASE: "CONTEXT"` として import）。
 
 **永続化 & 表示**:
@@ -1445,7 +1470,7 @@ SKILL は **HABIT とは完全に独立した補助能力**（外部 API・関�
 
 **CONTEXT SKILL の Reference material ラッピング**: LLM がツール結果を「口調はペルソナで、固有名詞・数字・日付は忠実に、段落丸ごとコピーは NG、`[1][2]` マーカーは引用に活用可」で扱うよう指示する guardrail 文言でラップされます。built-in Web Search 側も同じ文言に統一済み。
 
-**Thinking Targets の `Tools` オプション露出条件**: 新 `SKILL.TOOLS` (dict) または旧 `SKILL.TOOL_LIST` (list) の**どちらか一方でも非空**なら multiselect に自動追加。`THINKING_TARGETS.tools` フラグの既定値は他フラグと同様 `True`（キー欠落時は tool 経路を honor する保守的 default）。
+**Thinking Targets の `Skills` オプション露出条件**: 新 `SKILL.TOOLS` (dict) または旧 `SKILL.TOOL_LIST` (list) の**どちらか一方でも非空**なら multiselect に自動追加（旧称 `Tools` の JSON も読み込み時に `Skills` へ正規化）。`THINKING_TARGETS.tools` フラグの既定値は他フラグと同様 `True`（キー欠落時は tool 経路を honor する保守的 default）。
 
 #### FEEDBACK（フィードバック設定）
 
@@ -1501,13 +1526,13 @@ Notion保存時は `notion_name` でプロパティ名を個別に指定でき�
 
 ```json
 "SUPPORT_AGENT": {
-  "DIALOG_DIGEST": "agent_51DialogDigest.json",
-  "ART_CRITICS": "agent_52ArtCritic.json",
-  "EXTRACT_DATE": "agent_55ExtractDate.json",
-  "RAG_QUERY_GENERATOR": "agent_56RAGQueryGenerator.json",
-  "THINKING": "agent_58Thinking.json",
-  "KNOWLEDGE_INTERPRET": "agent_78DigiMKnowledgeInterpret.json",
-  "CITATION_INJECT": "agent_79DigiMCitationInject.json"
+  "DIALOG_DIGEST": "agent_60DialogDigest.json",
+  "ART_CRITICS": "agent_24ArtCritic.json",
+  "EXTRACT_DATE": "agent_54ExtractDate.json",
+  "RAG_QUERY_GENERATOR": "agent_5AQGenUserIntent.json",
+  "THINKING": "agent_50Thinking.json",
+  "KNOWLEDGE_INTERPRET": "agent_77DigiMKnowledgeInterpret.json",
+  "CITATION_INJECT": "agent_83DigiMCitationInject.json"
 }
 ```
 
@@ -1517,14 +1542,99 @@ Notion保存時は `notion_name` でプロパティ名を個別に指定でき�
 | `ART_CRITICS` | 画像生成後の解説・批評を生成 |
 | `EXTRACT_DATE` | ユーザー入力から日付情報を抽出（RAGのメタデータ検索に使用）。**汎用の `META_EXTRACT` が登録されていない場合の後方互換パス** |
 | `META_EXTRACT` | 汎用メタ抽出（`DATE` / `CATEGORY` / `NUMBER` / `TEXT` を 1 コールで抽出）。登録すると `EXTRACT_DATE` より優先されます。`META_SEARCH.CONDITIONS[]` の `EXTRACTOR` キーごとに値を返す JSON を生成 |
-| `RAG_QUERY_GENERATOR` | ユーザー入力からRAG検索用の補助クエリを生成 |
-| `THINKING` | ユーザーの質問を分析し、Habit選択・Web検索・RAGクエリ生成・Book追加・**Tool呼び出し** を動的に判定（Thinking Mode有効時）。Thinking Targets に `Tools` を含めているとき、Thinking Agent は `SKILL.TOOL_LIST` の各 tool 名 + description を見て「この質問にどの tool を呼ぶか」を判定し、選ばれた場合は自動で HABIT を `TOOL_PICK` に切り替えて engine-agnostic dispatcher に narrow 済み tool リストを渡す（`in_execution["_THINKING_TOOL_LIST"]` 経由）。**マルチターン対応**: `Max Thinking Turns > 1` にすると、各ターンの Thinking JSON の `sufficient=false` を検知して**予備 Web 検索**を実行 → 結果を次ターンの Thinking プロンプトに渡す B型ループ が動作。`sufficient=true` か上限到達で break。予備検索は `_WEB_SEARCH_CACHE` 経由でメイン応答パスに流用（二重発火なし）。<br>**プロンプトテンプレの placeholder**: `PROMPT_TEMPLATE.Thinking Agent` は `{PreviousThinking}` (前ターンの判定 JSON) と `{WebSearchPreview}` (予備検索結果テキスト) を含み、[user/common/tool/thinking.py](user/common/tool/thinking.py) が実行時に `.replace()` で差し込みます。カスタマイズする際はこの2つの placeholder を残してください（削除すると 2ターン目以降が前情報無しで走ることになります）。出力 JSON にも `sufficient` フィールドを含めることが必須 |
+| `RAG_QUERY_GENERATOR` | ユーザー入力からRAG検索用の補助クエリを生成。**単一の文字列でも、複数ジェネレータの配列でも指定可**（下記「複数 RAG クエリジェネレータ」参照） |
+| `THINKING` | ユーザーの質問を分析し、Habit選択・Web検索・RAGクエリ生成・Book追加・**Tool呼び出し** を動的に判定（Thinking Mode有効時）。Thinking Targets に `Skills` を含めているとき、Thinking Agent は SKILL 一覧の名前 + description を見て「この質問にどの tool を呼ぶか」を判定し、選ばれた場合は自動で HABIT を `TOOL_PICK` に切り替えて engine-agnostic dispatcher に narrow 済み tool リストを渡す（`in_execution["_THINKING_TOOL_LIST"]` 経由）。**マルチターン対応**: `Max Thinking Turns > 1` にすると、各ターンの Thinking JSON の `sufficient=false` を検知して**予備 Web 検索**を実行 → 結果を次ターンの Thinking プロンプトに渡す B型ループ が動作。`sufficient=true` か上限到達で break。予備検索は `_WEB_SEARCH_CACHE` 経由でメイン応答パスに流用（二重発火なし）。<br>**プロンプトテンプレの placeholder**: `PROMPT_TEMPLATE.Thinking Agent` は `{PreviousThinking}` (前ターンの判定 JSON) と `{WebSearchPreview}` (予備検索結果テキスト) を含み、[user/common/tool/thinking.py](user/common/tool/thinking.py) が実行時に `.replace()` で差し込みます。カスタマイズする際はこの2つの placeholder を残してください（削除すると 2ターン目以降が前情報無しで走ることになります）。出力 JSON にも `sufficient` フィールドを含めることが必須 |
 | `KNOWLEDGE_INTERPRET` | Analytics Results - Knowledge Utility の「LLM解釈」ボタンが押されたときに、CSV/類似度ランク（+任意で散布図画像）を読んで「全体構成と今回の選択傾向」「貢献度分析（回答距離−質問距離）」「注目点・改善示唆」を返す（バックデータ中心・Vision任意） |
 | `CITATION_INJECT` | 本回答生成後、Web検索URLとBOOKチャンクを引用ソースとして `[N]` マーカーを本文末文に挿入し、末尾に `## References` セクションを付与する。Web検索URL or BOOKチャンクのどちらかが使われていれば自動発火（KNOWLEDGE は対象外）。デフォルトは Claude-Haiku-4.5 等の軽量モデル。LLM失敗時は本文不変で References のみ追加するフォールバックあり。**LLM出力に `[N]` マーカーも `## References` も含まれない場合は「対応関係なし」とみなして元の本文をそのまま維持**（LLMが弁解文を返しても元回答が守られる） |
+
+##### サポートエージェントへのメインエージェント継承（`INHERIT`）
+
+`SUPPORT_AGENT` の各エントリは**文字列（従来どおり）**に加えて **dict 形式**が書けます。dict にすると、**メインエージェントの PERSONALITY の一部**と、**指定した KNOWLEDGE / BOOK**をそのサポートエージェントに引き継げます。
+
+```json
+"SUPPORT_AGENT": {
+    "THINKING": {
+        "AGENT_FILE": "agent_50Thinking.json",
+        "INHERIT": {
+            "PERSONALITY": ["CHARACTER", "SPEAKING_STYLE"],
+            "KNOWLEDGE": ["Identity", "Style"],
+            "BOOK": ["History"]
+        }
+    },
+    "RAG_QUERY_GENERATOR": [
+        {"AGENT_FILE": "agent_5AQGenUserIntent.json",
+         "INHERIT": {"PERSONALITY": ["CHARACTER"], "KNOWLEDGE": ["Identity"]}},
+        "agent_5BQGenGeneralKeywords.json"
+    ],
+    "DIALOG_DIGEST": "agent_60DialogDigest.json"
+}
+```
+
+| キー | 値 | 意味 |
+|---|---|---|
+| `AGENT_FILE` | str | 呼び出すサポートエージェント |
+| `INHERIT.PERSONALITY` | フィールド名の配列 / `true` | メインの PERSONALITY から指定フィールドを**上書きコピー**。`true` で全フィールド |
+| `INHERIT.KNOWLEDGE` | `RAG_NAME` の配列 / `true` | メインの KNOWLEDGE から該当エントリを**追加**（サポート側が元々持つものは消さない） |
+| `INHERIT.BOOK` | `RAG_NAME` の配列 / `true` | 同上（BOOK） |
+
+**KNOWLEDGE / BOOK は「追加」であって上書きではありません。** サポートエージェント自身が宣言しているエントリはそのまま残り、`RAG_NAME` が重複するものはスキップされます。PERSONALITY だけは指定フィールドを上書きします（ペルソナ実行時はペルソナが優先）。
+
+**何のためか**: 従来は「メインの人格・知識を使わせたい」ために、汎用サポートエージェントを丸ごとコピーした派生（`7X` / `8X` 帯）を手で維持していました。`INHERIT` を使えば **汎用エージェントを直接指定したまま、必要な人格フィールドと知識だけを借りられる**ので、派生ファイルを増やさずに済みます。
+
+**実装メモ**: 解決結果は `DigiM_Agent.SupportAgentRef`（`str` のサブクラス）として渡されます。ファイル名として振る舞うので、ログ出力・`json.dumps`・`os.path.exists`・名前比較といった既存の扱いはそのまま動き、継承情報だけが付随します。文字列エントリのときは `str` のままなので**既存エージェントは完全に無影響**です。
 
 **サポートエージェントの Date 参照**: `THINKING` / `RAG_QUERY_GENERATOR` / `EXTRACT_DATE` などのサポートエージェントは、親エージェント（メインチャット）の Date 設定（Real Date / Custom Date）をそのまま引き継ぎます。ただし親が **No Date** モードのときは、サポートエージェントだけは**現在の実時刻に自動フォールバック**します（「最近」「今の」等の相対表現や `EXTRACT_DATE` の日付範囲解決を成立させるため）。メインの応答（ユーザー向け）は No Date のままなので、ロールプレイやペルソナ設定は壊れません。
 
 **Thinking Mode と Web検索エンジンの関係**: Thinking Agent は原則としてエンジンを指定せず、`setting.yaml` の `WEB_SEARCH_DEFAULT` を尊重します（特定エンジンを推す明確な理由がある場合のみ Thinking が上書き）。ユーザーが WebUI で Web Search を明示的にONにしている場合、Thinking はそれを弱めることはなく、必要に応じてエンジン推奨を追加するだけです。
+
+##### 複数 RAG クエリジェネレータ（クエリのバリエーション × メタ検索）
+
+`RAG_QUERY_GENERATOR` に**配列**でジェネレータを登録すると、それぞれが**異なる切り口の検索クエリを 1 本ずつ生成**し、各クエリが独立した `QUERY_SEQ` としてベクトル検索に投入されます。クエリのバリエーションを増やすことで、[META_SEARCH](#meta_search汎用メタ検索期間--カテゴリ--数値--部分一致でボーナス) の絞り込みと組み合わせたときのベクトル検索の柔軟性・網羅性が上がります。
+
+```json
+"SUPPORT_AGENT": {
+    "RAG_QUERY_GENERATOR": [
+        "agent_7ADigiMQGenUserIntent.json",
+        "agent_5BQGenGeneralKeywords.json"
+    ]
+},
+"RAG_QUERY_GENERATOR_MAX_CALLS": 2
+```
+
+| キー | 意味 |
+|---|---|
+| `SUPPORT_AGENT.RAG_QUERY_GENERATOR` | ジェネレータのエージェントファイル名。**単一文字列（従来形）も配列も可** |
+| `RAG_QUERY_GENERATOR_MAX_CALLS` | 1 ターンで呼ぶジェネレータ数の上限（**既定 `2`**）。`AGENT_SEARCH_MAX_CALLS` と同じトップレベル配置 |
+
+**選定ロジック**（優先順）:
+1. **Thinking Mode** — Thinking Targets に `RAG Query` を含めると、Thinking Agent が各ジェネレータの `PURPOSE` を読んで**質問に合う組合せ**を `rag_query_generators` として返す（上限個数まで）。「似た切り口ばかり選ばず補完的な視点を選べ」とプロンプトで指示済み
+2. **フォールバック（Thinking 未使用時）** — 登録済みジェネレータから**ランダムに上限個数分をサンプリング**。毎回 JSON の先頭 N 個に固定されず、ターンを重ねるうちに登録した切り口を一巡するので、同じ質問でも違う角度の知識が拾えます
+
+どちらで選ばれたかは Detail Information のログ (`selection_mode`: `thinking` / `random`) で確認できます。
+
+**実行**: 選ばれたジェネレータは `ThreadPoolExecutor` で**並列実行**され、全応答をまとめて 1 回の `embed_texts_batch` でベクトル化します（逐次より高速）。1 つが失敗しても他は生き残り、警告ログのみ残します。
+
+**ジェネレータ側の `PURPOSE`**: 各ジェネレータのエージェント JSON トップレベルに `PURPOSE` を書くと、それが Thinking の判断材料になります（`PURPOSE` → `ACT` → `DISPLAY_NAME` のフォールバック順。HABIT / BOOK と同じパターン）。
+
+**同梱ジェネレータ**:
+
+| エージェント | 切り口 |
+|---|---|
+| `agent_5AQGenUserIntent.json` | 背景・動機・深層心理から掘り下げる（汎用） |
+| `agent_7ADigiMQGenUserIntent.json` | デジタルMATSUMOTO の Identity / Style を踏まえた人格寄りの切り口 |
+| `agent_5BQGenGeneralKeywords.json` | 固有名詞・専門用語・同義語・時期/数値条件など**事実側の検索語**を抽出（心理系と組むと網羅性が上がる） |
+
+**可視化**: Knowledge Utility / APE の散布図では `QUERY_SEQ` ごとに色分けされます。`0` = 元の質問（deepskyblue）、`1` = 質問＋会話履歴（blue）、**`2` 以降 = 生成されたクエリのバリエーション（紫系）**。ジェネレータが複数のときは `purple` → `darkviolet` → `mediumorchid` → `indigo` と紫の色相をローテーションするので、どのジェネレータ由来のヒットかを判別できます。
+
+**クエリ自体の位置マーキング**: Analytics Results の散布図には、チャンクだけでなく **各クエリ自身の位置**が番号付きの★マーカーで重ねて描かれます。マーカーの色はチャンクと同じ `QUERY_SEQ` 配色なので、「このクエリの周辺にどのチャンクが集まっているか」を一目で確認できます。
+
+- **投影方法**: PCA はチャンクで学習した空間にクエリを `transform()` で射影。t-SNE は out-of-sample transform が無いため、チャンク＋クエリをまとめて fit してから分離（チャンク座標がわずかに変わります）
+- **凡例**: グラフの**外側（右）**に配置されるのでプロット領域を隠しません。`[番号] 種別: クエリ先頭20文字` の形式で、タイトルに総数 `Queries (N)` を表示。番号は★マーカーの中にも白抜きで描かれるので、凡例と突き合わせなくても識別できます
+- **種別**: `input`（元の入力）/ `input+history`（会話履歴・状況を連結したもの。digest や situation がある場合のみ）/ `intent`（RAG クエリジェネレータの出力、選択された個数分）
+- **保存データ**: クエリベクトルはセッションの `vec/<seq>-<sub_seq>_queries.npy` に、20文字プレビューと種別は `prompt.query.query_labels` に保存されます。この対応が入る前のターンではマーカーは描かれません（後方互換）
+- **日本語表示**: 凡例に日本語が入るため、matplotlib のフォントは `IPAexGothic` / `Noto Sans CJK JP` など**インストール済みの CJK フォントを自動選択**します（無ければ DejaVu Sans にフォールバック）
+
+**トークン内訳**: Detail Information の Token Usage タブでは、ジェネレータごとに `RAG Query Gen #1` / `#2` … と行が分かれて表示されます。
 
 #### BOOK（参考情報）
 
@@ -1561,7 +1671,7 @@ Notion保存時は `notion_name` でプロパティ名を個別に指定でき�
       {
         "DATA_TYPE": "PAGE_INDEX",
         "DATA_NAME": "DigiMPGSystemGuide",
-        "SUPPORT_AGENT": "agent_59PageIndexSearch.json"
+        "SUPPORT_AGENT": "agent_55PageIndexSearch.json"
       }
     ],
     "HEADER_TEMPLATE": "【システムガイド】以下はシステムに関する技術情報です。\n",
@@ -1622,7 +1732,7 @@ Notion保存時は `notion_name` でプロパティ名を個別に指定でき�
 グラフフォルダ（例: `user/common/rag/graph/Sample01_Relations/`）に `mapping.json`（ソース定義）と `dictionary.json`（エイリアス正規化・シード・prop_schema）を置き、取込バッチで `graph.json` を生成します。
 
 - **レーンA（STRUCTURED）**: CSV列 / Notionプロパティ / RDBカラムを列マッピングで**決定的に**変換（LLM不要）。状態（props）・関係列・複数値セル（`;`区切り）・方向指定に対応
-- **レーンB（TEXT）**: 自由文列から `agent_67GraphExtract.json` が三つ組・状態候補をLLM抽出（述語は「評価/懸念/参画/策定」等の具体動詞）
+- **レーンB（TEXT）**: 自由文列から `agent_56GraphExtract.json` が三つ組・状態候補をLLM抽出（述語は「評価/懸念/参画/策定」等の具体動詞）
 - 競合時の優先順位: **STRUCTURED > 辞書シード > TEXT**、同順位は `AS_OF` の新しい方
 - props の値が既存ノード名に一致するとエッジへ**自動昇格**（例: `居住地: 東京` → `--[居住地]--> (東京)`）
 
@@ -1705,7 +1815,7 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/Sample01_Relations
 
 #### レーンBの例：文章からLLMで分解する
 
-台帳が無く、手元にあるのが文章だけのときはレーンBです。`agent_67GraphExtract.json` が本文から三つ組を抜き出します。
+台帳が無く、手元にあるのが文章だけのときはレーンBです。`agent_56GraphExtract.json` が本文から三つ組を抜き出します。
 
 ソースCSV（自由文の列を持つ）:
 
@@ -1798,7 +1908,7 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/Sample01_Relations --use-llm
     "file_path": "user/common/rag/graph/Sample01_Relations/",
     "use_llm": false,
     "embed": false,
-    "extractor_agent": "agent_67GraphExtract.json"
+    "extractor_agent": "agent_56GraphExtract.json"
 }
 ```
 
@@ -1826,7 +1936,7 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/Sample01_Relations --use-llm
     "data_type": "graph",
     "data_name": "DigiMATSU_Memo",
     "file_path": "user/common/rag/graph/digimatsu_identity/",
-    "extractor_agent": "agent_67GraphExtract.json",
+    "extractor_agent": "agent_56GraphExtract.json",
     "item_dict": { ... Notion カラム → chunk フィールドのマップ ... },
     "chk_dict": { "確定Chk": true },
     "category_dict": { "RAGカテゴリ": "identity" },
@@ -1986,7 +2096,7 @@ Practiceの各CHAINステップで、その**ステップだけ**を複数ペル
 
 **Phase 7: ThinkingMode persona auto-select**:
 
-`chain.PERSONAS = "THINKING"` のときは [`agent_54PersonaSelector.json`](user/common/agent/agent_54PersonaSelector.json) が呼ばれ、ユーザーの質問内容に応じて最適なペルソナを **最大N人** 自動選定します:
+`chain.PERSONAS = "THINKING"` のときは [`agent_65PersonaSelector.json`](user/common/agent/agent_65PersonaSelector.json) が呼ばれ、ユーザーの質問内容に応じて最適なペルソナを **最大N人** 自動選定します:
 - **候補プール**: 選択中ORG（WebUIで選んだ1つ）に合致するペルソナ全件
 - **上限N**: WebUIサイドバーの「Max Personas」入力（既定は `setting.yaml` の `MAX_PERSONAS=3`）
 - **選定ロジック**: PersonaSelectorが質問の内容と互いに補完的な視点を持つペルソナを選ぶ。1人で十分なら1人、専門外は除外
@@ -1994,7 +2104,7 @@ Practiceの各CHAINステップで、その**ステップだけ**を複数ペル
 - **Detail Information**: `_THINKING_RESULT.personas_reason` に選定理由が記録される
 
 **サポートエージェント**:
-- `agent_50PersonaMerge.json`: `PERSONA_MERGE="summary"` 時に呼ばれる統合用LLM
+- `agent_64PersonaMerge.json`: `PERSONA_MERGE="summary"` 時に呼ばれる統合用LLM
 - プロンプトテンプレ「Persona Merge」内の `{summary_level}` プレースホルダで要約強度を制御
 - `DigiM_Tool.dialog_persona_merge()` から呼び出し
 
@@ -2074,7 +2184,7 @@ Practiceの各CHAINステップで、その**ステップだけ**を複数ペル
     },
     {
       "TYPE": "LLM",
-      "AGENT_FILE": "agent_52ArtCritic.json",
+      "AGENT_FILE": "agent_24ArtCritic.json",
       "PROMPT_TEMPLATE": "Art Critic",
       "USER_INPUT": "コンテンツについて、これまでの話と関連付けながら300文字程度で解説してください。",
       "CONTENTS": "EXPORT_1",
@@ -2349,7 +2459,7 @@ BOOK と KNOWLEDGE の区別は `agent.agent["BOOK"]` 内の `RAG_NAME` でフ�
 - **デフォルト ON**：`_parse_execution_settings` の `insert_citations` 既定値は `True`。WebUI 上にトグルはありません — 引用ソース（Web URL または BOOK チャンク）が1件以上あれば**自動発火**します。
 - **明示OFF**（API 等）：`execution["INSERT_CITATIONS"] = false` を渡せば無効化可能。
 - **Practice の CHAIN 単位 override**：Practice JSON の `CHAINS[i].SETTING.INSERT_CITATIONS` に `false` を書けば、そのチェーンステップだけ Citation Injector を止められます（例: マルチステップ Practice で「1つ目のチェーンは元の 参照した知識 を保ったまま出力したい／2つ目は最終応答なので Web References を付ける」といった使い分け）。未指定なら親の値を継承 ([DigiM_Execute.py:1500](DigiM_Execute.py))。
-- **エンジン切替**：`SUPPORT_AGENT.CITATION_INJECT` で agent_file を指定。デフォルトは `agent_79DigiMCitationInject.json`（Claude-Haiku-4.5 系）。
+- **エンジン切替**：`SUPPORT_AGENT.CITATION_INJECT` で agent_file を指定。デフォルトは `agent_83DigiMCitationInject.json`（Claude-Haiku-4.5 系）。
 
 #### 多段フォールバック
 
@@ -2873,7 +2983,7 @@ Chat の各ターン下部の「**Detail Information**」エクスパンダは4�
 
 ### セッションサマリー（ユーザー定義のセッション状態文書）
 
-**メモリダイジェストとは別**の、**ユーザーが書式を指定できるセッション状態文書**。対話のたびに軽量LLM (デフォルトは `agent_65SessionSummary.json` → Gemini-3.5-Flash) がバックグラウンドでテンプレートを埋めていき、次以降のプロンプトに `[Current Session Summary]` ブロックとして注入されます。
+**メモリダイジェストとは別**の、**ユーザーが書式を指定できるセッション状態文書**。対話のたびに軽量LLM (デフォルトは `agent_62SessionSummary.json` → Gemini-3.5-Flash) がバックグラウンドでテンプレートを埋めていき、次以降のプロンプトに `[Current Session Summary]` ブロックとして注入されます。
 
 **用途例**:
 - **顧客ヒアリング**: 「会社名 / 担当者 / 課題 / 次アクション」を毎ターン蓄積 → 数ターン後に会社の全体像を Agent が保持している状態を作る
@@ -2898,12 +3008,12 @@ Session Summary の更新と Memory Digest の生成は**別スレッドで完�
 
 **軽量エージェントによる更新**:
 
-デフォルトでは `agent_65SessionSummary.json` (Gemini-3.5-Flash デフォルト) がグローバルフォールバックとして使われるため、**全 Chat エージェントで追加設定不要**で軽量モデルによるサマリー更新が有効になります。特定のエージェントで別モデルを使いたい場合は、そのエージェント JSON の `SUPPORT_AGENT` に:
+デフォルトでは `agent_62SessionSummary.json` (Gemini-3.5-Flash デフォルト) がグローバルフォールバックとして使われるため、**全 Chat エージェントで追加設定不要**で軽量モデルによるサマリー更新が有効になります。特定のエージェントで別モデルを使いたい場合は、そのエージェント JSON の `SUPPORT_AGENT` に:
 
 ```json
 "SUPPORT_AGENT": {
     ...
-    "SESSION_SUMMARY": "agent_65SessionSummary.json"
+    "SESSION_SUMMARY": "agent_62SessionSummary.json"
 }
 ```
 
@@ -3029,7 +3139,7 @@ Chat 画面下部の `Batch Test (upload Q&A xlsx)` エクスパンダから、E
 ### 内部実装メモ
 
 - マルチペルソナ時のみ `MEMORY_SAVE=True` を自動セット（並列パスは `[STATUS]` チャンクしか stream しないため、各ペルソナ応答は chat_memory の sub_seq から読み出す）
-- 評価は `dmt.eval_answer_vs_groundtruth` （`user/common/tool/analysis.py`）。LLM 用エージェントは既定で `agent_53CompareTexts.json`
+- 評価は `dmt.eval_answer_vs_groundtruth` （`user/common/tool/analysis.py`）。LLM 用エージェントは既定で `agent_25CompareTexts.json`
 - LLM 評価は `dmt.critique_batch_results` （同上）
 
 ---
@@ -3082,7 +3192,7 @@ LLM 講評は汎用ヘルパー `DigiM_Evaluation.llm_evaluate()` が `report_md
 1. **Evaluation プラグイン**ドロップダウン
 2. **📎 Sample input: `<filename>`** — サンプル入力ファイル名だけ表示 (絶対パスは非開示、セキュリティ配慮)。 **Download template (.xlsx)** ボタンで元 xlsx を byte-for-byte 配信 (書式そのまま)
 3. **Upload input (.xlsx)** — 記入済 xlsx をアップロード
-4. **🔒 Evaluation agent** — プラグインが `default_agent()` を持てば専用エージェント固定 (`agent_66Evaluation.json` 等)。持たなければ最初の登録エージェントにフォールバック
+4. **🔒 Evaluation agent** — プラグインが `default_agent()` を持てば専用エージェント固定 (`agent_69Evaluation.json` 等)。持たなければ最初の登録エージェントにフォールバック
 5. **カテゴリチェックボックス** — 対象カテゴリを絞れる
 6. **Run analysis** ボタン → プラグイン解析実行 → `llm_augment` があれば構造化分析を並列自動実行 → render() 表示
 7. **LLM Evaluation** —
@@ -3249,7 +3359,7 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
 | `thinking_mode` | `false` | Thinking Mode。`true` にするとAIが質問を分析してHabit・Web検索・RAGクエリ生成・Book追加を動的に判定する |
 | `max_thinking_turns` | `1` | Thinking を何ターンまで走らせるか（1〜5に自動 clamp）。2以上にすると、sufficient=false のとき予備Web検索→次ターンThinkingを繰り返す。`thinking_mode=true` の時のみ意味を持つ |
 | `insert_citations` | `true` | 応答本文に `[N]` 引用マーカーを挿入し、末尾に `## Reference Info` セクション（Web / Book のソース一覧）を付ける |
-| `cite_knowledge` | `false` | 応答生成後に判定エージェント（`agent_80DigiMKnowledgeUsageSelector.json`）が実際に参照したKNOWLEDGEチャンクを判定し、末尾に `## Reference Knowledge` セクションを付ける（Knowledge Utility スコア併記） |
+| `cite_knowledge` | `false` | 応答生成後に判定エージェント（`agent_78DigiMKnowledgeUsageSelector.json`）が実際に参照したKNOWLEDGEチャンクを判定し、末尾に `## Reference Knowledge` セクションを付ける（Knowledge Utility スコア併記） |
 | `diagram_mode` | `false` | LLMにMarkdownの表と Mermaid 図（```mermaid）を用いた説明を指示 |
 | `emphasis_mode` | `false` | LLMに要点の**太字**強調 + 見出し・箇条書き整理を指示 |
 | `user_memory` | （未指定） | ユーザーメモリ（対話相手についての情報）を使うか。`true`=全層ON / `false`=全Off / 未指定= `users.json` の `Allowed["User Memory Layers"]`（無ければ `USER_MEMORY_DEFAULT_LAYERS`）に従う |

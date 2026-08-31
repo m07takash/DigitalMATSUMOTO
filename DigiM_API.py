@@ -750,7 +750,11 @@ async def get_web_search_engines():
     _setting = dmu.read_yaml_file("setting.yaml")
     default_engine = _setting.get("WEB_SEARCH_DEFAULT", "Perplexity")
     engines = []
-    for name in dmt.WEB_SEARCH_ENGINES.keys():
+    try:
+        _engine_names = list(dmt.WEB_SEARCH_ENGINES.keys())
+    except AttributeError:
+        _engine_names = ["Perplexity", "OpenAI", "AzureOpenAI", "Google", "Claude"]
+    for name in _engine_names:
         engine_info = {"name": name}
         if name == "Perplexity":
             engine_info["model"] = _setting.get("PERPLEXITY_MODEL", "sonar")

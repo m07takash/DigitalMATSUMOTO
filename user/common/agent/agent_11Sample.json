@@ -612,17 +612,17 @@
         ]
     },
     "SUPPORT_AGENT": {
-        "DIALOG_DIGEST": "agent_51DialogDigest.json",
-        "PERSONA_MERGE": "agent_50PersonaMerge.json",
-        "PERSONA_SELECTOR": "agent_54PersonaSelector.json",
-        "EXTRACT_DATE": "agent_55ExtractDate.json",
-        "META_EXTRACT": "agent_55MetaExtract.json",
-        "RAG_QUERY_GENERATOR": "agent_56RAGQueryGenerator.json",
-        "SESSION_NAME": "agent_57SessionName.json",
-        "THINKING": "agent_58Thinking.json",
-        "PAGE_INDEX_SEARCH": "agent_59PageIndexSearch.json",
-        "KNOWLEDGE_INTERPRET": "agent_63KnowledgeInterpret.json",
-        "SESSION_SUMMARY": "agent_65SessionSummary.json"
+        "DIALOG_DIGEST": "agent_60DialogDigest.json",
+        "PERSONA_MERGE": "agent_64PersonaMerge.json",
+        "PERSONA_SELECTOR": "agent_65PersonaSelector.json",
+        "EXTRACT_DATE": "agent_54ExtractDate.json",
+        "META_EXTRACT": "agent_53MetaExtract.json",
+        "RAG_QUERY_GENERATOR": "agent_5AQGenUserIntent.json",
+        "SESSION_NAME": "agent_61SessionName.json",
+        "THINKING": "agent_50Thinking.json",
+        "PAGE_INDEX_SEARCH": "agent_55PageIndexSearch.json",
+        "KNOWLEDGE_INTERPRET": "agent_57KnowledgeInterpret.json",
+        "SESSION_SUMMARY": "agent_62SessionSummary.json"
     },
     "BOOK": [
         {
@@ -658,7 +658,7 @@
                 {
                     "DATA_TYPE": "PAGE_INDEX",
                     "DATA_NAME": "DigiMPGSystemGuide",
-                    "SUPPORT_AGENT": "agent_59PageIndexSearch.json"
+                    "SUPPORT_AGENT": "agent_55PageIndexSearch.json"
                 }
             ],
             "HEADER_TEMPLATE": "【システムガイド】以下はデジタルMATSUMOTOのシステムに関する技術情報です。\n",

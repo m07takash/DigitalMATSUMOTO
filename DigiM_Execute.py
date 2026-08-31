@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import random
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -186,7 +187,7 @@ def _detect_used_chunks(service_info, user_info, session_id, session_name,
     to the manifest.
 
     The selector agent (SUPPORT_AGENT.KNOWLEDGE_USAGE_SELECTOR, defaults to
-    agent_80DigiMKnowledgeUsageSelector.json) is a lightweight support
+    agent_78DigiMKnowledgeUsageSelector.json) is a lightweight support
     agent. Its prompt template is `Knowledge Usage Selector` — mirrors the
     Insight-Old "参照した【知識情報】と参考にした点(箇条書き)" idea but is
     RAG-name-agnostic and returns structured JSON.
@@ -199,7 +200,7 @@ def _detect_used_chunks(service_info, user_info, session_id, session_name,
     if not chunk_lookup or not primary_response:
         return []
     if not selector_agent_file:
-        selector_agent_file = "agent_80DigiMKnowledgeUsageSelector.json"
+        selector_agent_file = "agent_78DigiMKnowledgeUsageSelector.json"
     try:
         selector = dma.DigiM_Agent(selector_agent_file)
         model_type = "LLM"
@@ -475,6 +476,21 @@ def _build_knowledge_section(entries, chunk_lookup, title_cap=20,
     return "## Reference Knowledge\n" + "\n".join(lines)
 
 # B-3: Common USER_INPUT resolution
+def _resolve_chain_ref(results, ref_subseq, field):
+    """Resolve `OUTPUT_n` / `INPUT_n` against the chain results.
+
+    Practices write these as "the n-th chain", which used to coincide with
+    sub_seq n. BEFORE-phase SKILLs now consume sub_seq numbers before the
+    chain loop starts, so the exact sub_seq match can miss — fall back to
+    the n-th chain result, which is what the practice actually means. The
+    exact match is still tried first so multi-persona runs (which pin
+    `SubSEQ` to the step's starting sub_seq) keep resolving as before."""
+    hit = next((r[field] for r in results if r["SubSEQ"] == ref_subseq), None)
+    if hit is None and 1 <= ref_subseq <= len(results):
+        hit = results[ref_subseq - 1][field]
+    return hit or ""
+
+
 def _resolve_user_input(user_input_setting, user_query, results):
     inputs = user_input_setting if isinstance(user_input_setting, list) else [user_input_setting]
     user_input = ""
@@ -483,10 +499,10 @@ def _resolve_user_input(user_input_setting, user_query, results):
             user_input += user_query
         elif item.startswith("INPUT"):
             ref_subseq = int(item.replace("INPUT_", "").strip())
-            user_input += next((r["INPUT"] for r in results if r["SubSEQ"] == ref_subseq), "")
+            user_input += _resolve_chain_ref(results, ref_subseq, "INPUT")
         elif item.startswith("OUTPUT"):
             ref_subseq = int(item.replace("OUTPUT_", "").strip())
-            user_input += next((r["OUTPUT"] for r in results if r["SubSEQ"] == ref_subseq), "")
+            user_input += _resolve_chain_ref(results, ref_subseq, "OUTPUT")
         else:
             user_input += item
     return user_input
@@ -504,12 +520,87 @@ def _resolve_contents(contents_setting, in_contents, results):
     return contents_setting
 
 # B-4: RAG search-query generation phase (parallelization hook in C-1)
+def _resolve_rag_query_generators(support_agent, parent_agent_data=None):
+    """Normalize `SUPPORT_AGENT.RAG_QUERY_GENERATOR` into a list of agent
+    filenames. Accepts the legacy single-string form, the list form, and
+    per-entry `{"AGENT_FILE": ..., "INHERIT": {...}}` dicts — the latter
+    come back as `SupportAgentRef` (a str carrying the parent overlay), so
+    downstream name comparisons keep working."""
+    raw = (support_agent or {}).get("RAG_QUERY_GENERATOR")
+    if not raw:
+        return []
+    items = [raw] if isinstance(raw, (str, dict)) else (raw if isinstance(raw, list) else [])
+    out = []
+    for x in items:
+        if not x:
+            continue
+        resolved = dma.resolve_support_agent(x, parent_agent_data)
+        if resolved:
+            out.append(resolved)
+    return out
+
+
+def _rag_generator_max_calls(agent):
+    """Agent-JSON top-level `RAG_QUERY_GENERATOR_MAX_CALLS` (mirrors the
+    existing `AGENT_SEARCH_MAX_CALLS` convention). Defaults to 2 so an
+    agent registering several generators gets query variation out of the
+    box; a single-generator agent is unaffected (the cap just never binds)."""
+    try:
+        _raw = (getattr(agent, "agent", {}) or {}).get("RAG_QUERY_GENERATOR_MAX_CALLS", 2)
+        return max(1, int(_raw))
+    except (TypeError, ValueError):
+        return 2
+
+
+def _build_rag_generator_info(generators):
+    """`- <agent_file>: <purpose>` block handed to the Thinking Agent so it
+    can pick which query-generation angles fit this question. PURPOSE wins,
+    then ACT, then DISPLAY_NAME — same fallback ladder as HABIT / BOOK."""
+    info = ""
+    for gf in generators:
+        purpose = ""
+        try:
+            gd = dma._read_agent_json(gf)
+            purpose = (gd.get("PURPOSE") or gd.get("ACT")
+                        or gd.get("DISPLAY_NAME") or "").strip()
+        except Exception:
+            pass
+        info += f"- {gf}: {purpose}\n" if purpose else f"- {gf}\n"
+    return info
+
+
 def _build_intent_queries(service_info, user_info, session_id, session_name, support_agent,
                           user_query, memories_selected, situation_prompt, query_vec, RAG_query_gene,
-                          rag_query_hint="", user_memory_context="", memory_use=True):
-    """Generate the RAG search query (intent) and return extra queries, vectors, and logs."""
-    if not (RAG_query_gene and "RAG_QUERY_GENERATOR" in support_agent):
+                          rag_query_hint="", user_memory_context="", memory_use=True,
+                          agent=None, thinking_generators=None):
+    """Generate RAG search queries (intent) and return extra queries, vectors, logs.
+
+    Multiple generator agents can be registered; each produces one query
+    variation, and each variation gets its own `query_seq` in the vector
+    search — query variation × META_SEARCH is what gives the vector search
+    its flexibility. Generators run in parallel and are capped by
+    `RAG_QUERY_GENERATOR_MAX_CALLS` (default 2). Selection:
+      - Thinking picked some  -> use those (filtered to registered ones), in order
+      - otherwise             -> RANDOM sample up to the cap, so repeated turns
+                                 rotate through the registered angles instead of
+                                 always hitting the first N in JSON order
+    """
+    generators = _resolve_rag_query_generators(
+        support_agent, getattr(agent, "agent", None))
+    if not (RAG_query_gene and generators):
         return [], [], {}
+    max_calls = _rag_generator_max_calls(agent)
+    picked = [g for g in (thinking_generators or []) if g in generators]
+    _selection_mode = "thinking"
+    if picked:
+        picked = picked[:max_calls]
+    else:
+        _selection_mode = "random"
+        _k = min(max_calls, len(generators))
+        picked = random.sample(list(generators), _k)
+    if not picked:
+        return [], [], {}
+
     t_start = datetime.now()
     # Append the hint from Thinking to the query, if any
     _query = user_query
@@ -522,16 +613,53 @@ def _build_intent_queries(service_info, user_info, session_id, session_name, sup
     # instruction when the WebUI Memory Use toggle is off (benchmark mode).
     add_info = {"Memories_Selected": memories_selected, "Situation": situation_prompt,
                 "QueryVecs": [query_vec], "MemoryUse": bool(memory_use)}
-    agent_file = support_agent["RAG_QUERY_GENERATOR"]
-    _, _, response, model_name, prompt_tokens, response_tokens = dmt.call_function_by_name(
-        service_info, user_info, "RAG_query_generator",
-        session_id, session_name, agent_file, _query, [], add_info)
-    vec = dmu.embed_text(response.replace("\n", ""))
+
+    def _run_one(gf):
+        _t0 = datetime.now()
+        try:
+            _, _, response, model_name, ptok, rtok = dmt.call_function_by_name(
+                service_info, user_info, "RAG_query_generator",
+                session_id, session_name, gf, _query, [], add_info)
+        except Exception as _e:
+            import logging as _lg_rqg
+            _lg_rqg.getLogger(__name__).warning(
+                "RAG query generator %s failed: %s", gf, _e)
+            return {"agent_file": gf, "model": "", "llm_response": "",
+                    "prompt_token": 0, "response_token": 0,
+                    "duration_sec": round((datetime.now() - _t0).total_seconds(), 2),
+                    "error": str(_e)}
+        return {"agent_file": gf, "model": model_name, "llm_response": response,
+                "prompt_token": ptok, "response_token": rtok,
+                "duration_sec": round((datetime.now() - _t0).total_seconds(), 2)}
+
+    if len(picked) == 1:
+        gen_logs = [_run_one(picked[0])]
+    else:
+        with ThreadPoolExecutor(max_workers=len(picked)) as _ex:
+            gen_logs = list(_ex.map(_run_one, picked))
+
+    responses = [g["llm_response"] for g in gen_logs if (g.get("llm_response") or "").strip()]
+    if not responses:
+        return [], [], {"generators": gen_logs, "rag_query_hint": rag_query_hint,
+                        "selection_mode": _selection_mode,
+                        "duration_sec": round((datetime.now() - t_start).total_seconds(), 2)}
+    vecs = dmu.embed_texts_batch([r.replace("\n", "") for r in responses])
     duration = round((datetime.now() - t_start).total_seconds(), 2)
-    log = {"agent_file": agent_file, "model": model_name, "llm_response": response,
+    # Flat fields mirror the FIRST generator so pre-existing readers (token
+    # usage tab, API consumers) keep working; `generators` carries the full
+    # per-agent detail.
+    _first = gen_logs[0]
+    log = {"agent_file": _first.get("agent_file", ""), "model": _first.get("model", ""),
+           "llm_response": _first.get("llm_response", ""),
            "rag_query_hint": rag_query_hint,
-           "prompt_token": prompt_tokens, "response_token": response_tokens, "duration_sec": duration}
-    return [response], [vec], log
+           "prompt_token": _first.get("prompt_token", 0),
+           "response_token": _first.get("response_token", 0),
+           "duration_sec": duration,
+           "generators": gen_logs,
+           "generator_count": len(responses),
+           "selection_mode": _selection_mode,
+           "max_calls": max_calls}
+    return responses, vecs, log
 
 # B-4: Metadata search phase (parallelization hook in C-1)
 def _build_meta_searches(service_info, user_info, session_id, session_name, support_agent,
@@ -560,7 +688,8 @@ def _build_meta_searches(service_info, user_info, session_id, session_name, supp
         if not specs:
             return [], {}
         t_start = datetime.now()
-        agent_file = support_agent["META_EXTRACT"]
+        agent_file = dma.resolve_support_agent(
+            support_agent["META_EXTRACT"], getattr(agent, "agent", None))
         add_info = {"Memories_Selected": memories_selected,
                     "Situation": situation_prompt,
                     "QueryVecs": [query_vec],
@@ -597,7 +726,8 @@ def _build_meta_searches(service_info, user_info, session_id, session_name, supp
     if "EXTRACT_DATE" in support_agent:
         t_start = datetime.now()
         add_info = {"Memories_Selected": memories_selected, "Situation": situation_prompt, "QueryVecs": [query_vec]}
-        agent_file = support_agent["EXTRACT_DATE"]
+        agent_file = dma.resolve_support_agent(
+            support_agent["EXTRACT_DATE"], getattr(agent, "agent", None))
         _, _, response, model_name, prompt_tokens, response_tokens = dmt.call_function_by_name(
             service_info, user_info, "extract_date",
             session_id, session_name, agent_file, user_query, [], add_info)
@@ -625,18 +755,21 @@ def _build_meta_searches(service_info, user_info, session_id, session_name, supp
 #             as input. Saved as its own sub_seq like BEFORE.
 # Selection is `slash_pick > thinking-picked`, deduped, order preserved.
 def _collect_skill_selections(agent, thinking_result, slash_pick=None,
-                                user_query=""):
+                                user_query="", manual_picks=None):
     """Return {phase: [names]} using agent.skill_tools for phase lookup.
 
     Selection precedence (highest first, dedup preserves order):
       1. slash_pick               — explicit /command
-      2. SKILL.MAGIC_WORDS match   — auto-fire when a magic word is in the
+      2. manual_picks              — the SKILL multiselect shown when
+                                     Thinking Mode is OFF (explicit choice)
+      3. SKILL.MAGIC_WORDS match   — auto-fire when a magic word is in the
                                      user's query (mirrors HABIT.MAGIC_WORDS)
-      3. thinking_result["tools"]  — Thinking Agent judged based on the
+      4. thinking_result["tools"]  — Thinking Agent judged based on the
                                      SKILL description
     """
     skill_tools = getattr(agent, "skill_tools", {}) or {}
     slash_names = [slash_pick] if slash_pick and slash_pick in skill_tools else []
+    manual_names = [n for n in (manual_picks or []) if n in skill_tools]
     magic_names = []
     if user_query:
         for name, cfg in skill_tools.items():
@@ -647,7 +780,7 @@ def _collect_skill_selections(agent, thinking_result, slash_pick=None,
                        if n in skill_tools]
     seen = set()
     ordered = []
-    for n in slash_names + magic_names + thinking_names:
+    for n in slash_names + manual_names + magic_names + thinking_names:
         if n not in seen:
             seen.add(n)
             ordered.append(n)
@@ -840,10 +973,17 @@ def _run_thinking_agent(service_info, user_info, session_id, session_name,
     if previous_thinking and isinstance(previous_thinking, dict):
         _keep = ("reasoning", "habit", "web_search", "web_search_engine",
                  "web_search_query", "rag_query_gene", "rag_query_hint",
-                 "books", "sufficient")
+                 "rag_query_generators", "books", "tools", "sufficient")
         _prev_snippet = _json.dumps(
             {k: previous_thinking[k] for k in _keep if k in previous_thinking},
             ensure_ascii=False, indent=2)
+
+    # RAG query generators available to this agent. Only advertised when
+    # more than one is registered — with a single generator there is nothing
+    # for Thinking to choose between.
+    _rag_generators = _resolve_rag_query_generators(
+        support_agent, getattr(agent, "agent", None))
+    rag_gen_info = _build_rag_generator_info(_rag_generators) if len(_rag_generators) > 1 else ""
 
     add_info = {
         "Situation": situation_prompt,
@@ -851,10 +991,13 @@ def _run_thinking_agent(service_info, user_info, session_id, session_name,
         "HabitInfo": habit_info,
         "BookInfo": book_info,
         "ToolInfo": tool_info,
+        "RagGenInfo": rag_gen_info,
+        "RagGenMax": _rag_generator_max_calls(agent),
         "PreviousThinking": _prev_snippet,
         "WebSearchPreview": web_search_preview or "",
     }
-    agent_file = support_agent["THINKING"]
+    agent_file = dma.resolve_support_agent(
+        support_agent["THINKING"], getattr(agent, "agent", None))
     _, _, response, model_name, prompt_tokens, response_tokens = dmt.call_function_by_name(
         service_info, user_info, "thinking_agent",
         session_id, session_name, agent_file, user_query, [], add_info)
@@ -944,7 +1087,7 @@ def _apply_persona_merge(merge_method, persona_responses, user_query, merge_leve
     if method == "include_query":
         return _format_persona_responses_as_query(persona_responses, user_query)
     if method == "summary":
-        merge_agent = (support_agent or {}).get("PERSONA_MERGE", "agent_50PersonaMerge.json")
+        merge_agent = (support_agent or {}).get("PERSONA_MERGE", "agent_64PersonaMerge.json")
         try:
             _, _, merged, _, _, _ = dmt.call_function_by_name(
                 service_info, user_info, "dialog_persona_merge",
@@ -965,9 +1108,15 @@ def _apply_persona_merge(merge_method, persona_responses, user_query, merge_leve
 # Run digest generation / save / unlock in the background
 def _run_digest_background(session, service_info, user_info, session_id, session_name,
                             support_agent, memories_selected,
-                            seq, sub_seq, cfg, unlock_on_complete=True):
+                            seq, sub_seq, cfg, unlock_on_complete=True,
+                            parent_agent_data=None):
     try:
-        dialog_digest_agent_file = support_agent.get("DIALOG_DIGEST", "")
+        # Runs on a background thread, so the caller's `agent` object is not
+        # in scope — the parent data needed for SUPPORT_AGENT.INHERIT is
+        # passed in explicitly. This thread also owns the UNLOCK, so an
+        # exception here would strand the session as LOCKED.
+        dialog_digest_agent_file = dma.resolve_support_agent(
+            support_agent.get("DIALOG_DIGEST", ""), parent_agent_data)
         add_info = {}
         add_info["Memories_Selected"] = memories_selected
         timestamp_digest_start = str(datetime.now())
@@ -1107,7 +1256,23 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     # Run web search
     web_context = ""
     web_search_log = {}
-    if cfg["web_search"]:
+    # A CONTEXT-phase WebSearch SKILL has already run and appended its result
+    # to user_query by this point. Firing the built-in path too would mean a
+    # second paid API call whose search_text is polluted by the first result,
+    # and two reference blocks in the prompt. The SKILL path wins (it carries
+    # PHASE + ARGS_HINT), so skip the built-in one and say so in the log.
+    _ctx_skill_logs = execution.get("_SKILL_CONTEXT_LOGS") or {}
+    _ws_skill_names = [n for n in _ctx_skill_logs
+                       if n == "WebSearch" or str(n).startswith("WebSearch_")]
+    if cfg["web_search"] and _ws_skill_names:
+        web_search_log = {
+            "skipped_reason": "A CONTEXT SKILL web search already ran this turn",
+            "skipped_by": _ws_skill_names,
+        }
+        timestamp_log += ("[06.Web search skipped — SKILL "
+                          + ", ".join(_ws_skill_names) + " already ran]"
+                          + str(datetime.now()) + "<br>")
+    if cfg["web_search"] and not _ws_skill_names:
         session.save_status_message("Starting web search")
         yield service_info, user_info, "[STATUS]Starting web search", [], []
         timestamp_log += "[06.Web search start]" + str(datetime.now()) + "<br>"
@@ -1207,7 +1372,18 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     if digest_text or situation_prompt:
         user_query_ds = digest_text + user_query + situation_prompt
         queries.append(user_query_ds)
-    query_vecs = dmu.embed_texts_batch([q.replace("\n", "") for q in queries])
+    # Boundary between the base queries (raw / history-augmented) and the
+    # RAG-Query-Gen variations appended later — the history-augmented entry
+    # is conditional, so index 1 is NOT always "input+history".
+    _n_base_queries = len(queries)
+    # The embeddings API rejects empty strings outright (400), which would
+    # abort the whole turn. A chain step can legitimately produce an empty
+    # input (a tool returned nothing, an unresolved OUTPUT_n reference), so
+    # substitute a single space rather than letting one blank query kill the
+    # request — the resulting vector is meaningless but harmless, and the
+    # rest of the turn still runs.
+    _embed_inputs = [(q or "").replace("\n", "").strip() or " " for q in queries]
+    query_vecs = dmu.embed_texts_batch(_embed_inputs)
     query_vec = query_vecs[0]
 
     # Run conversation memory / RAG query generation / meta search in parallel
@@ -1246,7 +1422,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         except Exception as _um_err:
             timestamp_log += f"[user_memory composition failed: {_um_err}]" + str(datetime.now()) + "<br>"
 
-    need_intent = cfg["RAG_query_gene"] and "RAG_QUERY_GENERATOR" in support_agent
+    need_intent = cfg["RAG_query_gene"] and bool(
+        _resolve_rag_query_generators(support_agent, agent.agent))
     need_meta = cfg["meta_search"] and ("META_EXTRACT" in support_agent or "EXTRACT_DATE" in support_agent)
     if need_intent or need_meta:
         session.save_status_message("Starting RAG search-query generation")
@@ -1266,10 +1443,12 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         _rag_input_text = rag_query_text if rag_query_text else user_query
         _thinking_result = execution.get("_THINKING_RESULT", {})
         _rag_query_hint = _thinking_result.get("rag_query_hint", "")
+        _rag_generators_picked = _thinking_result.get("rag_query_generators") or []
         future_intent = executor.submit(
             _build_intent_queries, service_info, user_info, session_id, session_name,
             support_agent, _rag_input_text, [], situation_prompt_support, query_vec, cfg["RAG_query_gene"],
-            _rag_query_hint, user_memory_context, cfg["memory_use"])
+            _rag_query_hint, user_memory_context, cfg["memory_use"],
+            agent, _rag_generators_picked)
         # Kick off meta search in parallel
         future_meta = executor.submit(
             _build_meta_searches, service_info, user_info, session_id, session_name,
@@ -1441,6 +1620,33 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             query_vec_file = session.save_vec_file(str(seq), str(sub_seq), "query", query_vec)
             response_vec_file = session.save_vec_file(str(seq), str(sub_seq), "response", response_vec)
 
+        # Every query variation (raw / +history / one per RAG-Query-Gen
+        # generator) with a short preview, so Analytics Results can mark
+        # each query's own position on the scatter and label it. Saved
+        # unconditionally — the scatter needs these even when the
+        # memory-similarity toggle is off.
+        queries_vec_file = ""
+        query_labels = []
+        try:
+            if query_vecs is not None and len(query_vecs):
+                queries_vec_file = session.save_vec_file(
+                    str(seq), str(sub_seq), "queries", query_vecs)
+            for _qi, _qt in enumerate(queries):
+                if _qi == 0:
+                    _kind = "input"
+                elif _qi < _n_base_queries:
+                    _kind = "input+history"
+                else:
+                    _kind = "intent"
+                query_labels.append({
+                    "seq": _qi,
+                    "kind": _kind,
+                    "preview": _strip_skill_wraps(str(_qt or "")).replace("\n", " ").strip()[:60],
+                })
+        except Exception as _qv_e:
+            import logging as _lg_qv
+            _lg_qv.getLogger(__name__).warning("query vector/label save failed: %s", _qv_e)
+
         setting_chat_dict = {
             "session_id": session.session_id,
             "session_name": session.session_name,
@@ -1459,7 +1665,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             "query": {
                 "input": user_input, "token": query_tokens, "text": user_query,
                 "contents": contents_record_to, "situation": situation,
-                "tools": [], "vec_file": query_vec_file
+                "tools": [], "vec_file": query_vec_file,
+                "queries_vec_file": queries_vec_file, "query_labels": query_labels
             },
             "thinking": thinking_log,
             "web_search": web_search_log,
@@ -1549,7 +1756,9 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                 })
 
         if cfg["insert_citations"] and _ci_sources:
-            citation_agent_file = (agent.agent.get("SUPPORT_AGENT") or {}).get("CITATION_INJECT", "")
+            citation_agent_file = dma.resolve_support_agent(
+                (agent.agent.get("SUPPORT_AGENT") or {}).get("CITATION_INJECT", ""),
+                agent.agent)
             import logging as _lg_ci
             _ci_counts = {"web": sum(1 for s in _ci_sources if s.get("type") == "web"),
                           "book": sum(1 for s in _ci_sources if s.get("type") == "book")}
@@ -1666,8 +1875,10 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                     # Refresh util now that similarity_response is stamped
                     # (Detail Information reads this from the debug dict).
                     _refresh_chunk_util(_cite_chunk_lookup, knowledge_selected)
-                    _selector_agent = (agent.agent.get("SUPPORT_AGENT") or {}).get(
-                        "KNOWLEDGE_USAGE_SELECTOR", "agent_80DigiMKnowledgeUsageSelector.json")
+                    _selector_agent = dma.resolve_support_agent(
+                        (agent.agent.get("SUPPORT_AGENT") or {}).get(
+                            "KNOWLEDGE_USAGE_SELECTOR", "agent_78DigiMKnowledgeUsageSelector.json"),
+                        agent.agent)
                     _ck_dbg["selector_agent"] = _selector_agent
                     _entries = _detect_used_chunks(
                         service_info, user_info, session_id, session_name,
@@ -1783,7 +1994,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             _digest_job_id = djr.new_job_id()
             _digest_args = (session, service_info, user_info, session_id, session_name,
                             support_agent, _slim_memories,
-                            seq, sub_seq, cfg, _unlock_on_complete)
+                            seq, sub_seq, cfg, _unlock_on_complete,
+                            getattr(agent, "agent", None))
 
             def _digest_wrapper():
                 try:
@@ -1853,7 +2065,7 @@ def _get_session_summary_agent_file(agent_obj, fallback_agent_file):
 
     Priority:
       1. Chat agent's SUPPORT_AGENT.SESSION_SUMMARY slot (per-agent override)
-      2. The generic lightweight agent (`agent_65SessionSummary.json`)
+      2. The generic lightweight agent (`agent_62SessionSummary.json`)
          — shipped default, uses Gemini-2.5-Flash for cheap/fast updates
       3. The chat agent itself (ultimate fallback so the feature always works
          even if the lightweight agent file was removed)
@@ -1862,14 +2074,14 @@ def _get_session_summary_agent_file(agent_obj, fallback_agent_file):
         _sa = agent_obj.agent.get("SUPPORT_AGENT", {}) or {}
         _sess_sa = _sa.get("SESSION_SUMMARY")
         if _sess_sa:
-            return _sess_sa
+            return dma.resolve_support_agent(_sess_sa, agent_obj.agent)
     except Exception:
         pass
     # Global default — the shipped lightweight generic agent. Kept as a
     # data-file lookup (not a hardcoded import) so operators can swap it
     # by dropping in a different `agent_65*.json`.
     try:
-        _generic_name = "agent_65SessionSummary.json"
+        _generic_name = "agent_62SessionSummary.json"
         _generic_path = os.path.join(dma.agent_folder_path, _generic_name)
         if os.path.exists(_generic_path):
             return _generic_name
@@ -2109,7 +2321,13 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                         if "web_search_engine" in thinking_result:
                             cfg["web_search_engine"] = thinking_result["web_search_engine"]
                 if _targets.get("rag_query_gene", True) and "rag_query_gene" in thinking_result:
-                    cfg["RAG_query_gene"] = thinking_result["rag_query_gene"]
+                    # Same mirror semantics as web_search above: Thinking may
+                    # promote OFF → ON, but must not veto a user-explicit ON.
+                    # Without this, a Thinking turn that decides "web search
+                    # covers it" silently kills RAG query generation for the
+                    # whole turn even though the user asked for it.
+                    if not cfg["RAG_query_gene"]:
+                        cfg["RAG_query_gene"] = thinking_result["rag_query_gene"]
 
             # Pass the Thinking log/result to the chain-run execution.
             # `_THINKING_LOG` carries the FINAL turn's log for backward-compat
@@ -2147,6 +2365,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
             thinking_result if _thinking_tools_target_on else None,
             slash_pick=_slash_pick,
             user_query=user_query,
+            manual_picks=in_execution.get("_MANUAL_SKILL_PICKS") or [],
         )
         in_execution["_SELECTED_SKILLS"] = _selected_skills
 
@@ -2191,7 +2410,10 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 _selected_ids, _select_reason, _, _, _ = dmt.call_function_by_name(
                     service_info, user_info, "select_personas",
                     session_id, session_name,
-                    agent.agent.get("SUPPORT_AGENT", {}).get("PERSONA_SELECTOR", "agent_54PersonaSelector.json"),
+                    dma.resolve_support_agent(
+                        agent.agent.get("SUPPORT_AGENT", {}).get(
+                            "PERSONA_SELECTOR", "agent_65PersonaSelector.json"),
+                        agent.agent),
                     user_query, _candidates, max_personas=_max_p,
                 )
             except Exception as _e:

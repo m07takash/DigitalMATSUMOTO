@@ -33,7 +33,7 @@ _INPUT_TEXT = {
 def extract_date(service_info, user_info, session_id, session_name, agent_file,
                  input, import_contents=[], add_info={}):
     if not agent_file:
-        agent_file = "agent_55ExtractDate.json"
+        agent_file = "agent_54ExtractDate.json"
     agent = dma.DigiM_Agent(agent_file)
 
     model_type = "LLM"
@@ -141,7 +141,7 @@ def management_analysis(service_info, user_info, session_id, session_name, agent
 # Compare texts
 # Non-uniform signature: (svc, usr, head1, text1, head2, text2, query_compare="")
 def compare_texts(service_info, user_info, head1, text1, head2, text2, query_compare=""):
-    agent_file = "agent_53CompareTexts.json"
+    agent_file = "agent_25CompareTexts.json"
     agent = dma.DigiM_Agent(agent_file)
 
     model_type = "LLM"
@@ -171,7 +171,7 @@ def compare_texts(service_info, user_info, head1, text1, head2, text2, query_com
 def meta_extract(service_info, user_info, session_id, session_name, agent_file,
                  input, import_contents=[], add_info={}):
     if not agent_file:
-        agent_file = "agent_55MetaExtract.json"
+        agent_file = "agent_53MetaExtract.json"
     agent = dma.DigiM_Agent(agent_file)
 
     model_type = "LLM"
@@ -264,9 +264,9 @@ dmtr.register_tool(
 # Answer vs Ground-Truth evaluation
 # Used by BatchTest to score each row with a mix of deterministic metrics
 # (exact-match / SequenceMatcher / token-F1) and an LLM-judged verdict.
-# Non-uniform signature: (svc, usr, question, answer, ground_truth, agent_file="agent_53CompareTexts.json").
+# Non-uniform signature: (svc, usr, question, answer, ground_truth, agent_file="agent_25CompareTexts.json").
 def eval_answer_vs_groundtruth(service_info, user_info, question, answer, ground_truth,
-                                agent_file="agent_53CompareTexts.json"):
+                                agent_file="agent_25CompareTexts.json"):
     import json as _json
     from collections import Counter as _Counter
     from difflib import SequenceMatcher as _SM
@@ -385,7 +385,7 @@ dmtr.register_tool(
 # improvement suggestions. Used by the BatchTest Result Analysis panel.
 # Non-uniform signature; NOT safe for SKILL.
 def critique_batch_results(service_info, user_info, summary_json, worst_rows_json,
-                            agent_file="agent_53CompareTexts.json"):
+                            agent_file="agent_25CompareTexts.json"):
     agent = dma.DigiM_Agent(agent_file)
     model_type = "LLM"
     model_name = agent.agent["ENGINE"][model_type]["MODEL"]

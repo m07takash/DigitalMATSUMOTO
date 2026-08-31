@@ -16,7 +16,7 @@ practice_folder_path = _settings.get("PRACTICE_FOLDER", "user/common/practice/")
 # Generate critique on image data.
 # Non-uniform signature: (svc, usr, memories_selected, image_paths, agent_file).
 def art_critics(service_info, user_info, memories_selected=[], image_paths=[],
-                agent_file="agent_52ArtCritic.json"):
+                agent_file="agent_24ArtCritic.json"):
     agent = dma.DigiM_Agent(agent_file)
 
     model_type = "LLM"

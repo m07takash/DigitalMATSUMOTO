@@ -162,7 +162,7 @@ def knowledge_utility_interpret(service_info, user_info, session_id, session_nam
                                  agent_file, input, import_contents=[], add_info={}):
     """Interpret RAG-DB utility snapshots; see module docstring for add_info shape."""
     if not agent_file:
-        agent_file = "agent_78DigiMKnowledgeInterpret.json"
+        agent_file = "agent_77DigiMKnowledgeInterpret.json"
     agent = dma.DigiM_Agent(agent_file)
 
     model_type = "LLM"

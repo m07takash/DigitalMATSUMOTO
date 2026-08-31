@@ -688,7 +688,7 @@ Common keys: `Streaming Mode` / `Memory Use` / `Save Digest` / `Private Mode` / 
 ```json
 "THINKING": {
     "MODE": true,
-    "TARGETS": ["Habit", "RAG Query", "Books", "Tools"],
+    "TARGETS": ["Habit", "RAG Query", "Books", "Skills"],
     "MAX_TURNS": 1
 }
 ```
@@ -757,7 +757,7 @@ Place CSV files under `user/common/csv/`. Create them in UTF-8 (with BOM).
 
 ##### META_SEARCH (generalized meta-search: period / category / number / partial match bonus)
 
-Under each KNOWLEDGE / BOOK `DATA` entry you can define `META_SEARCH.CONDITIONS[]`. The support agent `META_EXTRACT` (`agent_55MetaExtract.json`) then extracts, in a single LLM call, per-condition values from the user query; matched chunks get a BONUS multiplier applied to their distance (`BONUS < 1` boosts, `> 1` penalises; multiple hits multiply). The legacy shape `"META_SEARCH": {"CONDITION":["DATE"],"BONUS":0.5}` is auto-converted at load time — existing JSON keeps working.
+Under each KNOWLEDGE / BOOK `DATA` entry you can define `META_SEARCH.CONDITIONS[]`. The support agent `META_EXTRACT` (`agent_53MetaExtract.json`) then extracts, in a single LLM call, per-condition values from the user query; matched chunks get a BONUS multiplier applied to their distance (`BONUS < 1` boosts, `> 1` penalises; multiple hits multiply). The legacy shape `"META_SEARCH": {"CONDITION":["DATE"],"BONUS":0.5}` is auto-converted at load time — existing JSON keeps working.
 
 ```json
 "META_SEARCH": {
@@ -1078,7 +1078,7 @@ Build a **pure-structure knowledge graph** (Entity nodes + predicate edges only,
   "data_name": "DigiMATSU_Memo",
   "bucket": "DigiMATSU_Identity_Graph",
   "file_path": "user/common/rag/graph/digimatsu_identity/",
-  "extractor_agent": "agent_67GraphExtract.json",
+  "extractor_agent": "agent_56GraphExtract.json",
   "item_dict": {
     "db": "DigiMATSU_Identity_Graph",
     "title":       {"名前": "title"},
@@ -1099,7 +1099,7 @@ Build a **pure-structure knowledge graph** (Entity nodes + predicate edges only,
 |------|------|
 | `data_type` | `graph`. `resolve_graph_dir()` on the retriever side reads this to locate the folder |
 | `file_path` | Graph folder (parent of `graph.json` / `mapping.json` / `dictionary.json` / `source/`) |
-| `extractor_agent` | Support agent used by Lane B (LLM extraction). Default: `agent_67GraphExtract.json` |
+| `extractor_agent` | Support agent used by Lane B (LLM extraction). Default: `agent_56GraphExtract.json` |
 | `chk_dict` | Notion pull filter. Do NOT share `RAGChk` with the sibling ChromaDB entry — whichever runs first flips it and starves the other. Use `確定Chk` only on the graph side, or add a separate Notion column (e.g. `GraphChk`) to fully isolate |
 | `fin_flg` | Notion-side completion flag write-back. Graph is idempotent via `graph.json.edge.source_ids` self-dedup, so `{}` is safe |
 
@@ -1126,6 +1126,26 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/{DATA_NAME} --use-llm --embe
 ### Agent configuration
 
 Place agent definition JSON files under `user/common/agent/`. It is recommended to copy `agent_10Sample.json` and customize it.
+
+##### Filename number bands
+
+`agent_<2 digits><Name>.json`. The band is decided by two axes: **shipped vs. private**, and **a derivative is `generic + 20`**.
+
+| Band | Role | git |
+|---|---|---|
+| `0X` | Main agents (`0A` = API variant) | private |
+| `1X` | Samples / templates | shipped |
+| `2X` | User-facing generic agents (`20Default` `21EthicalCheck` `22SenryuSensei` `23DataAnalyst` `24ArtCritic` `25CompareTexts`) | shipped |
+| `4X` | **Derivatives of 2X** (`41DigiMEthicalCheck`) | private |
+| `5X` | **Knowledge retrieval & interpretation (RAG pipeline)** — `50Thinking` `53MetaExtract` `54ExtractDate` `55PageIndexSearch` `56GraphExtract` `57KnowledgeInterpret` (`51`, `52`, `58`, `59` reserved)<br>**`5A` onwards is the dedicated RAG query-generator block** — `5ARAGQueryGenerator`, `5BFactQueryGenerator`, … (expected to grow one per angle, so it extends sequentially) | shipped |
+| `6X` | **Dialogue / session / persona** — `60DialogDigest` `61SessionName` `62SessionSummary` `64PersonaMerge` `65PersonaSelector` `66UserMemoryPersona` `67UserMemoryNowaday` `68UserMemoryHistory` `69Evaluation` (`63` reserved) | shipped |
+| `7X` | **Derivatives of 5X** (`70DigiMThinking` `74DigiMExtractDate` `77DigiMKnowledgeInterpret` `78DigiMKnowledgeUsageSelector` `7ADigiMRAGQueryGenerator`) | private |
+| `8X` | **Derivatives of 6X** (`83DigiMCitationInject`) | private |
+| `AX` / `RX` | Alternate personas / series agents | private |
+
+The "private" bands are excluded by `.gitignore`, so **each user has free space there for their own derivatives**. When a band fills up, extend it with a hex suffix (`5A`, `6A`) rather than spilling into the next band — following the existing `0A` precedent. **A derivative keeps the second character and adds 2 to the first** (`50`→`70`, `5A`→`7A`, `63`→`83`).
+
+> **Backward compatibility on rename**: renaming a support agent breaks `setting.agent_file` in saved sessions and `SUPPORT_AGENT` references in other users' private agents. Register the old → new name in `DigiM_Agent.AGENT_FILE_ALIASES`; the alias only kicks in when the requested file is genuinely absent. The 2026-08 renumbering is already registered.
 
 #### PERSONALITY (personality settings)
 
@@ -1265,7 +1285,7 @@ Optional top-level block on the agent JSON. Holds this agent's recommended defau
 ```json
 "THINKING": {
     "MODE": true,
-    "TARGETS": ["Habit", "RAG Query", "Books", "Tools"],
+    "TARGETS": ["Habit", "RAG Query", "Books", "Skills"],
     "MAX_TURNS": 1
 }
 ```
@@ -1275,10 +1295,10 @@ Optional top-level block on the agent JSON. Holds this agent's recommended defau
 **Target-option filter (UI render time)**:
 - `Habit` / `RAG Query` / `Web Search`: always shown
 - `Books`: only when the agent has `BOOK`
-- `Tools`: only when `SKILL.TOOL_LIST` is non-empty
+- `Skills`: only when `SKILL.TOOLS` / `SKILL.TOOL_LIST` is non-empty
 - `Personas`: only when the agent has `ORG`
 
-**Tools target**: The Thinking Agent inspects each `- name: description` entry in the SKILL list and returns SKILL names (the JSON key `tools` is kept for compat). The dispatcher then runs each selected SKILL **at the PHASE declared in `SKILL.TOOLS[name].PHASE`** (BEFORE / CONTEXT / AFTER). The old `HABIT.TOOL_PICK` routing is retired — see the SKILL section below.
+**Skills target**: The Thinking Agent inspects each `- name: description` entry in the SKILL list and returns SKILL names (the JSON key `tools` is kept for compat). The dispatcher then runs each selected SKILL **at the PHASE declared in `SKILL.TOOLS[name].PHASE`** (BEFORE / CONTEXT / AFTER). The old `HABIT.TOOL_PICK` routing is retired — see the SKILL section below.
 
 **`web_search` flag vs. `tools[]` conflict guard**: prompt-side rule that says "if a WebSearch-shaped SKILL appears in ToolInfo, prefer `tools=[<WebSearch>]` + `web_search=false`" + code-side auto-promotion when the LLM ignores it (`reasoning` gets a `[auto-promoted: ...]` line, visible in Detail Information).
 
@@ -1400,26 +1420,31 @@ SKILL is **fully independent of HABIT**. Each SKILL entry declares a `PHASE` and
 - **CONTEXT**: runs before the HABIT practice; the wrapped tool output is appended to `user_query`, so both the RAG query generator and the main LLM see it. Same shape as the built-in Web Search injection. Designed for Web / doc search
 - **AFTER**: runs after the HABIT produced its response; receives the HABIT's final response as input. Saved as its own sub_seq
 
-**How a SKILL fires (3-tier trigger stack, priority-ordered, merged)**:
+**How a SKILL fires (4-tier trigger stack, priority-ordered, merged)**:
 - **1. Slash command**: `/<name> <query>` — if the name resolves in `SKILL.TOOLS`, the tool fires at its declared PHASE and `<query>` becomes the HABIT's user_query
-- **2. `SKILL.TOOLS[name].MAGIC_WORDS` match**: if any word in the list appears in the user's query, the SKILL is auto-selected (same idea as HABIT.MAGIC_WORDS — write phrases that naturally invoke this SKILL)
-- **3. Thinking Mode**: with `Tools` in Thinking Targets, the Thinking Agent picks SKILLs by reading their `description`
-- **Dedup**: same SKILL selected by multiple tiers only runs once. Order: slash → magic → thinking
+- **2. SKILL multiselect (shown only when Thinking Mode is OFF)**: a **`SKILL`** multiselect appears under BOOK in Conversation Settings. Picked SKILLs fire this turn at their declared PHASE. Options render as `name (PHASE)`, and SKILLs disabled via Temporary Override are excluded
+- **3. `SKILL.TOOLS[name].MAGIC_WORDS` match**: if any word in the list appears in the user's query, the SKILL is auto-selected (same idea as HABIT.MAGIC_WORDS — write phrases that naturally invoke this SKILL)
+- **4. Thinking Mode**: with `Skills` in Thinking Targets, the Thinking Agent picks SKILLs by reading their `description`. The multiselect from tier 2 is hidden while Thinking Mode is ON
+- **Dedup**: same SKILL selected by multiple tiers only runs once. Order: slash → manual → magic → thinking
+
+**`WEB Search` checkbox vs. the `WebSearch` SKILL**: with Thinking Mode OFF, Conversation Settings shows two entry points for web search — the Row 4 **`WEB Search` checkbox** (built-in `execution.WEB_SEARCH` path) and **`WebSearch (CONTEXT)`** in the SKILL multiselect (SKILL path). **Selecting both still searches only once**: if a CONTEXT-phase WebSearch-family SKILL (`WebSearch` / `WebSearch_*`) already ran, the built-in path is skipped automatically (recorded as `prompt.web_search.skipped_reason` / `skipped_by`). The SKILL path wins because it carries PHASE and `ARGS_HINT`. Selecting just one behaves exactly as before.
 
 **Sample SKILLs on `agent_10Sample.json`** (persona-tailored for Eight, the freelance journalist):
 
 | SKILL | PHASE | Purpose | MAGIC_WORDS |
 |---|---|---|---|
 | `WebSearch` | CONTEXT | Web search on current events | (Thinking / slash) |
-| `recall_similar_experience` | BEFORE | Recall the agent's own past similar experience from Vector KNOWLEDGE | 「似た経験」「類似した経験」「過去に似た」「思い出したい」 |
-| `analyze_attachment` | BEFORE | Extract logical features from attached CSV/TXT/MD | 「添付を分析」「この資料を分析」「このデータの特徴」 |
-| `mood_score` | AFTER | Score user & assistant emotions on Plutchik's 8 axes | 「感情スコア」「今の気持ちを表示」「感情を見せて」 |
-| `self_critique` | AFTER | 3-axis devil's-advocate check on the assistant's own response | 「自分の回答に反論」「批判的に検討」「セルフクリティーク」 |
-| `translate_response` | AFTER | Translate the response into a target language (default English) | 「英訳して」「英語に翻訳」「translate to English」 |
-| `slide_deck_prompt` | AFTER | Turn the answer into a paste-ready prompt for a slide-generation AI (Gamma / Beautiful.AI / Canva Magic Studio / PowerPoint Copilot) | 「スライドにまとめて」「パワポで」「PowerPointで」「プレゼン資料にまとめる」「スライドAI向け」 |
+| `recall_similar_experience` | BEFORE | Recall the agent's own past similar experience from Vector KNOWLEDGE | 「過去の似た経験を思い出してください。」「似た経験を振り返ってください。」 |
+| `analyze_attachment` | BEFORE | Extract logical features from attached CSV/TXT/MD | 「添付データを分析してください。」「添付ファイルの特徴を分析してください。」 |
+| `mood_score` | AFTER | Score user & assistant emotions on Plutchik's 8 axes | 「感情スコアを表示してください。」「お互いの感情を分析してください。」 |
+| `self_critique` | AFTER | 3-axis devil's-advocate check on the assistant's own response | 「自分の回答を批判的に検討してください。」「セルフクリティークしてください。」 |
+| `translate_response` | AFTER | Translate the response into a target language (default English) | 「回答を英訳してください。」「回答を英語に翻訳してください。」 |
+| `slide_deck_prompt` | AFTER | Turn the answer into a paste-ready prompt for a slide-generation AI (Gamma / Beautiful.AI / Canva Magic Studio / PowerPoint Copilot) | 「スライド構成を作成してください。」「プレゼン資料の構成を作成してください。」 |
 
 None fires "always" — the description of each tool explicitly reads `Use ONLY when ...`, so the Thinking Agent stays selective, and MAGIC_WORDS require an explicit user hint.
 
+
+**MAGIC_WORDS must be explicit imperative sentences**: fragments like 「英訳して」 or 「パワポで」 show up in ordinary conversation and make SKILLs fire constantly. Follow the HABIT convention (`エシカルチェックしてください。`) and include the full 「〜してください。」 ending. Leave fuzzy triggering to Thinking Mode.
 **Retired**: `HABIT.TOOL_PICK` and `practice_55ToolPick.json` are no longer needed. Bundled agents have `HABIT.TOOL_PICK` removed. Legacy `SKILL.TOOL_LIST` + `INACTIVE_TOOLS` is auto-converted at load time (every entry lands on `PHASE: "CONTEXT"`).
 
 **Persistence & display**:
@@ -1430,7 +1455,7 @@ None fires "always" — the description of each tool explicitly reads `Use ONLY 
 
 **CONTEXT SKILL reference-material wrap**: the LLM is told to keep specific facts (proper nouns, numbers, dates, quotes) accurate to the material, rephrase in its own voice (no verbatim paragraph copies), let the persona lead tone/vocabulary, and reuse numbered citations like `[1]` verbatim when the material contains them. Built-in Web Search wraps its output with the same rules.
 
-**When the `Tools` option shows up in Thinking Targets**: the multiselect adds `Tools` whenever either the new `SKILL.TOOLS` (dict) or the legacy `SKILL.TOOL_LIST` (list) is non-empty. `THINKING_TARGETS.tools` defaults to `True` (matches the other target flags) — a missing key means "honor Thinking's tool picks" rather than "block them".
+**When the `Skills` option shows up in Thinking Targets**: the multiselect adds `Skills` whenever either the new `SKILL.TOOLS` (dict) or the legacy `SKILL.TOOL_LIST` (list) is non-empty (agent JSONs still saying `Tools` are normalized to `Skills` on load). `THINKING_TARGETS.tools` defaults to `True` (matches the other target flags) — a missing key means "honor Thinking's tool picks" rather than "block them".
 
 #### FEEDBACK (feedback settings)
 
@@ -1486,13 +1511,13 @@ Specifies Support Agents that assist the main dialogue. Each Support Agent is de
 
 ```json
 "SUPPORT_AGENT": {
-  "DIALOG_DIGEST": "agent_51DialogDigest.json",
-  "ART_CRITICS": "agent_52ArtCritic.json",
-  "EXTRACT_DATE": "agent_55ExtractDate.json",
-  "RAG_QUERY_GENERATOR": "agent_56RAGQueryGenerator.json",
-  "THINKING": "agent_58Thinking.json",
-  "KNOWLEDGE_INTERPRET": "agent_78DigiMKnowledgeInterpret.json",
-  "CITATION_INJECT": "agent_79DigiMCitationInject.json"
+  "DIALOG_DIGEST": "agent_60DialogDigest.json",
+  "ART_CRITICS": "agent_24ArtCritic.json",
+  "EXTRACT_DATE": "agent_54ExtractDate.json",
+  "RAG_QUERY_GENERATOR": "agent_5AQGenUserIntent.json",
+  "THINKING": "agent_50Thinking.json",
+  "KNOWLEDGE_INTERPRET": "agent_77DigiMKnowledgeInterpret.json",
+  "CITATION_INJECT": "agent_83DigiMCitationInject.json"
 }
 ```
 
@@ -1502,14 +1527,99 @@ Specifies Support Agents that assist the main dialogue. Each Support Agent is de
 | `ART_CRITICS` | Generates explanation / critique after image generation |
 | `EXTRACT_DATE` | Extracts date information from user input (used for RAG metadata search). **Legacy fallback path when `META_EXTRACT` is not registered** |
 | `META_EXTRACT` | Generalized meta extractor (`DATE` / `CATEGORY` / `NUMBER` / `TEXT` in a single call). Takes precedence over `EXTRACT_DATE` when both are registered. Produces one JSON object keyed by each `EXTRACTOR` name declared in `META_SEARCH.CONDITIONS[]` |
-| `RAG_QUERY_GENERATOR` | Generates auxiliary queries for RAG search from user input |
-| `THINKING` | Analyzes the user's question and dynamically decides on Habit selection / Web search / RAG query generation / Book addition / **Tool invocation** (when Thinking Mode is enabled). When `Tools` is included in Thinking Targets, the Thinking Agent inspects each entry in `SKILL.TOOL_LIST` (with its description) and, when it picks any, the dispatcher auto-switches the HABIT to `TOOL_PICK` and hands the narrowed tool list to the engine-agnostic dispatcher via `in_execution["_THINKING_TOOL_LIST"]`. **Multi-turn support**: setting `Max Thinking Turns > 1` enables the B-type loop — each turn's JSON carries a `sufficient` flag; when it is `false` the pipeline runs a **preview Web search** and feeds the result into the next Thinking turn. The loop breaks on `sufficient=true` or when the turn cap is reached. The preview search is reused by the main response path via `_WEB_SEARCH_CACHE` (no double-fire).<br>**Prompt-template placeholders**: `PROMPT_TEMPLATE."Thinking Agent"` embeds `{PreviousThinking}` (last turn's decision JSON) and `{WebSearchPreview}` (preview search text) — [user/common/tool/thinking.py](user/common/tool/thinking.py) substitutes them at runtime via `.replace()`. Preserve both placeholders + the `sufficient` field in the output JSON when customizing the template (removing them would cost the loop its memory across turns) |
+| `RAG_QUERY_GENERATOR` | Generates auxiliary queries for RAG search from user input. **Accepts a single string or an array of generators** (see "Multiple RAG query generators" below) |
+| `THINKING` | Analyzes the user's question and dynamically decides on Habit selection / Web search / RAG query generation / Book addition / **Tool invocation** (when Thinking Mode is enabled). When `Skills` is included in Thinking Targets, the Thinking Agent inspects each SKILL entry (with its description) and, when it picks any, the dispatcher auto-switches the HABIT to `TOOL_PICK` and hands the narrowed tool list to the engine-agnostic dispatcher via `in_execution["_THINKING_TOOL_LIST"]`. **Multi-turn support**: setting `Max Thinking Turns > 1` enables the B-type loop — each turn's JSON carries a `sufficient` flag; when it is `false` the pipeline runs a **preview Web search** and feeds the result into the next Thinking turn. The loop breaks on `sufficient=true` or when the turn cap is reached. The preview search is reused by the main response path via `_WEB_SEARCH_CACHE` (no double-fire).<br>**Prompt-template placeholders**: `PROMPT_TEMPLATE."Thinking Agent"` embeds `{PreviousThinking}` (last turn's decision JSON) and `{WebSearchPreview}` (preview search text) — [user/common/tool/thinking.py](user/common/tool/thinking.py) substitutes them at runtime via `.replace()`. Preserve both placeholders + the `sufficient` field in the output JSON when customizing the template (removing them would cost the loop its memory across turns) |
 | `KNOWLEDGE_INTERPRET` | Invoked by the "Interpret with LLM" buttons under Analytics Results - Knowledge Utility. Reads the inventory CSV / similarity rank (+ optional scatter / bar images) and returns three sections: overall composition vs. this-query selection, contribution analysis using delta = response_sim − question_sim, and notable / improvement points. Back-data centric; images are optional for vision-capable models. |
 | `CITATION_INJECT` | After the main response is generated, this agent inserts `[N]` markers at sentences grounded in web URLs or BOOK chunks and appends a `## References` section. Fires automatically whenever a web URL or a BOOK chunk was used (KNOWLEDGE entries are not cited — they are treated as the agent's internalised knowledge). Defaults to a lightweight model (Claude-Haiku-4.5 / Gemini Flash Lite / GPT-5.4-mini). On LLM failure, falls back to leaving the body untouched and appending only the References list. **If the LLM output contains neither `[N]` markers nor a `## References` section, it is treated as "no correspondence" and the original body is kept verbatim** (protects the real answer when the LLM returns an apology instead of citations). |
+
+##### Inheriting from the main agent into a support agent (`INHERIT`)
+
+Each `SUPPORT_AGENT` entry accepts the plain **string** form (as before) or a **dict** form. The dict lets a support agent inherit **selected PERSONALITY fields** and **named KNOWLEDGE / BOOK entries** from the main agent.
+
+```json
+"SUPPORT_AGENT": {
+    "THINKING": {
+        "AGENT_FILE": "agent_50Thinking.json",
+        "INHERIT": {
+            "PERSONALITY": ["CHARACTER", "SPEAKING_STYLE"],
+            "KNOWLEDGE": ["Identity", "Style"],
+            "BOOK": ["History"]
+        }
+    },
+    "RAG_QUERY_GENERATOR": [
+        {"AGENT_FILE": "agent_5AQGenUserIntent.json",
+         "INHERIT": {"PERSONALITY": ["CHARACTER"], "KNOWLEDGE": ["Identity"]}},
+        "agent_5BQGenGeneralKeywords.json"
+    ],
+    "DIALOG_DIGEST": "agent_60DialogDigest.json"
+}
+```
+
+| Key | Value | Meaning |
+|---|---|---|
+| `AGENT_FILE` | str | The support agent to invoke |
+| `INHERIT.PERSONALITY` | array of field names / `true` | Copy those fields from the main agent's PERSONALITY (**override**); `true` copies every field |
+| `INHERIT.KNOWLEDGE` | array of `RAG_NAME` / `true` | **Append** the matching entries from the main agent's KNOWLEDGE (never replaces what the support agent declares) |
+| `INHERIT.BOOK` | array of `RAG_NAME` / `true` | Same for BOOK |
+
+**KNOWLEDGE / BOOK are additive, not replacing.** Whatever the support agent declares itself is kept; entries whose `RAG_NAME` already exists are skipped. Only PERSONALITY overrides the named fields (an explicit persona still wins over it).
+
+**Why**: previously, making a support agent use the main agent's character and knowledge meant hand-maintaining a full copy in the `7X` / `8X` derivative bands. With `INHERIT` you can point straight at the generic agent and borrow only the fields and knowledge you need — no derivative file required.
+
+**Implementation note**: the resolved value is a `DigiM_Agent.SupportAgentRef`, a `str` subclass. It behaves as the plain filename everywhere (logging, `json.dumps`, `os.path.exists`, name comparisons) and just carries the overlay alongside. String entries stay plain `str`, so **existing agents are completely unaffected**.
 
 **Support-agent Date inheritance**: Support agents such as `THINKING` / `RAG_QUERY_GENERATOR` / `EXTRACT_DATE` inherit the parent (main chat) agent's Date setting (Real Date / Custom Date) as-is. However, when the parent is in **No Date** mode, support agents alone **fall back to the current real clock** (so relative expressions like "recently" / "just now" and `EXTRACT_DATE` date-range resolution keep working). The user-facing main response stays No Date — roleplay and persona settings are not affected.
 
 **Thinking Mode and web-search engine**: The Thinking Agent normally does NOT specify an engine and defers to `setting.yaml` `WEB_SEARCH_DEFAULT` (only overrides when it has a clear reason to prefer a specific engine). When the user has already turned Web Search ON in the WebUI, Thinking never weakens that choice — it can only add an engine hint on top.
+
+##### Multiple RAG query generators (query variation × meta-search)
+
+Register `RAG_QUERY_GENERATOR` as an **array** and each generator produces **one query from its own angle**; every generated query enters the vector search as its own `QUERY_SEQ`. More query variation, combined with [META_SEARCH](#meta_search-generalized-meta-search-period--category--number--partial-match-bonus) filtering, is what makes the vector search flexible and thorough.
+
+```json
+"SUPPORT_AGENT": {
+    "RAG_QUERY_GENERATOR": [
+        "agent_7ADigiMQGenUserIntent.json",
+        "agent_5BQGenGeneralKeywords.json"
+    ]
+},
+"RAG_QUERY_GENERATOR_MAX_CALLS": 2
+```
+
+| Key | Meaning |
+|---|---|
+| `SUPPORT_AGENT.RAG_QUERY_GENERATOR` | Generator agent filename(s). **Single string (legacy) or array** |
+| `RAG_QUERY_GENERATOR_MAX_CALLS` | Cap on generators invoked per turn (**default `2`**). Same top-level placement as `AGENT_SEARCH_MAX_CALLS` |
+
+**Selection order**:
+1. **Thinking Mode** — with `RAG Query` in Thinking Targets, the Thinking Agent reads each generator's `PURPOSE` and returns a fitting combination as `rag_query_generators` (up to the cap). The prompt tells it to pick complementary angles rather than near-duplicates
+2. **Fallback (Thinking not used)** — a **random sample** of registered generators, up to the cap. Turns rotate through the registered angles instead of always hitting the first N in JSON order, so the same question can surface knowledge from different directions across turns
+
+Which path was taken is recorded in the log as `selection_mode` (`thinking` / `random`), visible in Detail Information.
+
+**Execution**: selected generators run in parallel via `ThreadPoolExecutor`, and all responses are embedded in a single `embed_texts_batch` call. One failing generator does not abort the others (warning logged).
+
+**Generator `PURPOSE`**: a top-level `PURPOSE` on the generator's agent JSON feeds Thinking's decision (fallback ladder `PURPOSE` → `ACT` → `DISPLAY_NAME`, same as HABIT / BOOK).
+
+**Bundled generators**:
+
+| Agent | Angle |
+|---|---|
+| `agent_5AQGenUserIntent.json` | Digs into background / motive / underlying psychology (generic) |
+| `agent_7ADigiMQGenUserIntent.json` | Persona-flavoured, grounded in DigitalMATSUMOTO's Identity / Style |
+| `agent_5BQGenGeneralKeywords.json` | Extracts **factual search terms** — proper nouns, jargon, synonyms, period/number conditions. Pairs well with a psychology-oriented generator |
+
+**Visualization**: Knowledge Utility / APE scatter plots colour points by `QUERY_SEQ`. `0` = the raw question (deepskyblue), `1` = question + chat history (blue), **`2`+ = generated query variations (purple family)**. With multiple generators the purple hue rotates `purple` → `darkviolet` → `mediumorchid` → `indigo` so you can tell which generator produced a hit.
+
+**Marking the queries themselves**: the Analytics Results scatter also overlays **each query's own position** as a numbered ★ marker, coloured with the same `QUERY_SEQ` palette as the chunks — so you can see at a glance which chunks cluster around which query.
+
+- **Projection**: PCA `transform()`s the query vectors into the space fitted on the chunks. t-SNE has no out-of-sample transform, so chunks and queries are fitted together and split afterwards (chunk coordinates shift slightly)
+- **Legend**: placed **outside** the axes (right side) so it never covers the plot. Format is `[n] kind: first 20 chars of the query`, with the total in the title as `Queries (N)`. The number is also drawn inside the ★ itself, so points stay identifiable without cross-referencing the legend
+- **Kinds**: `input` (raw), `input+history` (digest/situation concatenated — present only when either exists), `intent` (one per selected RAG query generator)
+- **Stored data**: query vectors go to the session's `vec/<seq>-<sub_seq>_queries.npy`; the 20-char preview and kind go to `prompt.query.query_labels`. Turns recorded before this landed simply render without markers (backward compatible)
+- **Japanese text**: since previews are often Japanese, matplotlib auto-selects an **installed** CJK family (`IPAexGothic` / `Noto Sans CJK JP` / …), falling back to DejaVu Sans when none is present
+
+**Token breakdown**: Detail Information's Token Usage tab lists one row per generator (`RAG Query Gen #1`, `#2`, …).
 
 #### BOOK (reference information)
 
@@ -1546,7 +1656,7 @@ Rather than vector search, this method has the LLM select relevant pages from a 
       {
         "DATA_TYPE": "PAGE_INDEX",
         "DATA_NAME": "DigiMPGSystemGuide",
-        "SUPPORT_AGENT": "agent_59PageIndexSearch.json"
+        "SUPPORT_AGENT": "agent_55PageIndexSearch.json"
       }
     ],
     "HEADER_TEMPLATE": "[System Guide] The following is technical information about the system.\n",
@@ -1607,7 +1717,7 @@ Context is injected as three blocks: `paths` (oriented chains), `relations` (edg
 Place `mapping.json` (source definitions) and `dictionary.json` (alias normalization / seeds / prop_schema) in the graph folder (e.g. `user/common/rag/graph/Sample01_Relations/`) and run the ingestion batch to build `graph.json`.
 
 - **Lane A (STRUCTURED)**: CSV columns / Notion properties / RDB columns convert **deterministically** through column mapping (no LLM). Supports props, relation columns with edge props, multi-value cells (`;`), and IN/OUT direction
-- **Lane B (TEXT)**: free-text columns go through `agent_67GraphExtract.json` LLM extraction of triples and state candidates (predicates as concrete verbs: 評価/懸念/参画/策定 …)
+- **Lane B (TEXT)**: free-text columns go through `agent_56GraphExtract.json` LLM extraction of triples and state candidates (predicates as concrete verbs: 評価/懸念/参画/策定 …)
 - Conflict precedence: **STRUCTURED > dictionary seeds > TEXT**, ties broken by newer `AS_OF`
 - A prop whose value matches an existing node name is **auto-promoted to an edge** (e.g. `居住地: 東京` → `--[居住地]--> (東京)`)
 
@@ -1688,7 +1798,7 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/Sample01_Relations
 
 #### Lane B example — letting the LLM decompose prose
 
-With no ledger and only prose to work from, Lane B has `agent_67GraphExtract.json` pull triples out of the text.
+With no ledger and only prose to work from, Lane B has `agent_56GraphExtract.json` pull triples out of the text.
 
 ```csv
 id,create_date,category,body
@@ -1779,7 +1889,7 @@ An `input: "csv"` + `data_type: "graph"` entry in `rags.json` lets the sidebar *
     "file_path": "user/common/rag/graph/Sample01_Relations/",
     "use_llm": false,
     "embed": false,
-    "extractor_agent": "agent_67GraphExtract.json"
+    "extractor_agent": "agent_56GraphExtract.json"
 }
 ```
 
@@ -1807,7 +1917,7 @@ Write a `rags.json` entry in the same shape as ChromaDB and the sidebar **`Updat
     "data_type": "graph",
     "data_name": "DigiMATSU_Memo",
     "file_path": "user/common/rag/graph/digimatsu_identity/",
-    "extractor_agent": "agent_67GraphExtract.json",
+    "extractor_agent": "agent_56GraphExtract.json",
     "item_dict": { ... Notion property → chunk field map ... },
     "chk_dict": { "確定Chk": true },
     "category_dict": { "RAGカテゴリ": "identity" },
@@ -1967,7 +2077,7 @@ In each CHAIN step of a Practice, you can have **only that step** run in paralle
 
 **Phase 7: ThinkingMode persona auto-select**:
 
-When `chain.PERSONAS = "THINKING"`, [`agent_54PersonaSelector.json`](user/common/agent/agent_54PersonaSelector.json) is called and **up to N** optimal personas are auto-selected based on the user's question:
+When `chain.PERSONAS = "THINKING"`, [`agent_65PersonaSelector.json`](user/common/agent/agent_65PersonaSelector.json) is called and **up to N** optimal personas are auto-selected based on the user's question:
 - **Candidate pool**: All personas matching the selected ORG (the one chosen in the WebUI)
 - **Upper bound N**: The "Max Personas" input in the WebUI sidebar (default is `MAX_PERSONAS=3` in `setting.yaml`)
 - **Selection logic**: PersonaSelector picks personas whose viewpoints are complementary to one another and to the question. If one is sufficient, only one; out-of-domain personas are excluded
@@ -1975,7 +2085,7 @@ When `chain.PERSONAS = "THINKING"`, [`agent_54PersonaSelector.json`](user/common
 - **Detail Information**: The selection reasons are recorded in `_THINKING_RESULT.personas_reason`
 
 **Support agents**:
-- `agent_50PersonaMerge.json`: The integration LLM called when `PERSONA_MERGE="summary"`
+- `agent_64PersonaMerge.json`: The integration LLM called when `PERSONA_MERGE="summary"`
 - The summary intensity is controlled via the `{summary_level}` placeholder in the "Persona Merge" prompt template
 - Called from `DigiM_Tool.dialog_persona_merge()`
 
@@ -2055,7 +2165,7 @@ A Practice is a JSON file that defines the processing pipeline of an agent. Plac
     },
     {
       "TYPE": "LLM",
-      "AGENT_FILE": "agent_52ArtCritic.json",
+      "AGENT_FILE": "agent_24ArtCritic.json",
       "PROMPT_TEMPLATE": "Art Critic",
       "USER_INPUT": "Explain the content in about 300 characters while relating it to the conversation so far.",
       "CONTENTS": "EXPORT_1",
@@ -2329,7 +2439,7 @@ BOOK is distinguished from KNOWLEDGE by filtering on `agent.agent["BOOK"]` `RAG_
 - **Default ON**: `_parse_execution_settings.insert_citations` defaults to `True`. There is no WebUI toggle — the injector fires automatically whenever there is at least one citation source (a Web URL or a BOOK chunk).
 - **Explicit OFF** (API etc.): pass `execution["INSERT_CITATIONS"] = false` to disable.
 - **Per-chain override in Practice**: `CHAINS[i].SETTING.INSERT_CITATIONS = false` disables the injector for one chain step only (e.g. multi-step Practice where the first chain should keep its own "参照した知識" section intact and only the last chain adds `## References` for the web sources). Unset = inherits parent ([DigiM_Execute.py:1500](DigiM_Execute.py)).
-- **Engine override**: `SUPPORT_AGENT.CITATION_INJECT` selects the agent_file. Default is `agent_79DigiMCitationInject.json` (Claude-Haiku-4.5 family).
+- **Engine override**: `SUPPORT_AGENT.CITATION_INJECT` selects the agent_file. Default is `agent_83DigiMCitationInject.json` (Claude-Haiku-4.5 family).
 
 #### Graceful fallback
 
@@ -2854,7 +2964,7 @@ The "**Detail Information**" expander under each turn is split into four tabs:
 
 ### Session Summary (user-defined session dossier)
 
-**Distinct from memory digest** — a **user-formatted session state document** that gets updated by a lightweight LLM (default: `agent_65SessionSummary.json` → Gemini-3.5-Flash) after each turn in the background, and injected into subsequent prompts as a `[Current Session Summary]` block.
+**Distinct from memory digest** — a **user-formatted session state document** that gets updated by a lightweight LLM (default: `agent_62SessionSummary.json` → Gemini-3.5-Flash) after each turn in the background, and injected into subsequent prompts as a `[Current Session Summary]` block.
 
 **Example use cases**:
 - **Customer meeting**: Accumulate "Company / Contact / Issue / Next action" across turns → after a few exchanges the agent naturally holds the whole picture
@@ -2879,16 +2989,16 @@ Summary updates and digest generation run in **completely separate background th
 
 **Lightweight agent override**:
 
-By default `agent_65SessionSummary.json` (Gemini-3.5-Flash) is picked up as a global fallback, so **every chat agent gets lightweight summary updates without extra configuration**. To use a different model for a specific agent, add to its `SUPPORT_AGENT`:
+By default `agent_62SessionSummary.json` (Gemini-3.5-Flash) is picked up as a global fallback, so **every chat agent gets lightweight summary updates without extra configuration**. To use a different model for a specific agent, add to its `SUPPORT_AGENT`:
 
 ```json
 "SUPPORT_AGENT": {
     ...
-    "SESSION_SUMMARY": "agent_65SessionSummary.json"
+    "SESSION_SUMMARY": "agent_62SessionSummary.json"
 }
 ```
 
-(`agent_01DigitalMATSUMOTO.json` and `agent_10Sample.json` already have this wired up.) To switch models globally, change the `DEFAULT` engine inside `agent_65SessionSummary.json` (e.g. `GPT-5.4-nano`, `Claude-Haiku-4.5`).
+(`agent_01DigitalMATSUMOTO.json` and `agent_10Sample.json` already have this wired up.) To switch models globally, change the `DEFAULT` engine inside `agent_62SessionSummary.json` (e.g. `GPT-5.4-nano`, `Claude-Haiku-4.5`).
 
 **Prompt injection order**:
 
@@ -3010,7 +3120,7 @@ Reads the result xlsx from the session folder and renders a cross-sheet summary 
 ### Implementation notes
 
 - Multi-persona mode auto-sets `MEMORY_SAVE=True` (the parallel path only streams `[STATUS]` chunks; per-persona responses are read from chat_memory's sub_seqs of the latest seq).
-- Evaluation uses `dmt.eval_answer_vs_groundtruth` in `user/common/tool/analysis.py`. Default LLM agent for the verdict step is `agent_53CompareTexts.json`.
+- Evaluation uses `dmt.eval_answer_vs_groundtruth` in `user/common/tool/analysis.py`. Default LLM agent for the verdict step is `agent_25CompareTexts.json`.
 - LLM critique uses `dmt.critique_batch_results` (same file).
 
 ---
@@ -3063,7 +3173,7 @@ Adding any of these to your `Plugin` class unlocks matching UI behaviour:
 1. Pick a plugin from the dropdown
 2. **📎 Sample input: `<filename>`** — only the filename is shown (the absolute server path is hidden for safety). **Download template (.xlsx)** streams the source xlsx byte-for-byte (all formatting preserved)
 3. **Upload input (.xlsx)** — the filled-in spreadsheet
-4. **🔒 Evaluation agent** — when the plugin exposes `default_agent()`, that dedicated agent (e.g. `agent_66Evaluation.json`) is pinned. Otherwise falls back to the first registered agent
+4. **🔒 Evaluation agent** — when the plugin exposes `default_agent()`, that dedicated agent (e.g. `agent_69Evaluation.json`) is pinned. Otherwise falls back to the first registered agent
 5. **Category checkboxes** — narrow the scope when the plugin exposes `list_categories()`
 6. **Run analysis** → plugin's `run()` executes → `llm_augment` (if defined) runs per-category LLM extractions **in parallel** → `render()` displays the result
 7. **LLM Evaluation** —
@@ -3230,7 +3340,7 @@ API default values are used for omitted parameters. These correspond to the WebU
 | `thinking_mode` | `false` | Thinking Mode. When `true`, the AI analyzes the question and dynamically decides Habit / Web search / RAG query generation / Book addition |
 | `max_thinking_turns` | `1` | Upper bound on Thinking iterations (auto-clamped to 1–5). With 2+ turns, if Thinking returns `sufficient=false` a reserve web search runs and feeds the next Thinking turn. Only meaningful when `thinking_mode=true` |
 | `insert_citations` | `true` | Insert `[N]` citation markers into the response body and append a `## Reference Info` section listing Web / Book sources |
-| `cite_knowledge` | `false` | After the response, a dedicated selector agent (`agent_80DigiMKnowledgeUsageSelector.json`) decides which KNOWLEDGE chunks were actually referenced and appends a `## Reference Knowledge` section (Knowledge Utility scores included) |
+| `cite_knowledge` | `false` | After the response, a dedicated selector agent (`agent_78DigiMKnowledgeUsageSelector.json`) decides which KNOWLEDGE chunks were actually referenced and appends a `## Reference Knowledge` section (Knowledge Utility scores included) |
 | `diagram_mode` | `false` | Ask the LLM to use Markdown tables and Mermaid diagrams (```mermaid) inside the explanation |
 | `emphasis_mode` | `false` | Ask the LLM to emphasise key points in **bold** and organise long answers with headings and bullet lists |
 | `user_memory` | (unspecified) | Whether to use User Memory (information about the dialogue partner). `true` = all layers ON / `false` = all Off / unspecified = follows `Allowed["User Memory Layers"]` in `users.json` (or `USER_MEMORY_DEFAULT_LAYERS` if absent) |

@@ -760,7 +760,7 @@ def embed_nodes(graph):
 
 
 def source_fingerprint(graph_dir, use_llm=False, embed=False,
-                       llm_agent_file="agent_67GraphExtract.json"):
+                       llm_agent_file="agent_56GraphExtract.json"):
     """Content hash of everything a build reads: mapping.json, dictionary.json,
     every SOURCES[].FILE, the two build flags, and — for Lane B — the extractor
     agent's JSON.
@@ -804,7 +804,7 @@ def source_fingerprint(graph_dir, use_llm=False, embed=False,
 
 
 def build_graph(graph_dir, use_llm=False, embed=False,
-                llm_agent_file="agent_67GraphExtract.json",
+                llm_agent_file="agent_56GraphExtract.json",
                 skip_unchanged=False):
     """Full build from mapping.json + dictionary.json. Returns a report dict.
 

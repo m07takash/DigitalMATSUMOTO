@@ -1,8 +1,9 @@
 {
     "DISPLAY": false,
-    "DISPLAY_NAME": "RAGクエリ生成",
-    "NAME": "RAGクエリ生成",
-    "ACT": "深層心理や潜在意識を理解するAI",
+    "DISPLAY_NAME": "クエリ生成(一般キーワード)",
+    "NAME": "クエリ生成(一般キーワード)",
+    "ACT": "入力に一般的に関連するキーワードを列挙するAI",
+    "PURPOSE": "入力に対して一般的・辞書的に関連するキーワードを30個列挙する。人格に寄せない広い連想でベクトル検索の網羅性を上げたいときに向く。",
     "PERSONALITY": {},
     "ENGINE": {
         "LLM": {
@@ -76,7 +77,7 @@
             "MAGIC_WORDS": [
                 ""
             ],
-            "PRACTICE": "practice_11RAGQueryGenerator.json",
+            "PRACTICE": "practice_12QGenGeneralKeywords.json",
             "ADD_KNOWLEDGE": []
         }
     },

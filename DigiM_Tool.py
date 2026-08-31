@@ -86,7 +86,7 @@ def call_function_by_name(service_info, user_info, func_name, *args, **kwargs):
 # # Extract a date from text
 # def extract_date(service_info, user_info, session_id, session_name, agent_file, input, import_contents=[], add_info={}):
 #     if not agent_file:
-#         agent_file = "agent_55ExtractDate.json"
+#         agent_file = "agent_54ExtractDate.json"
 #     agent = dma.DigiM_Agent(agent_file)
 # 
 #     model_type = "LLM"
@@ -135,7 +135,7 @@ def call_function_by_name(service_info, user_info, func_name, *args, **kwargs):
 # def page_index_search(exec_info, agent_file, query, pages, max_pages=5):
 #     import json as _json
 #     if not agent_file:
-#         agent_file = "agent_59PageIndexSearch.json"
+#         agent_file = "agent_55PageIndexSearch.json"
 #     agent = dma.DigiM_Agent(agent_file)
 # 
 #     model_type = "LLM"
@@ -229,7 +229,7 @@ def call_function_by_name(service_info, user_info, func_name, *args, **kwargs):
 # # Generate the RAG query from text
 # def RAG_query_generator(service_info, user_info, session_id, session_name, agent_file, user_query, import_contents=[], add_info={}):
 #     if not agent_file:
-#         agent_file = "agent_56RAGQueryGenerator.json"
+#         agent_file = "agent_5AQGenUserIntent.json"
 #     agent = dma.DigiM_Agent(agent_file)
 # 
 #     model_type = "LLM"
@@ -250,7 +250,7 @@ def call_function_by_name(service_info, user_info, func_name, *args, **kwargs):
 #     if practice["CHAINS"][0]["TYPE"] == "LLM":
 #         prompt_temp_cd = practice["CHAINS"][0]["SETTING"]["PROMPT_TEMPLATE"]
 #     else:
-#         prompt_temp_cd = "RAG Query Generator"
+#         prompt_temp_cd = "Query Generator User Intent"
 #     prompt_template = agent.set_prompt_template(prompt_temp_cd)
 # 
 #     # Execute RAG
@@ -276,7 +276,7 @@ def call_function_by_name(service_info, user_info, func_name, *args, **kwargs):
 # # Generate the conversation digest
 # def dialog_digest(service_info, user_info, session_id, session_name, agent_file, user_query, import_contents=[], add_info={}):
 #     if not agent_file:
-#         agent_file = "agent_51DialogDigest.json"
+#         agent_file = "agent_60DialogDigest.json"
 #     agent = dma.DigiM_Agent(agent_file)
 # 
 #     model_type = "LLM"
@@ -328,7 +328,7 @@ def call_function_by_name(service_info, user_info, func_name, *args, **kwargs):
 # def dialog_persona_merge(service_info, user_info, session_id, session_name, agent_file,
 #                           user_query, persona_responses, summary_level="medium"):
 #     if not agent_file:
-#         agent_file = "agent_50PersonaMerge.json"
+#         agent_file = "agent_64PersonaMerge.json"
 #     agent = dma.DigiM_Agent(agent_file)
 # 
 #     model_type = "LLM"
@@ -384,7 +384,7 @@ def call_function_by_name(service_info, user_info, func_name, *args, **kwargs):
 #     if not candidate_personas:
 #         return [], "no candidates", "", 0, 0
 #     if not agent_file:
-#         agent_file = "agent_54PersonaSelector.json"
+#         agent_file = "agent_65PersonaSelector.json"
 #     agent = dma.DigiM_Agent(agent_file)
 # 
 #     model_type = "LLM"
@@ -459,7 +459,7 @@ def call_function_by_name(service_info, user_info, func_name, *args, **kwargs):
 # # Generate the session name
 # def gene_session_name(service_info, user_info, session_id, session_name, agent_file, user_query, import_contents=[], add_info={}):
 #     if not agent_file:
-#         agent_file = "agent_57SessionName.json"
+#         agent_file = "agent_61SessionName.json"
 #     agent = dma.DigiM_Agent(agent_file)
 # 
 #     model_type = "LLM"
@@ -732,7 +732,7 @@ def call_function_by_name(service_info, user_info, func_name, *args, **kwargs):
 # 
 # # Compare texts
 # def compare_texts(service_info, user_info, head1, text1, head2, text2, query_compare=""):
-#     agent_file = "agent_53CompareTexts.json"
+#     agent_file = "agent_25CompareTexts.json"
 #     agent = dma.DigiM_Agent(agent_file)
 # 
 #     model_type = "LLM"
@@ -764,7 +764,7 @@ def call_function_by_name(service_info, user_info, func_name, *args, **kwargs):
 #     return response_service_info, response_user_info, response, model_name, prompt_tokens, response_tokens
 # 
 # # Generate critique on image data
-# def art_critics(service_info, user_info, memories_selected=[], image_paths=[], agent_file="agent_52ArtCritic.json"):
+# def art_critics(service_info, user_info, memories_selected=[], image_paths=[], agent_file="agent_24ArtCritic.json"):
 #     agent = dma.DigiM_Agent(agent_file)
 # 
 #     model_type = "LLM"
@@ -1142,6 +1142,7 @@ _LOADED_PLUGINS = _load_tool_plugins()
 # take precedence and shadow the registry lookup — the shim only activates
 # once the original def is removed/commented out.
 def __getattr__(name):
+    global _LOADED_PLUGINS
     # 1. Tool registry — covers `dmt.<tool_name>` for migrated tools.
     entry = dmtr.get_tool(name)
     if entry and entry.get("func"):
@@ -1158,5 +1159,24 @@ def __getattr__(name):
         mod = _sys.modules.get(mod_name)
         if mod is not None and hasattr(mod, name):
             return getattr(mod, name)
+    # 3. Self-heal: a plugin can be missing from sys.modules if it failed to
+    #    load during a startup that raced a half-written file, or if another
+    #    import pass evicted it. Re-run the loader once and retry before
+    #    giving up, so a transient startup glitch doesn't leave the whole
+    #    app broken until the next manual restart.
+    if not getattr(__getattr__, "_reloaded", False):
+        __getattr__._reloaded = True
+        try:
+            _LOADED_PLUGINS = _load_tool_plugins()
+        except Exception:
+            pass
+        else:
+            for plugin_filename, status, _ in _LOADED_PLUGINS:
+                if status != "loaded":
+                    continue
+                mod_name = f"digim_tool_plugin__{plugin_filename.rsplit('.', 1)[0]}"
+                mod = _sys.modules.get(mod_name)
+                if mod is not None and hasattr(mod, name):
+                    return getattr(mod, name)
     raise AttributeError(f"module 'DigiM_Tool' has no attribute {name!r}")
 

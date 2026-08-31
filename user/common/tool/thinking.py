@@ -36,6 +36,8 @@ def thinking_agent(service_info, user_info, session_id, session_name, agent_file
     habit_info = add_info.get("HabitInfo", "")
     book_info = add_info.get("BookInfo", "")
     tool_info = add_info.get("ToolInfo", "")
+    rag_gen_info = add_info.get("RagGenInfo", "")
+    rag_gen_max = add_info.get("RagGenMax", 1)
     # Multi-turn Thinking (B型ループ) hands the previous turn's decision and
     # the mid-loop preview web-search result down through add_info. The
     # `Thinking Agent` prompt template holds `{PreviousThinking}` and
@@ -64,6 +66,9 @@ def thinking_agent(service_info, user_info, session_id, session_name, agent_file
         context += f"\n【Available books】\n{book_info}\n"
     if tool_info:
         context += f"\n【Available tools】\n{tool_info}\n"
+    if rag_gen_info:
+        context += (f"\n【Available RAG query generators】(最大 {rag_gen_max} 個まで選択可)\n"
+                    f"{rag_gen_info}\n")
     if digest_text:
         context += f"\n【Conversation digest】\n{digest_text}\n"
 
@@ -84,7 +89,7 @@ def thinking_agent(service_info, user_info, session_id, session_name, agent_file
 def RAG_query_generator(service_info, user_info, session_id, session_name, agent_file,
                         user_query, import_contents=[], add_info={}):
     if not agent_file:
-        agent_file = "agent_56RAGQueryGenerator.json"
+        agent_file = "agent_5AQGenUserIntent.json"
     agent = dma.DigiM_Agent(agent_file)
 
     model_type = "LLM"
@@ -104,7 +109,7 @@ def RAG_query_generator(service_info, user_info, session_id, session_name, agent
     if practice["CHAINS"][0]["TYPE"] == "LLM":
         prompt_temp_cd = practice["CHAINS"][0]["SETTING"]["PROMPT_TEMPLATE"]
     else:
-        prompt_temp_cd = "RAG Query Generator"
+        prompt_temp_cd = "Query Generator User Intent"
     prompt_template = agent.set_prompt_template(prompt_temp_cd)
 
     # When the caller's Memory Use is OFF (benchmark mode), drop the prompt
@@ -136,7 +141,7 @@ def RAG_query_generator(service_info, user_info, session_id, session_name, agent
 # Non-uniform signature: (exec_info, agent_file, query, pages, max_pages=5).
 def page_index_search(exec_info, agent_file, query, pages, max_pages=5):
     if not agent_file:
-        agent_file = "agent_59PageIndexSearch.json"
+        agent_file = "agent_55PageIndexSearch.json"
     agent = dma.DigiM_Agent(agent_file)
 
     model_type = "LLM"

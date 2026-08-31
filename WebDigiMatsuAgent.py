@@ -483,7 +483,11 @@ def _apply_agent_thinking_defaults(agent_data):
     if "MODE" in t:
         st.session_state.thinking_mode = bool(t["MODE"])
     if "TARGETS" in t and isinstance(t["TARGETS"], list):
-        st.session_state.thinking_targets = list(t["TARGETS"])
+        # "Tools" was renamed to "Skills" in the UI; normalize so agent JSONs
+        # written before the rename still match the multiselect options.
+        st.session_state.thinking_targets = [
+            ("Skills" if _t == "Tools" else _t) for _t in t["TARGETS"]
+        ]
     if "MAX_TURNS" in t:
         try:
             _mt = int(t["MAX_TURNS"])
@@ -806,8 +810,17 @@ def _render_token_usage_tab(v2: dict):
 
     _rqg = (v2.get("prompt") or {}).get("RAG_query_genetor") or {}
     if _rqg:
-        _add("RAG Query Gen", _rqg.get("agent_file", ""), _rqg.get("model", ""),
-             _rqg.get("prompt_token", 0), _rqg.get("response_token", 0))
+        # Multiple generator agents each produce one query variation; list
+        # them individually so per-agent cost stays visible. Falls back to
+        # the flat single-generator shape for pre-multi-generator history.
+        _gens = _rqg.get("generators") or []
+        if _gens:
+            for _i, _g in enumerate(_gens, 1):
+                _add(f"RAG Query Gen #{_i}", _g.get("agent_file", ""), _g.get("model", ""),
+                     _g.get("prompt_token", 0), _g.get("response_token", 0))
+        else:
+            _add("RAG Query Gen", _rqg.get("agent_file", ""), _rqg.get("model", ""),
+                 _rqg.get("prompt_token", 0), _rqg.get("response_token", 0))
 
     _ms = (v2.get("prompt") or {}).get("meta_search") or {}
     if _ms.get("date"):
@@ -895,6 +908,37 @@ def _render_token_usage_tab(v2: dict):
             _grp.sort_values("Total", ascending=False),
             hide_index=True, use_container_width=True,
         )
+
+
+def _build_query_points(v2: dict, session, seq_key, sub_seq_key) -> list:
+    """Query vectors + short labels for the Analytics scatter's query markers.
+
+    Pairs `prompt.query.query_labels` (seq / kind / 20-char preview) with the
+    per-turn `<seq>-<sub_seq>_queries.npy` vector file so each query variation
+    (raw input / +history / one per RAG-Query-Gen generator) can be projected
+    onto the same 2D space as the chunks. Returns [] for turns recorded before
+    this was persisted."""
+    try:
+        _q = ((v2.get("prompt") or {}).get("query") or {})
+        _labels = _q.get("query_labels") or []
+        if not _labels:
+            return []
+        _vecs = session.get_vec_file(str(seq_key), str(sub_seq_key), "queries")
+        if _vecs is None or len(_vecs) == 0:
+            return []
+        _out = []
+        for _i, _lb in enumerate(_labels):
+            if _i >= len(_vecs):
+                break
+            _out.append({
+                "seq": _lb.get("seq", _i),
+                "kind": _lb.get("kind", ""),
+                "preview": _lb.get("preview", ""),
+                "vec": _vecs[_i],
+            })
+        return _out
+    except Exception:
+        return []
 
 
 def _resolve_persona_for_analytics(agent_file: str, setting_dict: dict):
@@ -1143,6 +1187,8 @@ def initialize_session_states():
         st.session_state.emphasis_mode = False
     if 'book_selected' in st.session_state:
         st.session_state.book_selected = []
+    if 'skill_selected' not in st.session_state:
+        st.session_state.skill_selected = []
     if 'dl_type' not in st.session_state:
         st.session_state.dl_type = "Chats Only"
     if 'analytics_knowledge_mode' not in st.session_state:
@@ -1221,6 +1267,7 @@ def refresh_session_states():
     st.session_state.overwrite_flg_rag = False
     st.session_state.web_search = False
     st.session_state.book_selected = []
+    st.session_state.skill_selected = []
     st.session_state.dl_type = "Chats Only"
     st.session_state.analytics_knowledge_mode = ""
     st.session_state.analytics_dimension_mode = {}
@@ -1250,6 +1297,10 @@ def refresh_session(session_id, session_name, situation, new_session_flg=False):
         _apply_agent_thinking_defaults(st.session_state.agent_data)
     else:
         session_agent_file = dms.get_agent_file(st.session_state.session.session_id)
+        # Saved sessions can name an agent by its pre-renumbering filename, so
+        # resolve the alias before the existence check (and keep using the
+        # resolved name downstream so the selectbox lands on the right entry).
+        session_agent_file = dma.resolve_agent_file(session_agent_file)
         # `os.path.exists` reports True for the folder path when
         # `session_agent_file` is empty. Guard on truthiness AND require the
         # target to be a regular file so we don't try to open a directory.
@@ -1532,6 +1583,38 @@ def _session_active_book_names(agent_data):
                 out.append(_rag)
         elif _jactive(_bk, True):
             out.append(_rag)
+    return out
+
+
+def _session_active_skills(agent_data):
+    """{name: cfg} for SKILLs effectively active given the Temporary Override
+    widgets — the SKILL counterpart of `_session_active_book_names`. Falls
+    back to the JSON-level ACTIVE flag when no widget exists yet."""
+    import DigiM_Agent as _dma_local
+    _sid = getattr(st.session_state.get("session", None), "session_id", "")
+    _skill = (agent_data or {}).get("SKILL") or {}
+    _norm = _dma_local.normalize_skill_tools(_skill)
+    # Names the normalizer dropped for ACTIVE=false can still be re-enabled
+    # for this session via Temporary Override, so consider them too.
+    _all = dict(_norm)
+    _raw_tools = _skill.get("TOOLS")
+    if isinstance(_raw_tools, dict):
+        for _n, _cfg in _raw_tools.items():
+            if _n not in _all:
+                _c = _cfg if isinstance(_cfg, dict) else {}
+                _phase = str(_c.get("PHASE") or "CONTEXT").upper()
+                _all[_n] = {"PHASE": _phase if _phase in ("BEFORE", "CONTEXT", "AFTER") else "CONTEXT",
+                            "AS_REFERENCE": bool(_c.get("AS_REFERENCE", True)),
+                            "ARGS_HINT": _c.get("ARGS_HINT") or {},
+                            "MAGIC_WORDS": list(_c.get("MAGIC_WORDS") or [])}
+    out = {}
+    for _n, _cfg in _all.items():
+        _key = f"to_SKILL_{_sid}_{_n}"
+        if _key in st.session_state:
+            if bool(st.session_state[_key]):
+                out[_n] = _cfg
+        elif _n in _norm:
+            out[_n] = _cfg
     return out
 
 
@@ -3343,7 +3426,7 @@ def _knowledge_explorer():
             with st.spinner("Simulating page selection..."):
                 try:
                     _exec_info = {"SERVICE_INFO": st.session_state.web_service, "USER_INFO": st.session_state.web_user}
-                    _support_agent = "agent_59PageIndexSearch.json"
+                    _support_agent = "agent_55PageIndexSearch.json"
                     _sel_ids = _dmt_pi.page_index_search(_exec_info, _support_agent, _pi_query, _pi_pages, _pi_max)
                     st.session_state._rag_pi_sensitivity = {
                         "pi_name": _pi_name,
@@ -8596,12 +8679,15 @@ def main():
                                                         "SERVICE_INFO": dict(st.session_state.web_service),
                                                         "USER_INFO":    dict(st.session_state.web_user),
                                                     }
+                                                    _ak_query_points = _build_query_points(
+                                                        v2, _ak_session, _ak_k, _ak_k2)
                                                     def _run_ak():
                                                         result = dmva.analytics_knowledge(
                                                             _ak_agent_file, ref_timestamp, _ak_title, _ak_refs_local,
                                                             _ak_folder, _ak_mode, _ak_dim,
                                                             persona=_ak_persona_resolved,
                                                             exec_info=_ak_exec_info_resolved,
+                                                            query_points=_ak_query_points,
                                                         )
                                                         _ak_analytics_dict["knowledge_utility"] = result
                                                         _ak_session.set_analytics_history(_ak_k, _ak_k2, _ak_analytics_dict)
@@ -8914,7 +9000,7 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                                                 _ki_parent_data = dmu.read_json_file(_ki_parent_agent, agent_folder_path) if _ki_parent_agent else {}
                                                 _ki_agent_file = (
                                                     (_ki_parent_data.get("SUPPORT_AGENT", {}) or {}).get("KNOWLEDGE_INTERPRET")
-                                                    or "agent_78DigiMKnowledgeInterpret.json"
+                                                    or "agent_77DigiMKnowledgeInterpret.json"
                                                 )
                                                 _ki_user_query = (v2.get("prompt", {}).get("query", {}) or {}).get("input", "") or ""
                                                 _ki_ai_response = (v2.get("response", {}) or {}).get("text", "") or ""
@@ -9144,7 +9230,7 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                     _skill_raw = _ad.get("SKILL") or {}
                     if (_skill_raw.get("TOOL_LIST")
                             or (isinstance(_skill_raw.get("TOOLS"), dict) and _skill_raw["TOOLS"])):
-                        _thinking_options.append("Tools")
+                        _thinking_options.append("Skills")
                     _agent_orgs = _ad.get("ORG") or []
                     if isinstance(_agent_orgs, list) and _agent_orgs:
                         _thinking_options.append("Personas")
@@ -9189,7 +9275,14 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                 def _resolve_ws_engines():
                     _ws_setting = dmu.read_yaml_file("setting.yaml")
                     _ws_default = _ws_setting.get("WEB_SEARCH_DEFAULT", "Perplexity")
-                    _ws_all = list(dmt.WEB_SEARCH_ENGINES.keys())
+                    # The engine table lives in the web_search tool plugin and
+                    # reaches us through DigiM_Tool's __getattr__ shim. Degrade
+                    # to the known engine names rather than taking the whole
+                    # app down if that plugin is unavailable this run.
+                    try:
+                        _ws_all = list(dmt.WEB_SEARCH_ENGINES.keys())
+                    except AttributeError:
+                        _ws_all = ["Perplexity", "OpenAI", "AzureOpenAI", "Google", "Claude"]
                     _ws_allow = _ws_setting.get("WEB_SEARCH_ENGINES_AVAILABLE") or []
                     _ws_engines = [e for e in _ws_allow if e in _ws_all] or _ws_all
                     if ("web_search_engine" not in st.session_state
@@ -9240,6 +9333,30 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                         st.session_state.book_selected = st.multiselect(
                             "BOOK", _book_opts,
                         )
+
+                # --- Row 5b: SKILL multiselect (hidden when Thinking Mode ON;
+                # Thinking picks SKILLs from their descriptions in that case).
+                # With Thinking OFF the only automatic trigger left is
+                # MAGIC_WORDS, so this gives an explicit manual path. ---
+                if not st.session_state.thinking_mode:
+                    _skill_active = _session_active_skills(st.session_state.agent_data)
+                    if _skill_active:
+                        _skill_opts = list(_skill_active.keys())
+                        _skill_labels = {
+                            _n: f"{_n} ({(_cfg.get('PHASE') or 'CONTEXT')})"
+                            for _n, _cfg in _skill_active.items()
+                        }
+                        _skill_saved = [s for s in (st.session_state.get("skill_selected") or [])
+                                         if s in _skill_opts]
+                        st.session_state.skill_selected = st.multiselect(
+                            "SKILL", _skill_opts, default=_skill_saved,
+                            format_func=lambda _n: _skill_labels.get(_n, _n),
+                            help=("Run these SKILLs this turn at their declared PHASE "
+                                  "(BEFORE / CONTEXT / AFTER). Slash commands and "
+                                  "MAGIC_WORDS still fire on top of this selection."),
+                        )
+                else:
+                    st.session_state.skill_selected = []
 
                 # --- Row 6: URL fetch subpages (kept with fetch-related controls) ---
                 st.session_state.url_fetch_subpages = st.checkbox(
@@ -10918,7 +11035,10 @@ f"Target sheet (sheets with Question: {len(_q_sheets)})"
                 "web_search": "Web Search" in _targets,
                 "rag_query_gene": "RAG Query" in _targets,
                 "books": "Books" in _targets,
-                "tools": "Tools" in _targets,
+                # UI label is "Skills"; "Tools" is accepted for agent JSONs /
+                # saved sessions written before the rename. The execution key
+                # and the Thinking JSON field both stay `tools`.
+                "tools": ("Skills" in _targets) or ("Tools" in _targets),
                 "personas": "Personas" in _targets,
             }
 
@@ -10932,6 +11052,11 @@ f"Target sheet (sheets with Question: {len(_q_sheets)})"
             _pending_slash_pick = st.session_state.pop("pending_slash_pick", None)
             if _pending_slash_pick:
                 execution["_SLASH_SKILL_PICK"] = _pending_slash_pick
+            # Manual SKILL multiselect (Thinking Mode OFF). Explicit user
+            # choice, so it ranks just below a slash command.
+            _manual_skills = list(st.session_state.get("skill_selected") or [])
+            if _manual_skills:
+                execution["_MANUAL_SKILL_PICKS"] = _manual_skills
             # Phase 7: inject PersonaSelector cap into execution
             execution["MAX_PERSONAS"] = int(st.session_state.get("max_personas", 3))
             execution["MAX_THINKING_TURNS"] = int(st.session_state.get("max_thinking_turns", 1))

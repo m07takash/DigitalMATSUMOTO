@@ -129,7 +129,7 @@
         ]
     },
     "SUPPORT_AGENT": {
-        "DIALOG_DIGEST": "agent_51DialogDigest.json",
-        "ART_CRITICS": "agent_52ArtCritic.json"
+        "DIALOG_DIGEST": "agent_60DialogDigest.json",
+        "ART_CRITICS": "agent_24ArtCritic.json"
     }
 }

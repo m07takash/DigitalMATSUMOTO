@@ -408,6 +408,29 @@ QUERY_SEQ_COLORS = {
     "2": ("purple",      "plum"),
     "default": ("gray", "lightgray"),
 }
+# QUERY_SEQ >= 2 are RAG-Query-Gen variations (one per generator agent), so
+# they all stay purple; the shade rotates to keep generators distinguishable.
+GEN_QUERY_PURPLES = [
+    ("purple",       "plum"),
+    ("darkviolet",   "violet"),
+    ("mediumorchid", "thistle"),
+    ("indigo",       "mediumpurple"),
+]
+
+
+def query_seq_color_pair(query_seq) -> tuple:
+    """(NORMAL, non-NORMAL) color pair for a QUERY_SEQ. 0/1 are the raw and
+    history-augmented user queries; 2+ are generated query variations."""
+    _s = str(query_seq)
+    if _s in ("0", "1"):
+        return QUERY_SEQ_COLORS[_s]
+    try:
+        _i = int(float(_s))
+    except (TypeError, ValueError):
+        return QUERY_SEQ_COLORS["default"]
+    if _i < 2:
+        return QUERY_SEQ_COLORS["default"]
+    return GEN_QUERY_PURPLES[(_i - 2) % len(GEN_QUERY_PURPLES)]
 
 
 def aggregate_chunk_refs(turns: list[dict]) -> dict:
@@ -525,7 +548,7 @@ def dominant_query_color(by_query_seq: Counter, normalised: bool = True) -> str:
     if not by_query_seq:
         return QUERY_SEQ_COLORS["default"][0]
     (qs, qm), _ = by_query_seq.most_common(1)[0]
-    pair = QUERY_SEQ_COLORS.get(str(qs), QUERY_SEQ_COLORS["default"])
+    pair = query_seq_color_pair(qs)
     return pair[0 if (qm == "NORMAL") else 1]
 
 

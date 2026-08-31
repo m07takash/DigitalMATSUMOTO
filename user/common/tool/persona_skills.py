@@ -32,7 +32,7 @@ def _run_lightweight_llm(agent_file, prompt, memories=None):
     agent_file) and run a single non-streaming LLM turn against `prompt`.
     Returns (response_text, model_name, prompt_tokens, response_tokens)."""
     if not agent_file:
-        agent_file = "agent_58Thinking.json"
+        agent_file = "agent_50Thinking.json"
     agent = dma.DigiM_Agent(agent_file)
     model_type = "LLM"
     model_name = agent.agent["ENGINE"][model_type]["MODEL"]
@@ -164,7 +164,7 @@ def mood_score(service_info, user_info, session_id, session_name,
         f"【ユーザーの発言】\n{prev_user}\n\n"
         f"【アシスタントの発言】\n{response}\n"
     )
-    _hint = add_info.get("model_agent") or "agent_58Thinking.json"
+    _hint = add_info.get("model_agent") or "agent_50Thinking.json"
     text, model_name, ptok, rtok = _run_lightweight_llm(_hint, _prompt)
     parsed = ""
     try:
@@ -203,7 +203,7 @@ def self_critique(service_info, user_info, session_id, session_name,
         "- 論点が外れている箇所\n\n"
         f"【あなたの回答】\n{response}\n"
     )
-    _hint = add_info.get("model_agent") or "agent_58Thinking.json"
+    _hint = add_info.get("model_agent") or "agent_50Thinking.json"
     text, model_name, ptok, rtok = _run_lightweight_llm(_hint, _prompt)
     return service_info, user_info, f"【セルフクリティーク】\n{text}", model_name, ptok, rtok
 
@@ -241,7 +241,7 @@ def slide_deck_prompt(service_info, user_info, session_id, session_name,
         "前置き・後記は書かないでください。\n\n"
         f"---\n【元の応答文】\n{response}\n---\n"
     )
-    _hint = add_info.get("model_agent") or "agent_58Thinking.json"
+    _hint = add_info.get("model_agent") or "agent_50Thinking.json"
     text, model_name, ptok, rtok = _run_lightweight_llm(_hint, _prompt)
     return service_info, user_info, f"【スライド生成AIへのプロンプト】\n{text}", model_name, ptok, rtok
 
@@ -264,7 +264,7 @@ def translate_response(service_info, user_info, session_id, session_name,
         "only the translated text, no preface.\n\n"
         f"---\n{response}\n---\n"
     )
-    _hint = add_info.get("model_agent") or "agent_58Thinking.json"
+    _hint = add_info.get("model_agent") or "agent_50Thinking.json"
     text, model_name, ptok, rtok = _run_lightweight_llm(_hint, _prompt)
     return service_info, user_info, f"【Translated to {lang}】\n{text}", model_name, ptok, rtok
 

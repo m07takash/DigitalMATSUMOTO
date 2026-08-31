@@ -134,7 +134,7 @@ def inject_citations(service_info, user_info, session_id, session_name, agent_fi
     # Resolve agent (SUPPORT_AGENT.CITATION_INJECT typically; bundled default if absent)
     try:
         if not agent_file:
-            agent_file = "agent_79DigiMCitationInject.json"
+            agent_file = "agent_83DigiMCitationInject.json"
         agent = dma.DigiM_Agent(agent_file)
         model_type = "LLM"
         model_name = agent.agent["ENGINE"][model_type]["MODEL"]

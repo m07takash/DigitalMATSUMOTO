@@ -14,7 +14,7 @@
             "Habit",
             "RAG Query",
             "Books",
-            "Tools"
+            "Skills"
         ],
         "MAX_TURNS": 1
     },
@@ -512,10 +512,22 @@
                     "DATA_TYPE": "DB",
                     "DATA_NAME": "Sample04_Tweets",
                     "META_SEARCH": {
-                        "CONDITION": [
-                            "DATE"
-                        ],
-                        "BONUS": 0.5
+                        "CONDITIONS": [
+                            {
+                                "TYPE": "DATE",
+                                "EXTRACTOR": "DATE",
+                                "FIELD": "create_date_ts",
+                                "MATCH": "range",
+                                "BONUS": 0.5
+                            },
+                            {
+                                "TYPE": "TEXT",
+                                "EXTRACTOR": "KEYWORD",
+                                "FIELD": "value_text",
+                                "MATCH": "contains",
+                                "BONUS": 0.9
+                            }
+                        ]
                     }
                 }
             ],
@@ -540,37 +552,32 @@
                 "PHASE": "BEFORE",
                 "ACTIVE": true,
                 "MAGIC_WORDS": [
-                    "似た経験",
-                    "類似した経験",
-                    "過去に似た",
-                    "思い出したい"
+                    "過去の似た経験を思い出してください。",
+                    "似た経験を振り返ってください。"
                 ]
             },
             "analyze_attachment": {
                 "PHASE": "BEFORE",
                 "ACTIVE": true,
                 "MAGIC_WORDS": [
-                    "添付を分析",
-                    "この資料を分析",
-                    "このデータの特徴"
+                    "添付データを分析してください。",
+                    "添付ファイルの特徴を分析してください。"
                 ]
             },
             "mood_score": {
                 "PHASE": "AFTER",
                 "ACTIVE": true,
                 "MAGIC_WORDS": [
-                    "感情スコア",
-                    "今の気持ちを表示",
-                    "感情を見せて"
+                    "感情スコアを表示してください。",
+                    "お互いの感情を分析してください。"
                 ]
             },
             "self_critique": {
                 "PHASE": "AFTER",
                 "ACTIVE": true,
                 "MAGIC_WORDS": [
-                    "自分の回答に反論",
-                    "批判的に検討",
-                    "セルフクリティーク"
+                    "自分の回答を批判的に検討してください。",
+                    "セルフクリティークしてください。"
                 ]
             },
             "translate_response": {
@@ -581,9 +588,8 @@
                     "target_lang": "English"
                 },
                 "MAGIC_WORDS": [
-                    "英訳して",
-                    "英語に翻訳",
-                    "translate to English"
+                    "回答を英訳してください。",
+                    "回答を英語に翻訳してください。"
                 ]
             },
             "slide_deck_prompt": {
@@ -597,11 +603,8 @@
                     "prompt_lang": "Japanese"
                 },
                 "MAGIC_WORDS": [
-                    "スライドにまとめて",
-                    "パワポで",
-                    "PowerPointで",
-                    "プレゼン資料にまとめる",
-                    "スライドAI向け"
+                    "スライド構成を作成してください。",
+                    "プレゼン資料の構成を作成してください。"
                 ]
             }
         }
@@ -684,15 +687,64 @@
         ]
     },
     "SUPPORT_AGENT": {
-        "DIALOG_DIGEST": "agent_51DialogDigest.json",
-        "EXTRACT_DATE": "agent_55ExtractDate.json",
-        "META_EXTRACT": "agent_55MetaExtract.json",
-        "RAG_QUERY_GENERATOR": "agent_56RAGQueryGenerator.json",
-        "SESSION_NAME": "agent_57SessionName.json",
-        "THINKING": "agent_58Thinking.json",
-        "PAGE_INDEX_SEARCH": "agent_59PageIndexSearch.json",
-        "KNOWLEDGE_INTERPRET": "agent_63KnowledgeInterpret.json",
-        "SESSION_SUMMARY": "agent_65SessionSummary.json"
+        "DIALOG_DIGEST": "agent_60DialogDigest.json",
+        "EXTRACT_DATE": "agent_54ExtractDate.json",
+        "META_EXTRACT": {
+            "AGENT_FILE": "agent_53MetaExtract.json",
+            "INHERIT": {
+                "PERSONALITY": [
+                    "CHARACTER"
+                ],
+                "KNOWLEDGE": [
+                    "Relations",
+                    "Experience"
+                ]
+            }
+        },
+        "RAG_QUERY_GENERATOR": [
+            {
+                "AGENT_FILE": "agent_5AQGenUserIntent.json",
+                "INHERIT": {
+                    "PERSONALITY": [
+                        "CHARACTER",
+                        "LANGUAGE"
+                    ],
+                    "KNOWLEDGE": [
+                        "Relations",
+                        "Experience"
+                    ]
+                }
+            },
+            "agent_5BQGenGeneralKeywords.json",
+            {
+                "AGENT_FILE": "agent_5CQGenAgentInterest.json",
+                "INHERIT": {
+                    "PERSONALITY": [
+                        "CHARACTER",
+                        "LANGUAGE",
+                        "BIG5"
+                    ],
+                    "KNOWLEDGE": [
+                        "Relations",
+                        "Impressions",
+                        "Tweets"
+                    ]
+                }
+            }
+        ],
+        "SESSION_NAME": "agent_61SessionName.json",
+        "THINKING": {
+            "AGENT_FILE": "agent_50Thinking.json",
+            "INHERIT": {
+                "PERSONALITY": [
+                    "CHARACTER",
+                    "LANGUAGE"
+                ]
+            }
+        },
+        "PAGE_INDEX_SEARCH": "agent_55PageIndexSearch.json",
+        "KNOWLEDGE_INTERPRET": "agent_57KnowledgeInterpret.json",
+        "SESSION_SUMMARY": "agent_62SessionSummary.json"
     },
     "BOOK": [
         {
@@ -740,7 +792,7 @@
                 {
                     "DATA_TYPE": "PAGE_INDEX",
                     "DATA_NAME": "DigiMPGSystemGuide",
-                    "SUPPORT_AGENT": "agent_59PageIndexSearch.json"
+                    "SUPPORT_AGENT": "agent_55PageIndexSearch.json"
                 }
             ],
             "HEADER_TEMPLATE": "【システムガイド】以下はデジタルMATSUMOTOのシステムに関する技術情報です。\n",

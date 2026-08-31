@@ -7,7 +7,7 @@
 #   # Lane A only (deterministic, no LLM / no API key needed)
 #   python3 DigiM_GraphBuilder.py user/common/rag/graph/sample
 #
-#   # + Lane B free-text extraction via agent_67GraphExtract.json
+#   # + Lane B free-text extraction via agent_56GraphExtract.json
 #   python3 DigiM_GraphBuilder.py user/common/rag/graph/sample --use-llm
 #
 #   # + node embeddings (for embedding-based entity linking)

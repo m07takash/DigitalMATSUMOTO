@@ -8,7 +8,7 @@
         "file_path": "user/common/rag/graph/Sample01_Relations/",
         "use_llm": false,
         "embed": false,
-        "extractor_agent": "agent_67GraphExtract.json"
+        "extractor_agent": "agent_56GraphExtract.json"
     },
     "Sample02_Experience": {
         "active": "Y",
