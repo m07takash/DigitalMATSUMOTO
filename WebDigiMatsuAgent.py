@@ -21,6 +21,7 @@ with open(".streamlit/config.toml", "w") as _cf:
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 from dataclasses import dataclass
 from typing import Any, Dict
 import extra_streamlit_components as stx
@@ -934,7 +935,9 @@ def _build_query_points(v2: dict, session, seq_key, sub_seq_key) -> list:
                 "seq": _lb.get("seq", _i),
                 "kind": _lb.get("kind", ""),
                 "preview": _lb.get("preview", ""),
-                "vec": _vecs[_i],
+                # Stored at half precision to keep the per-turn files small;
+                # widen here because the PCA/t-SNE path expects float32.
+                "vec": np.asarray(_vecs[_i], dtype=np.float32),
             })
         return _out
     except Exception:
@@ -1817,26 +1820,82 @@ def _mermaid_runtime():
             '</script>'), False
 
 
-def _render_mermaid(code, height=420):
-    """Render one Mermaid diagram in an iframe, with the source as a fallback."""
+# Rough drawn-height estimate for a Mermaid source, in pixels.
+# The frame height must be chosen before Mermaid lays the graph out, and the
+# old "one source line = one row" rule badly underestimates top-down graphs
+# while overestimating left-right ones. Estimate from the shape instead, and
+# let `scrolling` cover whatever the estimate misses.
+_MERMAID_EDGE_RE = re.compile(r"(-{2,3}>|-{2,3}\||==+>|-\.->|--)")
+
+
+def _mermaid_height(code):
+    body = [ln for ln in (code or "").splitlines() if ln.strip()
+            and not ln.strip().startswith("%%")]
+    if not body:
+        return 240
+    header = body[0].strip().lower()
+    edges = sum(1 for ln in body if _MERMAID_EDGE_RE.search(ln))
+    rows = len(body)
+
+    if header.startswith(("sequencediagram", "gantt")):
+        per_row = 34
+    elif header.startswith(("pie", "mindmap", "journey")):
+        per_row = 30
+    elif re.match(r"^(graph|flowchart)\s+(lr|rl)\b", header):
+        # Left-right graphs grow sideways; height tracks parallel branches,
+        # which is far less than the line count.
+        per_row = 16
+    else:
+        per_row = 30  # TD / TB / classDiagram / stateDiagram / ER
+
+    return max(240, min(2200, 140 + per_row * max(rows, edges)))
+
+
+def _render_mermaid(code, height=None):
+    """Render one Mermaid diagram in an iframe, with the source as a fallback.
+
+    `components.v1.html` renders a plain iframe with a fixed height (it is not
+    a custom component, so it ignores `streamlit:setFrameHeight`). Two things
+    keep a diagram from being cut off: the SVG scales down to the frame width
+    so it never overflows sideways, and `scrolling=True` turns any leftover
+    vertical overflow into a scrollbar instead of a crop.
+    """
     script, _local = _mermaid_runtime()
     _esc = html.escape(code)
     st.components.v1.html(
         f"""{script}
-<div class="mermaid">{_esc}</div>
+<div id="wrap"><div class="mermaid">{_esc}</div></div>
+<style>
+  html, body {{ margin:0; padding:0; background:transparent; }}
+  #wrap {{ width:100%; }}
+  /* Fit the column instead of spilling past the iframe edge. */
+  #wrap svg {{ max-width:100% !important; height:auto !important; display:block; }}
+</style>
 <script>
-  try {{
-    mermaid.initialize({{ startOnLoad: true, securityLevel: 'loose' }});
-  }} catch (e) {{
-    // Runtime unavailable (offline without a vendored copy): show the source
-    document.querySelector('.mermaid').innerHTML =
-      '<pre style="white-space:pre-wrap;font-size:12px">{_esc}</pre>';
-  }}
-</script>
-<style>body {{ margin:0; background:transparent; }}</style>""",
-        height=height,
-    )
+  const WRAP = document.getElementById('wrap');
+  // Read from the DOM rather than interpolating into a JS literal — diagram
+  // sources are multi-line, which would terminate the string and take the
+  // whole script block down with it.
+  const SRC = WRAP.textContent || '';
 
+  function fallback() {{
+    const pre = document.createElement('pre');
+    pre.style.cssText = 'white-space:pre-wrap;font-size:12px;margin:0';
+    pre.textContent = SRC;
+    WRAP.textContent = '';
+    WRAP.appendChild(pre);
+  }}
+
+  try {{
+    mermaid.initialize({{ startOnLoad: false, securityLevel: 'loose' }});
+    mermaid.run().catch(fallback);
+  }} catch (e) {{
+    fallback();
+  }}
+</script>""",
+        height=height if height is not None else _mermaid_height(code),
+        scrolling=True,
+    )
 
 def render_response_markdown(text, allow_html=True):
     """st.markdown the body, but hand ```mermaid fences to the diagram renderer.
@@ -1853,7 +1912,7 @@ def render_response_markdown(text, allow_html=True):
             code = part.strip()
             if code:
                 # Grow the frame with the diagram so tall graphs are not clipped
-                _render_mermaid(code, height=min(900, 220 + 26 * code.count("\n")))
+                _render_mermaid(code)
         elif part.strip():
             st.markdown(part, unsafe_allow_html=allow_html)
 
@@ -4443,6 +4502,32 @@ def _scheduler_view():
                 _col2.write(f"agent: `{_p.get('agent_file')}` / engine=`{_p.get('engine') or '(default)'}`")
                 if _p.get("user_input"):
                     st.text_area("user_input", value=_p.get("user_input"), height=80, disabled=True, key=f"sch_view_ui_{_jid}")
+            if _j.get("kind") == "agent_push":
+                _p = _j.get("params") or {}
+                _t = _p.get("target") or {}
+                _m = _p.get("message") or {}
+                _col2.write(f"agent: `{_p.get('agent_file')}` / engine=`{_p.get('engine') or '(default)'}`")
+                _t_desc = _t.get("mode", "")
+                if _t.get("mode") == "selected":
+                    _t_desc += f" ({len(_t.get('session_ids') or [])} session(s))"
+                elif _t.get("mode") == "new":
+                    _t_desc += f" (x{_t.get('new_count') or 1})"
+                elif _t.get("filter"):
+                    _t_desc += f" filter={_t.get('filter')}"
+                _col2.write(f"target: `{_t_desc}` / message: `{_m.get('mode')}`")
+                _col2.write(f"keep in memory: `{_p.get('save_to_memory', True)}`")
+                _body = _m.get("text") or _m.get("prompt") or ""
+                if _body:
+                    st.text_area("message", value=_body, height=80, disabled=True, key=f"sch_view_msg_{_jid}")
+                _lp = _j.get("last_push") or {}
+                if _lp:
+                    st.caption(
+                        f"last push {_lp.get('at','')}: delivered "
+                        f"{len(_lp.get('delivered') or [])}/{_lp.get('targets', 0)}"
+                        + (f", failed {len(_lp.get('failed') or [])}" if _lp.get("failed") else ""))
+                    if _lp.get("failed"):
+                        with st.expander("Failed deliveries", expanded=False):
+                            st.json(_lp.get("failed"))
 
             if _j.get("last_status") == "error" and _j.get("last_error"):
                 with st.expander("Error log", expanded=False):
@@ -4478,7 +4563,7 @@ def _scheduler_view():
         st.markdown("### " + ("Add New Job" if _is_new else f"Edit Job: `{_edit_id}`"))
 
         _name = st.text_input("Name", value=_existing.get("name", ""), key="sch_f_name")
-        _kinds = ["rag_update", "user_memory_nowaday", "agent_run"]
+        _kinds = ["rag_update", "user_memory_nowaday", "agent_run", "agent_push"]
         _kind_idx = _kinds.index(_existing.get("kind", "rag_update")) if _existing.get("kind") in _kinds else 0
         _kind = st.selectbox("Kind", _kinds, index=_kind_idx, key="sch_f_kind")
         _cron = st.text_input(
@@ -4520,6 +4605,123 @@ def _scheduler_view():
                 "agent_file": _agent_file,
                 "engine": _engine,
                 "user_input": _user_input,
+                "execution": _exec,
+            }
+        elif _kind == "agent_push":
+            st.markdown("**Agent Push Params**")
+            _agent_files = [a["FILE"] for a in (st.session_state.get("agents") or [])]
+            _cur_agent = _params.get("agent_file") or (_agent_files[0] if _agent_files else "")
+            if _agent_files:
+                _idx = _agent_files.index(_cur_agent) if _cur_agent in _agent_files else 0
+                _agent_file = st.selectbox("Agent File", _agent_files, index=_idx, key="sch_pf_agent")
+            else:
+                _agent_file = st.text_input("Agent File", value=_cur_agent, key="sch_pf_agent_txt")
+            _engine = st.text_input("Engine (LLM key in agent JSON, empty=default)",
+                                    value=_params.get("engine", ""), key="sch_pf_engine")
+
+            # --- Target sessions ---
+            st.markdown("**Target sessions**")
+            _tgt = dict(_params.get("target") or {})
+            _t_modes = ["active_all", "selected", "new"]
+            _t_labels = {
+                "active_all": "All active sessions (filtered)",
+                "selected":   "Selected sessions",
+                "new":        "Create new session(s)",
+            }
+            _t_idx = _t_modes.index(_tgt.get("mode")) if _tgt.get("mode") in _t_modes else 0
+            _t_mode = st.radio("Send to", _t_modes, index=_t_idx, horizontal=True,
+                               format_func=lambda m: _t_labels[m], key="sch_pf_tmode")
+            _t_filter, _t_ids, _t_new = {}, [], 1
+            if _t_mode == "active_all":
+                _f = dict(_tgt.get("filter") or {})
+                _fc1, _fc2 = st.columns(2)
+                _f_agents = [""] + _agent_files
+                _fa_idx = _f_agents.index(_f.get("agent_file")) if _f.get("agent_file") in _f_agents else 0
+                _t_filter["agent_file"] = _fc1.selectbox(
+                    "Filter: agent (empty = any)", _f_agents, index=_fa_idx, key="sch_pf_fagent")
+                _t_filter["user_id"] = _fc2.text_input(
+                    "Filter: user_id (empty = any)", value=_f.get("user_id", ""), key="sch_pf_fuser")
+                _t_filter = {k: v for k, v in _t_filter.items() if v}
+                try:
+                    _preview = _dmsch._push_resolve_targets(
+                        {"params": {"target": {"mode": "active_all", "filter": _t_filter}}})
+                    st.caption(f"Currently matches **{len(_preview)}** active session(s).")
+                except Exception as _pe:
+                    st.caption(f"(preview unavailable: {_pe})")
+            elif _t_mode == "selected":
+                try:
+                    _sess = dms.get_session_list_visible(
+                        st.session_state.service_id, st.session_state.user_id,
+                        "Y" if st.session_state.get("admin_flg") == "Y" else "N")
+                    _sess = [s for s in _sess if s.get("active") == "Y"]
+                except Exception:
+                    _sess = []
+                _opts = [s["id"] for s in _sess]
+                _names = {s["id"]: f'{s.get("name") or "(no name)"} — {s["id"]}' for s in _sess}
+                _t_ids = st.multiselect(
+                    "Sessions", _opts,
+                    default=[i for i in (_tgt.get("session_ids") or []) if i in _opts],
+                    format_func=lambda i: _names.get(i, i), key="sch_pf_tids")
+            else:
+                _t_new = int(st.number_input("How many new sessions",
+                                             min_value=1, max_value=20,
+                                             value=int(_tgt.get("new_count") or 1),
+                                             step=1, key="sch_pf_tnew"))
+
+            # --- Message ---
+            st.markdown("**Message**")
+            _msg = dict(_params.get("message") or {})
+            _m_modes = ["fixed", "generated_shared", "generated_per_session"]
+            _m_labels = {
+                "fixed":                 "Fixed text",
+                "generated_shared":      "Agent generates once, same text to all",
+                "generated_per_session": "Agent generates per session",
+            }
+            _m_idx = _m_modes.index(_msg.get("mode")) if _msg.get("mode") in _m_modes else 0
+            _m_mode = st.radio("How to compose", _m_modes, index=_m_idx,
+                               format_func=lambda m: _m_labels[m], key="sch_pf_mmode")
+            _m_text, _m_prompt = "", ""
+            if _m_mode == "fixed":
+                _m_text = st.text_area("Message text", value=_msg.get("text", ""),
+                                       height=100, key="sch_pf_mtext")
+            else:
+                _m_prompt = st.text_area(
+                    "Instruction for the agent", value=_msg.get("prompt", ""), height=100,
+                    help="What the agent should write. For per-session mode the agent also sees that session's memory.",
+                    key="sch_pf_mprompt")
+                if _m_mode == "generated_per_session":
+                    st.caption(
+                        f"⚠ One LLM call per target session (limit "
+                        f"{_dmsch.PUSH_MAX_GENERATED_SESSIONS}; raise via max_generated_sessions).")
+            _max_gen = int(st.number_input(
+                "max_generated_sessions (per-session mode guard)", min_value=1, max_value=500,
+                value=int(_params.get("max_generated_sessions") or _dmsch.PUSH_MAX_GENERATED_SESSIONS),
+                step=1, key="sch_pf_maxgen"))
+
+            _save_mem = st.checkbox(
+                "Keep the pushed message in conversation memory",
+                value=bool(_params.get("save_to_memory", True)),
+                help="Off: the message still shows in the chat, but later turns will not recall it.",
+                key="sch_pf_savemem")
+
+            _exec = dict(_params.get("execution") or {})
+            st.markdown("**Execution flags (used when the agent composes the message)**")
+            _pc1, _pc2, _pc3 = st.columns(3)
+            _exec["MEMORY_USE"]     = _pc1.checkbox("MEMORY_USE", value=bool(_exec.get("MEMORY_USE", True)), key="sch_pf_e_memuse")
+            _exec["RAG_QUERY_GENE"] = _pc1.checkbox("RAG_QUERY_GENE", value=bool(_exec.get("RAG_QUERY_GENE", True)), key="sch_pf_e_rag")
+            _exec["META_SEARCH"]    = _pc2.checkbox("META_SEARCH", value=bool(_exec.get("META_SEARCH", True)), key="sch_pf_e_meta")
+            _exec["THINKING_MODE"]  = _pc2.checkbox("THINKING_MODE", value=bool(_exec.get("THINKING_MODE", False)), key="sch_pf_e_think")
+            _exec["PRIVATE_MODE"]   = _pc3.checkbox("PRIVATE_MODE", value=bool(_exec.get("PRIVATE_MODE", False)), key="sch_pf_e_priv")
+            _exec["CITE_KNOWLEDGE"] = _pc3.checkbox("CITE_KNOWLEDGE", value=bool(_exec.get("CITE_KNOWLEDGE", False)), key="sch_pf_e_cite")
+
+            _params = {
+                "agent_file": _agent_file,
+                "engine": _engine,
+                "target": {"mode": _t_mode, "filter": _t_filter,
+                           "session_ids": _t_ids, "new_count": _t_new},
+                "message": {"mode": _m_mode, "text": _m_text, "prompt": _m_prompt},
+                "max_generated_sessions": _max_gen,
+                "save_to_memory": _save_mem,
                 "execution": _exec,
             }
         else:

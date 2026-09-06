@@ -542,9 +542,19 @@ class DigiMSession:
         if self.chat_history_active_dict:
             for key, sub_dict in self.chat_history_active_dict.items():
                 sub_seqs = sorted((int(k) for k in sub_dict if k != "SETTING"))
+                # BEFORE/AFTER SKILLs occupy their own sub_seq around the
+                # chain steps, so the lowest/highest entry of a turn can be a
+                # SKILL rather than the conversation itself. The collapsed
+                # view must still show the user's question and the agent's
+                # answer, so pick min/max among the non-SKILL entries and only
+                # fall back to the raw range if a turn has nothing else.
+                _conv_seqs = [
+                    n for n in sub_seqs
+                    if ((sub_dict.get(str(n)) or {}).get("setting") or {}).get("type") != "SKILL"
+                ] or sub_seqs
                 # Get the min and max sub keys
-                min_subseq = str(sub_seqs[0])
-                max_subseq = str(sub_seqs[-1])
+                min_subseq = str(_conv_seqs[0])
+                max_subseq = str(_conv_seqs[-1])
                 chat_history_active_omit_dict[key] = {}
                 chat_history_active_omit_dict[key]["1"] = {}
                 chat_history_active_omit_dict[key]["1"]["setting"] = sub_dict[str(min_subseq)]["setting"]
@@ -750,6 +760,11 @@ class DigiMSession:
         return memories_list_final
 
     # Save vector data into the session folder
+    # Query vectors exist only to place markers on the Analytics scatter, so
+    # they are stored at half precision — the 2D projection is identical and
+    # the files are half the size. Similarity-ranking vectors keep float32.
+    VEC_DTYPE_BY_MODE = {"queries": "float16"}
+
     def save_vec_file(self, seq, sub_seq="1", mode="query", vec_text=[]):
         # Create the session folder if missing
         if not os.path.exists(self.session_folder_path):
@@ -761,7 +776,8 @@ class DigiMSession:
 
         # Save vector data as .npy
         vec_file_name = seq+"-"+sub_seq+"_"+mode+".npy"
-        dmu.save_vectext_to_npy(vec_text, str(Path(self.session_vec_folder_path) / vec_file_name))
+        dmu.save_vectext_to_npy(vec_text, str(Path(self.session_vec_folder_path) / vec_file_name),
+                                dtype=self.VEC_DTYPE_BY_MODE.get(mode, "float32"))
 
         return vec_file_name
 
@@ -973,6 +989,63 @@ class DigiMSession:
             export_status, last_exported_seq = self.get_db_export_info()
             if export_status == DB_EXPORT_DONE:
                 self.save_db_export_undo(last_exported_seq)
+
+
+    # Write a scheduler-pushed agent message into this session as its own turn.
+    # `save_to_memory=False` uses the existing MEMORY_FLG="N" marker: the turn
+    # still renders in the WebUI (otherwise the push would be invisible) but is
+    # skipped when assembling conversation memory for later turns.
+    def save_push_message(self, text, agent_file="", job_id="", job_name="",
+                          owner_user_id="", save_to_memory=True):
+        ts = str(datetime.now())
+        seq = str(int(self.get_seq_history()) + 1)
+        label = f"[Push] {job_name}" if job_name else "[Push]"
+        agent_name = ""
+        try:
+            import DigiM_Agent as _dma
+            agent_name = _dma.get_agent_item(agent_file, "DISPLAY_NAME") or ""
+        except Exception:
+            pass
+
+        sub_seq_data = {
+            "1": {
+                "setting": {
+                    "response_service_info": {},
+                    "response_user_info": {},
+                    "session_name": self.session_name,
+                    "situation": {},
+                    "type": "PUSH",
+                    "agent_file": agent_file,
+                    "agent_name": agent_name or label,
+                    "name": agent_name or label,
+                    "job_id": job_id,
+                    "job_name": job_name,
+                    "memory_flg": "Y" if save_to_memory else "N",
+                },
+                "prompt": {
+                    "role": "neither",
+                    "timestamp": ts,
+                    "text": label,
+                    "query": {"token": 0, "input": label, "text": label,
+                              "contents": [], "situation": {}},
+                },
+                "response": {
+                    "role": "assistant",
+                    "timestamp": ts,
+                    "token": 0,
+                    "text": text,
+                    "export_contents": [],
+                },
+            }
+        }
+        seq_setting_data = {
+            "FLG": "Y",
+            "MEMORY_FLG": "Y" if save_to_memory else "N",
+            "PUSH": {"job_id": job_id, "job_name": job_name, "at": ts},
+            "user_info": {"USER_ID": owner_user_id} if owner_user_id else {},
+        }
+        self.save_history_batch(seq, sub_seq_data, seq_setting_data)
+        return seq
 
     # Save chat history
     def save_history(self, seq, chat_dict_key, chat_dict, level="SEQ", sub_seq="1"):

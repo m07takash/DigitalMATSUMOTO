@@ -33,7 +33,7 @@ if os.path.exists("system.env"):
 _LOCK = threading.Lock()
 _FILE_NAME = "scheduled_jobs.json"
 
-VALID_KINDS = ("rag_update", "user_memory_nowaday", "agent_run")
+VALID_KINDS = ("rag_update", "user_memory_nowaday", "agent_run", "agent_push")
 
 
 def _mst_path() -> str:

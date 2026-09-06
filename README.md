@@ -2631,6 +2631,7 @@ USER_MEMORY_PERSONA_BACKEND="EXCEL"
 | `rag_update` | `DigiM_Context.generate_rag()` を呼んでRAGデータを再ベクトル化（`USER_MEMORY_HISTORY_AUTO_SAVE_FLG=Y` の場合は併せて未保存セッションのHistoryも自動保存）。セッションは作成されない。 |
 | `user_memory_nowaday` | 全ユーザーに対し当月のNowadayプロファイル更新 → Personaへの差分マージを順に実行。セッションは作成されない。 |
 | `agent_run` | 指定のエージェント・プロンプト・実行モードでエージェント実行。実行ごとに **所有者ユーザー** で新規セッションを発番（service_id=`Scheduler`、session_id=`SCH<日時>`、名前=`[Scheduler] <ジョブ名>`）し、応答はチャット履歴として通常通り保存。 |
+| `agent_push` | エージェントからの**定期メッセージ配信**。対象セッション（アクティブ全件/選択/新規作成）・メッセージ生成方式（固定/共通生成/セッション毎生成）・会話メモリに残すか、をジョブに設定。配信結果は `last_push` に記録。 |
 
 **cron書式:** `"off"` / `"daily"`(03:00) / `"weekly"`(月03:00) / `"monthly"`(1日03:00) / 5フィールドのcron文字列（例: `"0 3 1 * *"`）
 
@@ -2639,6 +2640,26 @@ USER_MEMORY_PERSONA_BACKEND="EXCEL"
 **権限:** Scheduler メニューは `Allowed["Scheduler"] = true` のユーザーのみアクセス可能（`users.json` / `sample_users.json` で設定）。所有者ユーザー（`owner_user_id`）は保存時のログインユーザーが自動セットされ、`agent_run` 実行時のセッションに紐付きます。
 
 **WebUI操作:** ジョブごとに **Edit** / **Run Now**（即時1回実行）/ **Enable/Disable** / **Delete**。ジョブ追加は **Add New Job** から、cron変更後は **Reload Schedulers** で稼働中スケジューラに反映。APScheduler 未インストール環境では cron 起動はスキップされますが Run Now による手動実行は可能。
+
+#### スケジュール Push 通知（`kind: "agent_push"`）
+
+Scheduler にエージェントからの定期メッセージ配信を登録できます。**Scheduler** 画面の *Add New Job* → Kind に `agent_push` を選ぶと専用フォームが出ます。cron は既存プリセット（`daily` / `weekly` / `monthly`）か 5 フィールドの cron 式。
+
+| 設定 | 選択肢 |
+|---|---|
+| **Agent File / Engine** | 送信するエージェントと LLM |
+| **Target sessions** | `active_all`（アクティブ全件。agent / user_id でフィルタ可）/ `selected`（明示選択）/ `new`（新規セッションを N 個作成） |
+| **Message** | `fixed`（固定文）/ `generated_shared`（1回生成して全員に同一文面）/ `generated_per_session`（セッション毎に個別生成） |
+| **Execution flags** | メッセージ生成時の実行設定（MEMORY_USE / RAG_QUERY_GENE / META_SEARCH / THINKING_MODE / PRIVATE_MODE / CITE_KNOWLEDGE） |
+| **Keep in conversation memory** | OFF にすると**チャットには表示されるが以降のターンでは想起されない**（`SETTING.MEMORY_FLG="N"`） |
+
+**送信対象は「グループ」ではなくフィルタ条件**として保持します。ジョブ登録後に作られたセッションも条件に合えば自動的に対象になり、グループの CRUD や整合管理が不要です。フォームには現在の該当件数がリアルタイムで表示されます。
+
+> **コストガード**: `generated_per_session` は対象セッション数だけ LLM を呼びます。既定で **20 セッションを超えるとエラー**にして実行を止めます（`max_generated_sessions` で変更可）。`generated_shared` は対象が何件でも生成は 1 回です。
+
+配信結果はジョブに `last_push`（`targets` / `delivered[]` / `failed[]`）として記録され、Scheduler 画面の一覧に出ます。1 セッションの失敗で全体は止まらず、残りの配信は継続します。
+
+投稿されたメッセージは `type: "PUSH"` のターンとして通常の会話履歴に入るので、WebUI を開けばそのまま会話に現れます。
 
 #### Personaのステータスと自動承認
 

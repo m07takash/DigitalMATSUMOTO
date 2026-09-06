@@ -2336,7 +2336,27 @@ user/common/tool/local/*          # exclude everything under local/
 !user/common/tool/local/.gitkeep  # …except the .gitkeep so the directory stays
 ```
 
-#### Agent JSON `SKILL` block (tools the agent is allowed to use from the WebUI / Thinking)
+##### Scheduled push messages (`kind: "agent_push"`)
+
+Register recurring agent messages from the **Scheduler** screen: *Add New Job* → Kind `agent_push`. Cron accepts the existing presets (`daily` / `weekly` / `monthly`) or a 5-field expression.
+
+| Setting | Options |
+|---|---|
+| **Agent File / Engine** | Which agent sends, and on which LLM |
+| **Target sessions** | `active_all` (every active session, optionally filtered by agent / user_id) / `selected` (explicit list) / `new` (create N fresh sessions) |
+| **Message** | `fixed` (literal text) / `generated_shared` (composed once, same text to everyone) / `generated_per_session` (composed separately for each session, seeing that conversation) |
+| **Execution flags** | Applied while the agent composes (MEMORY_USE / RAG_QUERY_GENE / META_SEARCH / THINKING_MODE / PRIVATE_MODE / CITE_KNOWLEDGE) |
+| **Keep in conversation memory** | Off means the message **still renders in the chat but is not recalled** by later turns (`SETTING.MEMORY_FLG="N"`) |
+
+**Targets are a filter, not a stored group.** Sessions created after the job was registered are picked up automatically when they match, so there is no group CRUD to maintain. The form shows the live match count.
+
+> **Cost guard**: `generated_per_session` costs one LLM call per target. Above **20 sessions** the run is refused (tune with `max_generated_sessions`). `generated_shared` always composes exactly once.
+
+Each run records `last_push` on the job (`targets` / `delivered[]` / `failed[]`), shown in the job list. One failing session does not abort the rest.
+
+Pushed messages land as ordinary `type: "PUSH"` turns, so they simply appear in the conversation when the WebUI is opened.
+
+### Agent JSON `SKILL` block (tools the agent is allowed to use from the WebUI / Thinking)
 
 ```json
 "SKILL": {
