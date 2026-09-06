@@ -2032,7 +2032,8 @@ main{max-width:960px;margin:0 auto;padding:20px}
 .msg :first-child{margin-top:0}
 .msg :last-child{margin-bottom:0}
 /* Wide content scrolls inside its own block instead of stretching the page. */
-pre,table,.mermaid{max-width:100%;overflow-x:auto}
+pre,table,.mermaid,.svgwrap{max-width:100%;overflow-x:auto}
+.svgwrap svg{max-width:none;height:auto}
 pre{background:var(--code);padding:10px 12px;border-radius:8px;font-size:12.5px}
 code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.92em}
 pre code{background:none;padding:0}
@@ -2092,6 +2093,13 @@ def _html_image_tag(path):
         return f'<p><em>[image not embedded: {html.escape(str(path))}]</em></p>'
 
 
+def _html_png_tag(raw):
+    """Embed PNG bytes produced on the fly (the PageIndex tree is drawn live
+    and never written to the analytics folder)."""
+    import base64
+    return f'<img src="data:image/png;base64,{base64.b64encode(raw).decode()}" alt="">'
+
+
 def set_dl_html(chat_history, dl_type="Chats Only", file_id="Chat_History", title=""):
     """Return the transcript as a self-contained HTML page.
 
@@ -2113,10 +2121,19 @@ def set_dl_html(chat_history, dl_type="Chats Only", file_id="Chat_History", titl
         role = msg.get("role", "")
         if dl_type == "Chats Only" and role not in ("user", "assistant"):
             continue
-        if not (msg.get("content") or msg.get("image")):
+        if not (msg.get("content") or msg.get("image")
+                or msg.get("html") or msg.get("png_bytes")):
             continue
-        body = (_html_markdown(msg["content"]) if "content" in msg
-                else _html_image_tag(msg["image"]))
+        if "content" in msg:
+            body = _html_markdown(msg["content"])
+        elif "image" in msg:
+            body = _html_image_tag(msg["image"])
+        elif "png_bytes" in msg:
+            body = _html_png_tag(msg["png_bytes"])
+        else:
+            # Already-rendered markup (the knowledge-graph SVG) goes in as-is;
+            # wrapped so a wide graph scrolls instead of overflowing.
+            body = f'<div class="svgwrap">{msg["html"]}</div>'
         if role in _HTML_FOLDED_ROLES:
             # Analytics arrives as a run of entries (a score line then its
             # plots); collapsing them together keeps one expander per section
@@ -7298,7 +7315,7 @@ def _render_ape_vector_scatter(rag_def, rag_name, rag_agg, dim, perp, size_mode,
     st.pyplot(_fig); plt.close(_fig)
 
 
-def _render_ape_pageindex_tree(rag_def, rag_name, rag_agg):
+def _render_ape_pageindex_tree(rag_def, rag_name, rag_agg, return_png=False):
     """PageIndex Page Tree — same shape as Knowledge Explorer's PageIndex
     view. Pages grouped under their category, referenced ones rendered in
     blue with `(N refs)` next to the title; unreferenced pages stay muted."""
@@ -7318,7 +7335,7 @@ def _render_ape_pageindex_tree(rag_def, rag_name, rag_agg):
             _all_pages.append(_p)
     if not _all_pages:
         st.caption("(no PageIndex pages to plot)")
-        return
+        return None
 
     # Group by category preserving the order they first appear
     _categories: dict = {}
@@ -7361,7 +7378,17 @@ def _render_ape_pageindex_tree(rag_def, rag_name, rag_agg):
                       fontweight=weight, fontfamily="IPAexGothic")
             y_pos -= 1
     plt.tight_layout()
-    st.pyplot(_fig); plt.close(_fig)
+    st.pyplot(_fig)
+    # The tree is drawn live rather than saved, so the HTML export asks for
+    # the same figure as bytes instead of re-deriving the layout.
+    _png = None
+    if return_png:
+        import io as _io
+        _buf = _io.BytesIO()
+        _fig.savefig(_buf, format="png", dpi=130, bbox_inches="tight")
+        _png = _buf.getvalue()
+    plt.close(_fig)
+    return _png
 
 
 
@@ -8853,14 +8880,14 @@ def main():
                         if st.session_state.allowed_analytics_knowledge or st.session_state.allowed_analytics_compare:
                             with st.chat_message("analytics"):
                                 if "analytics" in v2:
-                                    if "knowledge_utility" in v2["analytics"]:
-                                        similarity_utility_dict = v2["analytics"]["knowledge_utility"]["similarity_utility"]
+                                    _ku = (v2["analytics"] or {}).get("knowledge_utility") or {}
+                                    if _ku:
+                                        similarity_utility_dict = _ku.get("similarity_utility") or {}
                                         download_data.append({"role": "analytics", "content": "**knowledge Utility:**\n\n" + ", ".join(
-                                            f"{_kk}: {_vv}" for _kk, _vv in (similarity_utility_dict or {}).items())})
-                                        if "image_files" in v2["analytics"]["knowledge_utility"]:
-                                            for _, image_values in v2["analytics"]["knowledge_utility"]["image_files"].items():
-                                                for image_value in image_values:
-                                                    download_data.append({"role": "analytics", "image": st.session_state.session.session_analytics_folder_path + image_value})
+                                            f"{_kk}: {_vv}" for _kk, _vv in similarity_utility_dict.items())})
+                                        # Plots and chunk lines are collected further down, inside
+                                        # the render loop, so the export follows the same per-DB
+                                        # order as the screen and reuses the same resolved paths.
 
                                 chat_expander = st.expander("Analytics Results")
                                 with chat_expander:
@@ -9320,11 +9347,14 @@ def main():
                                                             _dgu_main.unified_legend_html(),
                                                             unsafe_allow_html=True,
                                                         )
-                                                        st.markdown(
-                                                            _dgu_main.render_unified_svg(_gu_usage, show_legend=False,
-                                                                                          label_mode=_gu_label_mode),
-                                                            unsafe_allow_html=True,
-                                                        )
+                                                        _gu_svg = _dgu_main.render_unified_svg(
+                                                            _gu_usage, show_legend=False, label_mode=_gu_label_mode)
+                                                        st.markdown(_gu_svg, unsafe_allow_html=True)
+                                                        # Inline SVG travels straight into the HTML export, so the
+                                                        # saved page keeps the graph crisp and zoomable.
+                                                        download_data.append({"role": "analytics",
+                                                                              "content": f"##### {_gu_rag_name} (Knowledge Graph)"})
+                                                        download_data.append({"role": "analytics", "html": _gu_svg})
                                                         # Seeds horizontal chip row + PNG download button
                                                         _chip_html = _dgu_main.seeds_chip_html(_gu_usage)
                                                         if _chip_html:
@@ -9452,6 +9482,8 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                                                     }
                                                     for rag_category, files in rag_to_files.items():
                                                         st.markdown(f"### {rag_category}")
+                                                        download_data.append({"role": "analytics",
+                                                                              "content": f"##### {rag_category}"})
                                                         _rag_def_here = _kbu_rag_defs.get(rag_category)
                                                         _is_pi_render = bool(_rag_def_here and _rag_def_here.get("RETRIEVER") == "PageIndex")
                                                         if _is_pi_render:
@@ -9463,13 +9495,19 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                                                             _pi_agg = _ape_ku.aggregate_chunk_refs(
                                                                 [{"knowledge_refs": _pi_refs, "timestamp": ""}]
                                                             )
-                                                            _render_ape_pageindex_tree(_rag_def_here, rag_category, _pi_agg.get(rag_category, {}))
+                                                            _pi_png = _render_ape_pageindex_tree(
+                                                                _rag_def_here, rag_category,
+                                                                _pi_agg.get(rag_category, {}), return_png=True)
+                                                            if _pi_png:
+                                                                download_data.append({"role": "analytics", "png_bytes": _pi_png})
                                                         else:
                                                             st_scatter01, st_scatter02 = st.columns(2)
                                                             if files.get("scatter_plot_file_ref"):
                                                                 st_scatter01.image(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_ref"])
+                                                                download_data.append({"role": "analytics", "image": st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_ref"]})
                                                             if files.get("scatter_plot_file_category"):
                                                                 st_scatter02.image(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_category"])
+                                                                download_data.append({"role": "analytics", "image": st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_category"]})
                                                             if files.get("scatter_plot_file_csv"):
                                                                 with st.expander(f"Coordinate - {rag_category}"):
                                                                     rag_rank_df = pd.read_csv(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_csv"])
@@ -9486,8 +9524,14 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                                                         # whichever scatter/tree branch ran above.
                                                         if files.get("similarity_plot_file"):
                                                             st.image(st.session_state.session.session_analytics_folder_path + files["similarity_plot_file"])
+                                                            download_data.append({"role": "analytics", "image": st.session_state.session.session_analytics_folder_path + files["similarity_plot_file"]})
+                                                        _ak_lines = []
                                                         for ak_dict in analytics_dict["knowledge_utility"]["similarity_rank"][rag_category]:
                                                             st.markdown(ak_line(ak_dict))
+                                                            _ak_lines.append(ak_line(ak_dict))
+                                                        if _ak_lines:
+                                                            download_data.append({"role": "analytics",
+                                                                                  "content": "\n\n".join(_ak_lines)})
                                                         # Per-DB "Interpret with LLM" button + existing result
                                                         _ki_col1, _ki_col2 = st.columns([1, 3])
                                                         if _ki_col1.button(f"Interpret '{rag_category}' with LLM",
