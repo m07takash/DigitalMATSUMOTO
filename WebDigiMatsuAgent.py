@@ -1868,8 +1868,11 @@ def _render_mermaid(code, height=None):
 <style>
   html, body {{ margin:0; padding:0; background:transparent; }}
   #wrap {{ width:100%; }}
-  /* Fit the column instead of spilling past the iframe edge. */
-  #wrap svg {{ max-width:100% !important; height:auto !important; display:block; }}
+  /* No sizing overrides here. Mermaid emits width="100%" with an inline
+     max-width of the graph's natural size, which already means "fit the
+     column, but never blow the drawing up past its own dimensions".
+     Forcing max-width:100% removes that cap and stretches small diagrams. */
+  #wrap svg {{ display:block; }}
 </style>
 <script>
   const WRAP = document.getElementById('wrap');
@@ -1887,7 +1890,20 @@ def _render_mermaid(code, height=None):
   }}
 
   try {{
-    mermaid.initialize({{ startOnLoad: false, securityLevel: 'loose' }});
+    mermaid.initialize({{
+      startOnLoad: false,
+      securityLevel: 'loose',
+      // Emit width="100%" capped by the natural graph size: a small diagram
+      // stays small, a wide one shrinks to the column. Stated explicitly
+      // rather than relying on the default in the CDN build.
+      flowchart: {{ useMaxWidth: true }},
+      sequence: {{ useMaxWidth: true }},
+      gantt: {{ useMaxWidth: true }},
+      class: {{ useMaxWidth: true }},
+      state: {{ useMaxWidth: true }},
+      er: {{ useMaxWidth: true }},
+      pie: {{ useMaxWidth: true }},
+    }});
     mermaid.run().catch(fallback);
   }} catch (e) {{
     fallback();
