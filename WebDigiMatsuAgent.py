@@ -2001,6 +2001,154 @@ def set_dl_file(chat_history, dl_type="Chats Only", file_id="Chat_History"):
     mime = "text/markdown"
     return data, file_name, mime
 
+
+# Roles that are supplementary rather than conversation, rendered as collapsed
+# <details> so the export mirrors the app's expanders instead of dumping walls
+# of log text into the transcript.
+_HTML_FOLDED_ROLES = ("detail", "analytics")
+
+_HTML_CSS = """
+:root{--bg:#f5f6f8;--card:#fff;--line:#e3e6ea;--txt:#1a1c1f;--muted:#6b7280;
+      --user:#e8f0fe;--user-line:#c7dbfa;--ai:#fff;--code:#f3f4f6}
+@media (prefers-color-scheme:dark){
+  :root{--bg:#15171a;--card:#1e2126;--line:#2f343b;--txt:#e6e8ea;--muted:#9aa2ad;
+        --user:#1d2b40;--user-line:#2b4a72;--ai:#1e2126;--code:#22262c}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);
+     font:14px/1.7 -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Sans",
+     "Noto Sans JP",Meiryo,sans-serif}
+header{position:sticky;top:0;z-index:5;background:var(--card);
+       border-bottom:1px solid var(--line);padding:12px 20px}
+header h1{margin:0;font-size:16px}
+header .meta{color:var(--muted);font-size:12px;margin-top:2px}
+main{max-width:960px;margin:0 auto;padding:20px}
+.turn{border-top:1px solid var(--line);padding-top:18px;margin-top:18px}
+.turn:first-child{border-top:0;margin-top:0;padding-top:0}
+.msg{background:var(--ai);border:1px solid var(--line);border-radius:10px;
+     padding:12px 16px;margin:10px 0}
+.msg.user{background:var(--user);border-color:var(--user-line)}
+.role{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;
+      color:var(--muted);margin-bottom:6px}
+.msg :first-child{margin-top:0}
+.msg :last-child{margin-bottom:0}
+/* Wide content scrolls inside its own block instead of stretching the page. */
+pre,table,.mermaid{max-width:100%;overflow-x:auto}
+pre{background:var(--code);padding:10px 12px;border-radius:8px;font-size:12.5px}
+code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:.92em}
+pre code{background:none;padding:0}
+table{border-collapse:collapse;display:block;width:max-content;max-width:100%}
+th,td{border:1px solid var(--line);padding:6px 10px;text-align:left}
+th{background:var(--code)}
+img{max-width:100%;height:auto;border-radius:6px}
+details{border:1px solid var(--line);border-radius:8px;margin:10px 0;
+        background:var(--card)}
+details>summary{cursor:pointer;padding:8px 14px;font-size:12px;font-weight:600;
+                color:var(--muted)}
+details[open]>summary{border-bottom:1px solid var(--line)}
+details .body{padding:12px 16px;max-height:60vh;overflow:auto}
+.mermaid{background:var(--card);border:1px solid var(--line);border-radius:8px;
+         padding:10px;margin:10px 0}
+.mermaid svg{display:block}
+blockquote{border-left:3px solid var(--line);margin:8px 0;padding:2px 12px;
+           color:var(--muted)}
+"""
+
+_HTML_MERMAID_INIT = """
+<script>
+  try {
+    mermaid.initialize({ startOnLoad: true, securityLevel: 'loose',
+      flowchart:{useMaxWidth:true}, sequence:{useMaxWidth:true},
+      gantt:{useMaxWidth:true}, class:{useMaxWidth:true},
+      state:{useMaxWidth:true}, er:{useMaxWidth:true}, pie:{useMaxWidth:true} });
+  } catch (e) {
+    document.querySelectorAll('.mermaid').forEach(function (el) {
+      var pre = document.createElement('pre');
+      pre.textContent = el.textContent;
+      el.replaceWith(pre);
+    });
+  }
+</script>
+"""
+
+
+def _html_markdown(text):
+    """Markdown -> HTML, with ```mermaid fences handed to the browser runtime
+    so diagrams stay live (and pannable) in the saved file."""
+    import mistune
+    out = []
+    for i, part in enumerate(re.split(r"```mermaid\s*\n(.*?)```", text or "", flags=re.S)):
+        if i % 2 == 1:
+            out.append(f'<div class="mermaid">{html.escape(part.strip())}</div>')
+        elif part.strip():
+            out.append(mistune.html(part))
+    return "".join(out)
+
+
+def _html_image_tag(path):
+    try:
+        b64 = dmu.encode_image_file(path).replace("\n", "").replace("\r", "")
+        return f'<img src="data:image/png;base64,{b64}" alt="">'
+    except Exception:
+        return f'<p><em>[image not embedded: {html.escape(str(path))}]</em></p>'
+
+
+def set_dl_html(chat_history, dl_type="Chats Only", file_id="Chat_History", title=""):
+    """Return the transcript as a self-contained HTML page.
+
+    Everything is inlined (images as data URIs, CSS in the document) so the
+    file opens offline from disk. Unlike the PDF, wide tables, code blocks and
+    diagrams keep their own scrollbars instead of being cropped to the page.
+    """
+    blocks = []
+    _fold_role, _fold_buf = None, []
+
+    def _flush_fold():
+        if not _fold_buf:
+            return
+        blocks.append(f'<details><summary>{html.escape(_fold_role.capitalize())}'
+                      f'</summary><div class="body">{"".join(_fold_buf)}</div></details>')
+        _fold_buf.clear()
+
+    for msg in chat_history:
+        role = msg.get("role", "")
+        if dl_type == "Chats Only" and role not in ("user", "assistant"):
+            continue
+        if not (msg.get("content") or msg.get("image")):
+            continue
+        body = (_html_markdown(msg["content"]) if "content" in msg
+                else _html_image_tag(msg["image"]))
+        if role in _HTML_FOLDED_ROLES:
+            # Analytics arrives as a run of entries (a score line then its
+            # plots); collapsing them together keeps one expander per section
+            # instead of one per image.
+            if role != _fold_role:
+                _flush_fold()
+                _fold_role = role
+            _fold_buf.append(body)
+            continue
+        _flush_fold()
+        _fold_role = None
+        cls = "msg user" if role == "user" else "msg"
+        blocks.append(f'<div class="{cls}"><div class="role">'
+                      f'{html.escape(str(role))}</div>{body}</div>')
+    _flush_fold()
+
+    _title = html.escape(title or file_id)
+    page = f"""<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{_title}</title><style>{_HTML_CSS}</style></head>
+<body>
+<header><h1>{_title}</h1>
+<div class="meta">{html.escape(datetime.now().strftime('%Y-%m-%d %H:%M'))} · {html.escape(dl_type)}</div>
+</header>
+<main>{''.join(blocks) or '<p>(no messages)</p>'}</main>
+{_mermaid_runtime()[0]}
+{_HTML_MERMAID_INIT}
+</body></html>"""
+    return page.encode("utf-8"), f"{file_id}_{dl_type}.html"
+
+
 def set_dl_pdf(chat_history, dl_type="Chats Only", file_id="Chat_History"):
     """Return chat history as PDF bytes."""
     from fpdf import FPDF
@@ -8707,7 +8855,8 @@ def main():
                                 if "analytics" in v2:
                                     if "knowledge_utility" in v2["analytics"]:
                                         similarity_utility_dict = v2["analytics"]["knowledge_utility"]["similarity_utility"]
-                                        download_data.append({"role": "analytics", "content": "**knowledge Utility:**"})
+                                        download_data.append({"role": "analytics", "content": "**knowledge Utility:**\n\n" + ", ".join(
+                                            f"{_kk}: {_vv}" for _kk, _vv in (similarity_utility_dict or {}).items())})
                                         if "image_files" in v2["analytics"]["knowledge_utility"]:
                                             for _, image_values in v2["analytics"]["knowledge_utility"]["image_files"].items():
                                                 for image_value in image_values:
@@ -9787,8 +9936,21 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
         dl_file_id = st.session_state.session.session_id +"_"+ st.session_state.session.session_name[:20]
         dl_data, dl_file_name, dl_mime = set_dl_file(download_data, st.session_state.dl_type, file_id=dl_file_id)
         footer_col2.download_button(label="Download(.md)", data=dl_data, file_name=dl_file_name, mime=dl_mime)
-        pdf_data, pdf_file_name = set_dl_pdf(download_data, st.session_state.dl_type, file_id=dl_file_id)
-        footer_col3.download_button(label="Download(.pdf)", data=pdf_data, file_name=pdf_file_name, mime="application/pdf")
+        # PDF export is hidden in favour of the HTML one, which keeps diagrams,
+        # wide tables and Analytics images readable (the PDF flattened and
+        # cropped them). `set_dl_pdf` stays in place so it can be restored.
+        # Always the full page. The HTML export exists to snapshot what is on
+        # screen, so it ignores the Chats Only / ALL radio (which stays in
+        # effect for the Markdown export) and keeps Detail / Analytics.
+        html_data, html_file_name = set_dl_html(
+            download_data, "Full", file_id=dl_file_id,
+            title=st.session_state.session.session_name)
+        footer_col3.download_button(
+            label="Download(.html)", data=html_data, file_name=html_file_name,
+            mime="text/html",
+            help="Self-contained snapshot of this page — chat, Detail Information and "
+                 "Analytics Results, with scrollable tables and live diagrams. "
+                 "Always full, regardless of Download Mode.")
 
     # User query input
     if st.session_state.session_user_id == st.session_state.user_id:
