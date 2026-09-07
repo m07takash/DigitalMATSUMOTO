@@ -52,6 +52,9 @@ def _empty_job(job_id: str = "") -> Dict[str, Any]:
         "name": "",
         "kind": "rag_update",
         "cron": "off",
+        # Empty means the scheduler-wide TIMEZONE; set per job to schedule in
+        # a different zone without moving everything else.
+        "timezone": "",
         "enabled": False,
         "owner_user_id": "",
         "params": {},
@@ -104,13 +107,22 @@ def get(job_id: str) -> Optional[Dict[str, Any]]:
 
 def upsert(job: Dict[str, Any]) -> Dict[str, Any]:
     """Create if job_id is empty, update if it exists."""
+    # agent_push was folded into agent_run (same execution, the old split was
+    # only target + delivery); normalize on write so the UI shows one kind.
+    if job.get("kind") == "agent_push":
+        job = dict(job); job["kind"] = "agent_run"
     if job.get("kind") not in VALID_KINDS:
         raise ValueError(f"invalid kind: {job.get('kind')}")
     with _LOCK:
         jobs = load_all()
         if not job.get("job_id"):
             new_job = _empty_job()
+            _generated_id = new_job["job_id"]
             new_job.update(job)
+            # The caller sends job_id="" to mean "new", and that empty value
+            # would otherwise overwrite the id just generated — leaving every
+            # new job with an empty id, colliding with each other.
+            new_job["job_id"] = _generated_id
             new_job["created_at"] = _now_str()
             new_job["updated_at"] = _now_str()
             jobs.append(new_job)

@@ -22,6 +22,7 @@ python3 \
 python3-pip \
 gcc \
 g++ \
+vim \
 mecab \
 libmecab-dev \
 mecab-ipadic-utf8 \
@@ -63,5 +64,10 @@ VOLUME /work
 # Additional port 8895
 EXPOSE 8895
 
-# Default startup command (startup.sh launches multiple services)
-CMD ["/bin/bash", "startup.sh"]
+# The container comes up idle on purpose. system.env / setting.yaml /
+# startup.sh are excluded from the image (.dockerignore) because they carry
+# credentials and per-environment paths, so a fresh container has nothing to
+# start yet. entrypoint.sh reports which templates still need copying and then
+# waits, leaving the engineer to configure and launch the services by hand.
+# Set DIGIM_AUTOSTART=true (with the config bind-mounted) to run startup.sh.
+CMD ["/bin/bash", "entrypoint.sh"]

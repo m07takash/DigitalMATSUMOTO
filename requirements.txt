@@ -38,3 +38,5 @@ python-pptx==1.0.2
 PyMuPDF==1.27.2.2
 tabulate==0.10.0
 APScheduler==3.10.4
+mistune==3.1.4
+azure-cosmos==4.16.4

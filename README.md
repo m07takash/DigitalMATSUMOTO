@@ -16,7 +16,7 @@
   - [1. リポジトリの取得](#1-リポジトリの取得)
   - [2. Dockerイメージのビルド](#2-dockerイメージのビルド)
   - [3. コンテナの起動](#3-コンテナの起動)
-  - [4. 環境変数の設定](#4-環境変数の設定)
+  - [4. 設定ファイルの作成（system.env / setting.yaml）](#4-設定ファイルの作成systemenv--settingyaml)
   - [5. アプリケーションの起動（コンテナ内で実行）](#5-アプリケーションの起動コンテナ内で実行)
   - [6. 動作確認](#6-動作確認)
   - [7. Nginx リバースプロキシの設定（本番環境向け）](#7-nginx-リバースプロキシの設定本番環境向け)
@@ -200,10 +200,15 @@ DigitalMATSUMOTO/
 │   ├── session*/                 # セッションデータ（チャット履歴）
 │   └── archive/                  # セッションアーカイブ（ZIP）
 ├── test/                         # ベンチマーク・評価入出力（questions.xlsx 等）
-├── setting.yaml                  # フォルダパス等のシステム設定
-├── system.env                    # APIキー等の環境変数（要作成）
-├── system.env_sample             # 環境変数のテンプレート
+├── setting.yaml                  # フォルダパス等のシステム設定（要作成／gitignore）
+├── setting.yaml_sample           # 同テンプレート
+├── system.env                    # APIキー等の環境変数（要作成／gitignore）
+├── system.env_sample             # 同テンプレート
+├── startup.sh                    # サービス起動スクリプト（要作成／gitignore）
+├── startup.sh_sample             # 同テンプレート
+├── entrypoint.sh                 # コンテナのCMD。待機して手順を案内するだけ
 ├── requirements.txt              # Pythonパッケージ一覧
+├── .dockerignore                 # 設定ファイル・セッションをイメージから除外
 └── Dockerfile                    # Dockerビルド定義
 ```
 
@@ -234,34 +239,68 @@ docker build -t digimatsumoto .
 
 ### 3. コンテナの起動
 
-まずアプリを起動しない待機状態でコンテナを立ち上げます（Streamlitは環境変数設定後に手動起動）。
+**コンテナは待機状態で起動します。サービスは自動起動しません。**
 
 ```bash
-docker run -dit --name digimatsumoto \
+docker run -d --name digimatsumoto \
   -p 8501:8501 \
   -p 8899:8899 \
-  -v $(pwd):/app/DigitalMATSUMOTO \
-  -w /app/DigitalMATSUMOTO \
-  digimatsumoto \
-  bash
+  digimatsumoto
 ```
 
 | ポート | 用途 |
 |-------|------|
 | 8501 | Streamlit WebUI |
 | 8899 | FastAPI エンドポイント |
+| 8891 / 8895 | 予備（`Dockerfile` で EXPOSE 済み。標準の `startup.sh` では未使用） |
 
 ※ポート番号は必要に応じて変更してください。
 
-ボリュームマウント（`-v $(pwd):/app/DigitalMATSUMOTO`）により、ホスト側のファイル編集はコンテナ内へ即時反映されます。次のステップの `system.env` 作成はホスト側で行えば、そのままコンテナから読み込めます。
-
-### 4. 環境変数の設定
-
-`system.env_sample` をコピーして `system.env` を作成し、APIキー等を設定します。
+イメージには **`system.env` / `setting.yaml` / `startup.sh` が含まれていません**（`.dockerignore` で除外。APIキーや環境依存のパスを焼き込まないため）。含まれるのは `*_sample` の雛形だけです。そのためコンテナは起動直後、何をすべきかを表示して待機します。
 
 ```bash
-cp system.env_sample system.env
+docker logs digimatsumoto
 ```
+
+```
+==================================================================
+ DigitalMATSUMOTO container is up. No service has been started.
+==================================================================
+
+Configuration files:
+  [MISSING] system.env        <- cp system.env_sample system.env
+  [MISSING] setting.yaml      <- cp setting.yaml_sample setting.yaml
+  [MISSING] startup.sh        <- cp startup.sh_sample startup.sh
+```
+
+`[MISSING]` が消えるまで次のステップを進めます。**この時点で `http://localhost:8501` にアクセスしても繋がりません**（まだ何も起動していないため）。故障ではありません。
+
+> **ホスト側でファイルを編集したい場合**は、ボリュームマウントを付けます。設定ファイルをホスト側に置けるので、`docker rm` してもコンテナ外に残ります。
+>
+> ```bash
+> docker run -d --name digimatsumoto \
+>   -p 8501:8501 -p 8899:8899 \
+>   -v $(pwd):/app/DigitalMATSUMOTO \
+>   digimatsumoto
+> ```
+>
+> マウントしない場合、次のステップで作る設定ファイルはコンテナ内にのみ存在し、**`docker rm` で消えます**。
+
+### 4. 設定ファイルの作成（system.env / setting.yaml）
+
+コンテナに入り、雛形から 3 つの設定ファイルを作ります。いずれも `.gitignore` / `.dockerignore` の対象なので、**リポジトリにもイメージにも存在しません。必ず自分で作成します。**
+
+```bash
+docker exec -it digimatsumoto bash
+
+cp system.env_sample   system.env     # APIキー・DB接続など（要編集／エディタは vim 同梱）
+cp setting.yaml_sample setting.yaml   # フォルダ構成・既定値（通常はそのままで可）
+cp startup.sh_sample   startup.sh     # 起動スクリプト（実行権限付きでコピーされます）
+```
+
+`setting.yaml` はフォルダパス等をアプリ起動時に読み込むため、**無いと起動時点で落ちます**。編集不要でもコピーは必須です。
+
+続いて `system.env` を編集します。
 
 **必須設定：**
 
@@ -345,52 +384,85 @@ Azure 上の gpt-* / dall-e / gpt-image-* 等のデプロイをチャット・�
 
 ### 5. アプリケーションの起動（コンテナ内で実行）
 
-`system.env` の設定が終わったら、コンテナに入って Streamlit を起動します。
+設定ファイルが揃ったら、**`./startup.sh` が標準の起動方法**です。WebUI（Streamlit）と FastAPI をまとめて起動します。
+
+```bash
+docker exec -it digimatsumoto ./startup.sh
+```
+
+`system.env` か `setting.yaml` が無い状態で実行すると、アプリ内部で落ちる前に理由を表示して停止します。
+
+```
+[startup.sh] system.env is missing. Copy system.env_sample to system.env and edit it first.
+```
+
+**バックグラウンドで起動したい場合**（`docker exec -it` は接続を切ると Streamlit も止まります）:
+
+```bash
+docker exec -d digimatsumoto ./startup.sh
+```
+
+FastAPI のログは コンテナ内 `/var/log/digim_api.log` に出ます。
+
+**WebUI だけを起動したい場合**（デバッグ用）:
 
 ```bash
 docker exec -it digimatsumoto bash
-```
-
-コンテナ内で:
-
-```bash
 streamlit run WebDigiMatsuAgent.py --server.port 8501 --server.address 0.0.0.0
 ```
 
 > `--server.address 0.0.0.0` を付けないとコンテナ外（ホストのブラウザ）からアクセスできない場合があります。
 
-ワンライナーで起動したい場合（コンテナに入らず外から実行）:
+**停止するには** — フォアグラウンドの Streamlit は `Ctrl-C`、バックグラウンド起動時は次のとおりです。
 
 ```bash
-docker exec -d digimatsumoto streamlit run WebDigiMatsuAgent.py --server.port 8501 --server.address 0.0.0.0
+docker exec digimatsumoto pkill -f "streamlit run"
+docker exec digimatsumoto pkill -f gunicorn
 ```
 
-**複数サービス（WebUI + FastAPI）をまとめて起動：**
-
-`startup.sh_sample` を `startup.sh` にコピーして使ってください（`startup.sh` は環境依存のため `.gitignore` 済み）。サンプルは `WebDigiMatsuAgent.py`（標準WebUI）+ FastAPI を起動します。
-
-```bash
-# ホスト側で雛形をコピー（必要に応じて編集）
-cp startup.sh_sample startup.sh
-
-# コンテナ内で実行
-docker exec -it digimatsumoto bash startup.sh
-```
-
-> **自動起動の抑止（新環境の構築・デバッグ時）：** Dockerfile のデフォルト `CMD` は `startup.sh`（全サービスを自動起動）です。CMD を上書きせずコンテナを起動する運用（例：ビルド済みイメージをそのまま `docker run` する場合）で、まずは起動せず待機させたいときは `DIGIM_AUTOSTART=false` を渡します。`startup.sh` はサービスを起動せず `tail -f /dev/null` で待機するため、コンテナは落ちず Streamlit の Rerun ループも発生しません。動作確認後に手動で `./startup.sh` を実行すれば通常起動します。
+> **`docker restart` / ホスト再起動の後はサービスが自動復帰しません。** コンテナは再び待機状態で上がるので、`./startup.sh` を実行し直してください（サービスは PID 1 ではなくなりました）。
+>
+> 本番運用などで自動復帰させたい場合は、設定ファイルをマウントした上で自動起動を有効にします。**マウント元のファイルはホスト側に実体が必要です**（存在しないパスを指定すると Docker が空のディレクトリを作ってしまい起動に失敗します）。コンテナ内で作成済みなら、先に取り出してください。
 >
 > ```bash
-> # 待機状態で起動（自動起動OFF） → exec で入って手動デバッグ
-> docker run -d --name digimatsumoto -p 8501:8501 -p 8899:8899 \
->   -e DIGIM_AUTOSTART=false --env-file ./system.env digimatsumoto
-> docker exec -it digimatsumoto bash
+> # コンテナ内で作った設定をホストへ取り出す
+> for f in system.env setting.yaml startup.sh; do
+>   docker cp digimatsumoto:/app/DigitalMATSUMOTO/$f ./$f
+> done
+>
+> docker rm -f digimatsumoto
+> docker run -d --name digimatsumoto \\
+>   -p 8501:8501 -p 8899:8899 \\
+>   -v $(pwd)/system.env:/app/DigitalMATSUMOTO/system.env \\
+>   -v $(pwd)/setting.yaml:/app/DigitalMATSUMOTO/setting.yaml \\
+>   -v $(pwd)/startup.sh:/app/DigitalMATSUMOTO/startup.sh \\
+>   -v $(pwd)/user:/app/DigitalMATSUMOTO/user \\
+>   -e DIGIM_AUTOSTART=true \\
+>   --restart unless-stopped \\
+>   digimatsumoto
 > ```
 >
-> `DIGIM_AUTOSTART` を指定しなければ従来どおり全サービスが自動起動します。
+> `user/` もマウントしています。`.dockerignore` により `user/session*/` はイメージに含まれないため、マウントしないと**セッションや分析結果がコンテナ削除で消えます**。
+>
+> `DIGIM_AUTOSTART=true` のときだけ `entrypoint.sh` が `./startup.sh` を実行します。**既定は `false`（起動しない）** です。
+
 
 ### 6. 動作確認
 
-ブラウザで `http://localhost:8501` にアクセスし、WebUIが表示されれば完了です。
+`./startup.sh` を実行した状態で、ブラウザから `http://localhost:8501` にアクセスし WebUI が表示されれば完了です。
+
+繋がらない場合は、まずコンテナの状態を確認します。
+
+```bash
+docker logs digimatsumoto          # 設定ファイルのチェックリスト
+docker exec digimatsumoto ps aux | grep -E "streamlit|gunicorn"
+```
+
+| 症状 | 原因 |
+|---|---|
+| `docker logs` に `[MISSING]` が残っている | 設定ファイル未作成。手順 4 に戻る |
+| `[ok]` が並ぶが 8501 に繋がらない | `./startup.sh` を実行していない（コンテナ起動だけではサービスは上がりません） |
+| `docker restart` 後に繋がらなくなった | 仕様。再度 `./startup.sh` が必要 |
 
 ### 7. Nginx リバースプロキシの設定（本番環境向け）
 
@@ -560,7 +632,36 @@ CREATE INDEX IF NOT EXISTS idx_digim_chat_history_session_seq
     ON digim_chat_history (session_id, seq DESC);
 ```
 
-**注意**：APE (Agent Performance Explorer) 用の `digim_sessions` / `digim_dialogs` / `digim_references` テーブルはこの `digim_chat_history` とは**別物**です。両者を混同しないでください。APE 側はバッチ export で埋める分析ミラー、`digim_chat_history` は Chat 実行中のライブ R/W 用です。
+**役割分担**：`digim_chat_history` は Chat 実行中のライブ R/W 用、`digim_sessions` / `digim_dialogs` / `digim_references` は**分析用の正規化ミラー**です。両者は別テーブルで、前者は turn 全体を JSONB で持つため高速ですが `SELECT` での分析には向きません。分析クエリは必ず後者を見てください。
+
+#### 会話ターンの自動エクスポート（`DB_EXPORT_AUTO`）
+
+ターンが保存されるたびに、そのセッションの未エクスポート分（`seq > last_seq`）が**バックグラウンドで**正規化テーブルへ書き出されます。
+
+```
+digim_chat_history            ← 実行時。turn 単位 UPSERT（変更なし）
+        │ ターン確定後、別スレッドで差分エクスポート
+        ▼
+digim_sessions / digim_dialogs / digim_references   ← 分析はこちらを SELECT
+```
+
+| 項目 | 内容 |
+|---|---|
+| 有効化 | `system.env` の `DB_EXPORT_AUTO`（既定 `Y`、`N` で無効）。`POSTGRES_*` 未設定なら自動的に無効 |
+| 実行タイミング | ダイジェスト生成スレッドの完了を待ってから（`digest_text` を含めるため）。チャットの応答速度には影響しません |
+| 差分管理 | `status.yaml` の `db_export: {status, last_seq}`。保存のたび `UNDO` になり、成功で `DONE` |
+| 失敗時 | ロールバックして `UNDO` のまま。次ターンで同じ範囲を再試行し、チャットはエラーになりません |
+| 冪等性 | 既に `DONE` かつ `last_seq >= 最新 seq` なら `skip` |
+
+サイドバー Sessions → **Export DB** の手動一括実行は取りこぼし回収用として残しています。埋め込み生成（`vectorize_dialogs`）は API 課金が発生するため**自動化していません**（従来どおり手動）。
+
+単一セッションだけ処理したい場合:
+
+```python
+import DigiM_DB_Export as dbex
+dbex.export_session("20260907_012345_0")       # 例外を投げる
+dbex.export_session_safe("20260907_012345_0")  # 例外を握って dict を返す（自動実行はこちら）
+```
 
 **依存パッケージ**：`psycopg2-binary`（`requirements.txt` に含まれています）
 
@@ -601,10 +702,12 @@ az cosmosdb sql container create \
 
 または Data Explorer の「New Container」から手動作成でも OK です。Partition key は `/session_id` を指定してください。
 
-**依存パッケージ**：`azure-cosmos`（optional）
+**依存パッケージ**：`azure-cosmos`（`requirements.txt` に収録済み）
+
+現行の `requirements.txt` でビルドしたイメージには最初から含まれます。それ以前にビルドした既存コンテナでは以下を実行してください。
 
 ```bash
-pip install azure-cosmos
+pip3 install -r requirements.txt
 ```
 
 CosmosDB モードで起動しつつパッケージが未インストールの場合、自動で JSON にフォールバック（警告ログ）します。
@@ -2630,10 +2733,21 @@ USER_MEMORY_PERSONA_BACKEND="EXCEL"
 |------|------|
 | `rag_update` | `DigiM_Context.generate_rag()` を呼んでRAGデータを再ベクトル化（`USER_MEMORY_HISTORY_AUTO_SAVE_FLG=Y` の場合は併せて未保存セッションのHistoryも自動保存）。セッションは作成されない。 |
 | `user_memory_nowaday` | 全ユーザーに対し当月のNowadayプロファイル更新 → Personaへの差分マージを順に実行。セッションは作成されない。 |
-| `agent_run` | 指定のエージェント・プロンプト・実行モードでエージェント実行。実行ごとに **所有者ユーザー** で新規セッションを発番（service_id=`Scheduler`、session_id=`SCH<日時>`、名前=`[Scheduler] <ジョブ名>`）し、応答はチャット履歴として通常通り保存。 |
-| `agent_push` | エージェントからの**定期メッセージ配信**。対象セッション（アクティブ全件/選択/新規作成）・メッセージ生成方式（固定/共通生成/セッション毎生成）・会話メモリに残すか、をジョブに設定。配信結果は `last_push` に記録。 |
+| `agent_run` | エージェントをスケジュール実行し、結果を届ける。**配信先**（新規セッション／アクティブ全件／選択）と**メッセージ**（エージェント生成／固定文）を組み合わせて指定。新規セッションの場合は **所有者ユーザー** で発番（service_id=`Scheduler`、session_id=`SCH<日時>`、名前=`[Scheduler] <ジョブ名>`）し、応答は通常のチャット履歴として保存されます。 |
 
-**cron書式:** `"off"` / `"daily"`(03:00) / `"weekly"`(月03:00) / `"monthly"`(1日03:00) / 5フィールドのcron文字列（例: `"0 3 1 * *"`）
+**スケジュール指定:** WebUI の Schedule ラジオから組み立てます（生の cron を覚える必要はありません）。
+
+| モード | 保存される値 | 用途 |
+|---|---|---|
+| Disabled | `off` | 無効 |
+| **Once (date & time)** | `once:YYYY-MM-DD HH:MM` | **1回だけ実行**。日付・時刻ピッカーで指定 |
+| Daily | `<分> <時> * * *` | 毎日、時刻を指定 |
+| Preset | `daily` / `weekly` / `monthly` | 03:00 固定のプリセット |
+| Custom cron | 5フィールドの cron 文字列 | 例: `0 9 * * 1-5`（平日09:00）、`*/30 * * * *`（30分毎） |
+
+**タイムゾーン:** ジョブごとに指定できます（`timezone` フィールド）。空欄なら `system.env` の `TIMEZONE`（既定 `Asia/Tokyo`）が使われます。cron の各フィールドも1回実行の日時も、**このゾーンの壁時計時刻**として解釈されます。
+
+いずれのモードでも、保存値と人が読める形（例 `once at 2026-12-24 09:00 [America/New_York]`）がフォーム直下と一覧に表示されます。1回実行は `DateTrigger` で登録され、**指定時刻がそのゾーンで過去の場合は発火せず**、フォームに現在時刻付きで警告が出ます（サーバの時計と運用者の壁時計は一致しないことが多いため、判定は必ず選択ゾーンで行われます）。
 
 **最終実行の記録:** `agent_run` 以外はセッションを残さず、ジョブ行に `last_run` / `last_status` / `last_error` のみが記録されます（エラー時は Error log expander で表示）。`agent_run` のみ `last_session_id` も保存されるので、当該セッションをチャット履歴から開いて応答を確認できます。
 
@@ -2641,25 +2755,26 @@ USER_MEMORY_PERSONA_BACKEND="EXCEL"
 
 **WebUI操作:** ジョブごとに **Edit** / **Run Now**（即時1回実行）/ **Enable/Disable** / **Delete**。ジョブ追加は **Add New Job** から、cron変更後は **Reload Schedulers** で稼働中スケジューラに反映。APScheduler 未インストール環境では cron 起動はスキップされますが Run Now による手動実行は可能。
 
-#### スケジュール Push 通知（`kind: "agent_push"`）
+#### スケジュール実行と配信（`kind: "agent_run"`）
 
-Scheduler にエージェントからの定期メッセージ配信を登録できます。**Scheduler** 画面の *Add New Job* → Kind に `agent_push` を選ぶと専用フォームが出ます。cron は既存プリセット（`daily` / `weekly` / `monthly`）か 5 フィールドの cron 式。
+Scheduler の **Add New Job** → Kind `agent_run` で、エージェントの定期実行とメッセージ配信を1つの種別として設定します。
 
 | 設定 | 選択肢 |
 |---|---|
-| **Agent File / Engine** | 送信するエージェントと LLM |
-| **Target sessions** | `active_all`（アクティブ全件。agent / user_id でフィルタ可）/ `selected`（明示選択）/ `new`（新規セッションを N 個作成） |
-| **Message** | `fixed`（固定文）/ `generated_shared`（1回生成して全員に同一文面）/ `generated_per_session`（セッション毎に個別生成） |
-| **Execution flags** | メッセージ生成時の実行設定（MEMORY_USE / RAG_QUERY_GENE / META_SEARCH / THINKING_MODE / PRIVATE_MODE / CITE_KNOWLEDGE） |
-| **Keep in conversation memory** | OFF にすると**チャットには表示されるが以降のターンでは想起されない**（`SETTING.MEMORY_FLG="N"`） |
+| **Agent File / Engine** | 実行するエージェントと LLM。Engine は**選んだエージェントの有効な ENGINE.LLM から選択**（`(agent default: …)` で既定を使用） |
+| **Deliver to** | `new`（新規セッションを N 個作成。**エージェントが実際に対話し、そのターンが会話そのものになる**）/ `active_all`（アクティブ全件。agent / user_id でフィルタ可）/ `selected`（明示選択） |
+| **Message** | `generated`（プロンプトを渡してエージェントに生成させる）/ `fixed`（LLM を呼ばず、入力文をそのまま投函） |
+| **Compose separately for each target session** | `generated` かつ配信先が既存セッションのとき。ON でセッション毎に個別生成 |
+| **Keep in conversation memory** | 既存セッションへの配信時。OFF で**チャットには表示されるが以降のターンでは想起されない**（`SETTING.MEMORY_FLG="N"`） |
+| **Execution flags** | 実行時の設定（MEMORY_USE / RAG_QUERY_GENE / META_SEARCH / THINKING_MODE / PRIVATE_MODE ほか） |
 
-**送信対象は「グループ」ではなくフィルタ条件**として保持します。ジョブ登録後に作られたセッションも条件に合えば自動的に対象になり、グループの CRUD や整合管理が不要です。フォームには現在の該当件数がリアルタイムで表示されます。
+**送信対象は「グループ」ではなくフィルタ条件**として保持します。ジョブ登録後に作られたセッションも条件に合えば自動的に対象になり、グループの CRUD や整合管理が不要です。フォームには現在の該当件数が表示されます。
 
-> **コストガード**: `generated_per_session` は対象セッション数だけ LLM を呼びます。既定で **20 セッションを超えるとエラー**にして実行を止めます（`max_generated_sessions` で変更可）。`generated_shared` は対象が何件でも生成は 1 回です。
+> **コストガード**: セッション毎の個別生成は対象数だけ LLM を呼びます。既定で **20 セッションを超えるとエラー**にして実行を止めます（`max_generated_sessions` で変更可）。共通生成は対象が何件でも生成は 1 回、`fixed` は 0 回です。
 
-配信結果はジョブに `last_push`（`targets` / `delivered[]` / `failed[]`）として記録され、Scheduler 画面の一覧に出ます。1 セッションの失敗で全体は止まらず、残りの配信は継続します。
+配信結果はジョブに `last_push`（`targets` / `delivered[]` / `failed[]`）として記録され、一覧に出ます。1 セッションの失敗で全体は止まらず、残りの配信は継続します。既存セッションへ投函されたメッセージは `type: "PUSH"` のターンとして通常の会話履歴に入ります。
 
-投稿されたメッセージは `type: "PUSH"` のターンとして通常の会話履歴に入るので、WebUI を開けばそのまま会話に現れます。
+> 旧 `kind: "agent_push"` は `agent_run` に統合されました。既存ジョブはそのまま動作し、保存時に `agent_run` へ正規化されます。
 
 #### Personaのステータスと自動承認
 
@@ -2756,10 +2871,11 @@ Streamlit上で走るバックグラウンドスレッド（RAG更新、知識�
 ### 起動方法
 
 ```bash
-# WebUI（Streamlit）
-streamlit run WebDigiMatsuAgent.py --server.port 8501
+# 標準：WebUI + API をまとめて起動（コンテナ内）
+./startup.sh
 
-# API（FastAPI）
+# 個別に起動する場合
+streamlit run WebDigiMatsuAgent.py --server.port 8501 --server.address 0.0.0.0
 python DigiM_API.py
 
 # ベンチマーク（サポートエージェントの速度・出力比較）

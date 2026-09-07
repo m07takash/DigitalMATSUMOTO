@@ -1,25 +1,23 @@
 #!/bin/bash
 # DigitalMATSUMOTO Startup Script (sample)
-# Copy this file to startup.sh and tailor it to your environment.
-# Launches the services in the background when the container starts.
+# Copy this file to startup.sh and tailor it to your environment, then run it
+# by hand inside the container. The container itself starts idle; nothing is
+# launched until this script is invoked.
 
 cd /app/DigitalMATSUMOTO
 
-# --- Auto-start toggle --------------------------------------------------------
-# Set DIGIM_AUTOSTART=false to keep the container alive WITHOUT launching any
-# service. Useful when bootstrapping a new environment or debugging: exec into
-# the container and start things manually.
-#   e.g.) docker run ... -e DIGIM_AUTOSTART=false digimatsumoto:offline
-#         docker exec -it digimatsumoto bash
-#         ./startup.sh            # re-evaluates this check; starts if true
-# Unset (default) preserves the original behavior of auto-starting all services.
-if [ "${DIGIM_AUTOSTART:-true}" = "false" ]; then
-    echo "[startup.sh] DIGIM_AUTOSTART=false: idling without starting services."
-    echo "[startup.sh] To start manually: docker exec -it <container> bash"
-    # Keep a foreground process so the container does not exit (and no Rerun loop)
-    exec tail -f /dev/null
-fi
-# -----------------------------------------------------------------------------
+# Running this script IS the explicit request to start, so there is no
+# auto-start toggle here — the container itself comes up idle via
+# entrypoint.sh, and this runs only when a person (or DIGIM_AUTOSTART=true)
+# invokes it.
+
+# Refuse to start without configuration rather than failing deep inside the app.
+for _f in system.env setting.yaml; do
+    if [ ! -f "$_f" ]; then
+        echo "[startup.sh] $_f is missing. Copy ${_f}_sample to $_f and edit it first." >&2
+        exit 1
+    fi
+done
 
 # Start FastAPI on port 8899
 nohup gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8899 DigiM_API:app --timeout 600 --graceful-timeout 600 --keep-alive 5 --capture-output --log-level debug >> /var/log/digim_api.log 2>&1 &

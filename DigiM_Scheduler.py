@@ -42,13 +42,78 @@ _active = {}  # job_id -> cron expr
 
 # ====== Settings loading ======
 
+# A one-shot schedule is stored as "once:YYYY-MM-DD HH:MM" rather than a cron
+# string, because cron cannot express a year and would otherwise re-fire every
+# year on the same day.
+_ONCE_PREFIX = "once:"
+
+
+def system_timezone() -> str:
+    """The scheduler-wide default, used when a job does not name its own."""
+    return os.getenv("TIMEZONE") or "Asia/Tokyo"
+
+
+def resolve_timezone(name: str = ""):
+    """tzinfo for a job. Falls back to the system default, then UTC, so a
+    typo in a saved job cannot stop the whole scheduler from starting."""
+    import pytz
+    for candidate in (name, system_timezone()):
+        if not candidate:
+            continue
+        try:
+            return pytz.timezone(candidate)
+        except Exception:
+            logger.warning(f"[scheduler] unknown timezone {candidate!r}; falling back")
+    return pytz.utc
+
+
+def _parse_once(raw):
+    """datetime for a one-shot schedule, or None when `raw` is not one."""
+    s = str(raw or "").strip()
+    if not s.lower().startswith(_ONCE_PREFIX):
+        return None
+    stamp = s[len(_ONCE_PREFIX):].strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%dT%H:%M"):
+        try:
+            return datetime.strptime(stamp, fmt)
+        except ValueError:
+            continue
+    return None
+
+
 def _normalize_expr(raw) -> str:
     if raw is None:
         return ""
     s = str(raw).strip()
     if not s or s.lower() == "off":
         return ""
+    if s.lower().startswith(_ONCE_PREFIX):
+        return s          # handled by a DateTrigger, not CronTrigger
     return _PRESETS.get(s.lower(), s)
+
+
+def describe_schedule(raw, tz: str = "") -> str:
+    """Human-readable rendering of a stored schedule, for the UI."""
+    s = str(raw or "").strip()
+    if not s or s.lower() == "off":
+        return "disabled"
+    _tz_sfx = f" [{tz or system_timezone()}]"
+    once = _parse_once(s)
+    if once:
+        return f"once at {once.strftime('%Y-%m-%d %H:%M')}" + _tz_sfx
+    expr = _PRESETS.get(s.lower(), s)
+    labels = {"0 3 1 * *": "monthly, 1st at 03:00",
+              "0 3 * * 1": "weekly, Monday at 03:00",
+              "0 3 * * *": "daily at 03:00"}
+    if expr in labels:
+        return labels[expr] + _tz_sfx
+    parts = expr.split()
+    if len(parts) == 5:
+        mi, ho, dom, mo, dow = parts
+        if dom == "*" and mo == "*" and dow == "*" and mi.isdigit() and ho.isdigit():
+            return f"daily at {int(ho):02d}:{int(mi):02d}" + _tz_sfx
+        return f"cron: {expr}" + _tz_sfx
+    return f"cron: {expr}" + _tz_sfx
 
 
 # ====== Job implementations ======
@@ -103,56 +168,131 @@ def _exec_user_memory_nowaday(job: dict):
             logger.error(f"[scheduler] persona merge failed user={uid}: {e}")
 
 
+def _agent_overwrite_items(agent_file: str, engine: str) -> dict:
+    """ENGINE override for a named LLM entry in the agent JSON."""
+    if not engine:
+        return {}
+    try:
+        import DigiM_Util as _dmu
+        setting = _dmu.read_yaml_file("setting.yaml") or {}
+        agent_folder = setting.get("AGENT_FOLDER", "user/common/agent/")
+        agent_data = _dmu.read_json_file(agent_file, agent_folder)
+        engines_map = (agent_data.get("ENGINE") or {}).get("LLM") or {}
+        if engine in engines_map:
+            return {"ENGINE": {"LLM": engines_map[engine]}}
+    except Exception as e:
+        logger.warning(f"[scheduler] engine override skipped: {e}")
+    return {}
+
+
 def _exec_agent_run(job: dict) -> str:
-    """Run the agent and return the newly issued session ID. Runs as the owner user."""
+    """Run an agent on a schedule and deliver the result.
+
+    One job kind covers both shapes that used to be separate:
+      target.mode = "new"                   -> the run creates its own session
+                                               and the turn IS the conversation
+      target.mode = "active_all"/"selected" -> the produced text is posted into
+                                               those sessions as a PUSH turn
+    message.mode = "fixed" skips the LLM and posts user_input as-is.
+    Returns the first session touched (recorded as last_session_id).
+    """
     import DigiM_Execute as dme
     import DigiM_Session as dms
 
     params = job.get("params") or {}
     agent_file = params.get("agent_file")
-    user_input = params.get("user_input", "")
-    engine = params.get("engine") or ""
-    execution = params.get("execution") or {}
-    owner = job.get("owner_user_id") or "Scheduler"
-
     if not agent_file:
         raise ValueError("agent_run requires params.agent_file")
 
+    user_input = params.get("user_input", "")
+    execution = params.get("execution") or {}
+    owner = job.get("owner_user_id") or "Scheduler"
+    job_name = job.get("name") or job.get("job_id")
+
+    target = params.get("target") or {}
+    mode = (target.get("mode") or "new").lower()
+    msg_mode = ((params.get("message") or {}).get("mode") or "generated").lower()
+    per_session = bool(params.get("per_session"))
+    save_to_memory = params.get("save_to_memory", True)
+
     service_info = {"SERVICE_ID": "Scheduler", "SERVICE_DATA": {"job_id": job.get("job_id", "")}}
     user_info = {"USER_ID": owner, "USER_DATA": {}}
+    overwrite_items = _agent_overwrite_items(agent_file, params.get("engine") or "")
 
-    session_id = "SCH" + dms.set_new_session_id()
-    session_name = f"[Scheduler] {job.get('name') or job.get('job_id')}"
+    # target.mode=new keeps the original behaviour: no PUSH indirection, the
+    # executed turn IS the session's content, which is what a plain
+    # "run this prompt on a schedule" job wants.
+    if mode == "new":
+        count = max(1, int(target.get("new_count") or 1))
+        exec_dict = {"STREAM_MODE": False, "SAVE_DIGEST": True, "LAST_ONLY": True}
+        exec_dict.update(execution)
+        first = ""
+        for n in range(count):
+            session_id = "SCH" + dms.set_new_session_id()
+            session_name = f"[Scheduler] {job_name}" + (f" #{n + 1}" if count > 1 else "")
+            if msg_mode == "fixed":
+                if not user_input:
+                    raise ValueError("message.mode=fixed requires params.user_input")
+                dms.DigiMSession(session_id).save_push_message(
+                    user_input, agent_file=agent_file, job_id=job.get("job_id", ""),
+                    job_name=job_name, owner_user_id=owner,
+                    save_to_memory=bool(save_to_memory))
+            else:
+                for _ in dme.DigiMatsuExecute_Practice(
+                        service_info, user_info, session_id, session_name,
+                        agent_file, user_input,
+                        in_overwrite_items=overwrite_items, in_execution=exec_dict):
+                    pass
+            first = first or session_id
+        return first
 
-    # Engine override (optional)
-    overwrite_items = {}
-    if engine:
+    targets = _push_resolve_targets(job)
+    if not targets:
+        raise ValueError("agent_run matched no target session")
+
+    max_gen = int(params.get("max_generated_sessions") or PUSH_MAX_GENERATED_SESSIONS)
+    if msg_mode != "fixed" and per_session and len(targets) > max_gen:
+        raise ValueError(
+            f"per-session generation would call the LLM {len(targets)} times "
+            f"(limit {max_gen}); narrow the target or raise max_generated_sessions")
+
+    shared_text = ""
+    if msg_mode == "fixed":
+        shared_text = user_input
+        if not shared_text:
+            raise ValueError("message.mode=fixed requires params.user_input")
+    elif not per_session:
+        shared_text = _push_generate_message(job)
+
+    delivered, failed = [], []
+    for sid in targets:
         try:
-            import DigiM_Util as _dmu
-            setting = _dmu.read_yaml_file("setting.yaml") or {}
-            agent_folder = setting.get("AGENT_FOLDER", "user/common/agent/")
-            agent_data = _dmu.read_json_file(agent_file, agent_folder)
-            engines_map = (agent_data.get("ENGINE") or {}).get("LLM") or {}
-            if engine in engines_map:
-                overwrite_items["ENGINE"] = {"LLM": engines_map[engine]}
+            text = (_push_generate_message(job, sid)
+                    if (msg_mode != "fixed" and per_session) else shared_text)
+            if not text:
+                raise ValueError("empty message")
+            dms.DigiMSession(sid).save_push_message(
+                text, agent_file=agent_file, job_id=job.get("job_id", ""),
+                job_name=job_name, owner_user_id=owner,
+                save_to_memory=bool(save_to_memory))
+            delivered.append(sid)
         except Exception as e:
-            logger.warning(f"[scheduler] engine override skipped: {e}")
+            logger.error(f"[scheduler] delivery failed session={sid}: {e}")
+            failed.append({"session_id": sid, "error": str(e)})
 
-    exec_dict = {
-        "STREAM_MODE": False,
-        "SAVE_DIGEST": True,
-        "LAST_ONLY": True,
-    }
-    exec_dict.update(execution or {})
+    try:
+        _j = dmsj.get(job.get("job_id", "")) or dict(job)
+        _j["last_push"] = {
+            "at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "targets": len(targets), "delivered": delivered, "failed": failed,
+        }
+        dmsj.upsert(_j)
+    except Exception as e:
+        logger.warning(f"[scheduler] could not record delivery result: {e}")
 
-    # Drain the generator (response content is persisted to the chat history)
-    for _ in dme.DigiMatsuExecute_Practice(
-        service_info, user_info, session_id, session_name, agent_file, user_input,
-        in_overwrite_items=overwrite_items, in_execution=exec_dict,
-    ):
-        pass
-
-    return session_id
+    if not delivered:
+        raise RuntimeError(f"agent_run delivered to no session ({len(failed)} failed)")
+    return delivered[0]
 
 
 def _push_resolve_targets(job: dict) -> list:
@@ -207,7 +347,7 @@ def _push_generate_message(job: dict, session_id: str = "") -> str:
     message = params.get("message") or {}
     agent_file = params.get("agent_file")
     owner = job.get("owner_user_id") or "Scheduler"
-    prompt = message.get("prompt") or ""
+    prompt = params.get("user_input") or message.get("prompt") or ""
 
     service_info = {"SERVICE_ID": "Scheduler", "SERVICE_DATA": {"job_id": job.get("job_id", "")}}
     user_info = {"USER_ID": owner, "USER_DATA": {}}
@@ -237,75 +377,10 @@ def _push_generate_message(job: dict, session_id: str = "") -> str:
 
 
 def _exec_agent_push(job: dict) -> str:
-    """Post a scheduled agent message into the target sessions.
+    """Kept so jobs saved as kind=agent_push keep running — agent_run now
+    covers both delivery shapes."""
+    return _exec_agent_run(job)
 
-    Returns the first target session id (recorded as last_session_id) and
-    stores the full per-session outcome on the job so the UI can show it.
-    """
-    import DigiM_Session as dms
-
-    params = job.get("params") or {}
-    message = params.get("message") or {}
-    msg_mode = (message.get("mode") or "fixed").lower()
-    agent_file = params.get("agent_file") or ""
-    save_to_memory = params.get("save_to_memory", True)
-    owner = job.get("owner_user_id") or "Scheduler"
-    job_name = job.get("name") or job.get("job_id")
-
-    if not agent_file:
-        raise ValueError("agent_push requires params.agent_file")
-
-    targets = _push_resolve_targets(job)
-    if not targets:
-        raise ValueError("agent_push matched no target session")
-
-    max_gen = int(params.get("max_generated_sessions") or PUSH_MAX_GENERATED_SESSIONS)
-    if msg_mode == "generated_per_session" and len(targets) > max_gen:
-        raise ValueError(
-            f"generated_per_session would call the LLM {len(targets)} times "
-            f"(limit {max_gen}); narrow the target or raise max_generated_sessions")
-
-    shared_text = ""
-    if msg_mode == "fixed":
-        shared_text = message.get("text") or ""
-        if not shared_text:
-            raise ValueError("agent_push message.mode=fixed requires message.text")
-    elif msg_mode == "generated_shared":
-        shared_text = _push_generate_message(job)
-
-    delivered, failed = [], []
-    for sid in targets:
-        try:
-            text = (_push_generate_message(job, sid)
-                    if msg_mode == "generated_per_session" else shared_text)
-            if not text:
-                raise ValueError("empty message")
-            session = dms.DigiMSession(sid)
-            session.save_push_message(
-                text, agent_file=agent_file, job_id=job.get("job_id", ""),
-                job_name=job_name, owner_user_id=owner,
-                save_to_memory=bool(save_to_memory))
-            delivered.append(sid)
-        except Exception as e:
-            logger.error(f"[scheduler] push failed session={sid}: {e}")
-            failed.append({"session_id": sid, "error": str(e)})
-
-    try:
-        _j = dmsj.get(job.get("job_id", "")) or dict(job)
-        _j["last_push"] = {
-            "at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "targets": len(targets), "delivered": delivered, "failed": failed,
-        }
-        dmsj.upsert(_j)
-    except Exception as e:
-        logger.warning(f"[scheduler] could not record push result: {e}")
-
-    if not delivered:
-        raise RuntimeError(f"agent_push delivered to no session ({len(failed)} failed)")
-    return delivered[0]
-
-
-# ====== APScheduler control ======
 
 def _build_scheduler():
     try:
@@ -340,6 +415,7 @@ def _start_all_locked() -> dict:
 
     try:
         from apscheduler.triggers.cron import CronTrigger
+        from apscheduler.triggers.date import DateTrigger
     except Exception as e:
         return {"started": [], "error": str(e)}
 
@@ -347,12 +423,28 @@ def _start_all_locked() -> dict:
     errors = {}
     for j, expr in targets:
         job_id = j.get("job_id")
-        try:
-            trigger = CronTrigger.from_crontab(expr)
-        except Exception as e:
-            errors[job_id] = f"invalid cron: {expr}"
-            logger.warning(f"[scheduler] invalid cron job_id={job_id} cron={expr}: {e}")
-            continue
+        _tz = resolve_timezone(j.get("timezone") or "")
+        _once = _parse_once(expr)
+        if _once is not None:
+            # Compare in the job's own zone; a wall-clock time is only "past"
+            # relative to where it was meant to fire.
+            _now_tz = datetime.now(_tz)
+            _once_tz = _tz.localize(_once) if hasattr(_tz, "localize") else _once.replace(tzinfo=_tz)
+            if _once_tz <= _now_tz:
+                # Already elapsed — leave it registered-but-idle rather than
+                # firing immediately, which would surprise anyone editing a
+                # past-dated job.
+                errors[job_id] = f"one-shot time already passed: {_once:%Y-%m-%d %H:%M}"
+                logger.info(f"[scheduler] skip elapsed one-shot job_id={job_id} at={_once} tz={_tz}")
+                continue
+            trigger = DateTrigger(run_date=_once, timezone=_tz)
+        else:
+            try:
+                trigger = CronTrigger.from_crontab(expr, timezone=_tz)
+            except Exception as e:
+                errors[job_id] = f"invalid cron: {expr}"
+                logger.warning(f"[scheduler] invalid cron job_id={job_id} cron={expr}: {e}")
+                continue
 
         def _make_fn(job_def):
             def _fn():

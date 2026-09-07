@@ -305,8 +305,12 @@ def write_session(cur, session_row: dict, dialog_rows: list, ref_rows: list):
     # sessions
     cur.execute(INSERT_SESSION, session_row)
 
-    # dialogs & references
+    # dialogs & references. A single turn can carry hundreds of chunk
+    # references, so they are collected and sent as one batch — row-by-row
+    # INSERTs put a network round trip on every chunk, which made a busy
+    # session take tens of seconds to mirror.
     ref_idx = 0
+    pending_refs = []
     for dr in dialog_rows:
         cur.execute(INSERT_DIALOG, dr)
 
@@ -325,8 +329,75 @@ def write_session(cur, session_row: dict, dialog_rows: list, ref_rows: list):
         count = dr["knowledge_ref_count"] or 0
         for rr in ref_rows[ref_idx: ref_idx + count]:
             rr["dialog_id"] = dialog_id
-            cur.execute(INSERT_REF, rr)
+            pending_refs.append(rr)
         ref_idx += count
+
+    if pending_refs:
+        psycopg2.extras.execute_batch(cur, INSERT_REF, pending_refs, page_size=500)
+
+# ------------------------------------------------------------------ #
+# Single-session entry (used by the automatic post-turn export)
+# ------------------------------------------------------------------ #
+def export_session(session_id: str, conn=None) -> dict:
+    """Export one session's un-exported delta into sessions/dialogs/references.
+
+    Split out of main() so a finished turn can mirror itself immediately
+    instead of waiting for an operator to sweep every session. Honours the
+    same db_export status bookkeeping, so a failure just leaves the session
+    UNDO and the next turn retries the same range.
+    """
+    status = dms.get_status_data(session_id) or {}
+    memory = dms.get_session_data(session_id)
+    memory_max_seq = max((int(k) for k in memory if str(k).isdigit()), default=0)
+    if not memory_max_seq:
+        return {"status": "empty", "session_id": session_id}
+
+    export_status, last_seq = dms.get_db_export_info(session_id)
+    if export_status == dms.DB_EXPORT_DONE and last_seq >= memory_max_seq:
+        return {"status": "skip", "session_id": session_id, "last_seq": last_seq}
+
+    dms.save_db_export_undo(session_id, last_seq)
+    from_seq = last_seq
+
+    own_conn = conn is None
+    if own_conn:
+        conn = psycopg2.connect(**DB_CONFIG)
+        conn.autocommit = False
+    cur = conn.cursor()
+    try:
+        session_row, dialog_rows, ref_rows = parse_session(session_id, status, memory, from_seq)
+        write_session(cur, session_row, dialog_rows, ref_rows)
+        conn.commit()
+        dms.save_db_export_done(session_id, memory_max_seq)
+        return {"status": "ok", "session_id": session_id,
+                "dialogs": len(dialog_rows), "refs": len(ref_rows),
+                "from_seq": from_seq, "last_seq": memory_max_seq}
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        if own_conn:
+            conn.close()
+
+
+def export_session_safe(session_id: str) -> dict:
+    """Never-raising wrapper for the background caller — a failed mirror must
+    not surface as a chat error. The session stays UNDO and is retried."""
+    try:
+        return export_session(session_id)
+    except Exception as e:
+        logger.warning("[db_export] session=%s failed: %s", session_id, e)
+        return {"status": "error", "session_id": session_id, "error": str(e)}
+
+
+def auto_export_enabled() -> bool:
+    """Post-turn mirroring is opt-out via DB_EXPORT_AUTO, and only meaningful
+    when a PostgreSQL target is actually configured."""
+    if (os.getenv("DB_EXPORT_AUTO") or "Y").upper() in ("N", "NO", "0", "FALSE"):
+        return False
+    return bool(DB_CONFIG.get("host") and DB_CONFIG.get("dbname"))
+
 
 # ------------------------------------------------------------------ #
 # Main entry

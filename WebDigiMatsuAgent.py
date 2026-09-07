@@ -6,7 +6,7 @@ import json
 import hmac
 import hashlib
 import datetime
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time as dt_time
 from pathlib import Path
 import pytz
 from dotenv import load_dotenv
@@ -4666,40 +4666,45 @@ def _scheduler_view():
     _jobs = _dmsj.load_all()
     if not _jobs:
         st.info("No jobs registered yet. Add one from **Add New Job**.")
-    for _j in _jobs:
-        _jid = _j.get("job_id")
-        _label = f"**{_j.get('name') or '(no name)'}** — `{_j.get('kind')}` / cron=`{_j.get('cron')}` / enabled={_j.get('enabled')}"
+    for _ji, _j in enumerate(_jobs):
+        # Index-suffixed so a job saved without an id (or a duplicate)
+        # cannot collide with another job's widget keys.
+        _jid = f'{_j.get("job_id") or "noid"}_{_ji}'
+        _label = (f"**{_j.get('name') or '(no name)'}** — `{_j.get('kind')}` / "
+                  f"{_dmsch.describe_schedule(_j.get('cron'), _j.get('timezone', ''))} / "
+                  f"enabled={_j.get('enabled')}")
         with st.expander(_label, expanded=False):
             _col1, _col2 = st.columns(2)
-            _col1.write(f"job_id: `{_jid}`")
+            _col1.write(f"job_id: `{_j.get('job_id')}`")
             _col1.write(f"owner: `{_j.get('owner_user_id')}`")
             _col1.write(f"last_run: `{_j.get('last_run') or '-'}`")
             _status_val = _j.get("last_status") or "-"
             _col2.write(f"last_status: **{_status_val}**")
             if _j.get("last_session_id"):
                 _col2.write(f"last_session_id: `{_j.get('last_session_id')}`")
-            if _j.get("kind") == "agent_run":
-                _p = _j.get("params") or {}
-                _col2.write(f"agent: `{_p.get('agent_file')}` / engine=`{_p.get('engine') or '(default)'}`")
-                if _p.get("user_input"):
-                    st.text_area("user_input", value=_p.get("user_input"), height=80, disabled=True, key=f"sch_view_ui_{_jid}")
-            if _j.get("kind") == "agent_push":
+            if _j.get("kind") in ("agent_run", "agent_push"):
                 _p = _j.get("params") or {}
                 _t = _p.get("target") or {}
                 _m = _p.get("message") or {}
                 _col2.write(f"agent: `{_p.get('agent_file')}` / engine=`{_p.get('engine') or '(default)'}`")
-                _t_desc = _t.get("mode", "")
-                if _t.get("mode") == "selected":
+                _t_mode_v = _t.get("mode") or "new"
+                _t_desc = _t_mode_v
+                if _t_mode_v == "selected":
                     _t_desc += f" ({len(_t.get('session_ids') or [])} session(s))"
-                elif _t.get("mode") == "new":
+                elif _t_mode_v == "new":
                     _t_desc += f" (x{_t.get('new_count') or 1})"
                 elif _t.get("filter"):
                     _t_desc += f" filter={_t.get('filter')}"
-                _col2.write(f"target: `{_t_desc}` / message: `{_m.get('mode')}`")
-                _col2.write(f"keep in memory: `{_p.get('save_to_memory', True)}`")
-                _body = _m.get("text") or _m.get("prompt") or ""
+                _msg_v = _m.get("mode") or "generated"
+                if _p.get("per_session"):
+                    _msg_v += " (per session)"
+                _col2.write(f"target: `{_t_desc}` / message: `{_msg_v}`")
+                if _t_mode_v != "new":
+                    _col2.write(f"keep in memory: `{_p.get('save_to_memory', True)}`")
+                _body = _p.get("user_input") or _m.get("text") or _m.get("prompt") or ""
                 if _body:
-                    st.text_area("message", value=_body, height=80, disabled=True, key=f"sch_view_msg_{_jid}")
+                    st.text_area("prompt / message", value=_body, height=80, disabled=True,
+                                 key=f"sch_view_ui_{_jid}")
                 _lp = _j.get("last_push") or {}
                 if _lp:
                     st.caption(
@@ -4716,12 +4721,12 @@ def _scheduler_view():
 
             _ba, _bb, _bc, _bd = st.columns(4)
             if _ba.button("Edit", key=f"sch_edit_{_jid}"):
-                st.session_state._sch_edit_id = _jid
+                st.session_state._sch_edit_id = _j.get("job_id")
                 st.rerun()
             if _bb.button("Run Now", key=f"sch_run_{_jid}"):
-                _res = _dmsch.run_now(_jid)
+                _res = _dmsch.run_now(_j.get("job_id"))
                 if _res.get("ok"):
-                    st.session_state.sidebar_message = f"Run completed: {_jid}"
+                    st.session_state.sidebar_message = f"Run completed: {_j.get('job_id')}"
                 else:
                     st.session_state.sidebar_message = f"Run failed: {_res.get('error')}"
                 st.rerun()
@@ -4731,8 +4736,8 @@ def _scheduler_view():
                 st.session_state.sidebar_message = "Updated (apply via Reload)"
                 st.rerun()
             if _bd.button("Delete", key=f"sch_del_{_jid}"):
-                _dmsj.delete(_jid)
-                st.session_state.sidebar_message = f"Deleted: {_jid}"
+                _dmsj.delete(_j.get("job_id"))
+                st.session_state.sidebar_message = f"Deleted: {_j.get('job_id')}"
                 st.rerun()
 
     # Edit form
@@ -4744,18 +4749,97 @@ def _scheduler_view():
         st.markdown("### " + ("Add New Job" if _is_new else f"Edit Job: `{_edit_id}`"))
 
         _name = st.text_input("Name", value=_existing.get("name", ""), key="sch_f_name")
-        _kinds = ["rag_update", "user_memory_nowaday", "agent_run", "agent_push"]
-        _kind_idx = _kinds.index(_existing.get("kind", "rag_update")) if _existing.get("kind") in _kinds else 0
+        # agent_push folded into agent_run: the old split was only target +
+        # delivery, both of which are now fields on the one kind.
+        _kinds = ["rag_update", "user_memory_nowaday", "agent_run"]
+        _kind_cur = _existing.get("kind", "rag_update")
+        if _kind_cur == "agent_push":
+            _kind_cur = "agent_run"
+        _kind_idx = _kinds.index(_kind_cur) if _kind_cur in _kinds else 0
         _kind = st.selectbox("Kind", _kinds, index=_kind_idx, key="sch_f_kind")
-        _cron = st.text_input(
-            "Cron",
-            value=_existing.get("cron", "off"),
-            help='"off" / "daily" (03:00) / "weekly" (Mon 03:00) / "monthly" (1st of month 03:00) / 5-field cron (e.g., "0 3 1 * *")',
-            key="sch_f_cron",
-        )
+
+        # --- Schedule builder -------------------------------------------
+        # A raw 5-field cron cannot express "once on this date", and most jobs
+        # here are one of three presets, so the expression is assembled from a
+        # mode picker instead of being typed.
+        _cron_cur = str(_existing.get("cron", "off") or "off")
+        _once_dt = _dmsch._parse_once(_cron_cur)
+        if _cron_cur.lower() == "off":
+            _sch_mode_cur = "Disabled"
+        elif _once_dt:
+            _sch_mode_cur = "Once (date & time)"
+        elif _cron_cur.lower() in ("daily", "weekly", "monthly"):
+            _sch_mode_cur = "Preset"
+        else:
+            _sch_mode_cur = "Custom cron"
+        _sch_modes = ["Disabled", "Once (date & time)", "Daily", "Preset", "Custom cron"]
+        if _sch_mode_cur == "Preset" and _cron_cur.lower() == "daily":
+            _sch_mode_cur = "Preset"
+        _sch_mode = st.radio(
+            "Schedule", _sch_modes,
+            index=_sch_modes.index(_sch_mode_cur) if _sch_mode_cur in _sch_modes else 0,
+            horizontal=True, key="sch_f_schmode")
+
+        # Chosen before the date/time inputs so "is this in the past?" and the
+        # default picker value are evaluated in the zone the job will run in —
+        # the server clock is often not the operator's wall clock.
+        _tz_sys = _dmsch.system_timezone()
+        if _sch_mode == "Disabled":
+            _tz = _existing.get("timezone", "") or ""
+        else:
+            try:
+                import pytz as _pytz_tz
+                _tz_opts = [""] + list(_pytz_tz.common_timezones)
+            except Exception:
+                _tz_opts = ["", "Asia/Tokyo", "UTC", "America/New_York", "Europe/London"]
+            _tz_cur = _existing.get("timezone", "") or ""
+            _tz = st.selectbox(
+                "Timezone", _tz_opts,
+                index=_tz_opts.index(_tz_cur) if _tz_cur in _tz_opts else 0,
+                format_func=lambda v: f"(system default: {_tz_sys})" if v == "" else v,
+                help="Cron fields and the one-shot date/time are interpreted in this zone.",
+                key="sch_f_tz")
+        _tz_now = datetime.now(_dmsch.resolve_timezone(_tz)).replace(tzinfo=None)
+
+        if _sch_mode == "Disabled":
+            _cron = "off"
+        elif _sch_mode == "Once (date & time)":
+            _d_col, _t_col = st.columns(2)
+            _base = _once_dt or (_tz_now + timedelta(hours=1))
+            _once_d = _d_col.date_input("Date", value=_base.date(), key="sch_f_once_d")
+            _once_t = _t_col.time_input("Time", value=_base.time().replace(second=0, microsecond=0),
+                                        step=300, key="sch_f_once_t")
+            _cron = f"once:{_once_d.strftime('%Y-%m-%d')} {_once_t.strftime('%H:%M')}"
+            if datetime.combine(_once_d, _once_t) <= _tz_now:
+                st.warning(
+                    f"This time is already past in {_tz or _tz_sys} "
+                    f"(now {_tz_now:%Y-%m-%d %H:%M}) — the job will not fire until you move it forward.")
+        elif _sch_mode == "Daily":
+            _hh, _mm = 3, 0
+            _parts = _cron_cur.split()
+            if len(_parts) == 5 and _parts[0].isdigit() and _parts[1].isdigit():
+                _mm, _hh = int(_parts[0]), int(_parts[1])
+            _t = st.time_input("Every day at", value=dt_time(_hh, _mm), step=300, key="sch_f_daily_t")
+            _cron = f"{_t.minute} {_t.hour} * * *"
+        elif _sch_mode == "Preset":
+            _preset_opts = ["daily", "weekly", "monthly"]
+            _pi = _preset_opts.index(_cron_cur.lower()) if _cron_cur.lower() in _preset_opts else 0
+            _cron = st.selectbox(
+                "Preset", _preset_opts, index=_pi,
+                format_func=lambda v: {"daily": "daily — 03:00",
+                                       "weekly": "weekly — Monday 03:00",
+                                       "monthly": "monthly — 1st 03:00"}[v],
+                key="sch_f_preset")
+        else:
+            _cron = st.text_input(
+                "Cron (5 fields: minute hour day month weekday)",
+                value=_cron_cur if _sch_mode_cur == "Custom cron" else "0 9 * * 1-5",
+                help="e.g. `0 9 * * 1-5` = weekdays 09:00 / `*/30 * * * *` = every 30 min",
+                key="sch_f_cron")
+        st.caption(f"Stored as `{_cron}` — **{_dmsch.describe_schedule(_cron, _tz)}**")
+
         _enabled = st.checkbox("Enabled", value=bool(_existing.get("enabled", False)), key="sch_f_enabled")
 
-        # Extra parameters for agent_run
         _params = dict(_existing.get("params") or {})
         if _kind == "agent_run":
             st.markdown("**Agent Run Params**")
@@ -4766,8 +4850,108 @@ def _scheduler_view():
                 _agent_file = st.selectbox("Agent File", _agent_files, index=_idx, key="sch_f_agent")
             else:
                 _agent_file = st.text_input("Agent File", value=_cur_agent, key="sch_f_agent_txt")
-            _engine = st.text_input("Engine (LLM key in agent JSON, empty=default)", value=_params.get("engine", ""), key="sch_f_engine")
-            _user_input = st.text_area("Prompt (user_input)", value=_params.get("user_input", ""), height=120, key="sch_f_userinput")
+
+            # Engine list comes from the chosen agent so only valid, ACTIVE
+            # entries can be picked (a free-text name silently did nothing).
+            _eng_opts, _eng_default = [""], ""
+            try:
+                _eng_agent = dmu.read_json_file(_agent_file, agent_folder_path) or {}
+                _eng_opts += dma.get_engine_list(_eng_agent, model_type="LLM")
+                _eng_default = ((_eng_agent.get("ENGINE") or {}).get("LLM") or {}).get("DEFAULT", "")
+            except Exception:
+                pass
+            _eng_cur = _params.get("engine", "")
+            _engine = st.selectbox(
+                "Engine (LLM)", _eng_opts,
+                index=_eng_opts.index(_eng_cur) if _eng_cur in _eng_opts else 0,
+                format_func=lambda v: f"(agent default: {_eng_default})" if v == "" else v,
+                key="sch_f_engine")
+
+            # --- Target ---
+            _tgt = dict(_params.get("target") or {})
+            _t_modes = ["new", "active_all", "selected"]
+            _t_labels = {"new": "Create new session(s)",
+                         "active_all": "All active sessions (filtered)",
+                         "selected": "Selected sessions"}
+            _t_idx = _t_modes.index(_tgt.get("mode")) if _tgt.get("mode") in _t_modes else 0
+            _t_mode = st.radio("Deliver to", _t_modes, index=_t_idx, horizontal=True,
+                               format_func=lambda m: _t_labels[m], key="sch_f_tmode")
+            _t_filter, _t_ids, _t_new = {}, [], 1
+            if _t_mode == "new":
+                _t_new = int(st.number_input("How many sessions", min_value=1, max_value=20,
+                                             value=int(_tgt.get("new_count") or 1), step=1,
+                                             key="sch_f_tnew"))
+                st.caption("The agent runs into fresh sessions; the turn itself is the conversation.")
+            elif _t_mode == "active_all":
+                _f = dict(_tgt.get("filter") or {})
+                _fc1, _fc2 = st.columns(2)
+                _f_agents = [""] + _agent_files
+                _fa_idx = _f_agents.index(_f.get("agent_file")) if _f.get("agent_file") in _f_agents else 0
+                _t_filter["agent_file"] = _fc1.selectbox("Filter: agent (empty = any)", _f_agents,
+                                                          index=_fa_idx, key="sch_f_fagent")
+                _t_filter["user_id"] = _fc2.text_input("Filter: user_id (empty = any)",
+                                                        value=_f.get("user_id", ""), key="sch_f_fuser")
+                _t_filter = {k: v for k, v in _t_filter.items() if v}
+                try:
+                    _preview = _dmsch._push_resolve_targets(
+                        {"params": {"target": {"mode": "active_all", "filter": _t_filter}}})
+                    st.caption(f"Currently matches **{len(_preview)}** active session(s).")
+                except Exception as _pe:
+                    st.caption(f"(preview unavailable: {_pe})")
+            else:
+                try:
+                    _sess = [s for s in dms.get_session_list_visible(
+                        st.session_state.service_id, st.session_state.user_id,
+                        "Y" if st.session_state.get("admin_flg") == "Y" else "N")
+                        if s.get("active") == "Y"]
+                except Exception:
+                    _sess = []
+                _opts = [s["id"] for s in _sess]
+                _names = {s["id"]: f'{s.get("name") or "(no name)"} — {s["id"]}' for s in _sess}
+                _t_ids = st.multiselect("Sessions", _opts,
+                                        default=[i for i in (_tgt.get("session_ids") or []) if i in _opts],
+                                        format_func=lambda i: _names.get(i, i), key="sch_f_tids")
+
+            # --- Message ---
+            _msg_mode_cur = ((_params.get("message") or {}).get("mode") or "generated")
+            if _msg_mode_cur.startswith("generated"):
+                _msg_mode_cur = "generated"
+            _msg_mode = st.radio(
+                "Message", ["generated", "fixed"],
+                index=0 if _msg_mode_cur == "generated" else 1,
+                horizontal=True,
+                format_func=lambda m: "Agent generates it" if m == "generated" else "Fixed text",
+                key="sch_f_mmode")
+            _user_input = st.text_area(
+                "Prompt" if _msg_mode == "generated" else "Message text",
+                value=_params.get("user_input") or (_params.get("message") or {}).get("prompt", "")
+                      or (_params.get("message") or {}).get("text", ""),
+                height=120,
+                help=("What to ask the agent." if _msg_mode == "generated"
+                      else "Posted verbatim; no LLM call is made."),
+                key="sch_f_userinput")
+
+            _per_session, _max_gen = False, _dmsch.PUSH_MAX_GENERATED_SESSIONS
+            if _msg_mode == "generated" and _t_mode != "new":
+                _per_session = st.checkbox(
+                    "Compose separately for each target session",
+                    value=bool(_params.get("per_session")),
+                    help="Off: one LLM call, same text everywhere. On: one call per session.",
+                    key="sch_f_persession")
+                if _per_session:
+                    _max_gen = int(st.number_input(
+                        "max_generated_sessions (cost guard)", min_value=1, max_value=500,
+                        value=int(_params.get("max_generated_sessions") or _dmsch.PUSH_MAX_GENERATED_SESSIONS),
+                        step=1, key="sch_f_maxgen"))
+                    st.caption(f"⚠ One LLM call per target session (refused above {_max_gen}).")
+
+            _save_mem = True
+            if _t_mode != "new":
+                _save_mem = st.checkbox(
+                    "Keep the delivered message in conversation memory",
+                    value=bool(_params.get("save_to_memory", True)),
+                    help="Off: still shown in the chat, but later turns will not recall it.",
+                    key="sch_f_savemem")
 
             _exec = dict(_params.get("execution") or {})
             st.markdown("**Execution flags**")
@@ -4786,121 +4970,10 @@ def _scheduler_view():
                 "agent_file": _agent_file,
                 "engine": _engine,
                 "user_input": _user_input,
-                "execution": _exec,
-            }
-        elif _kind == "agent_push":
-            st.markdown("**Agent Push Params**")
-            _agent_files = [a["FILE"] for a in (st.session_state.get("agents") or [])]
-            _cur_agent = _params.get("agent_file") or (_agent_files[0] if _agent_files else "")
-            if _agent_files:
-                _idx = _agent_files.index(_cur_agent) if _cur_agent in _agent_files else 0
-                _agent_file = st.selectbox("Agent File", _agent_files, index=_idx, key="sch_pf_agent")
-            else:
-                _agent_file = st.text_input("Agent File", value=_cur_agent, key="sch_pf_agent_txt")
-            _engine = st.text_input("Engine (LLM key in agent JSON, empty=default)",
-                                    value=_params.get("engine", ""), key="sch_pf_engine")
-
-            # --- Target sessions ---
-            st.markdown("**Target sessions**")
-            _tgt = dict(_params.get("target") or {})
-            _t_modes = ["active_all", "selected", "new"]
-            _t_labels = {
-                "active_all": "All active sessions (filtered)",
-                "selected":   "Selected sessions",
-                "new":        "Create new session(s)",
-            }
-            _t_idx = _t_modes.index(_tgt.get("mode")) if _tgt.get("mode") in _t_modes else 0
-            _t_mode = st.radio("Send to", _t_modes, index=_t_idx, horizontal=True,
-                               format_func=lambda m: _t_labels[m], key="sch_pf_tmode")
-            _t_filter, _t_ids, _t_new = {}, [], 1
-            if _t_mode == "active_all":
-                _f = dict(_tgt.get("filter") or {})
-                _fc1, _fc2 = st.columns(2)
-                _f_agents = [""] + _agent_files
-                _fa_idx = _f_agents.index(_f.get("agent_file")) if _f.get("agent_file") in _f_agents else 0
-                _t_filter["agent_file"] = _fc1.selectbox(
-                    "Filter: agent (empty = any)", _f_agents, index=_fa_idx, key="sch_pf_fagent")
-                _t_filter["user_id"] = _fc2.text_input(
-                    "Filter: user_id (empty = any)", value=_f.get("user_id", ""), key="sch_pf_fuser")
-                _t_filter = {k: v for k, v in _t_filter.items() if v}
-                try:
-                    _preview = _dmsch._push_resolve_targets(
-                        {"params": {"target": {"mode": "active_all", "filter": _t_filter}}})
-                    st.caption(f"Currently matches **{len(_preview)}** active session(s).")
-                except Exception as _pe:
-                    st.caption(f"(preview unavailable: {_pe})")
-            elif _t_mode == "selected":
-                try:
-                    _sess = dms.get_session_list_visible(
-                        st.session_state.service_id, st.session_state.user_id,
-                        "Y" if st.session_state.get("admin_flg") == "Y" else "N")
-                    _sess = [s for s in _sess if s.get("active") == "Y"]
-                except Exception:
-                    _sess = []
-                _opts = [s["id"] for s in _sess]
-                _names = {s["id"]: f'{s.get("name") or "(no name)"} — {s["id"]}' for s in _sess}
-                _t_ids = st.multiselect(
-                    "Sessions", _opts,
-                    default=[i for i in (_tgt.get("session_ids") or []) if i in _opts],
-                    format_func=lambda i: _names.get(i, i), key="sch_pf_tids")
-            else:
-                _t_new = int(st.number_input("How many new sessions",
-                                             min_value=1, max_value=20,
-                                             value=int(_tgt.get("new_count") or 1),
-                                             step=1, key="sch_pf_tnew"))
-
-            # --- Message ---
-            st.markdown("**Message**")
-            _msg = dict(_params.get("message") or {})
-            _m_modes = ["fixed", "generated_shared", "generated_per_session"]
-            _m_labels = {
-                "fixed":                 "Fixed text",
-                "generated_shared":      "Agent generates once, same text to all",
-                "generated_per_session": "Agent generates per session",
-            }
-            _m_idx = _m_modes.index(_msg.get("mode")) if _msg.get("mode") in _m_modes else 0
-            _m_mode = st.radio("How to compose", _m_modes, index=_m_idx,
-                               format_func=lambda m: _m_labels[m], key="sch_pf_mmode")
-            _m_text, _m_prompt = "", ""
-            if _m_mode == "fixed":
-                _m_text = st.text_area("Message text", value=_msg.get("text", ""),
-                                       height=100, key="sch_pf_mtext")
-            else:
-                _m_prompt = st.text_area(
-                    "Instruction for the agent", value=_msg.get("prompt", ""), height=100,
-                    help="What the agent should write. For per-session mode the agent also sees that session's memory.",
-                    key="sch_pf_mprompt")
-                if _m_mode == "generated_per_session":
-                    st.caption(
-                        f"⚠ One LLM call per target session (limit "
-                        f"{_dmsch.PUSH_MAX_GENERATED_SESSIONS}; raise via max_generated_sessions).")
-            _max_gen = int(st.number_input(
-                "max_generated_sessions (per-session mode guard)", min_value=1, max_value=500,
-                value=int(_params.get("max_generated_sessions") or _dmsch.PUSH_MAX_GENERATED_SESSIONS),
-                step=1, key="sch_pf_maxgen"))
-
-            _save_mem = st.checkbox(
-                "Keep the pushed message in conversation memory",
-                value=bool(_params.get("save_to_memory", True)),
-                help="Off: the message still shows in the chat, but later turns will not recall it.",
-                key="sch_pf_savemem")
-
-            _exec = dict(_params.get("execution") or {})
-            st.markdown("**Execution flags (used when the agent composes the message)**")
-            _pc1, _pc2, _pc3 = st.columns(3)
-            _exec["MEMORY_USE"]     = _pc1.checkbox("MEMORY_USE", value=bool(_exec.get("MEMORY_USE", True)), key="sch_pf_e_memuse")
-            _exec["RAG_QUERY_GENE"] = _pc1.checkbox("RAG_QUERY_GENE", value=bool(_exec.get("RAG_QUERY_GENE", True)), key="sch_pf_e_rag")
-            _exec["META_SEARCH"]    = _pc2.checkbox("META_SEARCH", value=bool(_exec.get("META_SEARCH", True)), key="sch_pf_e_meta")
-            _exec["THINKING_MODE"]  = _pc2.checkbox("THINKING_MODE", value=bool(_exec.get("THINKING_MODE", False)), key="sch_pf_e_think")
-            _exec["PRIVATE_MODE"]   = _pc3.checkbox("PRIVATE_MODE", value=bool(_exec.get("PRIVATE_MODE", False)), key="sch_pf_e_priv")
-            _exec["CITE_KNOWLEDGE"] = _pc3.checkbox("CITE_KNOWLEDGE", value=bool(_exec.get("CITE_KNOWLEDGE", False)), key="sch_pf_e_cite")
-
-            _params = {
-                "agent_file": _agent_file,
-                "engine": _engine,
                 "target": {"mode": _t_mode, "filter": _t_filter,
                            "session_ids": _t_ids, "new_count": _t_new},
-                "message": {"mode": _m_mode, "text": _m_text, "prompt": _m_prompt},
+                "message": {"mode": _msg_mode},
+                "per_session": _per_session,
                 "max_generated_sessions": _max_gen,
                 "save_to_memory": _save_mem,
                 "execution": _exec,
@@ -4915,6 +4988,7 @@ def _scheduler_view():
                 "name": _name,
                 "kind": _kind,
                 "cron": _cron,
+                "timezone": _tz,
                 "enabled": _enabled,
                 "owner_user_id": st.session_state.get("web_user", {}).get("USER_ID", ""),
                 "params": _params,

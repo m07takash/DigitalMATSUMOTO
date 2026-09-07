@@ -115,26 +115,30 @@ docker run --rm --network none digimatsumoto:offline \
 Start the container. Ports correspond to the Dockerfile / startup.sh definitions
 (8501: main Streamlit, 8895: modified Streamlit, 8899: FastAPI, 8891: spare).
 
-> 💡 **Recommended for first bring-up: start with auto-start OFF.** The Dockerfile's default `CMD` is `startup.sh` (auto-starts all services). On a fresh environment a misconfiguration can make startup fail and Streamlit fall into a Rerun loop, so for the first run pass `-e DIGIM_AUTOSTART=false` to bring the container up **idle**, then `docker exec` in and verify manually. Once it works, switch to normal startup.
+> 💡 **The image contains no configuration files.** `.dockerignore` keeps `system.env`, `setting.yaml` and `startup.sh` out of it so API keys are never baked in. What you carry into the closed network is the image **plus** those files, prepared separately. The container comes up **idle** and lists what is missing in `docker logs`.
 
 ```bash
-# [Recommended] First run idle, verify manually
+# [First run] bring it up idle and verify by hand
 docker run -d \
   --name digimatsumoto \
   --restart unless-stopped \
   -p 8501:8501 -p 8895:8895 -p 8899:8899 \
   -v /work/digimatsumoto/user:/app/DigitalMATSUMOTO/user \
   -v /work/digimatsumoto/work:/work \
-  --env-file /work/digimatsumoto/system.env \
-  -e DIGIM_AUTOSTART=false \
+  -v /work/digimatsumoto/system.env:/app/DigitalMATSUMOTO/system.env \
+  -v /work/digimatsumoto/setting.yaml:/app/DigitalMATSUMOTO/setting.yaml \
+  -v /work/digimatsumoto/startup.sh:/app/DigitalMATSUMOTO/startup.sh \
   digimatsumoto:offline
 
-docker exec -it digimatsumoto bash
-#   Start services individually inside the container to verify:
-#   streamlit run WebDigiMatsuAgent.py --server.port 8501 --server.address 0.0.0.0
-#   If it works, run ./startup.sh to start all services
+# Confirm the configuration is complete (three [ok] lines)
+docker logs digimatsumoto
 
-# [Normal operation] auto-start ON (omit DIGIM_AUTOSTART)
+# Verify, then start all services
+docker exec -it digimatsumoto bash
+#   streamlit run WebDigiMatsuAgent.py --server.port 8501 --server.address 0.0.0.0
+docker exec -d digimatsumoto ./startup.sh
+
+# [Normal operation] come back automatically after a VM reboot
 docker rm -f digimatsumoto
 docker run -d \
   --name digimatsumoto \
@@ -142,14 +146,19 @@ docker run -d \
   -p 8501:8501 -p 8895:8895 -p 8899:8899 \
   -v /work/digimatsumoto/user:/app/DigitalMATSUMOTO/user \
   -v /work/digimatsumoto/work:/work \
-  --env-file /work/digimatsumoto/system.env \
+  -v /work/digimatsumoto/system.env:/app/DigitalMATSUMOTO/system.env \
+  -v /work/digimatsumoto/setting.yaml:/app/DigitalMATSUMOTO/setting.yaml \
+  -v /work/digimatsumoto/startup.sh:/app/DigitalMATSUMOTO/startup.sh \
+  -e DIGIM_AUTOSTART=true \
   digimatsumoto:offline
 
-# Check startup logs
+# Follow the startup log
 docker logs -f digimatsumoto
 ```
 
-> Prepare `system.env` from `system.env_sample`, pointing it at the closed-network endpoints (Azure OpenAI / PostgreSQL) — see the next step.
+> **Nothing starts unless `DIGIM_AUTOSTART=true` is set** (idle is the default). `--restart unless-stopped` alone only brings the container back after a VM reboot, not the services — unattended deployments need both.
+
+> Prepare `system.env` / `setting.yaml` / `startup.sh` from their `*_sample` templates on a connected machine and place them under `/work/digimatsumoto/`. Point `system.env` at the closed-network endpoints (Azure OpenAI / PostgreSQL) — see the next step.
 > Mounting `user/` as a host volume lets you carry over agent definitions, RAG, and session data across image updates.
 
 ### Smoke test

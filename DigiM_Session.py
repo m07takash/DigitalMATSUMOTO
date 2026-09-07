@@ -107,9 +107,11 @@ def get_session_list_inactive_visible(input_service_id, input_user_id, admin_flg
 
 # Get the session dictionary by session ID
 def get_session_data(session_id):
-    session_key = session_folder_prefix + session_id
-    session_file_dict = _dmss.load_history(session_key)
-    return session_file_dict
+    # `session_folder_prefix + session_id` names the on-disk folder, not the store
+    # key — DigiMSession saves under the bare session_id. Pass both so the file
+    # store still resolves legacy sessions by path.
+    session_folder = str(Path(user_folder_path) / (session_folder_prefix + session_id)) + "/"
+    return _dmss.load_history(session_id, session_folder)
 
 # Get the session status data by session ID
 def get_status_data(session_id):
@@ -254,8 +256,8 @@ def get_user_dialog_session(session_id):
 
 # Get the situation
 def get_situation(session_id):
-    session_key = session_folder_prefix + session_id
-    session_file_dict = _dmss.load_history(session_key)
+    session_folder = str(Path(user_folder_path) / (session_folder_prefix + session_id)) + "/"
+    session_file_dict = _dmss.load_history(session_id, session_folder)
     session_file_active_dict = {k: v for k, v in session_file_dict.items() if v["SETTING"].get("FLG") == "Y"}
     situation = {}
 

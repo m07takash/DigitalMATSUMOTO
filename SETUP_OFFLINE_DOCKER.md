@@ -117,26 +117,30 @@ docker run --rm --network none digimatsumoto:offline \
 コンテナを起動します。ポートは Dockerfile / startup.sh の定義に対応します
 （8501: メイン Streamlit、8895: modified Streamlit、8899: FastAPI、8891: 予備）。
 
-> 💡 **初回構築のおすすめ：まず自動起動OFFで立ち上げる。** Dockerfile のデフォルト `CMD` は `startup.sh`（全サービス自動起動）です。新環境では設定ミスで起動が失敗し Streamlit が Rerun ループに陥ることがあるため、初回は `-e DIGIM_AUTOSTART=false` を付けて**待機状態**で起動し、`docker exec` で入って手動確認することを推奨します。問題なければ通常起動に切り替えます。
+> 💡 **イメージには設定ファイルが入っていません。** `.dockerignore` により `system.env` / `setting.yaml` / `startup.sh` はイメージから除外されます（APIキーを焼き込まないため）。閉域側に持ち込むのはイメージ＋**別途用意した設定ファイル**の 2 点です。コンテナは既定で**待機状態**で起動し、`docker logs` に不足ファイルの一覧を表示します。
 
 ```bash
-# 【推奨】初回は待機状態で起動して手動確認
+# 【初回】待機状態で起動して手動確認
 docker run -d \
   --name digimatsumoto \
   --restart unless-stopped \
   -p 8501:8501 -p 8895:8895 -p 8899:8899 \
   -v /work/digimatsumoto/user:/app/DigitalMATSUMOTO/user \
   -v /work/digimatsumoto/work:/work \
-  --env-file /work/digimatsumoto/system.env \
-  -e DIGIM_AUTOSTART=false \
+  -v /work/digimatsumoto/system.env:/app/DigitalMATSUMOTO/system.env \
+  -v /work/digimatsumoto/setting.yaml:/app/DigitalMATSUMOTO/setting.yaml \
+  -v /work/digimatsumoto/startup.sh:/app/DigitalMATSUMOTO/startup.sh \
   digimatsumoto:offline
 
-docker exec -it digimatsumoto bash
-#   コンテナ内で個別に起動して動作確認:
-#   streamlit run WebDigiMatsuAgent.py --server.port 8501 --server.address 0.0.0.0
-#   問題なければ ./startup.sh で全サービス起動
+# 設定ファイルが揃っているか確認（[ok] が3つ並べばOK）
+docker logs digimatsumoto
 
-# 【通常運用】自動起動ON（DIGIM_AUTOSTART を付けない）
+# 動作確認してから全サービス起動
+docker exec -it digimatsumoto bash
+#   streamlit run WebDigiMatsuAgent.py --server.port 8501 --server.address 0.0.0.0
+docker exec -d digimatsumoto ./startup.sh
+
+# 【通常運用】VM再起動時も自動復帰させる
 docker rm -f digimatsumoto
 docker run -d \
   --name digimatsumoto \
@@ -144,14 +148,19 @@ docker run -d \
   -p 8501:8501 -p 8895:8895 -p 8899:8899 \
   -v /work/digimatsumoto/user:/app/DigitalMATSUMOTO/user \
   -v /work/digimatsumoto/work:/work \
-  --env-file /work/digimatsumoto/system.env \
+  -v /work/digimatsumoto/system.env:/app/DigitalMATSUMOTO/system.env \
+  -v /work/digimatsumoto/setting.yaml:/app/DigitalMATSUMOTO/setting.yaml \
+  -v /work/digimatsumoto/startup.sh:/app/DigitalMATSUMOTO/startup.sh \
+  -e DIGIM_AUTOSTART=true \
   digimatsumoto:offline
 
 # 起動ログ確認
 docker logs -f digimatsumoto
 ```
 
-> `system.env` は `system.env_sample` を元に、閉域内のエンドポイント（Azure OpenAI / PostgreSQL）に合わせて作成しておきます（次ステップ参照）。
+> **`DIGIM_AUTOSTART=true` を付けない限りサービスは起動しません**（既定は待機）。`--restart unless-stopped` だけでは VM 再起動後にコンテナが上がるだけでサービスは復帰しないため、無人運用では両方を指定します。
+
+> `system.env` / `setting.yaml` / `startup.sh` は、ネット接続環境で `*_sample` からコピーして作成し、閉域側の `/work/digimatsumoto/` に配置しておきます。`system.env` は閉域内のエンドポイント（Azure OpenAI / PostgreSQL）に合わせて編集します（次ステップ参照）。
 > `user/` をホスト側にボリュームマウントしておくと、エージェント定義・RAG・セッションデータをイメージ更新後も引き継げます。
 
 ### 動作確認

@@ -16,7 +16,7 @@
   - [1. Clone the repository](#1-clone-the-repository)
   - [2. Build the Docker image](#2-build-the-docker-image)
   - [3. Start the container](#3-start-the-container)
-  - [4. Configure environment variables](#4-configure-environment-variables)
+  - [4. Create the configuration files (system.env / setting.yaml)](#4-create-the-configuration-files-systemenv--settingyaml)
   - [5. Launching the application (executed inside the container)](#5-launching-the-application-executed-inside-the-container)
   - [6. Verify operation](#6-verify-operation)
   - [7. Configuring Nginx reverse proxy (for production)](#7-configuring-nginx-reverse-proxy-for-production)
@@ -197,10 +197,15 @@ DigitalMATSUMOTO/
 │   ├── session*/                 # Session data (chat history)
 │   └── archive/                  # Session archive (ZIP)
 ├── test/                         # Benchmark / evaluation I/O (questions.xlsx, etc.)
-├── setting.yaml                  # System settings such as folder paths
-├── system.env                    # Environment variables for API keys, etc. (create by hand)
-├── system.env_sample             # Template for environment variables
+├── setting.yaml                  # Folder paths and system settings (create by hand / gitignored)
+├── setting.yaml_sample           # Its template
+├── system.env                    # API keys and env vars (create by hand / gitignored)
+├── system.env_sample             # Its template
+├── startup.sh                    # Service launcher (create by hand / gitignored)
+├── startup.sh_sample             # Its template
+├── entrypoint.sh                 # Container CMD: idles and prints the setup checklist
 ├── requirements.txt              # Python package list
+├── .dockerignore                 # Keeps config and session data out of the image
 └── Dockerfile                    # Docker build definition
 ```
 
@@ -231,34 +236,68 @@ The build automatically installs the following:
 
 ### 3. Start the container
 
-First, start the container in a standby state without launching the app (Streamlit is launched manually after the environment variables are configured).
+**The container comes up idle. No service starts on its own.**
 
 ```bash
-docker run -dit --name digimatsumoto \
+docker run -d --name digimatsumoto \
   -p 8501:8501 \
   -p 8899:8899 \
-  -v $(pwd):/app/DigitalMATSUMOTO \
-  -w /app/DigitalMATSUMOTO \
-  digimatsumoto \
-  bash
+  digimatsumoto
 ```
 
 | Port | Purpose |
 |-------|------|
 | 8501 | Streamlit WebUI |
 | 8899 | FastAPI endpoint |
+| 8891 / 8895 | Spare (declared by `EXPOSE`; unused by the stock `startup.sh`) |
 
 Note: Change the port numbers as needed.
 
-Thanks to the volume mount (`-v $(pwd):/app/DigitalMATSUMOTO`), file edits on the host side are immediately reflected inside the container. If you create the `system.env` in the next step on the host side, it can be read directly from the container.
-
-### 4. Configure environment variables
-
-Copy `system.env_sample` to create `system.env`, then set the API keys and so on.
+The image deliberately contains **no `system.env`, `setting.yaml` or `startup.sh`** — `.dockerignore` keeps API keys and environment-specific paths out of it, so only the `*_sample` templates ship. The container therefore starts by reporting what is still missing and then waits.
 
 ```bash
-cp system.env_sample system.env
+docker logs digimatsumoto
 ```
+
+```
+==================================================================
+ DigitalMATSUMOTO container is up. No service has been started.
+==================================================================
+
+Configuration files:
+  [MISSING] system.env        <- cp system.env_sample system.env
+  [MISSING] setting.yaml      <- cp setting.yaml_sample setting.yaml
+  [MISSING] startup.sh        <- cp startup.sh_sample startup.sh
+```
+
+Work through the next steps until no `[MISSING]` remains. **`http://localhost:8501` will not respond yet** — nothing is listening. That is expected, not a fault.
+
+> **To edit the files from the host**, add a volume mount. The configuration then lives outside the container and survives `docker rm`.
+>
+> ```bash
+> docker run -d --name digimatsumoto \
+>   -p 8501:8501 -p 8899:8899 \
+>   -v $(pwd):/app/DigitalMATSUMOTO \
+>   digimatsumoto
+> ```
+>
+> Without a mount, the files you create in the next step exist only inside the container and **are lost on `docker rm`**.
+
+### 4. Create the configuration files (system.env / setting.yaml)
+
+Enter the container and create three files from their templates. All three are covered by `.gitignore` and `.dockerignore`, so **they exist neither in the repository nor in the image — you always create them yourself.**
+
+```bash
+docker exec -it digimatsumoto bash
+
+cp system.env_sample   system.env     # API keys, DB connection (edit this; vim is in the image)
+cp setting.yaml_sample setting.yaml   # folder layout, defaults (usually fine as-is)
+cp startup.sh_sample   startup.sh     # launcher (copied with its executable bit)
+```
+
+`setting.yaml` is read at import time for folder paths, so **the app fails to start without it**. Copy it even when no edit is needed.
+
+Then edit `system.env`.
 
 **Required settings:**
 
@@ -342,52 +381,84 @@ In the agent JSON, specify `FUNC_NAME: "generate_response_T_azure_openai"` under
 
 ### 5. Launching the application (executed inside the container)
 
-Once you have finished configuring `system.env`, enter the container and start Streamlit.
+Once the configuration files exist, **`./startup.sh` is the standard way to start** — it brings up the Streamlit WebUI and FastAPI together.
+
+```bash
+docker exec -it digimatsumoto ./startup.sh
+```
+
+If `system.env` or `setting.yaml` is missing it stops with the reason instead of failing deep inside the app:
+
+```
+[startup.sh] system.env is missing. Copy system.env_sample to system.env and edit it first.
+```
+
+**To run it detached** (`docker exec -it` ties Streamlit to that session, so it stops when you disconnect):
+
+```bash
+docker exec -d digimatsumoto ./startup.sh
+```
+
+FastAPI logs to `/var/log/digim_api.log` inside the container.
+
+**To start only the WebUI** (for debugging):
 
 ```bash
 docker exec -it digimatsumoto bash
-```
-
-Inside the container:
-
-```bash
 streamlit run WebDigiMatsuAgent.py --server.port 8501 --server.address 0.0.0.0
 ```
 
 > Without `--server.address 0.0.0.0`, it may not be accessible from outside the container (the host's browser).
 
-To launch with a one-liner (from outside, without entering the container):
+**To stop** — press `Ctrl-C` for a foreground Streamlit, or:
 
 ```bash
-docker exec -d digimatsumoto streamlit run WebDigiMatsuAgent.py --server.port 8501 --server.address 0.0.0.0
+docker exec digimatsumoto pkill -f "streamlit run"
+docker exec digimatsumoto pkill -f gunicorn
 ```
 
-**Launching multiple services (WebUI + FastAPI) together:**
-
-Copy `startup.sh_sample` to `startup.sh` and use it (`startup.sh` is environment-dependent and is already `.gitignore`d). The sample launches `WebDigiMatsuAgent.py` (standard WebUI) + FastAPI.
-
-```bash
-# Copy the template on the host (edit as needed)
-cp startup.sh_sample startup.sh
-
-# Execute inside the container
-docker exec -it digimatsumoto bash startup.sh
-```
-
-> **Suppressing auto-start (when bootstrapping a new environment or debugging):** The Dockerfile's default `CMD` is `startup.sh`, which auto-starts all services. If you run the container without overriding the CMD (e.g. running a pre-built image with `docker run` directly) and want it to idle first, pass `DIGIM_AUTOSTART=false`. `startup.sh` then idles with `tail -f /dev/null` instead of starting services, so the container stays up and no Streamlit Rerun loop occurs. After verifying, run `./startup.sh` manually to start normally.
+> **Services do not come back after `docker restart` or a host reboot.** The container returns to its idle state, so run `./startup.sh` again — the services are no longer PID 1.
+>
+> For unattended operation, mount the configuration and opt into auto-start. **The mounted paths must already exist on the host** — Docker silently creates an empty *directory* for a missing source, which then breaks startup. If you created the files inside the container, copy them out first.
 >
 > ```bash
-> # Start in an idle state (auto-start OFF), then exec in to debug manually
-> docker run -d --name digimatsumoto -p 8501:8501 -p 8899:8899 \
->   -e DIGIM_AUTOSTART=false --env-file ./system.env digimatsumoto
-> docker exec -it digimatsumoto bash
+> # Pull the files you created inside the container back to the host
+> for f in system.env setting.yaml startup.sh; do
+>   docker cp digimatsumoto:/app/DigitalMATSUMOTO/$f ./$f
+> done
+>
+> docker rm -f digimatsumoto
+> docker run -d --name digimatsumoto \\
+>   -p 8501:8501 -p 8899:8899 \\
+>   -v $(pwd)/system.env:/app/DigitalMATSUMOTO/system.env \\
+>   -v $(pwd)/setting.yaml:/app/DigitalMATSUMOTO/setting.yaml \\
+>   -v $(pwd)/startup.sh:/app/DigitalMATSUMOTO/startup.sh \\
+>   -v $(pwd)/user:/app/DigitalMATSUMOTO/user \\
+>   -e DIGIM_AUTOSTART=true \\
+>   --restart unless-stopped \\
+>   digimatsumoto
 > ```
 >
-> Without `DIGIM_AUTOSTART`, all services auto-start as before.
+> `user/` is mounted too: `.dockerignore` keeps `user/session*/` out of the image, so without a mount **sessions and analytics vanish when the container is removed**.
+>
+> `entrypoint.sh` runs `./startup.sh` only when `DIGIM_AUTOSTART=true`. **The default is `false` (start nothing).**
 
 ### 6. Verify operation
 
-Access `http://localhost:8501` in your browser; if the WebUI is displayed, you are done.
+With `./startup.sh` running, open `http://localhost:8501`; the WebUI should appear.
+
+If it does not, check the container first:
+
+```bash
+docker logs digimatsumoto          # the configuration checklist
+docker exec digimatsumoto ps aux | grep -E "streamlit|gunicorn"
+```
+
+| Symptom | Cause |
+|---|---|
+| `docker logs` still shows `[MISSING]` | Configuration not created — go back to step 4 |
+| All `[ok]` but nothing on 8501 | `./startup.sh` was never run (starting the container does not start services) |
+| Stopped responding after `docker restart` | By design — run `./startup.sh` again |
 
 ### 7. Configuring Nginx reverse proxy (for production)
 
@@ -557,7 +628,36 @@ CREATE INDEX IF NOT EXISTS idx_digim_chat_history_session_seq
     ON digim_chat_history (session_id, seq DESC);
 ```
 
-**Do not confuse this with the APE (Agent Performance Explorer) tables** (`digim_sessions` / `digim_dialogs` / `digim_references`). Those are populated by the analytics export batch. `digim_chat_history` is the live R/W table for Chat itself.
+**Division of labour**: `digim_chat_history` is the live R/W table for Chat; `digim_sessions` / `digim_dialogs` / `digim_references` are the **normalized analytics mirror**. The former keeps a whole turn as one JSONB blob — fast to write, useless to `SELECT` against. Point analytics queries at the latter.
+
+#### Automatic per-turn export (`DB_EXPORT_AUTO`)
+
+Every time a turn is saved, that session's un-exported delta (`seq > last_seq`) is mirrored into the normalized tables on a **background thread**.
+
+```
+digim_chat_history            <- runtime; turn-level UPSERT (unchanged)
+        |  after the turn settles, delta-exported on its own thread
+        v
+digim_sessions / digim_dialogs / digim_references   <- query these for analytics
+```
+
+| Aspect | Behaviour |
+|---|---|
+| Enable | `DB_EXPORT_AUTO` in `system.env` (default `Y`, `N` disables). Automatically off when `POSTGRES_*` is unset |
+| Timing | After the digest thread finishes (so `digest_text` is included). The chat response path is unaffected |
+| Delta tracking | `db_export: {status, last_seq}` in `status.yaml` — set to `UNDO` on every save, `DONE` on success |
+| On failure | Rolls back and stays `UNDO`; the next turn retries the same range. Chat never surfaces an error |
+| Idempotency | Returns `skip` when already `DONE` and `last_seq >= max seq` |
+
+The manual sidebar Sessions → **Export DB** sweep is kept for catch-up. Embedding generation (`vectorize_dialogs`) is **not** automated because it incurs API cost — run it manually as before.
+
+To export a single session:
+
+```python
+import DigiM_DB_Export as dbex
+dbex.export_session("20260907_012345_0")       # raises on failure
+dbex.export_session_safe("20260907_012345_0")  # swallows and returns a dict (used by auto-export)
+```
 
 **Dependency**: `psycopg2-binary` (already in `requirements.txt`).
 
@@ -597,10 +697,12 @@ az cosmosdb sql container create \
 
 Or click through Data Explorer → "New Container". Partition key must be `/session_id`.
 
-**Dependency**: `azure-cosmos` (optional)
+**Dependency**: `azure-cosmos` (shipped in `requirements.txt`)
+
+Images built from the current `requirements.txt` already include it. On a container built before that update, run:
 
 ```bash
-pip install azure-cosmos
+pip3 install -r requirements.txt
 ```
 
 If the package is missing when CosmosDB mode is selected, the store falls back to JSON with a warning log.
@@ -2336,37 +2438,26 @@ user/common/tool/local/*          # exclude everything under local/
 !user/common/tool/local/.gitkeep  # …except the .gitkeep so the directory stays
 ```
 
-##### Scheduled push messages (`kind: "agent_push"`)
+##### Scheduled execution and delivery (`kind: "agent_run"`)
 
-Register recurring agent messages from the **Scheduler** screen: *Add New Job* → Kind `agent_push`. Cron accepts the existing presets (`daily` / `weekly` / `monthly`) or a 5-field expression.
+Scheduler → **Add New Job** → Kind `agent_run` covers both recurring agent runs and message delivery as one kind.
 
 | Setting | Options |
 |---|---|
-| **Agent File / Engine** | Which agent sends, and on which LLM |
-| **Target sessions** | `active_all` (every active session, optionally filtered by agent / user_id) / `selected` (explicit list) / `new` (create N fresh sessions) |
-| **Message** | `fixed` (literal text) / `generated_shared` (composed once, same text to everyone) / `generated_per_session` (composed separately for each session, seeing that conversation) |
-| **Execution flags** | Applied while the agent composes (MEMORY_USE / RAG_QUERY_GENE / META_SEARCH / THINKING_MODE / PRIVATE_MODE / CITE_KNOWLEDGE) |
-| **Keep in conversation memory** | Off means the message **still renders in the chat but is not recalled** by later turns (`SETTING.MEMORY_FLG="N"`) |
+| **Agent File / Engine** | Which agent runs, on which LLM. Engine is **picked from that agent's active `ENGINE.LLM` entries** (`(agent default: …)` keeps its default) |
+| **Deliver to** | `new` (create N fresh sessions — **the agent actually runs and that turn is the conversation**) / `active_all` (every active session, optionally filtered by agent / user_id) / `selected` (explicit list) |
+| **Message** | `generated` (hand the prompt to the agent) / `fixed` (no LLM call; the text is posted verbatim) |
+| **Compose separately for each target session** | For `generated` into existing sessions. On = one call per session |
+| **Keep in conversation memory** | When delivering into existing sessions. Off means the message **still renders in the chat but is not recalled** by later turns (`SETTING.MEMORY_FLG="N"`) |
+| **Execution flags** | MEMORY_USE / RAG_QUERY_GENE / META_SEARCH / THINKING_MODE / PRIVATE_MODE, etc. |
 
 **Targets are a filter, not a stored group.** Sessions created after the job was registered are picked up automatically when they match, so there is no group CRUD to maintain. The form shows the live match count.
 
-> **Cost guard**: `generated_per_session` costs one LLM call per target. Above **20 sessions** the run is refused (tune with `max_generated_sessions`). `generated_shared` always composes exactly once.
+> **Cost guard**: per-session generation costs one LLM call per target. Above **20 sessions** the run is refused (tune with `max_generated_sessions`). Shared generation always composes exactly once; `fixed` never calls the LLM.
 
-Each run records `last_push` on the job (`targets` / `delivered[]` / `failed[]`), shown in the job list. One failing session does not abort the rest.
+Each run records `last_push` on the job (`targets` / `delivered[]` / `failed[]`), shown in the job list. One failing session does not abort the rest. Messages delivered into existing sessions land as ordinary `type: "PUSH"` turns.
 
-Pushed messages land as ordinary `type: "PUSH"` turns, so they simply appear in the conversation when the WebUI is opened.
-
-### Agent JSON `SKILL` block (tools the agent is allowed to use from the WebUI / Thinking)
-
-```json
-"SKILL": {
-  "TOOL_LIST": ["forget_history", "remember_history", "management_analysis", "fixed_message"],
-  "CHOICE": "auto"
-}
-```
-
-- `TOOL_LIST` — Allow-list of tool names. Used both for the WebUI slash command (`/skills`) and for the Thinking-mode auto-picker.
-- `CHOICE` — `"auto"` (LLM picks) / `"manual"` (user must specify), etc. (reserved for future expansion).
+> The former `kind: "agent_push"` has been folded into `agent_run`. Existing jobs keep running and are normalized to `agent_run` on save.
 
 #### Running a SKILL explicitly from the WebUI (slash command)
 
@@ -2631,9 +2722,21 @@ The general-purpose scheduler is managed from the **Scheduler menu** (at the top
 |------|------|
 | `rag_update` | Calls `DigiM_Context.generate_rag()` to re-vectorize RAG data (when `USER_MEMORY_HISTORY_AUTO_SAVE_FLG=Y`, History of unsaved sessions is also auto-saved). No session is created. |
 | `user_memory_nowaday` | For all users, runs the current month's Nowaday profile update -> diff merge into Persona, in order. No session is created. |
-| `agent_run` | Runs the agent with the specified agent / prompt / execution mode. Each run issues a new session as the **owner user** (service_id=`Scheduler`, session_id=`SCH<datetime>`, name=`[Scheduler] <job name>`), and the response is saved to chat history as usual. |
+| `agent_run` | Runs an agent on a schedule and delivers the result. Combine a **target** (new session / all active / selected) with a **message** (agent-generated or fixed text). For new sessions the run issues one as the **owner user** (service_id=`Scheduler`, session_id=`SCH<datetime>`, name=`[Scheduler] <job name>`) and the response is saved to chat history as usual. |
 
-**cron syntax:** `"off"` / `"daily"` (03:00) / `"weekly"` (Mon 03:00) / `"monthly"` (1st 03:00) / 5-field cron string (e.g., `"0 3 1 * *"`)
+**Schedule:** built from the Schedule radio in the WebUI — no need to hand-write cron.
+
+| Mode | Stored value | Use |
+|---|---|---|
+| Disabled | `off` | Off |
+| **Once (date & time)** | `once:YYYY-MM-DD HH:MM` | **Run exactly once**, via date/time pickers |
+| Daily | `<min> <hour> * * *` | Every day at a chosen time |
+| Preset | `daily` / `weekly` / `monthly` | Fixed 03:00 presets |
+| Custom cron | 5-field cron | e.g. `0 9 * * 1-5` (weekdays 09:00), `*/30 * * * *` (every 30 min) |
+
+**Timezone:** set per job (the `timezone` field). Empty means the scheduler-wide `TIMEZONE` from `system.env` (default `Asia/Tokyo`). Both the cron fields and the one-shot date/time are read as **wall-clock time in that zone**.
+
+Whatever the mode, the stored value and a human reading of it (e.g. `once at 2026-12-24 09:00 [America/New_York]`) appear under the form and in the job list. One-shot jobs register a `DateTrigger`; **a time already past in that zone does not fire**, and the form warns with the current local time (the server clock is rarely the operator's wall clock, so the check always uses the selected zone).
 
 **Recording of last run:** For kinds other than `agent_run`, no session is left; only `last_run` / `last_status` / `last_error` are recorded in the job row (on error, shown in the Error log expander). Only for `agent_run` is `last_session_id` also saved, so the session can be opened from the chat history to check the response.
 
@@ -2736,10 +2839,11 @@ Background threads running on Streamlit (RAG update, knowledge usage analysis, a
 ### How to launch
 
 ```bash
-# WebUI (Streamlit)
-streamlit run WebDigiMatsuAgent.py --server.port 8501
+# Standard: WebUI + API together (inside the container)
+./startup.sh
 
-# API (FastAPI)
+# Individually
+streamlit run WebDigiMatsuAgent.py --server.port 8501 --server.address 0.0.0.0
 python DigiM_API.py
 
 # Benchmark (speed / output comparison of Support Agents)

@@ -1,0 +1,20 @@
+# Keep environment-specific and secret-bearing files OUT of the image.
+# The build ships only the *_sample templates; the engineer copies and edits
+# them inside the container (see README "環境構築・インストレーション").
+system.env
+setting.yaml
+startup.sh
+*.env
+
+# Local session data / generated artefacts — never belongs in an image.
+user/session*/
+user/common/rag/db/
+user/common/analytics/
+**/__pycache__/
+**/*.pyc
+.ipynb_checkpoints/
+
+# VCS and tooling
+.git/
+.gitignore
+.claude/

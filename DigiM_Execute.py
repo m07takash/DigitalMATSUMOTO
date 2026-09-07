@@ -2015,6 +2015,36 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             _digest_thread.start()
             output_reference["_digest_bg_started"] = True
 
+        # ── Mirror the finished turn into the normalized export tables ───
+        # digim_chat_history stays the fast runtime store; sessions / dialogs
+        # / references are what analytics queries. Runs after the digest so
+        # the exported row carries it, on its own thread so the chat return
+        # path is unaffected. A failure leaves the session flagged UNDO and
+        # the next turn re-exports the same range.
+        try:
+            import DigiM_DB_Export as _dbex
+            if _dbex.auto_export_enabled():
+                _exp_job_id = djr.new_job_id()
+                _exp_digest_thread = locals().get("_digest_thread")
+
+                def _export_wrapper():
+                    try:
+                        if _exp_digest_thread is not None:
+                            _exp_digest_thread.join(timeout=120)
+                        _dbex.export_session_safe(session_id)
+                    finally:
+                        djr.unregister_job(_exp_job_id)
+
+                _exp_thread = threading.Thread(target=_export_wrapper, daemon=True)
+                djr.register_job(_exp_job_id, _exp_thread, "db_export",
+                                 f"DB export: {session_name}", session_id=session_id,
+                                 user_id=user_info.get("USER_ID") if isinstance(user_info, dict) else None)
+                _exp_thread.start()
+        except Exception as _exp_e:
+            import logging as _lg_exp
+            _lg_exp.getLogger(__name__).warning(
+                "[db_export] could not start background export: %s", _exp_e)
+
         # ── Session Summary background update ────────────────────────────
         # Distinct from memory digest — this one fills a user-defined
         # template (see DigiM_Session.get_session_summary) that the operator
