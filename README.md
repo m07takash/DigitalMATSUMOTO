@@ -1344,7 +1344,39 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/{DATA_NAME} --use-llm --embe
 | Google | `generate_response_T_gemini` | Gemini-3.5-Flash, Gemini-3.1 等 |
 | Anthropic | `generate_response_T_claude` | Claude-Sonnet-4.5, Claude-Haiku 等 |
 | XAI | `generate_response_T_grok` | Grok-4 等 |
-| **Azure OpenAI** | `generate_response_T_azure_openai` | Azure上のgpt-*デプロイ（`MODEL`にデプロイ名を指定） |
+| **Azure OpenAI** | `generate_response_T_azure_openai` | Azure OpenAI Service 上の gpt-* デプロイ（`MODEL`にデプロイ名を指定） |
+| **Azure AI Foundry** | `generate_response_T_azure_foundry` | Foundry 上の **Claude / Gemini / Llama 等**のデプロイ（`MODEL`にデプロイ名を指定） |
+
+**Azure AI Foundry の利用（Claude / Gemini 等を Azure 上で動かす）**
+
+Claude や Gemini は Azure OpenAI Service ではなく **Azure AI Foundry**（Models-as-a-Service）で提供されます。**別リソース・別エンドポイント**です。
+
+```env
+AZURE_AI_ENDPOINT="https://<resource>.services.ai.azure.com"
+AZURE_AI_API_KEY="<API key>"
+AZURE_AI_API_VERSION="2024-05-01-preview"
+```
+
+エージェント JSON では `FUNC_NAME` に `generate_response_T_azure_foundry` を指定し、`MODEL` に **Foundry のデプロイ名**を入れます。
+
+```json
+"Claude-Sonnet-Foundry": {
+    "NAME": "Claude-Sonnet-Foundry",
+    "FUNC_NAME": "generate_response_T_azure_foundry",
+    "MODEL": "claude-sonnet-4-5",
+    "PARAMETER": {"max_tokens": 8000},
+    "TOKENIZER": "tiktoken",
+    "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"},
+    "ACTIVE": true
+}
+```
+
+Foundry は OpenAI 互換の chat completions を `<endpoint>/models` で提供するため、**1つの関数で Claude も Gemini も Llama も扱えます**（モデルごとの SDK は不要）。ベンダー直の `generate_response_T_claude` / `generate_response_T_gemini` は**そのまま併存**するので、同じエージェント内に直接続と Foundry 経由の両方を並べて選択できます。
+
+> **注意**
+> - `TOKENIZER` は `tiktoken` を指定してください。`gemini` を指定すると Google へ直接トークン数を問い合わせるため、Foundry のデプロイ名では解決できません。
+> - 画像入力は、テキスト専用モデルが multimodal 形式を拒否するため、添付があるときだけ配列形式で送る実装になっています。
+> - ストリーミングはモデルによって挙動が異なる場合があります。うまくいかない場合は `EXECUTION_DEFAULTS.STREAM_MODE` を `false` にしてください。
 
 **Azure OpenAI Service の利用**
 
@@ -1438,11 +1470,16 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/{DATA_NAME} --use-llm --embe
     "CITE_KNOWLEDGE": true,
     "DIAGRAM_MODE": false,
     "EMPHASIS_MODE": false,
-    "MAX_PERSONAS": 3
+    "MAX_PERSONAS": 3,
+    "TIME_MODE": "Real Date"
 }
 ```
 
+`TIME_MODE` は Conversation Settings の **Time Setting** の既定値で、`"Real Date"`（実時刻）/ `"Custom Date"`（指定日時）/ `"No Date"`（日付を渡さない）のいずれか。`"Real Date"` を指定すると、セッションを開き直すたびに現在時刻が入り直します。
+
 **優先順位**: `agent.EXECUTION_DEFAULTS.<field>` > `users.json Defaults.<field>` > ハードコード fallback。エージェント切替時 / セッション読み込み時に再解決。
+
+ただし `TIME_MODE` だけは、そのセッションを実際に実行したときのモードがセッションに保存されているため、**保存されたモード > `EXECUTION_DEFAULTS.TIME_MODE` > 現在の選択** の順で解決されます（過去セッションを開いても、そのとき使っていた時刻設定が保たれます）。
 
 省略されたフィールドはユーザー Defaults が生きます。「ユーザーの好み（言語 / speaking style / streaming ON/OFF 等）」は Defaults、「エージェントごとの推奨（RAG 検索の ON/OFF、Web Search をデフォルト ON にしたい支援エージェント等）」は EXECUTION_DEFAULTS、という棲み分け。
 
@@ -1504,6 +1541,23 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/{DATA_NAME} --use-llm --embe
 - `RAG_DATA`: 参照するRAGデータソース（RAGマスターの `bucket` と対応）。複数指定可
 - `TEXT_LIMITS`: コンテキストに含める最大文字数
 - `DISTANCE_LOGIC`: 類似度計算方式（`Cosine`）
+
+**`RETRIEVER: "Vector"` のエントリで参照されるキー**
+
+| キー | 未指定時 | 用途 |
+|---|---|---|
+| `TIMESTAMP` | `CURRENT_DATE` 扱い | チャンクの日付の求め方。`CREATE_DATE`（データの `create_date`）/ `CURRENT_DATE` / 固定日付 |
+| `TIMESTAMP_STYLE` | `%Y-%m-%d` | `{timestamp}` の表示書式（例 `%Y年%-m月%-d日`） |
+| `CHUNK_TEMPLATE` | — | 1チャンクの整形。`{timestamp}` `{value_text}` 等を埋め込む |
+| `LOG_TEMPLATE` | — | Detail Information / Analytics に出すログ行の書式 |
+| `HEADER_TEMPLATE` | — | この RAG のコンテキスト冒頭に付ける見出し |
+| `TEXT_LIMITS` | — | 上記のとおり |
+
+未指定でもターンは失敗せず既定値で動きますが、エージェント読み込み時に **どの RAG エントリで何が欠けているか**を警告ログに出します。
+
+```
+WARNING [駒木乃英人] KNOWLEDGE.Experience is RETRIEVER=Vector but missing TIMESTAMP, TIMESTAMP_STYLE; defaults will be used
+```
 
 #### SKILL（補助能力・フェーズ制御ツール）
 
@@ -2751,6 +2805,17 @@ USER_MEMORY_PERSONA_BACKEND="EXCEL"
 
 **最終実行の記録:** `agent_run` 以外はセッションを残さず、ジョブ行に `last_run` / `last_status` / `last_error` のみが記録されます（エラー時は Error log expander で表示）。`agent_run` のみ `last_session_id` も保存されるので、当該セッションをチャット履歴から開いて応答を確認できます。
 
+**動かないときの確認:**
+
+| 症状 | 原因 |
+|---|---|
+| 一覧に「Disabled」警告 | `enabled` が OFF。有効化しないとスケジュールは登録されません |
+| 「One-shot time already passed」警告 | 1回実行の指定時刻が**そのジョブのゾーンで**過去。時刻を未来へ動かしてください |
+| 保存したのに動かない | 保存・有効化・削除の時点で自動的にスケジューラへ反映されます（`Reload Schedulers` は手動再適用用）。反映結果はサイドバーに `active: N` として出ます |
+| `last_run` の時刻が変 | `last_run` は**ジョブのタイムゾーン**で記録されます（コンテナ時計が UTC でも JST 指定なら JST 表記） |
+
+1回実行のジョブは**発火後に自動で `enabled=False`** になります（次の予定が無いため、有効なまま残すと以降ずっと「時刻超過」になります）。
+
 **権限:** Scheduler メニューは `Allowed["Scheduler"] = true` のユーザーのみアクセス可能（`users.json` / `sample_users.json` で設定）。所有者ユーザー（`owner_user_id`）は保存時のログインユーザーが自動セットされ、`agent_run` 実行時のセッションに紐付きます。
 
 **WebUI操作:** ジョブごとに **Edit** / **Run Now**（即時1回実行）/ **Enable/Disable** / **Delete**。ジョブ追加は **Add New Job** から、cron変更後は **Reload Schedulers** で稼働中スケジューラに反映。APScheduler 未インストール環境では cron 起動はスキップされますが Run Now による手動実行は可能。
@@ -2763,12 +2828,15 @@ Scheduler の **Add New Job** → Kind `agent_run` で、エージェントの�
 |---|---|
 | **Agent File / Engine** | 実行するエージェントと LLM。Engine は**選んだエージェントの有効な ENGINE.LLM から選択**（`(agent default: …)` で既定を使用） |
 | **Deliver to** | `new`（新規セッションを N 個作成。**エージェントが実際に対話し、そのターンが会話そのものになる**）/ `active_all`（アクティブ全件。agent / user_id でフィルタ可）/ `selected`（明示選択） |
+| **Owner**（`new` のみ） | 新規セッションを**誰のセッション一覧に出すか**。空欄ならジョブ所有者。`service_id` は WebUI が絞り込みに使う値（`WEB_DEFAULT_SERVICE.SERVICE_ID`、既定 `Streamlit`）が自動で入ります |
 | **Message** | `generated`（プロンプトを渡してエージェントに生成させる）/ `fixed`（LLM を呼ばず、入力文をそのまま投函） |
 | **Compose separately for each target session** | `generated` かつ配信先が既存セッションのとき。ON でセッション毎に個別生成 |
 | **Keep in conversation memory** | 既存セッションへの配信時。OFF で**チャットには表示されるが以降のターンでは想起されない**（`SETTING.MEMORY_FLG="N"`） |
 | **Execution flags** | 実行時の設定（MEMORY_USE / RAG_QUERY_GENE / META_SEARCH / THINKING_MODE / PRIVATE_MODE ほか） |
 
 **送信対象は「グループ」ではなくフィルタ条件**として保持します。ジョブ登録後に作られたセッションも条件に合えば自動的に対象になり、グループの CRUD や整合管理が不要です。フォームには現在の該当件数が表示されます。
+
+> **既存セッションへの配信は、そのセッションの Chat Name / User / Service を変更しません。** セッション毎の個別生成は対象セッションの中でエージェントを実行して文脈を読ませますが、名前と identity は元の値を引き継ぎます（WebUI の一覧は `service_id` と `user_id` の一致で絞り込むため、書き換えると持ち主から見えなくなります）。
 
 > **コストガード**: セッション毎の個別生成は対象数だけ LLM を呼びます。既定で **20 セッションを超えるとエラー**にして実行を止めます（`max_generated_sessions` で変更可）。共通生成は対象が何件でも生成は 1 回、`fixed` は 0 回です。
 

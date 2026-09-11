@@ -221,18 +221,23 @@ def select_rag_vector(rag_data_list, rag={}):
     # Select RAG text
     for rag_data in rag_data_list:
         rag_data["rag_name"] = rag["RAG_NAME"]
-        if rag["TIMESTAMP"]=="CREATE_DATE":
+        # Optional: an entry without TIMESTAMP falls through to CURRENT_DATE,
+        # which the branch below already treats as "now". Indexing directly
+        # turned a missing key in one RAG entry into a failure of the whole
+        # turn, with nothing in the error naming the entry at fault.
+        _ts = rag.get("TIMESTAMP") or ""
+        if _ts == "CREATE_DATE":
             if rag_data["create_date"]:
                 timestamp = datetime.strptime(dmu.convert_to_ymd(rag_data["create_date"], "%Y-%m-%d"), "%Y-%m-%d")
             else:
                 timestamp = current_date
-        elif rag["TIMESTAMP"]=="CURRENT_DATE" or not rag["TIMESTAMP"]:
+        elif _ts == "CURRENT_DATE" or not _ts:
             timestamp = current_date
         else:
-            timestamp = datetime.strptime(dmu.convert_to_ymd(rag["TIMESTAMP"], "%Y-%m-%d"), "%Y-%m-%d")
+            timestamp = datetime.strptime(dmu.convert_to_ymd(_ts, "%Y-%m-%d"), "%Y-%m-%d")
 
         # Embed-side date setting
-        timestamp_str = timestamp.strftime(rag["TIMESTAMP_STYLE"])
+        timestamp_str = timestamp.strftime(rag.get("TIMESTAMP_STYLE") or "%Y-%m-%d")
         days_difference = (current_date - timestamp).days
         rag_data["timestamp"] = timestamp_str
         rag_data["days_difference"] = days_difference

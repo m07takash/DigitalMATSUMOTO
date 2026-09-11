@@ -253,6 +253,25 @@ def is_entry_active(entry, default=True):
     return bool(v)
 
 
+# Keys select_rag_vector reads off a Vector entry. A missing one used to
+# surface as a bare KeyError from deep inside retrieval, naming neither the
+# agent nor the RAG entry — warn at load time instead, where RAG_NAME is known.
+_VECTOR_EXPECTED_KEYS = ("TIMESTAMP", "TIMESTAMP_STYLE", "CHUNK_TEMPLATE",
+                          "LOG_TEMPLATE", "HEADER_TEMPLATE", "TEXT_LIMITS")
+
+
+def _warn_incomplete_vector_entries(agent_file, entries, section):
+    for entry in entries or []:
+        if not isinstance(entry, dict) or entry.get("RETRIEVER") != "Vector":
+            continue
+        missing = [k for k in _VECTOR_EXPECTED_KEYS if k not in entry]
+        if missing:
+            import logging as _lg_v
+            _lg_v.getLogger(__name__).warning(
+                "[%s] %s.%s is RETRIEVER=Vector but missing %s; defaults will be used",
+                agent_file, section, entry.get("RAG_NAME", "(unnamed)"), ", ".join(missing))
+
+
 def _filter_active_habit(habit_dict):
     if not isinstance(habit_dict, dict):
         return habit_dict
@@ -482,6 +501,8 @@ class DigiM_Agent:
         # of self.agent[...] should prefer the filtered views below.
         self.habit = _filter_active_habit(self.agent.get('HABIT') or {})
         self.knowledge = _filter_active_list(self.agent.get('KNOWLEDGE') or [])
+        _af = self.agent.get("AGENT_FILE") or getattr(self, "agent_file", "") or self.agent.get("NAME", "")
+        _warn_incomplete_vector_entries(_af, self.knowledge, "KNOWLEDGE")
         self.skill = _filter_active_skill(self.agent.get('SKILL') or {})
         # Normalized per-tool skill config (PHASE / ACTIVE / AS_REFERENCE /
         # ARGS_HINT / MAGIC_WORDS). Handles both new SKILL.TOOLS and legacy
@@ -497,6 +518,7 @@ class DigiM_Agent:
         self.support_agent = self.agent["SUPPORT_AGENT"]
         self.define_code = self.agent["DEFINE_CODE"] if "DEFINE_CODE" in self.agent else {}
         self.book = _filter_active_list(self.agent.get('BOOK') or []) if 'BOOK' in self.agent else []
+        _warn_incomplete_vector_entries(_af, self.book, "BOOK")
         self.system_prompt = self.set_system_prompt()
 
     # Build the system prompt

@@ -300,6 +300,7 @@ def set_login_user_to_session(user_id: str, user_info: dict):
     # precedence over the user's Defaults just applied. Execution defaults
     # run first so Thinking-related fields aren't silently overwritten by
     # a stale execution key.
+    _reset_personality_override()
     _apply_agent_execution_defaults(default_agent_data)
     _apply_agent_thinking_defaults(default_agent_data)
 
@@ -420,6 +421,38 @@ def ensure_login():
     st.stop()
 
 # Configure which UI features are available to the user
+def _reset_personality_override():
+    """Drop every Personality Override widget value.
+
+    The expander's widgets use fixed keys (`po_*`), and Streamlit ignores a
+    widget's `value=` once its key exists in session_state. Without clearing
+    them, switching agent or session keeps the previous agent's PERSONALITY in
+    the boxes — and because the override is computed as "differs from the
+    agent JSON default", those stale values then get applied to the new agent.
+    """
+    for _k in [k for k in list(st.session_state.keys())
+               if str(k).startswith("po_") or k == "personality_override_on"]:
+        # Popped rather than assigned: these are widget keys, and clearing them
+        # lets the widget re-seed from its `value=` (the new agent's JSON).
+        st.session_state.pop(_k, None)
+
+
+_TIME_MODES = ("Real Date", "Custom Date", "No Date")
+
+
+def _agent_default_time_mode(agent_data, fallback=None):
+    """Time Mode the agent prefers, else whatever is already selected.
+
+    Sessions saved before TIME_MODE was persisted carry no mode, and defaulting
+    those to "No Date" silently stripped the clock from every reloaded session.
+    """
+    e = (agent_data or {}).get("EXECUTION_DEFAULTS") if isinstance(agent_data, dict) else None
+    v = e.get("TIME_MODE") if isinstance(e, dict) else None
+    if v in _TIME_MODES:
+        return v
+    return fallback if fallback in _TIME_MODES else "Real Date"
+
+
 def _apply_agent_execution_defaults(agent_data):
     """Resolve Conversation Settings execution toggles from the agent JSON's
     optional top-level `EXECUTION_DEFAULTS` block. Applied on top of the
@@ -433,7 +466,7 @@ def _apply_agent_execution_defaults(agent_data):
                  WEB_SEARCH, WEB_SEARCH_GUARDRAIL, CITE_KNOWLEDGE,
                  DIAGRAM_MODE, EMPHASIS_MODE
       Int      — MAX_PERSONAS (clamped 1..20)
-      String   — WEB_SEARCH_ENGINE
+      String   — WEB_SEARCH_ENGINE, TIME_MODE ("Real Date"/"Custom Date"/"No Date")
 
     Called on login, on every agent switch, and on session load.
     Missing fields are left untouched (user Defaults stand)."""
@@ -466,6 +499,14 @@ def _apply_agent_execution_defaults(agent_data):
         st.session_state.max_personas = max(1, min(_mp, 20))
     if "WEB_SEARCH_ENGINE" in e and e["WEB_SEARCH_ENGINE"] is not None:
         st.session_state.web_search_engine = str(e["WEB_SEARCH_ENGINE"])
+    # The radio recomputes the shown value every render, so seeding
+    # time_setting here only matters until the widget is drawn.
+    if e.get("TIME_MODE") in _TIME_MODES:
+        st.session_state.time_mode = e["TIME_MODE"]
+        if e["TIME_MODE"] == "Real Date":
+            st.session_state.time_setting = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+        elif e["TIME_MODE"] == "No Date":
+            st.session_state.time_setting = ""
 
 
 def _apply_agent_thinking_defaults(agent_data):
@@ -1296,6 +1337,7 @@ def refresh_session(session_id, session_name, situation, new_session_flg=False):
         st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, agent_folder_path)
         st.session_state.engine_name = st.session_state.agent_data.get("ENGINE", {}).get("LLM", {}).get("DEFAULT", "")
         st.session_state.imagegen_engine_name = st.session_state.agent_data.get("ENGINE", {}).get("IMAGEGEN", {}).get("DEFAULT", "")
+        _reset_personality_override()
         _apply_agent_execution_defaults(st.session_state.agent_data)
         _apply_agent_thinking_defaults(st.session_state.agent_data)
     else:
@@ -1325,6 +1367,7 @@ def refresh_session(session_id, session_name, situation, new_session_flg=False):
             else:
                 st.session_state.engine_name = st.session_state.agent_data.get("ENGINE", {}).get("LLM", {}).get("DEFAULT", "")
             st.session_state.imagegen_engine_name = st.session_state.agent_data.get("ENGINE", {}).get("IMAGEGEN", {}).get("DEFAULT", "")
+            _reset_personality_override()
             _apply_agent_execution_defaults(st.session_state.agent_data)
             _apply_agent_thinking_defaults(st.session_state.agent_data)
         else:
@@ -1335,10 +1378,24 @@ def refresh_session(session_id, session_name, situation, new_session_flg=False):
             st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, agent_folder_path)
             st.session_state.engine_name = st.session_state.agent_data.get("ENGINE", {}).get("LLM", {}).get("DEFAULT", "")
             st.session_state.imagegen_engine_name = st.session_state.agent_data.get("ENGINE", {}).get("IMAGEGEN", {}).get("DEFAULT", "")
+            _reset_personality_override()
             _apply_agent_execution_defaults(st.session_state.agent_data)
             _apply_agent_thinking_defaults(st.session_state.agent_data)
     st.session_state.time_setting = situation.get("TIME", "")
-    st.session_state.time_mode = "Custom Date" if situation.get("TIME") else "No Date"
+    # Precedence: what the session was actually run with > the agent's
+    # EXECUTION_DEFAULTS > whatever is already selected. Forcing "No Date"
+    # whenever TIME was empty meant a session load silently dropped the clock
+    # and never restored it.
+    _saved_mode = situation.get("TIME_MODE")
+    if _saved_mode in _TIME_MODES:
+        st.session_state.time_mode = _saved_mode
+    elif situation.get("TIME"):
+        st.session_state.time_mode = "Custom Date"
+    else:
+        st.session_state.time_mode = _agent_default_time_mode(
+            st.session_state.get("agent_data"), st.session_state.get("time_mode"))
+    if st.session_state.time_mode == "Real Date":
+        st.session_state.time_setting = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
     st.session_state.situation_setting = situation["SITUATION"]
     st.session_state.seq_memory = []
     st.session_state.sidebar_message = ""
@@ -4692,7 +4749,9 @@ def _scheduler_view():
                 if _t_mode_v == "selected":
                     _t_desc += f" ({len(_t.get('session_ids') or [])} session(s))"
                 elif _t_mode_v == "new":
-                    _t_desc += f" (x{_t.get('new_count') or 1})"
+                    _t_desc += f" (x{_t.get('new_count') or 1}"
+                    _t_desc += f", owner={_t.get('user_id')}" if _t.get("user_id") else ""
+                    _t_desc += ")"
                 elif _t.get("filter"):
                     _t_desc += f" filter={_t.get('filter')}"
                 _msg_v = _m.get("mode") or "generated"
@@ -4876,12 +4935,29 @@ def _scheduler_view():
             _t_idx = _t_modes.index(_tgt.get("mode")) if _tgt.get("mode") in _t_modes else 0
             _t_mode = st.radio("Deliver to", _t_modes, index=_t_idx, horizontal=True,
                                format_func=lambda m: _t_labels[m], key="sch_f_tmode")
-            _t_filter, _t_ids, _t_new = {}, [], 1
+            _t_filter, _t_ids, _t_new, _t_user = {}, [], 1, ""
             if _t_mode == "new":
-                _t_new = int(st.number_input("How many sessions", min_value=1, max_value=20,
-                                             value=int(_tgt.get("new_count") or 1), step=1,
-                                             key="sch_f_tnew"))
-                st.caption("The agent runs into fresh sessions; the turn itself is the conversation.")
+                _tn_c1, _tn_c2 = st.columns(2)
+                _t_new = int(_tn_c1.number_input("How many sessions", min_value=1, max_value=20,
+                                                  value=int(_tgt.get("new_count") or 1), step=1,
+                                                  key="sch_f_tnew"))
+                # Whose session list they land in. A new session is only listed
+                # for the matching user, so leaving this on the job owner would
+                # hide it from whoever the push is actually for.
+                try:
+                    import DigiM_Auth as _dma_auth
+                    _user_opts = [""] + sorted((_dma_auth.load_user_master() or {}).keys())
+                except Exception:
+                    _user_opts = [""]
+                _tu_cur = _tgt.get("user_id") or ""
+                _t_user = _tn_c2.selectbox(
+                    "Owner (whose session list)", _user_opts,
+                    index=_user_opts.index(_tu_cur) if _tu_cur in _user_opts else 0,
+                    format_func=lambda v: f"(job owner: {st.session_state.get('user_id', '')})" if v == "" else v,
+                    key="sch_f_tuser")
+                st.caption(
+                    "The agent runs into fresh sessions; the turn itself is the conversation. "
+                    f"They appear under service_id `{_dmsch.webui_service_id()}` so the WebUI lists them.")
             elif _t_mode == "active_all":
                 _f = dict(_tgt.get("filter") or {})
                 _fc1, _fc2 = st.columns(2)
@@ -4971,7 +5047,8 @@ def _scheduler_view():
                 "engine": _engine,
                 "user_input": _user_input,
                 "target": {"mode": _t_mode, "filter": _t_filter,
-                           "session_ids": _t_ids, "new_count": _t_new},
+                           "session_ids": _t_ids, "new_count": _t_new,
+                           "user_id": _t_user},
                 "message": {"mode": _msg_mode},
                 "per_session": _per_session,
                 "max_generated_sessions": _max_gen,
@@ -8041,6 +8118,12 @@ def main():
                 # Reset ORG / Persona selection when the agent changes
                 st.session_state.selected_org = None
                 st.session_state.selected_persona_ids = []
+                # Personality Override widgets are seeded from the current
+                # agent, so they must be dropped when the agent changes — but
+                # only then. Clearing on every rerun would pop the toggle
+                # before the expander re-renders it further down the sidebar,
+                # making the override impossible to switch on at all.
+                _reset_personality_override()
             st.session_state.agent_id = agent_id_selected
             st.session_state.agent_file = next((a2["FILE"] for a2 in st.session_state.agents if a2["AGENT"] == st.session_state.agent_id), None)
             st.session_state.agent_data = dmu.read_json_file(st.session_state.agent_file, agent_folder_path)
@@ -8646,10 +8729,10 @@ def main():
                                 session_name_btn = session_id_list[:15]
                             situation = dms.get_situation(session_id_list)
                             if not situation:
-                                # Default to No Date (empty TIME) — session-load
-                                # otherwise flips time_mode to "Custom Date" via
-                                # refresh_session() and pins now_time as the
-                                # situation timestamp, which surprises users.
+                                # No stored situation: leave TIME empty so
+                                # refresh_session() resolves the mode from the
+                                # agent's EXECUTION_DEFAULTS rather than pinning
+                                # now_time as a fixed situation timestamp.
                                 situation["TIME"] = ""
                                 situation["SITUATION"] = ""
                             if st.button(session_name_btn, key=session_key_list):
@@ -9925,14 +10008,27 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                         "PERSONALITY overrides effective for this session only (agent JSON stays unchanged)."
                         " Family accepts multiple entries separated by `/`. BIG5 is 5 traits in 0.00-1.00."
                     )
-                    st.checkbox("Alive", value=bool(_cur_pers.get("IS_ALIVE", True)), key="po_IS_ALIVE")
+                    # Off unless explicitly switched on, and reset whenever the
+                    # agent or session changes: the fields below are seeded from
+                    # the current agent, so an override left on from a previous
+                    # agent would silently rewrite this one's personality.
+                    _po_on = st.checkbox(
+                        "Enable Personality Override",
+                        value=bool(st.session_state.get("personality_override_on", False)),
+                        key="personality_override_on",
+                        help="Off = use the agent JSON as-is. Turning this off discards the edits below.",
+                    )
+                    if not _po_on:
+                        st.caption(f"Using **{st.session_state.get('display_name', '')}**'s personality as defined in its agent JSON.")
+                    st.checkbox("Alive", value=bool(_cur_pers.get("IS_ALIVE", True)),
+                                key="po_IS_ALIVE", disabled=not _po_on)
                     _po_cols = st.columns(2)
                     for _i, (_k, _label) in enumerate(_PERSONALITY_STR_UI):
                         _default = str(_cur_pers.get(_k, "") or "")
-                        _po_cols[_i % 2].text_input(_label, value=_default, key=f"po_{_k}")
+                        _po_cols[_i % 2].text_input(_label, value=_default, key=f"po_{_k}", disabled=not _po_on)
                     _fam_default = _cur_pers.get("FAMILY") or []
                     _fam_str = " / ".join(str(x) for x in _fam_default) if isinstance(_fam_default, list) else str(_fam_default)
-                    st.text_input("Family (`/` separated)", value=_fam_str, key="po_FAMILY_STR")
+                    st.text_input("Family (`/` separated)", value=_fam_str, key="po_FAMILY_STR", disabled=not _po_on)
                     st.markdown("**BIG5**")
                     _big5_default = _cur_pers.get("BIG5") or {}
                     _big5_cols = st.columns(5)
@@ -9941,10 +10037,12 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                         try: _bv = float(_bv)
                         except (TypeError, ValueError): _bv = 0.5
                         _big5_cols[_i].number_input(_bk, min_value=0.0, max_value=1.0, step=0.05,
-                                                      value=_bv, format="%.2f", key=f"po_BIG5_{_bk}")
+                                                      value=_bv, format="%.2f", key=f"po_BIG5_{_bk}",
+                                                      disabled=not _po_on)
                     st.text_area(
                         "Character (CHARACTER) — inline text or a filename under `character/`",
                         value=str(_cur_pers.get("CHARACTER", "") or ""), height=100, key="po_CHARACTER",
+                        disabled=not _po_on,
                     )
 
                 # --- Nested: Temporary Override (HABIT / KNOWLEDGE / BOOK /
@@ -11434,10 +11532,19 @@ f"Target sheet (sheets with Question: {len(_q_sheets)})"
             # overrides preserve other PERSONALITY keys not shown in the UI.
             _pers_default = (st.session_state.get("agent_data") or {}).get("PERSONALITY") or {}
             _pers_override = {}
-            for _k in ("SEX", "BIRTHDAY", "NATIONALITY", "LANGUAGE",
-                       "BLOOD_TYPE", "RESIDENCE", "HEIGHT", "WEIGHT", "FOOT_SIZE",
-                       "DOMINANT_HAND", "DOMINANT_FOOT", "HAIRSTYLE", "GLASSES",
-                       "PERSONAL_COLOR", "SPEAKING_STYLE", "CHARACTER"):
+            # Gate on the explicit toggle. The diff-vs-JSON rule below cannot
+            # by itself tell "the user edited this" from "a widget still holds
+            # the previous agent's value", so an unchecked box sends nothing.
+            _po_active = bool(st.session_state.get("personality_override_on", False))
+            # LANGUAGE / SPEAKING_STYLE live in their own always-visible row,
+            # not inside the Personality Override expander, so they stay
+            # effective regardless of the toggle.
+            _PO_ALWAYS = ("LANGUAGE", "SPEAKING_STYLE")
+            _PO_GATED = ("SEX", "BIRTHDAY", "NATIONALITY",
+                         "BLOOD_TYPE", "RESIDENCE", "HEIGHT", "WEIGHT", "FOOT_SIZE",
+                         "DOMINANT_HAND", "DOMINANT_FOOT", "HAIRSTYLE", "GLASSES",
+                         "PERSONAL_COLOR", "CHARACTER")
+            for _k in (_PO_ALWAYS + (_PO_GATED if _po_active else ())):
                 _cur = st.session_state.get(f"po_{_k}", "")
                 if str(_cur) != str(_pers_default.get(_k, "") or ""):
                     _pers_override[_k] = _cur
@@ -11447,7 +11554,7 @@ f"Target sheet (sheets with Question: {len(_q_sheets)})"
             if bool(st.session_state.get("po_LANG_AUTO", False)):
                 _pers_override["LANGUAGE"] = "__AUTO__"
             _cur_alive = bool(st.session_state.get("po_IS_ALIVE", True))
-            if _cur_alive != bool(_pers_default.get("IS_ALIVE", True)):
+            if _po_active and _cur_alive != bool(_pers_default.get("IS_ALIVE", True)):
                 _pers_override["IS_ALIVE"] = _cur_alive
             _fam_str = st.session_state.get("po_FAMILY_STR", "")
             _fam_list = [x.strip() for x in _fam_str.split("/") if x.strip()]
@@ -11456,7 +11563,7 @@ f"Target sheet (sheets with Question: {len(_q_sheets)})"
                 _def_fam_norm = [str(x) for x in _def_fam]
             else:
                 _def_fam_norm = [str(_def_fam)] if _def_fam else []
-            if _fam_list != _def_fam_norm:
+            if _po_active and _fam_list != _def_fam_norm:
                 _pers_override["FAMILY"] = _fam_list
             _big5_default = _pers_default.get("BIG5") or {}
             _big5_cur = {}
@@ -11472,7 +11579,7 @@ f"Target sheet (sheets with Question: {len(_q_sheets)})"
                     _big5_changed = _big5_changed or (abs(_bv - float(_big5_default.get(_bk, 0.5))) > 1e-9)
                 except (TypeError, ValueError):
                     _big5_changed = True
-            if _big5_changed:
+            if _po_active and _big5_changed:
                 _pers_override["BIG5"] = _big5_cur
             if _pers_override:
                 overwrite_items["PERSONALITY"] = _pers_override
@@ -11502,6 +11609,10 @@ f"Target sheet (sheets with Question: {len(_q_sheets)})"
             situation = {}
             situation["TIME"] = time_setting
             situation["SITUATION"] = situation_setting
+            # Persist the mode, not just the resolved timestamp: a "Real Date"
+            # turn stores a concrete time, which on reload is indistinguishable
+            # from "Custom Date" and would pin the session to a stale clock.
+            situation["TIME_MODE"] = st.session_state.time_mode
 
             # Execution settings
             execution = {}

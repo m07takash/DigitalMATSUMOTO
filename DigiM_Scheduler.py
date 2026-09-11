@@ -48,6 +48,20 @@ _active = {}  # job_id -> cron expr
 _ONCE_PREFIX = "once:"
 
 
+def webui_service_id() -> str:
+    """SERVICE_ID the WebUI filters its session list on.
+
+    A scheduler-created session stamped "Scheduler" is invisible there, since
+    the list requires service_id AND user_id to match the logged-in context.
+    """
+    import json as _json
+    raw = os.getenv("WEB_DEFAULT_SERVICE") or ""
+    try:
+        return (_json.loads(raw) or {}).get("SERVICE_ID") or "Streamlit"
+    except Exception:
+        return "Streamlit"
+
+
 def system_timezone() -> str:
     """The scheduler-wide default, used when a job does not name its own."""
     return os.getenv("TIMEZONE") or "Asia/Tokyo"
@@ -122,7 +136,11 @@ def _run_job(job: dict):
     """Dispatch a registered job by kind and write the result back to the master."""
     job_id = job.get("job_id", "")
     kind = job.get("kind", "")
-    started_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # Stamp in the job's own zone. The container clock is often UTC while
+    # schedules are written in local wall-clock time, and a last_run that
+    # disagrees with the schedule by the UTC offset reads as "it ran at the
+    # wrong time".
+    started_at = datetime.now(resolve_timezone(job.get("timezone") or "")).strftime("%Y-%m-%d %H:%M:%S")
     dmsj.update_run_result(job_id, status="running", started_at=started_at)
     logger.info(f"[scheduler] run start job_id={job_id} kind={kind}")
     try:
@@ -144,6 +162,18 @@ def _run_job(job: dict):
     except Exception as e:
         logger.exception(f"[scheduler] run error job_id={job_id}: {e}")
         dmsj.update_run_result(job_id, status="error", error=str(e), started_at=started_at)
+    finally:
+        # A one-shot has no next occurrence; leaving it enabled makes every
+        # later reload report "already passed" as an error.
+        if _parse_once(job.get("cron")) is not None:
+            try:
+                _j = dmsj.get(job_id)
+                if _j and _j.get("enabled"):
+                    _j["enabled"] = False
+                    dmsj.upsert(_j)
+                    logger.info(f"[scheduler] one-shot completed; disabled job_id={job_id}")
+            except Exception as _e:
+                logger.warning(f"[scheduler] could not disable one-shot {job_id}: {_e}")
 
 
 def _exec_rag_update(job: dict):
@@ -215,8 +245,12 @@ def _exec_agent_run(job: dict) -> str:
     per_session = bool(params.get("per_session"))
     save_to_memory = params.get("save_to_memory", True)
 
-    service_info = {"SERVICE_ID": "Scheduler", "SERVICE_DATA": {"job_id": job.get("job_id", "")}}
-    user_info = {"USER_ID": owner, "USER_DATA": {}}
+    # The WebUI session list matches on service_id AND user_id (unless the
+    # viewer is Admin), so a session stamped "Scheduler" is invisible to the
+    # person it was created for. Use the id the WebUI actually filters on.
+    service_info = {"SERVICE_ID": target.get("service_id") or webui_service_id(),
+                    "SERVICE_DATA": {"job_id": job.get("job_id", "")}}
+    user_info = {"USER_ID": target.get("user_id") or owner, "USER_DATA": {}}
     overwrite_items = _agent_overwrite_items(agent_file, params.get("engine") or "")
 
     # target.mode=new keeps the original behaviour: no PUSH indirection, the
@@ -224,6 +258,11 @@ def _exec_agent_run(job: dict) -> str:
     # "run this prompt on a schedule" job wants.
     if mode == "new":
         count = max(1, int(target.get("new_count") or 1))
+        # Whose session list the new conversations land in. Defaults to the
+        # job owner; service_id has to match what the WebUI filters on or the
+        # session exists but is never listed.
+        _new_user_id = target.get("user_id") or owner
+        _new_service_id = target.get("service_id") or webui_service_id()
         exec_dict = {"STREAM_MODE": False, "SAVE_DIGEST": True, "LAST_ONLY": True}
         exec_dict.update(execution)
         first = ""
@@ -233,7 +272,16 @@ def _exec_agent_run(job: dict) -> str:
             if msg_mode == "fixed":
                 if not user_input:
                     raise ValueError("message.mode=fixed requires params.user_input")
-                dms.DigiMSession(session_id).save_push_message(
+                _sess = dms.DigiMSession(session_id, session_name)
+                # Nothing runs DigiMatsuExecute on this path, so the session
+                # metadata that normally lands as a side effect has to be
+                # written here — without status.yaml the session never shows
+                # up in the WebUI list, which scans folders.
+                _sess.save_session_metadata(
+                    id=session_id, name=session_name, active="Y", status="UNLOCKED",
+                    service_id=_new_service_id, user_id=_new_user_id, agent=agent_file,
+                    user_dialog="N")
+                _sess.save_push_message(
                     user_input, agent_file=agent_file, job_id=job.get("job_id", ""),
                     job_name=job_name, owner_user_id=owner,
                     save_to_memory=bool(save_to_memory))
@@ -349,10 +397,25 @@ def _push_generate_message(job: dict, session_id: str = "") -> str:
     owner = job.get("owner_user_id") or "Scheduler"
     prompt = params.get("user_input") or message.get("prompt") or ""
 
-    service_info = {"SERVICE_ID": "Scheduler", "SERVICE_DATA": {"job_id": job.get("job_id", "")}}
-    user_info = {"USER_ID": owner, "USER_DATA": {}}
-
     gen_session_id = session_id or ("SCH" + dms.set_new_session_id())
+
+    # Composing against an existing conversation runs inside that session, and
+    # DigiMatsuExecute_Practice stamps the session name and the caller's
+    # service/user identity onto it as a side effect. Reuse what the session
+    # already has, otherwise the chat gets renamed to "[Push] <job>" and its
+    # service_id flips to "Scheduler" — which hides it from the owner in the
+    # WebUI, since the session list filters on service_id + user_id.
+    if session_id:
+        _svc_id, _usr_id = dms.get_ids(session_id)
+        service_info = {"SERVICE_ID": _svc_id, "SERVICE_DATA": {"job_id": job.get("job_id", "")}}
+        user_info = {"USER_ID": _usr_id or owner, "USER_DATA": {}}
+        gen_session_name = dms.get_session_name(session_id)
+    else:
+        _t = (job.get("params") or {}).get("target") or {}
+        service_info = {"SERVICE_ID": _t.get("service_id") or webui_service_id(),
+                        "SERVICE_DATA": {"job_id": job.get("job_id", "")}}
+        user_info = {"USER_ID": _t.get("user_id") or owner, "USER_DATA": {}}
+        gen_session_name = f"[Push] {job.get('name') or job.get('job_id')}"
     exec_dict = {
         "STREAM_MODE": False,
         # Composing the text must never mutate the target conversation; the
@@ -367,12 +430,15 @@ def _push_generate_message(job: dict, session_id: str = "") -> str:
     exec_dict["SAVE_DIGEST"] = False
 
     text = ""
-    for _svc, _usr, chunk, _exp, _ref in dme.DigiMatsuExecute_Practice(
-            service_info, user_info, gen_session_id,
-            f"[Push] {job.get('name') or job.get('job_id')}",
+    for _item in dme.DigiMatsuExecute_Practice(
+            service_info, user_info, gen_session_id, gen_session_name,
             agent_file, prompt, in_execution=exec_dict):
+        # The generator yields both 4- and 5-element tuples (status pings vs a
+        # completed turn), so index rather than unpack — element 2 is the text
+        # in either shape.
+        chunk = _item[2] if isinstance(_item, (tuple, list)) and len(_item) > 2 else ""
         if chunk and not str(chunk).startswith("[STATUS]"):
-            text += chunk
+            text += str(chunk)
     return text.strip()
 
 

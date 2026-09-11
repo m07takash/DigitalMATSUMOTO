@@ -35,6 +35,12 @@ xai_api_key = os.getenv("XAI_API_KEY")
 azure_openai_api_key = os.getenv("AZURE_OPENAI_API_KEY")
 azure_openai_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
 azure_openai_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-01-preview")
+# Azure AI Foundry (Models-as-a-Service). A different resource and endpoint
+# from Azure OpenAI Service — this is what serves Claude / Gemini / Llama and
+# friends behind an OpenAI-compatible surface.
+azure_ai_api_key = os.getenv("AZURE_AI_API_KEY")
+azure_ai_endpoint = os.getenv("AZURE_AI_ENDPOINT")
+azure_ai_api_version = os.getenv("AZURE_AI_API_VERSION", "2024-05-01-preview")
 
 # Singleton LLM clients
 _clients = {}
@@ -57,6 +63,35 @@ def _get_azure_openai_client(timeout=None, api_version=None):
             timeout=timeout,
         )
     return _clients[key]
+
+def _get_azure_foundry_client(timeout=None, api_version=None):
+    """Azure AI Foundry client.
+
+    Foundry speaks the OpenAI chat-completions protocol at
+    `<endpoint>/models`, so the stock OpenAI SDK reaches it with only a
+    base_url swap — no vendor SDK per model. `model` is the deployment name,
+    which is how one function can serve Claude, Gemini, Llama and the rest.
+    """
+    _api_version = api_version or azure_ai_api_version
+    key = f"azure_foundry_{timeout}_{_api_version}"
+    if key not in _clients:
+        if not azure_ai_endpoint or not azure_ai_api_key:
+            raise ValueError(
+                "AZURE_AI_ENDPOINT / AZURE_AI_API_KEY are not set; "
+                "required for generate_response_T_azure_foundry")
+        _base = azure_ai_endpoint.rstrip("/")
+        if not _base.endswith("/models"):
+            _base += "/models"
+        _clients[key] = OpenAI(
+            base_url=_base,
+            api_key=azure_ai_api_key,
+            # Foundry takes the version as a query parameter rather than a path
+            # segment, so it is pinned on the client instead of per request.
+            default_query={"api-version": _api_version},
+            timeout=timeout,
+        )
+    return _clients[key]
+
 
 def _get_gemini_client():
     if "gemini" not in _clients:
@@ -330,6 +365,45 @@ def generate_response_T_azure_openai_chatcompletion(query, system_prompt, model,
 
     completion = azure_client.chat.completions.create(
         model=model["MODEL"],   # On Azure this is the deployment name
+        **params,
+        messages=prompt,
+        stream=stream_mode,
+    )
+
+    if stream_mode:
+        for chunk_completion in completion:
+            if chunk_completion.choices:
+                response = chunk_completion.choices[0].delta.content
+                yield str(prompt), response, chunk_completion
+    else:
+        response = completion.choices[0].message.content
+        yield str(prompt), response, completion
+
+# Run a model deployed on Azure AI Foundry (Claude / Gemini / Llama / ...)
+def generate_response_T_azure_foundry(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
+    params = dict(model.get("PARAMETER") or {})
+    _api_version = params.pop("api_version", None)
+    client = _get_azure_foundry_client(api_version=_api_version)
+
+    system_message = [{"role": "system", "content": system_prompt}]
+
+    memory_message = []
+    for memory in memories:
+        memory_message.append({"role": memory["role"], "content": memory["text"]})
+
+    image_message = []
+    for image_path in image_paths:
+        image_base64 = dmu.encode_image_file(image_path)
+        image_message.append({"type": "image_url", "image_url": {"url": f"data:{_get_image_mime(image_path)};base64,{image_base64}"}})
+
+    # Text-only models on Foundry reject the multimodal content array, so send
+    # a plain string unless an image is actually attached.
+    user_content = ([{"type": "text", "text": query}] + image_message) if image_message else query
+    user_message = [{"role": "user", "content": user_content}]
+    prompt = _sanitize_messages(system_message + memory_message + user_message)
+
+    completion = client.chat.completions.create(
+        model=model["MODEL"],   # Foundry deployment name
         **params,
         messages=prompt,
         stream=stream_mode,

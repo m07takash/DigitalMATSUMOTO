@@ -1329,7 +1329,39 @@ The model with the key name specified in `DEFAULT` is used. It can also be switc
 | Google | `generate_response_T_gemini` | Gemini-3.5-Flash, Gemini-3.1, etc. |
 | Anthropic | `generate_response_T_claude` | Claude-Sonnet-4.5, Claude-Haiku, etc. |
 | XAI | `generate_response_T_grok` | Grok-4, etc. |
-| **Azure OpenAI** | `generate_response_T_azure_openai` | gpt-* deployments on Azure (specify the deployment name in `MODEL`) |
+| **Azure OpenAI** | `generate_response_T_azure_openai` | gpt-* deployments on Azure OpenAI Service (deployment name in `MODEL`) |
+| **Azure AI Foundry** | `generate_response_T_azure_foundry` | **Claude / Gemini / Llama etc.** deployed on Foundry (deployment name in `MODEL`) |
+
+**Using Azure AI Foundry (running Claude / Gemini on Azure)**
+
+Claude and Gemini are served by **Azure AI Foundry** (Models-as-a-Service), not by Azure OpenAI Service — a **separate resource with its own endpoint**.
+
+```env
+AZURE_AI_ENDPOINT="https://<resource>.services.ai.azure.com"
+AZURE_AI_API_KEY="<API key>"
+AZURE_AI_API_VERSION="2024-05-01-preview"
+```
+
+Set `FUNC_NAME` to `generate_response_T_azure_foundry` and put the **Foundry deployment name** in `MODEL`.
+
+```json
+"Claude-Sonnet-Foundry": {
+    "NAME": "Claude-Sonnet-Foundry",
+    "FUNC_NAME": "generate_response_T_azure_foundry",
+    "MODEL": "claude-sonnet-4-5",
+    "PARAMETER": {"max_tokens": 8000},
+    "TOKENIZER": "tiktoken",
+    "MEMORY": {"limit": 8000, "role": "both", "priority": "latest", "similarity_logic": "cosine", "digest": "Y"},
+    "ACTIVE": true
+}
+```
+
+Foundry exposes OpenAI-compatible chat completions at `<endpoint>/models`, so **one function covers Claude, Gemini, Llama and the rest** — no per-vendor SDK. The direct-to-vendor engines (`generate_response_T_claude`, `generate_response_T_gemini`) are **untouched and still available**, so a single agent can offer both routes side by side.
+
+> **Notes**
+> - Use `TOKENIZER: "tiktoken"`. `"gemini"` asks Google directly for a token count and cannot resolve a Foundry deployment name.
+> - Image input is sent as a multimodal array only when an image is actually attached — text-only models reject that shape otherwise.
+> - Streaming behaviour varies by model; set `EXECUTION_DEFAULTS.STREAM_MODE` to `false` if a model misbehaves.
 
 **Using Azure OpenAI Service**
 
@@ -1423,11 +1455,16 @@ Optional top-level block on the agent JSON. Holds this agent's defaults for the 
     "CITE_KNOWLEDGE": true,
     "DIAGRAM_MODE": false,
     "EMPHASIS_MODE": false,
-    "MAX_PERSONAS": 3
+    "MAX_PERSONAS": 3,
+    "TIME_MODE": "Real Date"
 }
 ```
 
+`TIME_MODE` is the default for **Time Setting** in Conversation Settings — one of `"Real Date"` (wall clock), `"Custom Date"` (a fixed timestamp) or `"No Date"` (no date handed to the agent). With `"Real Date"`, reopening a session re-stamps the current time.
+
 **Precedence**: `agent.EXECUTION_DEFAULTS.<field>` > `users.json Defaults.<field>` > hardcoded fallback. Re-resolved on every agent switch / session load.
+
+`TIME_MODE` is the one exception: the mode a session was actually run with is stored on the session, so it resolves as **stored mode > `EXECUTION_DEFAULTS.TIME_MODE` > whatever is currently selected** — reopening an old session keeps the time setting it was run with.
 
 Fields you omit fall through to the user's `Defaults`. The natural split: pure user preferences (language, speaking style, Streaming on/off) live in `Defaults`; per-agent recommendations (turn RAG on/off for a lightweight assistant, default WEB_SEARCH=true for a research-oriented agent) live here.
 
@@ -2446,12 +2483,15 @@ Scheduler → **Add New Job** → Kind `agent_run` covers both recurring agent r
 |---|---|
 | **Agent File / Engine** | Which agent runs, on which LLM. Engine is **picked from that agent's active `ENGINE.LLM` entries** (`(agent default: …)` keeps its default) |
 | **Deliver to** | `new` (create N fresh sessions — **the agent actually runs and that turn is the conversation**) / `active_all` (every active session, optionally filtered by agent / user_id) / `selected` (explicit list) |
+| **Owner** (`new` only) | **Whose session list** the new conversations appear in. Empty = the job owner. `service_id` is filled with what the WebUI filters on (`WEB_DEFAULT_SERVICE.SERVICE_ID`, default `Streamlit`) |
 | **Message** | `generated` (hand the prompt to the agent) / `fixed` (no LLM call; the text is posted verbatim) |
 | **Compose separately for each target session** | For `generated` into existing sessions. On = one call per session |
 | **Keep in conversation memory** | When delivering into existing sessions. Off means the message **still renders in the chat but is not recalled** by later turns (`SETTING.MEMORY_FLG="N"`) |
 | **Execution flags** | MEMORY_USE / RAG_QUERY_GENE / META_SEARCH / THINKING_MODE / PRIVATE_MODE, etc. |
 
 **Targets are a filter, not a stored group.** Sessions created after the job was registered are picked up automatically when they match, so there is no group CRUD to maintain. The form shows the live match count.
+
+> **Delivering into an existing session never changes its Chat Name, User or Service.** Per-session generation runs the agent inside the target conversation so it can read that context, but the session keeps its original name and identity — the WebUI session list matches on `service_id` + `user_id`, so rewriting either hides the session from its owner.
 
 > **Cost guard**: per-session generation costs one LLM call per target. Above **20 sessions** the run is refused (tune with `max_generated_sessions`). Shared generation always composes exactly once; `fixed` never calls the LLM.
 

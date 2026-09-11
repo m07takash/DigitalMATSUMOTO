@@ -662,6 +662,22 @@ def _build_intent_queries(service_info, user_info, session_id, session_name, sup
     return responses, vecs, log
 
 # B-4: Metadata search phase (parallelization hook in C-1)
+def _web_search_date_note(situation_support: str) -> str:
+    """Date anchor appended to every web-search query.
+
+    Search engines resolve "last week" / "recently" against their own idea of
+    the current date, so without this a question about the past week comes
+    back with months-old articles.
+    """
+    import re as _re_d
+    m = _re_d.search(r"(\d{4})/(\d{2})/(\d{2})", situation_support or "")
+    if not m:
+        return ""
+    return (f"\n\n[重要]今日の日付は {m.group(1)}年{m.group(2)}月{m.group(3)}日 です。"
+            f"「先週」「最近」などの相対表現はこの日付を基準に解釈し、"
+            f"この日付より新しい情報は存在しない点に注意してください。")
+
+
 def _build_meta_searches(service_info, user_info, session_id, session_name, support_agent,
                          user_query, memories_selected, situation_prompt, query_vec, meta_search,
                          agent=None):
@@ -1285,6 +1301,12 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             search_text = "検索して欲しい内容:\n" + user_query + "\n\n[参考]これまでの会話:\n" + digest_text + "\n\n[参考]今の状況:\n" + situation_prompt
         else:
             search_text = user_query
+        # Relative wording ("last week", "recently") is resolved by the search
+        # engine against whatever it thinks today is — which for a model with
+        # an older cutoff means stale results. `situation_prompt_support`
+        # always carries a clock (the parent's TIME, else the real now), so
+        # anchor every query with it regardless of which branch built it.
+        search_text += _web_search_date_note(situation_prompt_support)
         _setting = system_setting_dict
         web_engine = cfg["web_search_engine"] or _setting.get("WEB_SEARCH_DEFAULT", "Perplexity")
         _web_model_map = {
@@ -2289,6 +2311,10 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                                     + "\n\n[参考]今の状況:\n" + _thinking_situation)
                 else:
                     _search_text = user_query
+                # Must match the main path byte-for-byte or the search cache
+                # key misses and the (expensive) query runs twice.
+                _search_text += _web_search_date_note(
+                    f"\n【状況】\n現在は「{_thinking_time}」です。")
                 session.save_status_message(f"{_label}: preview web search")
                 yield service_info, user_info, f"[STATUS]{_label}: preview web search...", {}
                 try:
@@ -2467,7 +2493,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
         # from the next value automatically.
         for _sk in _sel.get("BEFORE") or []:
             session.save_status_message(f"SKILL[BEFORE]:{_sk}")
-            yield service_info, user_info, f"[STATUS]SKILL[BEFORE]:{_sk}", [], []
+            yield service_info, user_info, f"[STATUS]SKILL[BEFORE]:{_sk}", {}
             _skill_out, _skill_exp = _invoke_skill(
                 service_info, user_info, session_id, session_name,
                 in_agent_file, _sk, user_query,
@@ -2486,7 +2512,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
         # output_reference for the Reference Info panel.
         for _sk in _sel.get("CONTEXT") or []:
             session.save_status_message(f"SKILL[CONTEXT]:{_sk}")
-            yield service_info, user_info, f"[STATUS]SKILL[CONTEXT]:{_sk}", [], []
+            yield service_info, user_info, f"[STATUS]SKILL[CONTEXT]:{_sk}", {}
             _skill_out, _skill_exp = _invoke_skill(
                 service_info, user_info, session_id, session_name,
                 in_agent_file, _sk, user_query,
@@ -2857,9 +2883,17 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
             result["INPUT"] = input
             chat_history_dict = session.get_history()
             seq = session.get_seq_history()
+            # This turn is in history only when MEMORY_SAVE is on. An AgentSearch
+            # child runs with MEMORY_SAVE=False, so on the parent's first turn
+            # there is no seq to read back at all (KeyError: '0'), and on later
+            # turns the lookup silently lands on an unrelated turn.
+            _turn = {}
+            if cfg["memory_save"]:
+                _turn = (chat_history_dict.get(str(seq)) or {}).get(str(sub_seq)) or {}
+            _turn_contents = ((_turn.get("prompt") or {}).get("query") or {}).get("contents") or []
             result["IMPORT_CONTENTS"] = [
                 str(Path(session.session_folder_path) / "contents" / item["file_name"])
-                for item in chat_history_dict[str(seq)][str(sub_seq)]["prompt"]["query"]["contents"]
+                for item in _turn_contents
             ]
             result["OUTPUT"] = output
             result["EXPORT_CONTENTS"] = export_contents
@@ -2874,7 +2908,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
         _after_seq = session.get_seq_history()
         for _sk in (_sel.get("AFTER") or []):
             session.save_status_message(f"SKILL[AFTER]:{_sk}")
-            yield service_info, user_info, f"[STATUS]SKILL[AFTER]:{_sk}", [], []
+            yield service_info, user_info, f"[STATUS]SKILL[AFTER]:{_sk}", {}
             _skill_out, _skill_exp = _invoke_skill(
                 service_info, user_info, session_id, session_name,
                 in_agent_file, _sk, _after_input_text,

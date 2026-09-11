@@ -1040,11 +1040,18 @@ class DigiMSession:
                 },
             }
         }
+        # `get_ids` falls back to the newest seq's SETTING when status.yaml has
+        # no ids, and the WebUI session list filters on service_id + user_id.
+        # Stamping the job owner here would therefore hide someone else's
+        # session from them, so carry the session's own identity forward and
+        # only fall back to the owner for a session that has none yet.
+        _svc_id, _usr_id = get_ids(self.session_id)
         seq_setting_data = {
             "FLG": "Y",
             "MEMORY_FLG": "Y" if save_to_memory else "N",
             "PUSH": {"job_id": job_id, "job_name": job_name, "at": ts},
-            "user_info": {"USER_ID": owner_user_id} if owner_user_id else {},
+            "user_info": {"USER_ID": _usr_id or owner_user_id} if (_usr_id or owner_user_id) else {},
+            "service_info": {"SERVICE_ID": _svc_id} if _svc_id else {},
         }
         self.save_history_batch(seq, sub_seq_data, seq_setting_data)
         return seq

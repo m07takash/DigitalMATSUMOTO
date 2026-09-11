@@ -29,7 +29,8 @@
         "CITE_KNOWLEDGE": true,
         "DIAGRAM_MODE": false,
         "EMPHASIS_MODE": false,
-        "MAX_PERSONAS": 3
+        "MAX_PERSONAS": 3,
+        "TIME_MODE": "Real Date"
     },
     "PERSONALITY": {
         "SEX": "男性",
