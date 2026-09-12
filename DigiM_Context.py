@@ -1889,6 +1889,7 @@ def generate_rag():
                             }
                             _t_llm = 0.0
                             _n_llm = 0
+                            _n_direct = 0
                             _t_save_start = _time_gr.time()
                             for chunk in rag_data:
                                 _pid = chunk.get("id", "")
@@ -1901,27 +1902,39 @@ def generate_rag():
                                     _processed_pids.append(_pid)
                                     continue
                                 _text = chunk.get("value_text") or chunk.get("key_text") or ""
-                                if not str(_text).strip():
-                                    continue
                                 _as_of = chunk.get("create_date", "") or ""
                                 _cat = chunk.get("category", "")
                                 _domains = [_cat] if _cat else []
-                                _known = [n.get("name", "") for n in graph.get("nodes", {}).values()]
-                                _prompt = _dmg.GRAPH_EXTRACT_PROMPT % (
-                                    ", ".join(_known[:50]), _text)
-                                try:
-                                    _t_llm_start = _time_gr.time()
-                                    _raw = _extract_call(_prompt)
-                                    _t_llm += _time_gr.time() - _t_llm_start
-                                    _n_llm += 1
-                                    _clean = _re_g.sub(
-                                        r"^```(json)?|```$", "",
-                                        str(_raw).strip(), flags=_re_g.M)
-                                    _data = json.loads(_clean)
-                                except Exception as _e:
-                                    logger.warning(
-                                        f"[GraphRAG extract failed] {rag_id} page={_pid}: {_e}")
-                                    continue
+                                # A hand-authored graph cell wins over extraction:
+                                # lane STRUCTURED outranks TEXT, so a curated
+                                # prop is never clobbered by a later LLM guess.
+                                # Checked before the empty-text guard so a row
+                                # carrying only a graph cell still ingests.
+                                _data = _dmg.parse_handwritten_graph(
+                                    chunk.get("graph_json", ""))
+                                _lane = "STRUCTURED"
+                                if _data is None:
+                                    if not str(_text).strip():
+                                        continue
+                                    _lane = "TEXT"
+                                    _known = [n.get("name", "") for n in graph.get("nodes", {}).values()]
+                                    _prompt = _dmg.GRAPH_EXTRACT_PROMPT % (
+                                        ", ".join(_known[:50]), _text)
+                                    try:
+                                        _t_llm_start = _time_gr.time()
+                                        _raw = _extract_call(_prompt)
+                                        _t_llm += _time_gr.time() - _t_llm_start
+                                        _n_llm += 1
+                                        _clean = _re_g.sub(
+                                            r"^```(json)?|```$", "",
+                                            str(_raw).strip(), flags=_re_g.M)
+                                        _data = json.loads(_clean)
+                                    except Exception as _e:
+                                        logger.warning(
+                                            f"[GraphRAG extract failed] {rag_id} page={_pid}: {_e}")
+                                        continue
+                                else:
+                                    _n_direct += 1
                                 for _t in _data.get("triples", []):
                                     _s = _dmg.upsert_node(
                                         graph, _t.get("subject", ""), _t.get("subject_type", ""),
@@ -1935,14 +1948,14 @@ def generate_rag():
                                             _t.get("relation", "関連"),
                                             domains=_domains,
                                             props=_t.get("props") or {},
-                                            source_id=_pid, create_date=_as_of, lane="TEXT")
+                                            source_id=_pid, create_date=_as_of, lane=_lane)
                                 for _p in _data.get("node_props", []):
                                     _n = _dmg.upsert_node(
                                         graph, _p.get("entity", ""), "", [], _domains, dictionary)
                                     if _n:
                                         _dmg.set_prop(
                                             _n["props"], _p.get("key", ""), _p.get("value", ""),
-                                            _as_of, _pid, "TEXT")
+                                            _as_of, _pid, _lane)
                                 _processed_pids.append(_pid)
                             _dmg.promote_props_to_edges(graph, dictionary)
                             _dmg.save_graph_atomic(graph_dir, graph)
@@ -1950,6 +1963,7 @@ def generate_rag():
                             logger.info(
                                 f"[rag_timing] {rag_id}: save={_t_save:.2f}s "
                                 f"llm_extract={_t_llm:.2f}s llm_calls={_n_llm} "
+                                f"handwritten={_n_direct} "
                                 f"new_pages={len(_processed_pids)} "
                                 f"(nodes now={len(graph.get('nodes', {}))}, edges now={len(graph.get('edges', []))})")
                         except Exception as _ge:

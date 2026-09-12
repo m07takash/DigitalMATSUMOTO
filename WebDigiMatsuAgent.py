@@ -8418,7 +8418,9 @@ def main():
                 # rebuild from `Update RAG data` or the batch CLI).
                 try:
                     import DigiM_Graph as _dmg_del_ui
-                    _graph_names_del = _dmg_del_ui.get_graph_list()
+                    # built_only: a graph with no graph.json has nothing to
+                    # delete, and master-registered names never leave the list.
+                    _graph_names_del = _dmg_del_ui.get_graph_list(built_only=True)
                 except Exception:
                     _graph_names_del = []
                 if _graph_names_del:
@@ -8428,15 +8430,22 @@ def main():
                     )
                     if st.button("Delete Graph DB", key="delete_graph_db"):
                         _targets = _graph_del_sel or _graph_names_del
-                        _cnt = 0
+                        _cnt, _errs_del = 0, []
                         for _gname_del in _targets:
                             try:
                                 _gd_del = _dmg_del_ui.resolve_graph_dir(_gname_del)
                                 if _dmg_del_ui.delete_graph(_gd_del):
                                     _cnt += 1
-                            except Exception:
-                                pass
-                        st.session_state.sidebar_message = f"Deleted Graph ({_cnt})"
+                            except Exception as _e_del:
+                                _errs_del.append(f"{_gname_del}: {_e_del}")
+                        st.session_state.sidebar_message = (
+                            f"Deleted Graph ({_cnt})"
+                            + (f" / failed: {'; '.join(_errs_del)}" if _errs_del else ""))
+                        # Drop the stale selection before rerunning: the deleted
+                        # name is gone from the options and Streamlit errors on a
+                        # multiselect default that is no longer selectable.
+                        st.session_state.pop("delete_graph_db_multi", None)
+                        st.rerun()
 
                 # PageIndex Export: download the selected PageIndex as a ZIP of Excel + individual files
                 _pi_dict = dmc.get_page_index_list()

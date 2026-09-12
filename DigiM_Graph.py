@@ -61,18 +61,25 @@ def resolve_graph_dir(data_name):
     return str(Path(rag_folder_graph_path) / data_name) + os.sep
 
 
-def get_graph_list():
+def get_graph_list(built_only=False):
     """List available graphs for UI selectors: active rags-master entries
     (data_type='graph') plus RAG_FOLDER_GRAPH subfolders holding a graph.json
-    that no master entry already covers."""
+    that no master entry already covers.
+
+    built_only keeps just the graphs that actually have a graph.json on disk.
+    A master entry is listed whether or not it has been built yet, so without
+    this a deleted graph keeps appearing in the delete selector — the folder
+    scan drops it, but the master entry never does."""
     names, covered = [], set()
     try:
         rags_file = os.getenv("RAG_MST_FILE") or _setting.get("RAG_MST_FILE", "sample_rags.json")
         rags = dmu.read_json_file(rags_file, mst_folder_path) or {}
         for k, v in rags.items():
             if v.get("data_type") == "graph" and v.get("active", "Y") == "Y":
-                names.append(k)
-                covered.add(os.path.normpath(v.get("file_path", "")))
+                _fp = v.get("file_path", "")
+                if not built_only or os.path.exists(os.path.join(_fp, "graph.json")):
+                    names.append(k)
+                covered.add(os.path.normpath(_fp))
     except Exception:
         pass
     if os.path.isdir(rag_folder_graph_path):
@@ -674,6 +681,33 @@ GRAPH_EXTRACT_PROMPT = """あなたは知識グラフの抽出器です。以下
 本文:
 %s
 """
+
+
+def parse_handwritten_graph(raw):
+    """Parse a hand-authored graph cell into the same schema the extractor emits.
+
+    Returns None whenever the cell cannot be trusted, so the caller falls back
+    to LLM extraction rather than silently ingesting a half-written row:
+    unparseable, not an object, or carrying neither a usable triple
+    (subject/relation/object all non-empty) nor a usable node_prop.
+    """
+    if not str(raw or "").strip():
+        return None
+    try:
+        data = json.loads(re.sub(r"^```(json)?|```$", "", str(raw).strip(), flags=re.M))
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    triples = [t for t in (data.get("triples") or [])
+               if isinstance(t, dict)
+               and all(str(t.get(k, "")).strip() for k in ("subject", "relation", "object"))]
+    node_props = [p for p in (data.get("node_props") or [])
+                  if isinstance(p, dict)
+                  and str(p.get("entity", "")).strip() and str(p.get("key", "")).strip()]
+    if not triples and not node_props:
+        return None
+    return {"triples": triples, "node_props": node_props}
 
 
 def ingest_text_source(graph, dictionary, graph_dir, source, llm_extractor, sep=";"):
