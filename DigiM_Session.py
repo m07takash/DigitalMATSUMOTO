@@ -258,14 +258,17 @@ def get_user_dialog_session(session_id):
 def get_situation(session_id):
     session_folder = str(Path(user_folder_path) / (session_folder_prefix + session_id)) + "/"
     session_file_dict = _dmss.load_history(session_id, session_folder)
-    session_file_active_dict = {k: v for k, v in session_file_dict.items() if v["SETTING"].get("FLG") == "Y"}
+    # Turns holding only a SETTING have no prompt to read the situation from.
+    session_file_active_dict = {k: v for k, v in session_file_dict.items()
+                                if v["SETTING"].get("FLG") == "Y" and any(sk != "SETTING" for sk in v)}
     situation = {}
 
     # Get the situation from the max seq / sub_seq
     if session_file_active_dict:
         max_seq = max_seq_dict(session_file_active_dict)
         max_sub_seq = max_seq_dict(session_file_active_dict[max_seq])
-        situation = session_file_active_dict[max_seq][max_sub_seq]["prompt"]["query"]["situation"]
+        _turn = session_file_active_dict[max_seq].get(max_sub_seq) or {}
+        situation = ((_turn.get("prompt") or {}).get("query") or {}).get("situation") or {}
 
     return situation
 
@@ -544,6 +547,10 @@ class DigiMSession:
         if self.chat_history_active_dict:
             for key, sub_dict in self.chat_history_active_dict.items():
                 sub_seqs = sorted((int(k) for k in sub_dict if k != "SETTING"))
+                # A turn can hold only its SETTING (a run that saved nothing);
+                # there is no question or answer to collapse.
+                if not sub_seqs:
+                    continue
                 # BEFORE/AFTER SKILLs occupy their own sub_seq around the
                 # chain steps, so the lowest/highest entry of a turn can be a
                 # SKILL rather than the conversation itself. The collapsed
@@ -998,10 +1005,14 @@ class DigiMSession:
     # still renders in the WebUI (otherwise the push would be invisible) but is
     # skipped when assembling conversation memory for later turns.
     def save_push_message(self, text, agent_file="", job_id="", job_name="",
-                          owner_user_id="", save_to_memory=True):
+                          owner_user_id="", save_to_memory=True, prompt_text=""):
         ts = str(datetime.now())
         seq = str(int(self.get_seq_history()) + 1)
         label = f"[Push] {job_name}" if job_name else "[Push]"
+        # The WebUI shows prompt.query.input as the turn's input, so an
+        # agent-composed message records the instruction the agent was given.
+        # Only a fixed message, which had no agent input, falls back to the label.
+        shown_prompt = prompt_text or label
         agent_name = ""
         try:
             import DigiM_Agent as _dma
@@ -1027,8 +1038,8 @@ class DigiMSession:
                 "prompt": {
                     "role": "neither",
                     "timestamp": ts,
-                    "text": label,
-                    "query": {"token": 0, "input": label, "text": label,
+                    "text": shown_prompt,
+                    "query": {"token": 0, "input": shown_prompt, "text": shown_prompt,
                               "contents": [], "situation": {}},
                 },
                 "response": {

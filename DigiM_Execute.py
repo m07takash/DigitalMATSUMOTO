@@ -662,6 +662,69 @@ def _build_intent_queries(service_info, user_info, session_id, session_name, sup
     return responses, vecs, log
 
 # B-4: Metadata search phase (parallelization hook in C-1)
+def _situation_prompts(situation):
+    """(main, support) situation prompts. The support one always carries a clock."""
+    situation_prompt = ""
+    if situation:
+        situation_setting = situation.get("SITUATION", "") + "\n" if "SITUATION" in situation else ""
+        time_setting = situation.get("TIME", "")
+        if time_setting:
+            # Add a stronger directive when the datetime form is non-standard (fictional setting)
+            is_standard = False
+            try:
+                datetime.strptime(time_setting, "%Y/%m/%d %H:%M:%S")
+                is_standard = True
+            except (ValueError, TypeError):
+                pass
+            if is_standard:
+                situation_prompt = f"\n【状況】\n{situation_setting}現在は「{time_setting}」です。"
+            else:
+                situation_prompt = f"\n【重要な状況設定】\n{situation_setting}この会話では、現在の日時は「{time_setting}」として設定されています。会話履歴やシステム上の実際の日時に関わらず、必ずこの設定に従ってください。実際の日時には一切言及しないでください。"
+        elif situation_setting.strip():
+            situation_prompt = f"\n【状況】\n{situation_setting}"
+
+    # Support-agent situation (Thinking / RAG Query Generator / Extract Date,
+    # ...). Falls back to the current real date when the parent's TIME is
+    # empty ("No Date"). Support agents need date awareness to judge
+    # freshness ("recent" / "current") and generate meta-search date ranges even
+    # when the main-response persona intentionally omits date grounding.
+    _sup_sit = dict(situation or {})
+    if not _sup_sit.get("TIME"):
+        _sup_sit["TIME"] = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+    _sup_setting = _sup_sit.get("SITUATION", "")
+    _sup_setting = _sup_setting + "\n" if _sup_setting else ""
+    _sup_time = _sup_sit["TIME"]
+    try:
+        datetime.strptime(_sup_time, "%Y/%m/%d %H:%M:%S")
+        situation_prompt_support = f"\n【状況】\n{_sup_setting}現在は「{_sup_time}」です。"
+    except (ValueError, TypeError):
+        situation_prompt_support = f"\n【重要な状況設定】\n{_sup_setting}この会話では、現在の日時は「{_sup_time}」として設定されています。会話履歴やシステム上の実際の日時に関わらず、必ずこの設定に従ってください。実際の日時には一切言及しないでください。"
+    return situation_prompt, situation_prompt_support
+
+
+def _build_web_search_text(query, thinking_query="", digest_text="",
+                           situation_prompt="", situation_support=""):
+    """Search text shared by the built-in web search, Thinking's preview search
+    and WebSearch SKILLs.
+
+    Every path carries the situation and a date anchor — engines resolve
+    "yesterday" / "recently" against their own idea of today otherwise — and
+    the paths must agree byte-for-byte for the preview cache to be reused.
+    """
+    ref = ""
+    if digest_text:
+        ref += "\n\n[参考]これまでの会話:\n" + digest_text
+    if situation_prompt:
+        ref += "\n\n[参考]今の状況:\n" + situation_prompt
+    if thinking_query:
+        text = "検索して欲しい内容:\n" + thinking_query + "\n\n[参考]元の質問:\n" + query + ref
+    elif ref:
+        text = "検索して欲しい内容:\n" + query + ref
+    else:
+        text = query
+    return text + _web_search_date_note(situation_support)
+
+
 def _web_search_date_note(situation_support: str) -> str:
     """Date anchor appended to every web-search query.
 
@@ -1219,41 +1282,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
 
     # Set up the situation
     timestamp_log += "[04.Situation setup]" + str(datetime.now()) + "<br>"
-    situation_prompt = ""
-    if situation:
-        situation_setting = situation.get("SITUATION", "") + "\n" if "SITUATION" in situation else ""
-        time_setting = situation.get("TIME", "")
-        if time_setting:
-            # Add a stronger directive when the datetime form is non-standard (fictional setting)
-            is_standard = False
-            try:
-                datetime.strptime(time_setting, "%Y/%m/%d %H:%M:%S")
-                is_standard = True
-            except (ValueError, TypeError):
-                pass
-            if is_standard:
-                situation_prompt = f"\n【状況】\n{situation_setting}現在は「{time_setting}」です。"
-            else:
-                situation_prompt = f"\n【重要な状況設定】\n{situation_setting}この会話では、現在の日時は「{time_setting}」として設定されています。会話履歴やシステム上の実際の日時に関わらず、必ずこの設定に従ってください。実際の日時には一切言及しないでください。"
-        elif situation_setting.strip():
-            situation_prompt = f"\n【状況】\n{situation_setting}"
-
-    # Support-agent situation (Thinking / RAG Query Generator / Extract Date,
-    # ...). Falls back to the current real date when the parent's TIME is
-    # empty ("No Date"). Support agents need date awareness to judge
-    # freshness ("recent" / "current") and generate meta-search date ranges even
-    # when the main-response persona intentionally omits date grounding.
-    _sup_sit = dict(situation or {})
-    if not _sup_sit.get("TIME"):
-        _sup_sit["TIME"] = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
-    _sup_setting = _sup_sit.get("SITUATION", "")
-    _sup_setting = _sup_setting + "\n" if _sup_setting else ""
-    _sup_time = _sup_sit["TIME"]
-    try:
-        datetime.strptime(_sup_time, "%Y/%m/%d %H:%M:%S")
-        situation_prompt_support = f"\n【状況】\n{_sup_setting}現在は「{_sup_time}」です。"
-    except (ValueError, TypeError):
-        situation_prompt_support = f"\n【重要な状況設定】\n{_sup_setting}この会話では、現在の日時は「{_sup_time}」として設定されています。会話履歴やシステム上の実際の日時に関わらず、必ずこの設定に従ってください。実際の日時には一切言及しないでください。"
+    situation_prompt, situation_prompt_support = _situation_prompts(situation)
 
     # Read the conversation digest
     if cfg["memory_use"]:
@@ -1294,19 +1323,9 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         timestamp_log += "[06.Web search start]" + str(datetime.now()) + "<br>"
         # Prefer the Thinking-generated web search query, if any
         _thinking_result = execution.get("_THINKING_RESULT", {})
-        _web_search_query = _thinking_result.get("web_search_query", "")
-        if _web_search_query:
-            search_text = "検索して欲しい内容:\n" + _web_search_query + "\n\n[参考]元の質問:\n" + user_query
-        elif digest_text or situation_prompt:
-            search_text = "検索して欲しい内容:\n" + user_query + "\n\n[参考]これまでの会話:\n" + digest_text + "\n\n[参考]今の状況:\n" + situation_prompt
-        else:
-            search_text = user_query
-        # Relative wording ("last week", "recently") is resolved by the search
-        # engine against whatever it thinks today is — which for a model with
-        # an older cutoff means stale results. `situation_prompt_support`
-        # always carries a clock (the parent's TIME, else the real now), so
-        # anchor every query with it regardless of which branch built it.
-        search_text += _web_search_date_note(situation_prompt_support)
+        search_text = _build_web_search_text(
+            user_query, _thinking_result.get("web_search_query", ""), digest_text,
+            situation_prompt, situation_prompt_support)
         _setting = system_setting_dict
         web_engine = cfg["web_search_engine"] or _setting.get("WEB_SEARCH_DEFAULT", "Perplexity")
         _web_model_map = {
@@ -1382,7 +1401,9 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             web_search_log.setdefault("engine", "SKILL")
             web_search_log.setdefault("model", "")
             web_search_log.setdefault("duration_sec", 0.0)
-            web_search_log.setdefault("search_text", user_query)
+            _ws_input = next((_l.get("input") for _n, _l in _skill_ctx_from_exec.items()
+                              if (_n == "WebSearch" or str(_n).startswith("WebSearch_")) and _l.get("input")), "")
+            web_search_log.setdefault("search_text", _ws_input or user_query)
             web_search_log.setdefault("web_context", "")
 
     output_reference["Web_search"] = web_search_log
@@ -2301,20 +2322,9 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                     _web_preview_for_next = ""
                     continue
                 _preview_query = _tr.get("web_search_query", "") or ""
-                # Build the same search_text shape the main path builds so
-                # the cache key hits cleanly on the main-execution side.
-                if _preview_query:
-                    _search_text = "検索して欲しい内容:\n" + _preview_query + "\n\n[参考]元の質問:\n" + user_query
-                elif _thinking_digest or _thinking_situation:
-                    _search_text = ("検索して欲しい内容:\n" + user_query
-                                    + "\n\n[参考]これまでの会話:\n" + _thinking_digest
-                                    + "\n\n[参考]今の状況:\n" + _thinking_situation)
-                else:
-                    _search_text = user_query
-                # Must match the main path byte-for-byte or the search cache
-                # key misses and the (expensive) query runs twice.
-                _search_text += _web_search_date_note(
-                    f"\n【状況】\n現在は「{_thinking_time}」です。")
+                _ws_main, _ws_support = _situation_prompts(in_situation)
+                _search_text = _build_web_search_text(
+                    user_query, _preview_query, _thinking_digest, _ws_main, _ws_support)
                 session.save_status_message(f"{_label}: preview web search")
                 yield service_info, user_info, f"[STATUS]{_label}: preview web search...", {}
                 try:
@@ -2513,11 +2523,34 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
         for _sk in _sel.get("CONTEXT") or []:
             session.save_status_message(f"SKILL[CONTEXT]:{_sk}")
             yield service_info, user_info, f"[STATUS]SKILL[CONTEXT]:{_sk}", {}
-            _skill_out, _skill_exp = _invoke_skill(
-                service_info, user_info, session_id, session_name,
-                in_agent_file, _sk, user_query,
-                add_info=(agent.skill_tools.get(_sk, {}).get("ARGS_HINT") or {}),
-            )
+            _add_info = dict(agent.skill_tools.get(_sk, {}).get("ARGS_HINT") or {})
+            _skill_input = user_query
+            _is_ws = _sk == "WebSearch" or str(_sk).startswith("WebSearch_")
+            if _is_ws:
+                # A WebSearch SKILL used to receive the bare question, with no
+                # situation, date, digest or Thinking query — so "yesterday"
+                # was resolved against the engine's own today.
+                _ws_digest = ""
+                if cfg["memory_use"] and session.chat_history_active_dict:
+                    _, _, _dd = session.get_history_max_digest()
+                    _ws_digest = _dd.get("text", "") if isinstance(_dd, dict) else ""
+                _ws_main, _ws_support = _situation_prompts(in_situation)
+                _skill_input = _build_web_search_text(
+                    user_query, (thinking_result or {}).get("web_search_query", ""),
+                    _ws_digest, _ws_main, _ws_support)
+                if _sk == "WebSearch":
+                    _add_info.setdefault("engine", cfg["web_search_engine"]
+                                         or system_setting_dict.get("WEB_SEARCH_DEFAULT", "Perplexity"))
+            _wsc = in_execution.get("_WEB_SEARCH_CACHE") or {}
+            if (_sk == "WebSearch" and _wsc.get("result_text") is not None
+                    and _wsc.get("engine") == _add_info.get("engine")
+                    and _wsc.get("search_text") == _skill_input):
+                _skill_out, _skill_exp = _wsc["result_text"], (_wsc.get("urls") or [])
+            else:
+                _skill_out, _skill_exp = _invoke_skill(
+                    service_info, user_info, session_id, session_name,
+                    in_agent_file, _sk, _skill_input, add_info=_add_info,
+                )
             _wrapped = _wrap_skill_context(_sk, _skill_out)
             user_query = f"{user_query}\n{_wrapped}"
             _skill_ctx_logs[_sk] = {
@@ -2526,6 +2559,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 "raw": _skill_out,
                 "wrapped": _wrapped,
                 "export_contents": _skill_exp or [],
+                "input": _skill_input,
             }
         # Stash CONTEXT logs on the practice-execution so downstream can
         # persist them into `prompt.skills` (mirrors how `web_search_log`
@@ -2923,22 +2957,28 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
 
         # B-5: Bulk-save SEQ-level logs
         seq = session.get_seq_history()
-        session.save_history_batch(str(seq), seq_setting_data={
-            "service_info": service_info,
-            "user_info": user_info,
-            "practice": practice
-        })
+        # A MEMORY_SAVE=False run in a session that has no saved turns (the
+        # scheduler's throwaway compose session) has nothing to describe.
+        # Writing the SETTING anyway leaves a seq 0 with no entries, and
+        # activating the session lists it in the WebUI, whose history loader
+        # then fails on the empty turn.
+        if cfg["memory_save"] or session.get_history():
+            session.save_history_batch(str(seq), seq_setting_data={
+                "service_info": service_info,
+                "user_info": user_info,
+                "practice": practice
+            })
 
-        # Bulk-update the session status (collapses 7 YAML read/write cycles into 1)
-        session.save_session_metadata(
-            id=session.session_id,
-            name=session.session_name,
-            service_id=service_info["SERVICE_ID"],
-            user_id=user_info["USER_ID"],
-            agent=in_agent_file,
-            last_update_date=str(datetime.now()),
-            active="Y",
-        )
+            # Bulk-update the session status (collapses 7 YAML read/write cycles into 1)
+            session.save_session_metadata(
+                id=session.session_id,
+                name=session.session_name,
+                service_id=service_info["SERVICE_ID"],
+                user_id=user_info["USER_ID"],
+                agent=in_agent_file,
+                last_update_date=str(datetime.now()),
+                active="Y",
+            )
 
     except Exception as e:
         # Persist a detailed error log (traceback + context) into the session folder

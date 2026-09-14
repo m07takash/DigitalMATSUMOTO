@@ -2748,28 +2748,42 @@ def _graph_utility_pane(graph_names, agent_graph_rags):
                 " Empty `id` = create / `active=N` = logical delete /"
                 " rows missing from Excel = logical delete."
             )
-            import io as _io_xl
-            _buf = _io_xl.BytesIO()
             # Write to a real temp file first because openpyxl can't stream
             # to BytesIO cleanly under all versions; then read the bytes back.
             import tempfile as _tf_xl, os as _os_xl
             _tmp_path = _os_xl.path.join(_tf_xl.gettempdir(), f"{_gname}_graph_export.xlsx")
+            # Clicking a download_button reruns the script, which re-registers
+            # the payload and garbage-collects the previous one. Rebuilding the
+            # workbook every rerun changes both the bytes (openpyxl stamps the
+            # zip entries) and the timestamped file_name, so the URL the browser
+            # is about to fetch is already gone by the time it asks — the click
+            # fails. Build once per graph revision and keep both stable.
+            _gjson_xl = _os_xl.path.join(_gdir, "graph.json")
             try:
-                dmg_graph.export_graph_to_xlsx(_graph_raw, _tmp_path)
-                with open(_tmp_path, "rb") as _fh_xl:
-                    _buf.write(_fh_xl.read())
-                _buf.seek(0)
-                _dl_ok = True
-            except Exception as _e_dl:
-                st.warning(f"Export preparation failed: {_e_dl}")
-                _dl_ok = False
-            if _dl_ok:
+                _st_xl = _os_xl.stat(_gjson_xl)
+                _xl_rev = f"{_st_xl.st_mtime_ns}:{_st_xl.st_size}"
+            except OSError:
+                _xl_rev = f"{len(_graph_raw.get('nodes') or {})}:{len(_graph_raw.get('edges') or [])}"
+            _xl_key = f"_gs_xlsx_cache_{_gname}"
+            if (st.session_state.get(_xl_key) or {}).get("rev") != _xl_rev:
                 from datetime import datetime as _dt_xl
-                _ts = _dt_xl.now().strftime("%Y%m%d_%H%M%S")
+                try:
+                    dmg_graph.export_graph_to_xlsx(_graph_raw, _tmp_path)
+                    with open(_tmp_path, "rb") as _fh_xl:
+                        _xl_bytes = _fh_xl.read()
+                    st.session_state[_xl_key] = {
+                        "rev": _xl_rev, "data": _xl_bytes,
+                        "name": f"{_gname}_graph_{_dt_xl.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    }
+                except Exception as _e_dl:
+                    st.warning(f"Export preparation failed: {_e_dl}")
+                    st.session_state[_xl_key] = {"rev": _xl_rev, "data": None, "name": ""}
+            _xl_cache = st.session_state.get(_xl_key) or {}
+            if _xl_cache.get("data"):
                 st.download_button(
                     "📥 Download all (.xlsx)",
-                    data=_buf.getvalue(),
-                    file_name=f"{_gname}_graph_{_ts}.xlsx",
+                    data=_xl_cache["data"],
+                    file_name=_xl_cache["name"],
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key=f"gs_xlsx_dl_{_gname}",
                 )
@@ -4727,7 +4741,8 @@ def _scheduler_view():
         # Index-suffixed so a job saved without an id (or a duplicate)
         # cannot collide with another job's widget keys.
         _jid = f'{_j.get("job_id") or "noid"}_{_ji}'
-        _label = (f"**{_j.get('name') or '(no name)'}** — `{_j.get('kind')}` / "
+        _chain = " → ".join(_s["kind"] for _s in _dmsj.job_steps(_j))
+        _label = (f"**{_j.get('name') or '(no name)'}** — `{_chain}` / "
                   f"{_dmsch.describe_schedule(_j.get('cron'), _j.get('timezone', ''))} / "
                   f"enabled={_j.get('enabled')}")
         with st.expander(_label, expanded=False):
@@ -4739,31 +4754,36 @@ def _scheduler_view():
             _col2.write(f"last_status: **{_status_val}**")
             if _j.get("last_session_id"):
                 _col2.write(f"last_session_id: `{_j.get('last_session_id')}`")
-            if _j.get("kind") in ("agent_run", "agent_push"):
-                _p = _j.get("params") or {}
-                _t = _p.get("target") or {}
-                _m = _p.get("message") or {}
-                _col2.write(f"agent: `{_p.get('agent_file')}` / engine=`{_p.get('engine') or '(default)'}`")
-                _t_mode_v = _t.get("mode") or "new"
-                _t_desc = _t_mode_v
-                if _t_mode_v == "selected":
-                    _t_desc += f" ({len(_t.get('session_ids') or [])} session(s))"
-                elif _t_mode_v == "new":
-                    _t_desc += f" (x{_t.get('new_count') or 1}"
-                    _t_desc += f", owner={_t.get('user_id')}" if _t.get("user_id") else ""
-                    _t_desc += ")"
-                elif _t.get("filter"):
-                    _t_desc += f" filter={_t.get('filter')}"
-                _msg_v = _m.get("mode") or "generated"
-                if _p.get("per_session"):
-                    _msg_v += " (per session)"
-                _col2.write(f"target: `{_t_desc}` / message: `{_msg_v}`")
-                if _t_mode_v != "new":
-                    _col2.write(f"keep in memory: `{_p.get('save_to_memory', True)}`")
-                _body = _p.get("user_input") or _m.get("text") or _m.get("prompt") or ""
-                if _body:
-                    st.text_area("prompt / message", value=_body, height=80, disabled=True,
-                                 key=f"sch_view_ui_{_jid}")
+            # One detail block per agent_run step; a workflow can hold several.
+            _agent_steps = [_s for _s in _dmsj.job_steps(_j) if _s["kind"] == "agent_run"]
+            for _si, _astep in enumerate(_agent_steps):
+                _p = _astep["params"]
+                if len(_agent_steps) > 1:
+                    _col2.write(f"**agent_run #{_si + 1}**")
+                    _t = _p.get("target") or {}
+                    _m = _p.get("message") or {}
+                    _col2.write(f"agent: `{_p.get('agent_file')}` / engine=`{_p.get('engine') or '(default)'}`")
+                    _t_mode_v = _t.get("mode") or "new"
+                    _t_desc = _t_mode_v
+                    if _t_mode_v == "selected":
+                        _t_desc += f" ({len(_t.get('session_ids') or [])} session(s))"
+                    elif _t_mode_v == "new":
+                        _t_desc += f" (x{_t.get('new_count') or 1}"
+                        _t_desc += f", owner={_t.get('user_id')}" if _t.get("user_id") else ""
+                        _t_desc += ")"
+                    elif _t.get("filter"):
+                        _t_desc += f" filter={_t.get('filter')}"
+                    _msg_v = _m.get("mode") or "generated"
+                    if _p.get("per_session"):
+                        _msg_v += " (per session)"
+                    _col2.write(f"target: `{_t_desc}` / message: `{_msg_v}`")
+                    if _t_mode_v != "new":
+                        _col2.write(f"keep in memory: `{_p.get('save_to_memory', True)}`")
+                    _body = _p.get("user_input") or _m.get("text") or _m.get("prompt") or ""
+                    if _body:
+                        st.text_area("prompt / message", value=_body, height=80, disabled=True,
+                                     key=f"sch_view_ui_{_jid}_{_si}")
+            if _agent_steps:
                 _lp = _j.get("last_push") or {}
                 if _lp:
                     st.caption(
@@ -4773,6 +4793,14 @@ def _scheduler_view():
                     if _lp.get("failed"):
                         with st.expander("Failed deliveries", expanded=False):
                             st.json(_lp.get("failed"))
+
+            _ls = _j.get("last_steps") or []
+            if len(_ls) > 1:
+                _step_icon = {"success": "✓", "error": "✗", "running": "…", "skipped": "–", "pending": "·"}
+                st.caption("last steps: " + " → ".join(
+                    f"{_s.get('kind')} {_step_icon.get(_s.get('status'), '?')}"
+                    + (f" {_s['seconds']}s" if _s.get("seconds") is not None else "")
+                    for _s in _ls))
 
             if _j.get("last_status") == "error" and _j.get("last_error"):
                 with st.expander("Error log", expanded=False):
@@ -4799,6 +4827,174 @@ def _scheduler_view():
                 st.session_state.sidebar_message = f"Deleted: {_j.get('job_id')}"
                 st.rerun()
 
+    def _sch_agent_run_params(_params, kp):
+        """agent_run step editor. Keys are namespaced by `kp` so several
+        agent_run steps can sit in one workflow."""
+        st.markdown("**Agent Run Params**")
+        _agent_files = [a["FILE"] for a in (st.session_state.get("agents") or [])]
+        _cur_agent = _params.get("agent_file") or (_agent_files[0] if _agent_files else "")
+        if _agent_files:
+            _idx = _agent_files.index(_cur_agent) if _cur_agent in _agent_files else 0
+            _agent_file = st.selectbox("Agent File", _agent_files, index=_idx, key=kp + "agent")
+        else:
+            _agent_file = st.text_input("Agent File", value=_cur_agent, key=kp + "agent_txt")
+
+        # Engine list comes from the chosen agent so only valid, ACTIVE
+        # entries can be picked (a free-text name silently did nothing).
+        _eng_opts, _eng_default = [""], ""
+        try:
+            _eng_agent = dmu.read_json_file(_agent_file, agent_folder_path) or {}
+            _eng_opts += dma.get_engine_list(_eng_agent, model_type="LLM")
+            _eng_default = ((_eng_agent.get("ENGINE") or {}).get("LLM") or {}).get("DEFAULT", "")
+        except Exception:
+            pass
+        _eng_cur = _params.get("engine", "")
+        _engine = st.selectbox(
+            "Engine (LLM)", _eng_opts,
+            index=_eng_opts.index(_eng_cur) if _eng_cur in _eng_opts else 0,
+            format_func=lambda v: f"(agent default: {_eng_default})" if v == "" else v,
+            key=kp + "engine")
+
+        # --- Target ---
+        _tgt = dict(_params.get("target") or {})
+        _t_modes = ["new", "active_all", "selected"]
+        _t_labels = {"new": "Create new session(s)",
+                     "active_all": "All active sessions (filtered)",
+                     "selected": "Selected sessions"}
+        _t_idx = _t_modes.index(_tgt.get("mode")) if _tgt.get("mode") in _t_modes else 0
+        _t_mode = st.radio("Deliver to", _t_modes, index=_t_idx, horizontal=True,
+                           format_func=lambda m: _t_labels[m], key=kp + "tmode")
+        _t_filter, _t_ids, _t_new, _t_user = {}, [], 1, ""
+        if _t_mode == "new":
+            _tn_c1, _tn_c2 = st.columns(2)
+            _t_new = int(_tn_c1.number_input("How many sessions", min_value=1, max_value=20,
+                                              value=int(_tgt.get("new_count") or 1), step=1,
+                                              key=kp + "tnew"))
+            # Whose session list they land in. A new session is only listed
+            # for the matching user, so leaving this on the job owner would
+            # hide it from whoever the push is actually for.
+            try:
+                import DigiM_Auth as _dma_auth
+                _user_opts = [""] + sorted((_dma_auth.load_user_master() or {}).keys())
+            except Exception:
+                _user_opts = [""]
+            _tu_cur = _tgt.get("user_id") or ""
+            _t_user = _tn_c2.selectbox(
+                "Owner (whose session list)", _user_opts,
+                index=_user_opts.index(_tu_cur) if _tu_cur in _user_opts else 0,
+                format_func=lambda v: f"(job owner: {st.session_state.get('user_id', '')})" if v == "" else v,
+                key=kp + "tuser")
+            st.caption(
+                "The agent runs into fresh sessions; the turn itself is the conversation. "
+                f"They appear under service_id `{_dmsch.webui_service_id()}` so the WebUI lists them.")
+        elif _t_mode == "active_all":
+            _f = dict(_tgt.get("filter") or {})
+            _fc1, _fc2 = st.columns(2)
+            _f_agents = [""] + _agent_files
+            _fa_idx = _f_agents.index(_f.get("agent_file")) if _f.get("agent_file") in _f_agents else 0
+            _t_filter["agent_file"] = _fc1.selectbox("Filter: agent (empty = any)", _f_agents,
+                                                      index=_fa_idx, key=kp + "fagent")
+            _t_filter["user_id"] = _fc2.text_input("Filter: user_id (empty = any)",
+                                                    value=_f.get("user_id", ""), key=kp + "fuser")
+            _t_filter = {k: v for k, v in _t_filter.items() if v}
+            try:
+                _preview = _dmsch._push_resolve_targets(
+                    {"params": {"target": {"mode": "active_all", "filter": _t_filter}}})
+                st.caption(f"Currently matches **{len(_preview)}** active session(s).")
+            except Exception as _pe:
+                st.caption(f"(preview unavailable: {_pe})")
+        else:
+            try:
+                _sess = [s for s in dms.get_session_list_visible(
+                    st.session_state.service_id, st.session_state.user_id,
+                    "Y" if st.session_state.get("admin_flg") == "Y" else "N")
+                    if s.get("active") == "Y"]
+            except Exception:
+                _sess = []
+            _opts = [s["id"] for s in _sess]
+            _names = {s["id"]: f'{s.get("name") or "(no name)"} — {s["id"]}' for s in _sess}
+            _t_ids = st.multiselect("Sessions", _opts,
+                                    default=[i for i in (_tgt.get("session_ids") or []) if i in _opts],
+                                    format_func=lambda i: _names.get(i, i), key=kp + "tids")
+
+        # --- Message ---
+        _msg_mode_cur = ((_params.get("message") or {}).get("mode") or "generated")
+        if _msg_mode_cur.startswith("generated"):
+            _msg_mode_cur = "generated"
+        _msg_mode = st.radio(
+            "Message", ["generated", "fixed"],
+            index=0 if _msg_mode_cur == "generated" else 1,
+            horizontal=True,
+            format_func=lambda m: "Agent generates it" if m == "generated" else "Fixed text",
+            key=kp + "mmode")
+        _user_input = st.text_area(
+            "Prompt" if _msg_mode == "generated" else "Message text",
+            value=_params.get("user_input") or (_params.get("message") or {}).get("prompt", "")
+                  or (_params.get("message") or {}).get("text", ""),
+            height=120,
+            help=("What to ask the agent." if _msg_mode == "generated"
+                  else "Posted verbatim; no LLM call is made."),
+            key=kp + "userinput")
+
+        _per_session, _max_gen = False, _dmsch.PUSH_MAX_GENERATED_SESSIONS
+        if _msg_mode == "generated" and _t_mode != "new":
+            _per_session = st.checkbox(
+                "Compose separately for each target session",
+                value=bool(_params.get("per_session")),
+                help="Off: one LLM call, same text everywhere (unless MEMORY_SAVE is on). On: one call per session.",
+                key=kp + "persession")
+            # MEMORY_SAVE is drawn further down, so read its current widget
+            # value: when on, the run happens inside every target anyway.
+            _mem_save_now = bool(st.session_state.get(
+                kp + "e_memsave", (_params.get("execution") or {}).get("MEMORY_SAVE", True)))
+            if _per_session or _mem_save_now:
+                _max_gen = int(st.number_input(
+                    "max_generated_sessions (cost guard)", min_value=1, max_value=500,
+                    value=int(_params.get("max_generated_sessions") or _dmsch.PUSH_MAX_GENERATED_SESSIONS),
+                    step=1, key=kp + "maxgen"))
+                if _per_session:
+                    st.caption(f"⚠ One LLM call per target session (refused above {_max_gen}).")
+                else:
+                    st.caption(f"⚠ MEMORY_SAVE is on: the agent runs inside each target session and the "
+                               f"turn is saved with Detail / Analytics — one LLM call per target "
+                               f"(refused above {_max_gen}).")
+
+        _save_mem = True
+        if _t_mode != "new":
+            _save_mem = st.checkbox(
+                "Keep the delivered message in conversation memory",
+                value=bool(_params.get("save_to_memory", True)),
+                help="Off: still shown in the chat, but later turns will not recall it.",
+                key=kp + "savemem")
+
+        _exec = dict(_params.get("execution") or {})
+        st.markdown("**Execution flags**")
+        _ec1, _ec2, _ec3 = st.columns(3)
+        _exec["MEMORY_USE"]      = _ec1.checkbox("MEMORY_USE", value=bool(_exec.get("MEMORY_USE", True)), key=kp + "e_memuse")
+        _exec["MEMORY_SAVE"]     = _ec1.checkbox("MEMORY_SAVE", value=bool(_exec.get("MEMORY_SAVE", True)), key=kp + "e_memsave")
+        _exec["RAG_QUERY_GENE"]  = _ec1.checkbox("RAG_QUERY_GENE", value=bool(_exec.get("RAG_QUERY_GENE", True)), key=kp + "e_rag")
+        _exec["WEB_SEARCH"]      = _ec2.checkbox("WEB_SEARCH", value=bool(_exec.get("WEB_SEARCH", False)), key=kp + "e_web")
+        _exec["META_SEARCH"]     = _ec2.checkbox("META_SEARCH", value=bool(_exec.get("META_SEARCH", True)), key=kp + "e_meta")
+        _exec["THINKING_MODE"]   = _ec2.checkbox("THINKING_MODE", value=bool(_exec.get("THINKING_MODE", False)), key=kp + "e_think")
+        _exec["MAGIC_WORD_USE"]  = _ec3.checkbox("MAGIC_WORD_USE", value=bool(_exec.get("MAGIC_WORD_USE", False)), key=kp + "e_magic")
+        _exec["PRIVATE_MODE"]    = _ec3.checkbox("PRIVATE_MODE", value=bool(_exec.get("PRIVATE_MODE", False)), key=kp + "e_priv")
+        _exec["SAVE_DIGEST"]     = _ec3.checkbox("SAVE_DIGEST", value=bool(_exec.get("SAVE_DIGEST", True)), key=kp + "e_dig")
+
+        _params = {
+            "agent_file": _agent_file,
+            "engine": _engine,
+            "user_input": _user_input,
+            "target": {"mode": _t_mode, "filter": _t_filter,
+                       "session_ids": _t_ids, "new_count": _t_new,
+                       "user_id": _t_user},
+            "message": {"mode": _msg_mode},
+            "per_session": _per_session,
+            "max_generated_sessions": _max_gen,
+            "save_to_memory": _save_mem,
+            "execution": _exec,
+        }
+        return _params
+
     # Edit form
     _edit_id = st.session_state.get("_sch_edit_id")
     if _edit_id:
@@ -4808,14 +5004,6 @@ def _scheduler_view():
         st.markdown("### " + ("Add New Job" if _is_new else f"Edit Job: `{_edit_id}`"))
 
         _name = st.text_input("Name", value=_existing.get("name", ""), key="sch_f_name")
-        # agent_push folded into agent_run: the old split was only target +
-        # delivery, both of which are now fields on the one kind.
-        _kinds = ["rag_update", "user_memory_nowaday", "agent_run"]
-        _kind_cur = _existing.get("kind", "rag_update")
-        if _kind_cur == "agent_push":
-            _kind_cur = "agent_run"
-        _kind_idx = _kinds.index(_kind_cur) if _kind_cur in _kinds else 0
-        _kind = st.selectbox("Kind", _kinds, index=_kind_idx, key="sch_f_kind")
 
         # --- Schedule builder -------------------------------------------
         # A raw 5-field cron cannot express "once on this date", and most jobs
@@ -4899,186 +5087,75 @@ def _scheduler_view():
 
         _enabled = st.checkbox("Enabled", value=bool(_existing.get("enabled", False)), key="sch_f_enabled")
 
-        _params = dict(_existing.get("params") or {})
-        if _kind == "agent_run":
-            st.markdown("**Agent Run Params**")
-            _agent_files = [a["FILE"] for a in (st.session_state.get("agents") or [])]
-            _cur_agent = _params.get("agent_file") or (_agent_files[0] if _agent_files else "")
-            if _agent_files:
-                _idx = _agent_files.index(_cur_agent) if _cur_agent in _agent_files else 0
-                _agent_file = st.selectbox("Agent File", _agent_files, index=_idx, key="sch_f_agent")
-            else:
-                _agent_file = st.text_input("Agent File", value=_cur_agent, key="sch_f_agent_txt")
-
-            # Engine list comes from the chosen agent so only valid, ACTIVE
-            # entries can be picked (a free-text name silently did nothing).
-            _eng_opts, _eng_default = [""], ""
-            try:
-                _eng_agent = dmu.read_json_file(_agent_file, agent_folder_path) or {}
-                _eng_opts += dma.get_engine_list(_eng_agent, model_type="LLM")
-                _eng_default = ((_eng_agent.get("ENGINE") or {}).get("LLM") or {}).get("DEFAULT", "")
-            except Exception:
-                pass
-            _eng_cur = _params.get("engine", "")
-            _engine = st.selectbox(
-                "Engine (LLM)", _eng_opts,
-                index=_eng_opts.index(_eng_cur) if _eng_cur in _eng_opts else 0,
-                format_func=lambda v: f"(agent default: {_eng_default})" if v == "" else v,
-                key="sch_f_engine")
-
-            # --- Target ---
-            _tgt = dict(_params.get("target") or {})
-            _t_modes = ["new", "active_all", "selected"]
-            _t_labels = {"new": "Create new session(s)",
-                         "active_all": "All active sessions (filtered)",
-                         "selected": "Selected sessions"}
-            _t_idx = _t_modes.index(_tgt.get("mode")) if _tgt.get("mode") in _t_modes else 0
-            _t_mode = st.radio("Deliver to", _t_modes, index=_t_idx, horizontal=True,
-                               format_func=lambda m: _t_labels[m], key="sch_f_tmode")
-            _t_filter, _t_ids, _t_new, _t_user = {}, [], 1, ""
-            if _t_mode == "new":
-                _tn_c1, _tn_c2 = st.columns(2)
-                _t_new = int(_tn_c1.number_input("How many sessions", min_value=1, max_value=20,
-                                                  value=int(_tgt.get("new_count") or 1), step=1,
-                                                  key="sch_f_tnew"))
-                # Whose session list they land in. A new session is only listed
-                # for the matching user, so leaving this on the job owner would
-                # hide it from whoever the push is actually for.
-                try:
-                    import DigiM_Auth as _dma_auth
-                    _user_opts = [""] + sorted((_dma_auth.load_user_master() or {}).keys())
-                except Exception:
-                    _user_opts = [""]
-                _tu_cur = _tgt.get("user_id") or ""
-                _t_user = _tn_c2.selectbox(
-                    "Owner (whose session list)", _user_opts,
-                    index=_user_opts.index(_tu_cur) if _tu_cur in _user_opts else 0,
-                    format_func=lambda v: f"(job owner: {st.session_state.get('user_id', '')})" if v == "" else v,
-                    key="sch_f_tuser")
-                st.caption(
-                    "The agent runs into fresh sessions; the turn itself is the conversation. "
-                    f"They appear under service_id `{_dmsch.webui_service_id()}` so the WebUI lists them.")
-            elif _t_mode == "active_all":
-                _f = dict(_tgt.get("filter") or {})
-                _fc1, _fc2 = st.columns(2)
-                _f_agents = [""] + _agent_files
-                _fa_idx = _f_agents.index(_f.get("agent_file")) if _f.get("agent_file") in _f_agents else 0
-                _t_filter["agent_file"] = _fc1.selectbox("Filter: agent (empty = any)", _f_agents,
-                                                          index=_fa_idx, key="sch_f_fagent")
-                _t_filter["user_id"] = _fc2.text_input("Filter: user_id (empty = any)",
-                                                        value=_f.get("user_id", ""), key="sch_f_fuser")
-                _t_filter = {k: v for k, v in _t_filter.items() if v}
-                try:
-                    _preview = _dmsch._push_resolve_targets(
-                        {"params": {"target": {"mode": "active_all", "filter": _t_filter}}})
-                    st.caption(f"Currently matches **{len(_preview)}** active session(s).")
-                except Exception as _pe:
-                    st.caption(f"(preview unavailable: {_pe})")
-            else:
-                try:
-                    _sess = [s for s in dms.get_session_list_visible(
-                        st.session_state.service_id, st.session_state.user_id,
-                        "Y" if st.session_state.get("admin_flg") == "Y" else "N")
-                        if s.get("active") == "Y"]
-                except Exception:
-                    _sess = []
-                _opts = [s["id"] for s in _sess]
-                _names = {s["id"]: f'{s.get("name") or "(no name)"} — {s["id"]}' for s in _sess}
-                _t_ids = st.multiselect("Sessions", _opts,
-                                        default=[i for i in (_tgt.get("session_ids") or []) if i in _opts],
-                                        format_func=lambda i: _names.get(i, i), key="sch_f_tids")
-
-            # --- Message ---
-            _msg_mode_cur = ((_params.get("message") or {}).get("mode") or "generated")
-            if _msg_mode_cur.startswith("generated"):
-                _msg_mode_cur = "generated"
-            _msg_mode = st.radio(
-                "Message", ["generated", "fixed"],
-                index=0 if _msg_mode_cur == "generated" else 1,
-                horizontal=True,
-                format_func=lambda m: "Agent generates it" if m == "generated" else "Fixed text",
-                key="sch_f_mmode")
-            _user_input = st.text_area(
-                "Prompt" if _msg_mode == "generated" else "Message text",
-                value=_params.get("user_input") or (_params.get("message") or {}).get("prompt", "")
-                      or (_params.get("message") or {}).get("text", ""),
-                height=120,
-                help=("What to ask the agent." if _msg_mode == "generated"
-                      else "Posted verbatim; no LLM call is made."),
-                key="sch_f_userinput")
-
-            _per_session, _max_gen = False, _dmsch.PUSH_MAX_GENERATED_SESSIONS
-            if _msg_mode == "generated" and _t_mode != "new":
-                _per_session = st.checkbox(
-                    "Compose separately for each target session",
-                    value=bool(_params.get("per_session")),
-                    help="Off: one LLM call, same text everywhere. On: one call per session.",
-                    key="sch_f_persession")
-                if _per_session:
-                    _max_gen = int(st.number_input(
-                        "max_generated_sessions (cost guard)", min_value=1, max_value=500,
-                        value=int(_params.get("max_generated_sessions") or _dmsch.PUSH_MAX_GENERATED_SESSIONS),
-                        step=1, key="sch_f_maxgen"))
-                    st.caption(f"⚠ One LLM call per target session (refused above {_max_gen}).")
-
-            _save_mem = True
-            if _t_mode != "new":
-                _save_mem = st.checkbox(
-                    "Keep the delivered message in conversation memory",
-                    value=bool(_params.get("save_to_memory", True)),
-                    help="Off: still shown in the chat, but later turns will not recall it.",
-                    key="sch_f_savemem")
-
-            _exec = dict(_params.get("execution") or {})
-            st.markdown("**Execution flags**")
-            _ec1, _ec2, _ec3 = st.columns(3)
-            _exec["MEMORY_USE"]      = _ec1.checkbox("MEMORY_USE", value=bool(_exec.get("MEMORY_USE", True)), key="sch_f_e_memuse")
-            _exec["MEMORY_SAVE"]     = _ec1.checkbox("MEMORY_SAVE", value=bool(_exec.get("MEMORY_SAVE", True)), key="sch_f_e_memsave")
-            _exec["RAG_QUERY_GENE"]  = _ec1.checkbox("RAG_QUERY_GENE", value=bool(_exec.get("RAG_QUERY_GENE", True)), key="sch_f_e_rag")
-            _exec["WEB_SEARCH"]      = _ec2.checkbox("WEB_SEARCH", value=bool(_exec.get("WEB_SEARCH", False)), key="sch_f_e_web")
-            _exec["META_SEARCH"]     = _ec2.checkbox("META_SEARCH", value=bool(_exec.get("META_SEARCH", True)), key="sch_f_e_meta")
-            _exec["THINKING_MODE"]   = _ec2.checkbox("THINKING_MODE", value=bool(_exec.get("THINKING_MODE", False)), key="sch_f_e_think")
-            _exec["MAGIC_WORD_USE"]  = _ec3.checkbox("MAGIC_WORD_USE", value=bool(_exec.get("MAGIC_WORD_USE", False)), key="sch_f_e_magic")
-            _exec["PRIVATE_MODE"]    = _ec3.checkbox("PRIVATE_MODE", value=bool(_exec.get("PRIVATE_MODE", False)), key="sch_f_e_priv")
-            _exec["SAVE_DIGEST"]     = _ec3.checkbox("SAVE_DIGEST", value=bool(_exec.get("SAVE_DIGEST", True)), key="sch_f_e_dig")
-
-            _params = {
-                "agent_file": _agent_file,
-                "engine": _engine,
-                "user_input": _user_input,
-                "target": {"mode": _t_mode, "filter": _t_filter,
-                           "session_ids": _t_ids, "new_count": _t_new,
-                           "user_id": _t_user},
-                "message": {"mode": _msg_mode},
-                "per_session": _per_session,
-                "max_generated_sessions": _max_gen,
-                "save_to_memory": _save_mem,
-                "execution": _exec,
-            }
-        else:
-            _params = {}
+        # --- Workflow: serial steps -----------------------------------------
+        # Nodes live in session_state so + / ↑ / ↓ / ✕ survive reruns. Widget keys
+        # use each node's own id rather than its position, so reordering keeps
+        # every node's inputs attached to that node.
+        if st.session_state.get("_sch_nodes_for") != _edit_id:
+            st.session_state._sch_nodes = (_dmsj.job_steps(_existing) if _existing
+                                           else [_dmsj.new_step("agent_run")])
+            st.session_state._sch_nodes_for = _edit_id
+        _nodes = st.session_state._sch_nodes
+        _step_kinds = list(_dmsch.STEP_KINDS)
+        _step_notes = {
+            "rag_update": "Re-vectorize every active RAG (same as Update RAG Data).",
+            "user_memory_nowaday": "Update this month's Nowaday for all users, then merge into Persona.",
+        }
+        st.markdown("**Workflow** — steps run top to bottom; if one fails, the job stops there.")
+        for _ni, _node in enumerate(_nodes):
+            _kp = f"sch_n_{_node['id']}_"
+            with st.container(border=True):
+                _h1, _h2, _h3, _h4, _h5 = st.columns([2, 5, 1, 1, 1], vertical_alignment="center")
+                _h1.markdown(f"**Step {_ni + 1}**")
+                _k_cur = _node.get("kind") if _node.get("kind") in _step_kinds else _step_kinds[0]
+                _node["kind"] = _h2.selectbox("Kind", _step_kinds, index=_step_kinds.index(_k_cur),
+                                              key=_kp + "kind", label_visibility="collapsed")
+                if _h3.button("↑", key=_kp + "up", disabled=_ni == 0, help="Move up"):
+                    _nodes[_ni - 1], _nodes[_ni] = _nodes[_ni], _nodes[_ni - 1]
+                    st.rerun()
+                if _h4.button("↓", key=_kp + "down", disabled=_ni == len(_nodes) - 1, help="Move down"):
+                    _nodes[_ni + 1], _nodes[_ni] = _nodes[_ni], _nodes[_ni + 1]
+                    st.rerun()
+                if _h5.button("✕", key=_kp + "del", disabled=len(_nodes) == 1, help="Remove this step"):
+                    _nodes.pop(_ni)
+                    st.rerun()
+                if _node["kind"] == "agent_run":
+                    _node["params"] = _sch_agent_run_params(dict(_node.get("params") or {}), _kp)
+                else:
+                    _node["params"] = {}
+                    st.caption(_step_notes.get(_node["kind"], ""))
+            if _ni < len(_nodes) - 1:
+                st.markdown("<div style='text-align:center;font-size:1.2em'>↓</div>", unsafe_allow_html=True)
+        if st.button("＋ Add step", key="sch_f_add_step"):
+            _nodes.append(_dmsj.new_step("agent_run"))
+            st.rerun()
 
         _bs, _bc = st.columns(2)
         if _bs.button("Save", key="sch_f_save"):
+            _steps = [{"id": _n["id"], "kind": _n["kind"], "params": _n.get("params") or {}} for _n in _nodes]
             _doc = {
                 "job_id": "" if _is_new else _edit_id,
                 "name": _name,
-                "kind": _kind,
+                "kind": _steps[-1]["kind"],
                 "cron": _cron,
                 "timezone": _tz,
                 "enabled": _enabled,
                 "owner_user_id": st.session_state.get("web_user", {}).get("USER_ID", ""),
-                "params": _params,
+                "params": _steps[-1]["params"],
+                "steps": _steps,
+                "pre_steps": [],
             }
             try:
                 _saved = _dmsj.upsert(_doc)
                 st.session_state._sch_edit_id = None
+                st.session_state.pop("_sch_nodes_for", None)
                 st.session_state.sidebar_message = f"Saved: {_saved.get('job_id')} (apply via Reload)"
             except Exception as e:
                 st.session_state.sidebar_message = f"Save failed: {e}"
             st.rerun()
         if _bc.button("Cancel", key="sch_f_cancel"):
             st.session_state._sch_edit_id = None
+            st.session_state.pop("_sch_nodes_for", None)
             st.rerun()
 
 

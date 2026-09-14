@@ -5,6 +5,11 @@ Job definitions are loaded from user/common/mst/scheduled_jobs.json:
   kind="user_memory_nowaday" : Batch that updates Nowaday -> Persona
   kind="agent_run"           : Run an agent (DigiMatsuExecute_Practice)
 
+steps ([{"kind", "params"}]) make a job a serial workflow: steps run top to
+bottom, each with its own params; a failed step stops the job and marks the
+rest skipped (see last_steps). Jobs without steps run as their legacy
+pre_steps followed by the job's own kind (DigiM_ScheduledJobs.job_steps).
+
 cron format: "off" | "daily" (03:00) | "weekly" (Mon 03:00) | "monthly" (1st 03:00) | 5-field cron
 Jobs with "off" / enabled=False are not registered.
 
@@ -13,6 +18,7 @@ When APScheduler is not installed, startup is skipped (run_now() still works).
 import logging
 import os
 import threading
+import time
 from datetime import datetime
 
 from dotenv import load_dotenv
@@ -34,6 +40,9 @@ _PRESETS = {
 # matches a wide filter can get expensive fast. Refuse above this unless the
 # job raises it explicitly.
 PUSH_MAX_GENERATED_SESSIONS = 20
+
+# Step kinds offered by the workflow editor, in menu order.
+STEP_KINDS = ("agent_run", "rag_update", "user_memory_nowaday")
 
 _scheduler = None
 _scheduler_lock = threading.Lock()
@@ -135,29 +144,42 @@ def describe_schedule(raw, tz: str = "") -> str:
 def _run_job(job: dict):
     """Dispatch a registered job by kind and write the result back to the master."""
     job_id = job.get("job_id", "")
-    kind = job.get("kind", "")
     # Stamp in the job's own zone. The container clock is often UTC while
     # schedules are written in local wall-clock time, and a last_run that
     # disagrees with the schedule by the UTC offset reads as "it ran at the
     # wrong time".
-    started_at = datetime.now(resolve_timezone(job.get("timezone") or "")).strftime("%Y-%m-%d %H:%M:%S")
+    _tz = resolve_timezone(job.get("timezone") or "")
+    started_at = datetime.now(_tz).strftime("%Y-%m-%d %H:%M:%S")
+    # A failed prep step stops the job: running the main step on data the step
+    # was meant to refresh (a reflection over a stale RAG) would report success
+    # while producing the wrong thing.
+    steps = dmsj.job_steps(job)
+    kinds = [st["kind"] for st in steps]
+    step_log = [{"kind": k, "status": "pending"} for k in kinds]
     dmsj.update_run_result(job_id, status="running", started_at=started_at)
-    logger.info(f"[scheduler] run start job_id={job_id} kind={kind}")
+    dmsj.update_steps(job_id, step_log)
+    logger.info(f"[scheduler] run start job_id={job_id} steps={kinds}")
     try:
-        if kind == "rag_update":
-            _exec_rag_update(job)
-            dmsj.update_run_result(job_id, status="success", started_at=started_at)
-        elif kind == "user_memory_nowaday":
-            _exec_user_memory_nowaday(job)
-            dmsj.update_run_result(job_id, status="success", started_at=started_at)
-        elif kind == "agent_run":
-            session_id = _exec_agent_run(job)
-            dmsj.update_run_result(job_id, status="success", session_id=session_id, started_at=started_at)
-        elif kind == "agent_push":
-            session_id = _exec_agent_push(job)
-            dmsj.update_run_result(job_id, status="success", session_id=session_id, started_at=started_at)
-        else:
-            raise ValueError(f"unknown kind: {kind}")
+        session_id = ""
+        for i, k in enumerate(kinds):
+            step_log[i].update(status="running", started_at=datetime.now(_tz).strftime("%Y-%m-%d %H:%M:%S"))
+            dmsj.update_steps(job_id, step_log)
+            _t0 = time.monotonic()
+            try:
+                # Each step reads its own params; id / name / timezone / owner
+                # are shared by the whole job.
+                session_id = _run_step(dict(job, kind=k, params=steps[i]["params"]), k) or session_id
+            except Exception as e:
+                step_log[i].update(status="error", seconds=round(time.monotonic() - _t0, 1), error=str(e))
+                for _rest in step_log[i + 1:]:
+                    _rest["status"] = "skipped"
+                dmsj.update_steps(job_id, step_log)
+                if len(kinds) == 1:
+                    raise
+                raise RuntimeError(f"step {i + 1}/{len(kinds)} ({k}) failed: {e}") from e
+            step_log[i].update(status="success", seconds=round(time.monotonic() - _t0, 1))
+            dmsj.update_steps(job_id, step_log)
+        dmsj.update_run_result(job_id, status="success", session_id=session_id, started_at=started_at)
         logger.info(f"[scheduler] run success job_id={job_id}")
     except Exception as e:
         logger.exception(f"[scheduler] run error job_id={job_id}: {e}")
@@ -174,6 +196,39 @@ def _run_job(job: dict):
                     logger.info(f"[scheduler] one-shot completed; disabled job_id={job_id}")
             except Exception as _e:
                 logger.warning(f"[scheduler] could not disable one-shot {job_id}: {_e}")
+
+
+def _scheduled_situation(job: dict, agent_file: str) -> dict:
+    """The situation a WebUI "Real Date" turn would carry, in the job's zone.
+
+    Without one the main agent gets no clock at all, and the support agents'
+    fallback reads the container clock (usually UTC) — a 08:00 JST job would
+    then treat the previous day as "today" in its web search and date filters.
+    """
+    try:
+        import DigiM_Agent as _dma
+        _defaults = _dma.get_agent_item(agent_file, "EXECUTION_DEFAULTS") or {}
+    except Exception:
+        _defaults = {}
+    if _defaults.get("TIME_MODE") == "No Date":
+        return {"TIME": "", "SITUATION": "", "TIME_MODE": "No Date"}
+    now = datetime.now(resolve_timezone(job.get("timezone") or ""))
+    return {"TIME": now.strftime("%Y/%m/%d %H:%M:%S"), "SITUATION": "", "TIME_MODE": "Real Date"}
+
+
+def _run_step(job: dict, kind: str) -> str:
+    """Returns the session a step touched, or "" for kinds that create none."""
+    if kind == "rag_update":
+        _exec_rag_update(job)
+    elif kind == "user_memory_nowaday":
+        _exec_user_memory_nowaday(job)
+    elif kind == "agent_run":
+        return _exec_agent_run(job)
+    elif kind == "agent_push":
+        return _exec_agent_push(job)
+    else:
+        raise ValueError(f"unknown kind: {kind}")
+    return ""
 
 
 def _exec_rag_update(job: dict):
@@ -289,6 +344,7 @@ def _exec_agent_run(job: dict) -> str:
                 for _ in dme.DigiMatsuExecute_Practice(
                         service_info, user_info, session_id, session_name,
                         agent_file, user_input,
+                        in_situation=_scheduled_situation(job, agent_file),
                         in_overwrite_items=overwrite_items, in_execution=exec_dict):
                     pass
             first = first or session_id
@@ -298,10 +354,16 @@ def _exec_agent_run(job: dict) -> str:
     if not targets:
         raise ValueError("agent_run matched no target session")
 
+    # MEMORY_SAVE means the run itself is kept: it executes inside each target
+    # as an ordinary turn, so Detail Information / Analytics (RAG, web search,
+    # thinking) exist for it. Without it the text is composed in a throwaway
+    # session and only the text is posted.
+    save_turn = msg_mode != "fixed" and bool(execution.get("MEMORY_SAVE"))
     max_gen = int(params.get("max_generated_sessions") or PUSH_MAX_GENERATED_SESSIONS)
-    if msg_mode != "fixed" and per_session and len(targets) > max_gen:
+    if msg_mode != "fixed" and (per_session or save_turn) and len(targets) > max_gen:
+        _why = "per-session generation" if per_session else "MEMORY_SAVE (runs inside each target)"
         raise ValueError(
-            f"per-session generation would call the LLM {len(targets)} times "
+            f"{_why} would call the LLM {len(targets)} times "
             f"(limit {max_gen}); narrow the target or raise max_generated_sessions")
 
     shared_text = ""
@@ -309,12 +371,21 @@ def _exec_agent_run(job: dict) -> str:
         shared_text = user_input
         if not shared_text:
             raise ValueError("message.mode=fixed requires params.user_input")
-    elif not per_session:
+    elif not (per_session or save_turn):
         shared_text = _push_generate_message(job)
 
     delivered, failed = [], []
     for sid in targets:
         try:
+            if save_turn:
+                if not _push_generate_message(job, sid, save=True):
+                    raise ValueError("empty message")
+                _sess = dms.DigiMSession(sid)
+                _sess.save_history_batch(str(_sess.get_seq_history()), seq_setting_data={
+                    "PUSH": {"job_id": job.get("job_id", ""), "job_name": job_name,
+                             "at": str(datetime.now())}})
+                delivered.append(sid)
+                continue
             text = (_push_generate_message(job, sid)
                     if (msg_mode != "fixed" and per_session) else shared_text)
             if not text:
@@ -322,7 +393,8 @@ def _exec_agent_run(job: dict) -> str:
             dms.DigiMSession(sid).save_push_message(
                 text, agent_file=agent_file, job_id=job.get("job_id", ""),
                 job_name=job_name, owner_user_id=owner,
-                save_to_memory=bool(save_to_memory))
+                save_to_memory=bool(save_to_memory),
+                prompt_text="" if msg_mode == "fixed" else _push_prompt(params))
             delivered.append(sid)
         except Exception as e:
             logger.error(f"[scheduler] delivery failed session={sid}: {e}")
@@ -384,18 +456,22 @@ def _push_resolve_targets(job: dict) -> list:
     return out
 
 
-def _push_generate_message(job: dict, session_id: str = "") -> str:
+def _push_prompt(params: dict) -> str:
+    return params.get("user_input") or (params.get("message") or {}).get("prompt") or ""
+
+
+def _push_generate_message(job: dict, session_id: str = "", save: bool = False) -> str:
     """Ask the agent to compose the push text. With `session_id` the agent
     sees that conversation's memory, so the message can react to it; without,
-    it composes once for everyone."""
+    it composes once for everyone. `save=True` (with a session_id) keeps the
+    run as a normal turn of that session instead of discarding it."""
     import DigiM_Execute as dme
     import DigiM_Session as dms
 
     params = job.get("params") or {}
-    message = params.get("message") or {}
     agent_file = params.get("agent_file")
     owner = job.get("owner_user_id") or "Scheduler"
-    prompt = params.get("user_input") or message.get("prompt") or ""
+    prompt = _push_prompt(params)
 
     gen_session_id = session_id or ("SCH" + dms.set_new_session_id())
 
@@ -426,13 +502,17 @@ def _push_generate_message(job: dict, session_id: str = "") -> str:
         "LAST_ONLY": True,
     }
     exec_dict.update(params.get("execution") or {})
-    exec_dict["MEMORY_SAVE"] = False
-    exec_dict["SAVE_DIGEST"] = False
+    if not (save and session_id):
+        exec_dict["MEMORY_SAVE"] = False
+        exec_dict["SAVE_DIGEST"] = False
 
     text = ""
     for _item in dme.DigiMatsuExecute_Practice(
             service_info, user_info, gen_session_id, gen_session_name,
-            agent_file, prompt, in_execution=exec_dict):
+            agent_file, prompt,
+            in_situation=_scheduled_situation(job, agent_file),
+            in_overwrite_items=_agent_overwrite_items(agent_file, params.get("engine") or ""),
+            in_execution=exec_dict):
         # The generator yields both 4- and 5-element tuples (status pings vs a
         # completed turn), so index rather than unpack — element 2 is the text
         # in either shape.

@@ -2322,6 +2322,8 @@ Enabling Web search lets you supplement the input to the LLM with the latest inf
 
 **Injection guardrail**: The raw web-search body is not mixed straight into `user_query`; it is wrapped in `[参考資料 — Web検索結果 (ここから)]` / `[参考資料 END]` (see [DigiM_Execute.py `web_context`](DigiM_Execute.py)) with four rules — do not copy verbatim, respect the personality voice, prioritize the ongoing conversation and user intent, and use only what's necessary. This suppresses the failure mode where the LLM starts echoing the web page's tone and loses its own persona / conversation context.
 
+**Search text and situation**: the built-in web search, Thinking's preview search and the `WebSearch` CONTEXT SKILL all build their search text with the same function (`_build_web_search_text`): what to search for (Thinking's query when it made one), the original question, the conversation so far (with MEMORY_USE), the current situation (situation text and date/time), plus a date anchor ("今日の日付は YYYY年MM月DD日 です"). Engines resolve "yesterday" / "recently" against their own idea of today, so every path carries the situation's date (the real date under No Date). The `WebSearch` SKILL uses the engine selected in the UI unless its ARGS_HINT names one, and reuses Thinking's preview result when the text and engine match instead of searching twice. The text actually sent is visible as `search_text` in the web-search log under Detail Information.
+
 #### Outbound guardrail (confidential-data filter)
 
 A web-search query is assembled from the user's chat input, so posting it to a third-party search API can carry confidential text out of the system. [DigiM_Guardrail.py](DigiM_Guardrail.py) intercepts it **at that egress point**.
@@ -2487,15 +2489,19 @@ Scheduler → **Add New Job** → Kind `agent_run` covers both recurring agent r
 | **Message** | `generated` (hand the prompt to the agent) / `fixed` (no LLM call; the text is posted verbatim) |
 | **Compose separately for each target session** | For `generated` into existing sessions. On = one call per session |
 | **Keep in conversation memory** | When delivering into existing sessions. Off means the message **still renders in the chat but is not recalled** by later turns (`SETTING.MEMORY_FLG="N"`) |
-| **Execution flags** | MEMORY_USE / RAG_QUERY_GENE / META_SEARCH / THINKING_MODE / PRIVATE_MODE, etc. |
+| **Execution flags** | MEMORY_USE / MEMORY_SAVE / RAG_QUERY_GENE / META_SEARCH / THINKING_MODE / PRIVATE_MODE, etc. What **MEMORY_SAVE** means when delivering into existing sessions is below |
 
 **Targets are a filter, not a stored group.** Sessions created after the job was registered are picked up automatically when they match, so there is no group CRUD to maintain. The form shows the live match count.
 
 > **Delivering into an existing session never changes its Chat Name, User or Service.** Per-session generation runs the agent inside the target conversation so it can read that context, but the session keeps its original name and identity — the WebUI session list matches on `service_id` + `user_id`, so rewriting either hides the session from its owner.
 
-> **Cost guard**: per-session generation costs one LLM call per target. Above **20 sessions** the run is refused (tune with `max_generated_sessions`). Shared generation always composes exactly once; `fixed` never calls the LLM.
+> **Existing-session delivery and MEMORY_SAVE**: with `generated` and **MEMORY_SAVE on**, the agent runs inside each target session and **that turn is saved as an ordinary conversation turn** (prompt = the job's input; Detail Information / Analytics Results / web search and Thinking records all available; the seq's `SETTING.PUSH` carries the job). With it **off**, the text is composed in a throwaway session and only the text is posted as a `type: "PUSH"` turn (no execution details are kept).
 
-Each run records `last_push` on the job (`targets` / `delivered[]` / `failed[]`), shown in the job list. One failing session does not abort the rest. Messages delivered into existing sessions land as ordinary `type: "PUSH"` turns.
+> **Date (situation)**: scheduled runs pass **the current date/time in the job's timezone** as the situation, the same as the WebUI's Real Date (no date when the agent's `EXECUTION_DEFAULTS.TIME_MODE` is `No Date`). The main agent's situation, the date anchor on web-search queries, and Thinking / meta-search date reasoning all use it.
+
+> **Cost guard**: per-session generation, and delivery into existing sessions with MEMORY_SAVE on, cost one LLM call per target. Above **20 sessions** the run is refused (tune with `max_generated_sessions`). Shared generation always composes exactly once; `fixed` never calls the LLM.
+
+Each run records `last_push` on the job (`targets` / `delivered[]` / `failed[]`), shown in the job list. One failing session does not abort the rest. With MEMORY_SAVE off, messages delivered into existing sessions land as ordinary `type: "PUSH"` turns.
 
 > The former `kind: "agent_push"` has been folded into `agent_run`. Existing jobs keep running and are normalized to `agent_run` on save.
 
@@ -2764,6 +2770,17 @@ The general-purpose scheduler is managed from the **Scheduler menu** (at the top
 | `user_memory_nowaday` | For all users, runs the current month's Nowaday profile update -> diff merge into Persona, in order. No session is created. |
 | `agent_run` | Runs an agent on a schedule and delivers the result. Combine a **target** (new session / all active / selected) with a **message** (agent-generated or fixed text). For new sessions the run issues one as the **owner user** (service_id=`Scheduler`, session_id=`SCH<datetime>`, name=`[Scheduler] <job name>`) and the response is saved to chat history as usual. |
 
+**Workflow (`steps`):** a job is a serial list of steps. **Add New Job** opens with a single step; **＋ Add step** appends one below, **↑ / ↓** reorder a step and **✕** removes it. Each step has its own Kind (`agent_run` / `rag_update` / `user_memory_nowaday`) and settings, so several `agent_run` steps can each use a different agent, prompt and target. "Update RAG, then run the daily reflection" is a `rag_update` step followed by an `agent_run` step:
+
+```json
+"steps": [
+  {"id": "st_1a2b3c4d", "kind": "rag_update", "params": {}},
+  {"id": "st_5e6f7a8b", "kind": "agent_run", "params": {"agent_file": "agent_01DigitalMATSUMOTO.json", "user_input": "…"}}
+]
+```
+
+Steps run top to bottom. A failed step stops the job and marks every later step `skipped`, so nothing downstream runs on data a step failed to refresh while still reporting success. Each step's status and duration are recorded in `last_steps` and shown in the job list as `last steps: rag_update ✓ 192.4s → agent_run ✓ 48.1s`. The job's top-level `kind` / `params` mirror its last step. Existing jobs without `steps` (including the former `pre_steps` shape) are read as a list of steps on load and keep running unchanged.
+
 **Schedule:** built from the Schedule radio in the WebUI — no need to hand-write cron.
 
 | Mode | Stored value | Use |
@@ -2778,7 +2795,7 @@ The general-purpose scheduler is managed from the **Scheduler menu** (at the top
 
 Whatever the mode, the stored value and a human reading of it (e.g. `once at 2026-12-24 09:00 [America/New_York]`) appear under the form and in the job list. One-shot jobs register a `DateTrigger`; **a time already past in that zone does not fire**, and the form warns with the current local time (the server clock is rarely the operator's wall clock, so the check always uses the selected zone).
 
-**Recording of last run:** For kinds other than `agent_run`, no session is left; only `last_run` / `last_status` / `last_error` are recorded in the job row (on error, shown in the Error log expander). Only for `agent_run` is `last_session_id` also saved, so the session can be opened from the chat history to check the response.
+**Recording of last run:** For kinds other than `agent_run`, no session is left; only `last_run` / `last_status` / `last_error` are recorded in the job row (on error, shown in the Error log expander). Only for `agent_run` is `last_session_id` also saved, so the session can be opened from the chat history to check the response. Multi-step jobs also record each step's status (`success` / `error` / `skipped`) and seconds in `last_steps`.
 
 **Permissions:** The Scheduler menu is accessible only to users with `Allowed["Scheduler"] = true` (configured in `users.json` / `sample_users.json`). The owner user (`owner_user_id`) is auto-set to the logged-in user at save time, and is associated with the session at `agent_run` execution.
 

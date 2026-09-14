@@ -58,13 +58,46 @@ def _empty_job(job_id: str = "") -> Dict[str, Any]:
         "enabled": False,
         "owner_user_id": "",
         "params": {},
+        # Serial workflow: [{"id", "kind", "params"}], run top to bottom.
+        # Empty means the legacy shape (pre_steps + kind/params); see job_steps.
+        "steps": [],
+        "pre_steps": [],
         "last_run": "",
         "last_status": "",
         "last_error": "",
         "last_session_id": "",
+        "last_steps": [],
         "created_at": _now_str(),
         "updated_at": _now_str(),
     }
+
+
+# Legacy pre_steps could only hold kinds that need no params.
+_PARAMLESS_KINDS = ("rag_update", "user_memory_nowaday")
+
+
+def new_step(kind: str = "agent_run") -> Dict[str, Any]:
+    return {"id": f"st_{uuid.uuid4().hex[:8]}", "kind": kind, "params": {}}
+
+
+def job_steps(job: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """The job as its ordered list of steps.
+
+    Jobs saved before workflows have no `steps`; they are their pre_steps
+    followed by the job's own kind + params, so they keep running unchanged.
+    """
+    raw = [st for st in (job.get("steps") or []) if isinstance(st, dict) and st.get("kind")]
+    if not raw:
+        raw = [{"kind": st["kind"]} for st in (job.get("pre_steps") or [])
+               if isinstance(st, dict) and st.get("kind") in _PARAMLESS_KINDS]
+        raw.append({"kind": job.get("kind") or "rag_update", "params": job.get("params") or {}})
+    out = []
+    for st in raw:
+        step = new_step("agent_run" if st.get("kind") == "agent_push" else st.get("kind"))
+        step["id"] = st.get("id") or step["id"]
+        step["params"] = dict(st.get("params") or {})
+        out.append(step)
+    return out
 
 
 def load_all() -> List[Dict[str, Any]]:
@@ -111,6 +144,15 @@ def upsert(job: Dict[str, Any]) -> Dict[str, Any]:
     # only target + delivery); normalize on write so the UI shows one kind.
     if job.get("kind") == "agent_push":
         job = dict(job); job["kind"] = "agent_run"
+    if job.get("steps"):
+        # kind/params mirror the last step, so readers that predate workflows
+        # (and the check below) still see a real kind.
+        job = dict(job)
+        job["steps"] = job_steps(job)
+        for _st in job["steps"]:
+            if _st["kind"] not in VALID_KINDS:
+                raise ValueError(f"invalid step kind: {_st['kind']}")
+        job["kind"], job["params"] = job["steps"][-1]["kind"], job["steps"][-1]["params"]
     if job.get("kind") not in VALID_KINDS:
         raise ValueError(f"invalid kind: {job.get('kind')}")
     with _LOCK:
@@ -152,6 +194,20 @@ def delete(job_id: str) -> bool:
             return False
         save_all(new_jobs)
         return True
+
+
+def update_steps(job_id: str, steps: List[Dict[str, Any]]):
+    """Record per-step progress of the current / last run."""
+    with _LOCK:
+        jobs = load_all()
+        for i, job in enumerate(jobs):
+            if job.get("job_id") != job_id:
+                continue
+            job["last_steps"] = steps
+            job["updated_at"] = _now_str()
+            jobs[i] = job
+            save_all(jobs)
+            return
 
 
 def update_run_result(job_id: str, status: str, error: str = "",

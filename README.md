@@ -2359,6 +2359,8 @@ Web検索を有効にすると、LLMへの入力にWebの最新情報を付加�
 
 **注入時のガードレール**: Web 検索結果は生の本文を `user_query` に混ぜず、`[参考資料 — Web検索結果 (ここから)]` / `[参考資料 END]` の枠で囲んで注入します（[DigiM_Execute.py `web_context`](DigiM_Execute.py)）。中に「本文を丸写ししない／口調・視点は人格設定に従う／会話流れとユーザー意図を最優先／一部だけ使ってよい」の4ルールを添え、LLM が Web の口調に引きずられて人格や会話文脈を失う挙動を抑えています。
 
+**検索文とシチュエーション**: 組み込みの Web検索、Thinking の事前検索、CONTEXT スキルの `WebSearch` は、すべて同じ関数（`_build_web_search_text`）で検索文を組み立てます。中身は「検索して欲しい内容（Thinking が作ったクエリがあればそれ）」「元の質問」「これまでの会話（MEMORY_USE 時）」「今の状況（シチュエーションの文章と日時）」、それに「今日の日付は YYYY年MM月DD日 です」という日付注記です。検索エンジンは「昨日」「最近」を自分の考える今日で解釈するので、どの経路でもシチュエーションの日時を渡しています（No Date のときは実時刻）。`WebSearch` スキルは、ARGS_HINT にエンジン指定が無ければ UI で選んだエンジンを使います。Thinking の事前検索と検索文・エンジンが一致すればその結果を再利用し、同じ検索を二重に行いません。実際に送った検索文は Detail Information の Web検索ログ（`search_text`）で確認できます。
+
 #### 送信前ガードレール（秘匿情報のフィルタ）
 
 Web検索クエリはユーザーのチャット入力から組み立てられるため、そのまま外部の検索APIへ送ると入力に含まれる秘匿情報が社外に出ます。これを**送信直前で遮断**するのが [DigiM_Guardrail.py](DigiM_Guardrail.py) です。
@@ -2789,6 +2791,17 @@ USER_MEMORY_PERSONA_BACKEND="EXCEL"
 | `user_memory_nowaday` | 全ユーザーに対し当月のNowadayプロファイル更新 → Personaへの差分マージを順に実行。セッションは作成されない。 |
 | `agent_run` | エージェントをスケジュール実行し、結果を届ける。**配信先**（新規セッション／アクティブ全件／選択）と**メッセージ**（エージェント生成／固定文）を組み合わせて指定。新規セッションの場合は **所有者ユーザー** で発番（service_id=`Scheduler`、session_id=`SCH<日時>`、名前=`[Scheduler] <ジョブ名>`）し、応答は通常のチャット履歴として保存されます。 |
 
+**ワークフロー（`steps`）:** ジョブは直列に並んだステップとして組み立てます。**Add New Job** を開くとステップが1つだけあり、**＋ Add step** で下に追加、各ステップの **↑ / ↓** で並べ替え、**✕** で削除できます。ステップごとに Kind（`agent_run` / `rag_update` / `user_memory_nowaday`）とその設定を持つので、`agent_run` を複数並べてもそれぞれ別のエージェント・プロンプト・配信先で動きます。例えば「RAGを更新してからデイリーリフレクションを実行する」は、1つ目を `rag_update`、2つ目を `agent_run` にするだけです。
+
+```json
+"steps": [
+  {"id": "st_1a2b3c4d", "kind": "rag_update", "params": {}},
+  {"id": "st_5e6f7a8b", "kind": "agent_run", "params": {"agent_file": "agent_01DigitalMATSUMOTO.json", "user_input": "…"}}
+]
+```
+
+ステップは上から順に実行されます。途中で失敗した時点でジョブは止まり、以降のステップは `skipped` になります（更新に失敗した古いデータのまま後続が動き、「成功」に見えるのを防ぐため）。各ステップの結果と所要時間は `last_steps` に記録され、一覧に `last steps: rag_update ✓ 192.4s → agent_run ✓ 48.1s` の形で表示されます。ジョブ直下の `kind` / `params` は最後のステップの写しです。`steps` を持たない既存のジョブ（旧 `pre_steps` 形式を含む）は、読み込み時にそのままステップの並びとして扱われるので、書き換えなしで動きます。
+
 **スケジュール指定:** WebUI の Schedule ラジオから組み立てます（生の cron を覚える必要はありません）。
 
 | モード | 保存される値 | 用途 |
@@ -2803,7 +2816,7 @@ USER_MEMORY_PERSONA_BACKEND="EXCEL"
 
 いずれのモードでも、保存値と人が読める形（例 `once at 2026-12-24 09:00 [America/New_York]`）がフォーム直下と一覧に表示されます。1回実行は `DateTrigger` で登録され、**指定時刻がそのゾーンで過去の場合は発火せず**、フォームに現在時刻付きで警告が出ます（サーバの時計と運用者の壁時計は一致しないことが多いため、判定は必ず選択ゾーンで行われます）。
 
-**最終実行の記録:** `agent_run` 以外はセッションを残さず、ジョブ行に `last_run` / `last_status` / `last_error` のみが記録されます（エラー時は Error log expander で表示）。`agent_run` のみ `last_session_id` も保存されるので、当該セッションをチャット履歴から開いて応答を確認できます。
+**最終実行の記録:** `agent_run` 以外はセッションを残さず、ジョブ行に `last_run` / `last_status` / `last_error` のみが記録されます（エラー時は Error log expander で表示）。`agent_run` のみ `last_session_id` も保存されるので、当該セッションをチャット履歴から開いて応答を確認できます。複数ステップのジョブは、`last_steps` にステップごとの状態（`success` / `error` / `skipped`）と所要秒数も記録されます。
 
 **動かないときの確認:**
 
@@ -2832,15 +2845,19 @@ Scheduler の **Add New Job** → Kind `agent_run` で、エージェントの�
 | **Message** | `generated`（プロンプトを渡してエージェントに生成させる）/ `fixed`（LLM を呼ばず、入力文をそのまま投函） |
 | **Compose separately for each target session** | `generated` かつ配信先が既存セッションのとき。ON でセッション毎に個別生成 |
 | **Keep in conversation memory** | 既存セッションへの配信時。OFF で**チャットには表示されるが以降のターンでは想起されない**（`SETTING.MEMORY_FLG="N"`） |
-| **Execution flags** | 実行時の設定（MEMORY_USE / RAG_QUERY_GENE / META_SEARCH / THINKING_MODE / PRIVATE_MODE ほか） |
+| **Execution flags** | 実行時の設定（MEMORY_USE / MEMORY_SAVE / RAG_QUERY_GENE / META_SEARCH / THINKING_MODE / PRIVATE_MODE ほか）。既存セッションへの配信での **MEMORY_SAVE** の意味は下記 |
 
 **送信対象は「グループ」ではなくフィルタ条件**として保持します。ジョブ登録後に作られたセッションも条件に合えば自動的に対象になり、グループの CRUD や整合管理が不要です。フォームには現在の該当件数が表示されます。
 
 > **既存セッションへの配信は、そのセッションの Chat Name / User / Service を変更しません。** セッション毎の個別生成は対象セッションの中でエージェントを実行して文脈を読ませますが、名前と identity は元の値を引き継ぎます（WebUI の一覧は `service_id` と `user_id` の一致で絞り込むため、書き換えると持ち主から見えなくなります）。
 
-> **コストガード**: セッション毎の個別生成は対象数だけ LLM を呼びます。既定で **20 セッションを超えるとエラー**にして実行を止めます（`max_generated_sessions` で変更可）。共通生成は対象が何件でも生成は 1 回、`fixed` は 0 回です。
+> **既存セッションへの配信と MEMORY_SAVE**: `generated` で **MEMORY_SAVE が ON** のときは、各配信先セッションの中でエージェントを実行し、**そのターンを通常の会話として保存**します（プロンプト＝ジョブの入力文、Detail Information / Analytics Results / Web検索・Thinking の記録あり。seq の `SETTING.PUSH` にジョブ情報を付与）。**OFF** のときは使い捨てセッションで本文を生成し、配信先には本文だけを `type: "PUSH"` のターンとして投函します（実行の詳細は残りません）。
 
-配信結果はジョブに `last_push`（`targets` / `delivered[]` / `failed[]`）として記録され、一覧に出ます。1 セッションの失敗で全体は止まらず、残りの配信は継続します。既存セッションへ投函されたメッセージは `type: "PUSH"` のターンとして通常の会話履歴に入ります。
+> **日付（シチュエーション）**: スケジュール実行は、WebUI の Real Date と同じく **ジョブのタイムゾーンでの現在日時** をシチュエーションとして渡します（エージェントの `EXECUTION_DEFAULTS.TIME_MODE` が `No Date` なら日付なし）。メインエージェントの【状況】、Web検索クエリの日付注記、Thinking・メタ検索の日付判定はこの日時を基準にします。
+
+> **コストガード**: セッション毎の個別生成と、MEMORY_SAVE ON での既存セッションへの配信は、対象数だけ LLM を呼びます。既定で **20 セッションを超えるとエラー**にして実行を止めます（`max_generated_sessions` で変更可）。共通生成は対象が何件でも生成は 1 回、`fixed` は 0 回です。
+
+配信結果はジョブに `last_push`（`targets` / `delivered[]` / `failed[]`）として記録され、一覧に出ます。1 セッションの失敗で全体は止まらず、残りの配信は継続します。MEMORY_SAVE OFF で既存セッションへ投函されたメッセージは `type: "PUSH"` のターンとして通常の会話履歴に入ります。
 
 > 旧 `kind: "agent_push"` は `agent_run` に統合されました。既存ジョブはそのまま動作し、保存時に `agent_run` へ正規化されます。
 
