@@ -228,7 +228,7 @@ TIKTOKEN_DISABLE="true"
 ```
 
 > **ポイント**
-> - `generate_response_T_azure_openai` は `_get_azure_openai_client()`（`AzureOpenAI` クライアント）を使い、上記の `AZURE_OPENAI_*` 環境変数で接続します（[DigiM_FoundationModel.py](DigiM_FoundationModel.py) 参照）。
+> - `generate_response_T_azure_openai` は `_get_azure_openai_client()`（`AzureOpenAI` クライアント）を使い、上記の `AZURE_OPENAI_*` 環境変数で接続します（[DigiM_FoundationModel.py](../DigiM_FoundationModel.py) 参照）。
 > - Azure では `MODEL` は OpenAI のモデル名ではなく、Azure ポータルで作成した**デプロイ名**を指定します。
 > - 画像生成を使う場合は `generate_image_dalle` → `generate_image_azure_dalle` も同様に置き換えます。
 > - 各エージェントの `ENGINE.LLM.DEFAULT` が Azure 化したキーを指しているか確認してください。

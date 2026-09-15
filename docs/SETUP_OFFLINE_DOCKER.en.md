@@ -226,7 +226,7 @@ and replace `MODEL` with the **Azure deployment name**.
 ```
 
 > **Notes**
-> - `generate_response_T_azure_openai` uses `_get_azure_openai_client()` (the `AzureOpenAI` client) and connects via the `AZURE_OPENAI_*` env vars above (see [DigiM_FoundationModel.py](DigiM_FoundationModel.py)).
+> - `generate_response_T_azure_openai` uses `_get_azure_openai_client()` (the `AzureOpenAI` client) and connects via the `AZURE_OPENAI_*` env vars above (see [DigiM_FoundationModel.py](../DigiM_FoundationModel.py)).
 > - On Azure, `MODEL` is not the OpenAI model name but the **deployment name** you created in the Azure portal.
 > - For image generation, similarly replace `generate_image_dalle` with `generate_image_azure_dalle`.
 > - Confirm each agent's `ENGINE.LLM.DEFAULT` points at an Azure-enabled key.

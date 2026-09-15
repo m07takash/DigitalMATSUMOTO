@@ -83,7 +83,7 @@ python3 -m http.server 8000
 
 ### 方法C: NGINX 経由で外部公開
 
-社内 URL や独自ドメインから配信する場合。`SETUP_NGINX.md` の手順に従って、`demo/sample_demo/` を静的配信対象に追加します。
+社内 URL や独自ドメインから配信する場合。`docs/SETUP_NGINX.md` の手順に従って、`demo/sample_demo/` を静的配信対象に追加します。
 
 ```nginx
 location /demo/ {

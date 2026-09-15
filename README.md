@@ -11,7 +11,7 @@
 - [アーキテクチャ概要](#アーキテクチャ概要)
 - [主要モジュール](#主要モジュール)
 - [ディレクトリ構造](#ディレクトリ構造)
-- [環境構築・インストレーション](#環境構築・インストレーション)
+- [環境構築・インストレーション](#環境構築インストレーション)
   - [前提条件](#前提条件)
   - [1. リポジトリの取得](#1-リポジトリの取得)
   - [2. Dockerイメージのビルド](#2-dockerイメージのビルド)
@@ -41,7 +41,7 @@
   - [3. Topic（旧 感度分析）](#3-topic旧-感度分析)
   - [4. Ask Agent](#4-ask-agent)
   - [PageIndex](#pageindex)
-  - [エクスポート・レポート](#エクスポート・レポート)
+  - [エクスポート・レポート](#エクスポートレポート)
   - [セッション管理](#セッション管理)
 - [User Memory Explorer](#user-memory-explorer)
 - [Agent Performance Explorer (APE)](#agent-performance-explorer-ape)
@@ -340,7 +340,7 @@ cp startup.sh_sample   startup.sh     # 起動スクリプト（実行権限付�
 
 **オプション設定（PostgreSQL）：**
 
-分析用DBを使用する場合は以下を設定します（詳細は `SETUP_POSTGRESQL.md` / `SETUP_POSTGRESQL_AZURE.md` を参照）。
+分析用DBを使用する場合は以下を設定します（詳細は `docs/SETUP_POSTGRESQL.md` / `docs/SETUP_POSTGRESQL_AZURE.md` を参照）。
 
 | 変数 | 説明 |
 |------|------|
@@ -551,7 +551,7 @@ sudo systemctl reload nginx
 
 ### 8. 閉域ネットワーク（Azure）への構築
 
-pip / Git / apt が使えない閉域ネットワーク下の Azure 環境へ構築する場合は、ネット接続環境でビルド済みの Docker イメージを丸ごと持ち込む方式をとります。tar 化・分割転送・ロードから、Azure OpenAI への切り替え（エージェント定義の `FUNC_NAME` 変更）までの一連の手順は [SETUP_OFFLINE_DOCKER.md](SETUP_OFFLINE_DOCKER.md) を参照してください。
+pip / Git / apt が使えない閉域ネットワーク下の Azure 環境へ構築する場合は、ネット接続環境でビルド済みの Docker イメージを丸ごと持ち込む方式をとります。tar 化・分割転送・ロードから、Azure OpenAI への切り替え（エージェント定義の `FUNC_NAME` 変更）までの一連の手順は [docs/SETUP_OFFLINE_DOCKER.md](docs/SETUP_OFFLINE_DOCKER.md) を参照してください。
 
 ---
 
@@ -1174,6 +1174,8 @@ WebUIのサイドバー **RAG Management → Page Index Export** から、既存
 #### グラフRAG（graph型）
 
 > グラフを手で設計する方法（何をノードにするか、検索で引ける形にするコツ、サンプルの駒木乃英人を使った例）は [ナレッジグラフの書き方ガイド](docs/KNOWLEDGE_GRAPH_GUIDE.md) にまとめています。
+>
+> テキストを渡すとグラフ列の JSON を作ってくれる Claude 用の Skill も同梱しています：[docs/SKILL_KNOWLEDGE_GRAPH.md](docs/SKILL_KNOWLEDGE_GRAPH.md)。Claude Code では `.claude/skills/digim-knowledge-graph/SKILL.md` として置くと、「ナレッジグラフを作って」と頼むだけで使われます（claude.ai では、そのフォルダを zip にして Skills にアップロード）。
 
 エンティティ（実体）と述語付きエッジだけを持つ**純構造の知識グラフ**を専用フォルダ (`user/common/rag/graph/{DATA_NAME}/graph.json`) にビルドし、`RETRIEVER: "Graph"` を指定した KNOWLEDGE / BOOK から参照します。本文チャンクはグラフに持たず、Vector RAG (ChromaDB) を**併置**して役割分担する設計 (→ 詳細は [Graph型 KNOWLEDGE / BOOK](#graph型-knowledge--bookgraphrag検索) 章)。
 
@@ -1854,6 +1856,7 @@ Notion保存時は `notion_name` でプロパティ名を個別に指定でき�
 
 **位置パンくず（自動付与）**: PageIndex で選択された各ページの本文先頭に、ID階層から逆引きした `[Path] 親タイトル > 子タイトル > 自タイトル` という1行が自動的に差し込まれます（例：`id=1-1-1` → `[Path] システム概要 > アーキテクチャ > ChromaDB連携`）。これにより LLM がページの **知識全体における位置づけ** を把握できます。中間IDが `_index.json` に存在しない場合はそのセグメントを黙ってスキップ。
 
+<a id="graph型-knowledge--bookgraphrag検索"></a>
 **Graph型 KNOWLEDGE / BOOK（GraphRAG検索）：**
 
 エンティティ（実体）と述語付きエッジだけを持つ**純構造の知識グラフ**から、クエリに関わる**経路（シードエンティティ間のつながり）と近傍**を取得してコンテキストに注入します。チャンク本文はグラフに持たず、本文知識は従来どおり Vector RAG（ChromaDB）を**併置**して担当させる役割分離の設計です。ノード・エッジには `props`（状態: 生年月日/居住地、役職/期間など）を持てます。
@@ -2284,7 +2287,7 @@ Practiceの各CHAINステップで、その**ステップだけ**を複数ペル
 | `character_file` | str | `character/` 配下のファイル名 |
 | `active` | `Y`/`N` | 論理削除 |
 
-**RDBスキーマ**: 詳細は `SETUP_POSTGRESQL.md` の `digim_agent_personas` 項を参照。
+**RDBスキーマ**: 詳細は `docs/SETUP_POSTGRESQL.md` の `digim_agent_personas` 項を参照。
 
 ### プラクティスの設定
 

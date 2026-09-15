@@ -337,7 +337,7 @@ Then edit `system.env`.
 
 **Optional settings (PostgreSQL):**
 
-To use the analytics DB, configure the following (see `SETUP_POSTGRESQL.en.md` / `SETUP_POSTGRESQL_AZURE.en.md` for details).
+To use the analytics DB, configure the following (see `docs/SETUP_POSTGRESQL.en.md` / `docs/SETUP_POSTGRESQL_AZURE.en.md` for details).
 
 | Variable | Description |
 |------|------|
@@ -547,7 +547,7 @@ sudo systemctl reload nginx
 
 ### 8. Deploying to a closed network (Azure)
 
-To deploy into a closed (air-gapped) Azure environment where pip / Git / apt are unavailable, carry a pre-built Docker image over in its entirety from an internet-connected environment. For the full procedure — saving and splitting the image as a tar, transferring and loading it, and switching to Azure OpenAI (changing `FUNC_NAME` in the agent definitions) — see [SETUP_OFFLINE_DOCKER.en.md](SETUP_OFFLINE_DOCKER.en.md).
+To deploy into a closed (air-gapped) Azure environment where pip / Git / apt are unavailable, carry a pre-built Docker image over in its entirety from an internet-connected environment. For the full procedure — saving and splitting the image as a tar, transferring and loading it, and switching to Azure OpenAI (changing `FUNC_NAME` in the agent definitions) — see [docs/SETUP_OFFLINE_DOCKER.en.md](docs/SETUP_OFFLINE_DOCKER.en.md).
 
 ---
 
@@ -785,7 +785,7 @@ If the package is missing when CosmosDB mode is selected, the store falls back t
 
 Common keys: `Streaming Mode` / `Memory Use` / `Save Digest` / `Private Mode` / `RAG Query Gen` / `Meta Search` / `Magic Word` / `WEB Search` / `Web Search Guardrail` / `Include URL Subpages` / `Reference Knowledge` / `Diagrams` / `Emphasis` / `Match Input Language` / `Language` / `Speaking Style` / `Web Search Engine` / `Max Personas`.
 
-> **Thinking is managed on the agent side.** `Thinking Mode` / `Thinking Targets` / `Max Thinking Turns` live in the agent JSON's top-level `THINKING` block, not in Defaults (this keeps per-user administration light as your user count grows). See [Agent setup → THINKING](#thinkingper-agent-thinking-mode-defaults) for details.
+> **Thinking is managed on the agent side.** `Thinking Mode` / `Thinking Targets` / `Max Thinking Turns` live in the agent JSON's top-level `THINKING` block, not in Defaults (this keeps per-user administration light as your user count grows). See [Agent setup → THINKING](#thinking-per-agent-thinking-mode-defaults) for details.
 
 ```json
 "THINKING": {
@@ -1169,6 +1169,8 @@ From the WebUI sidebar **RAG Management -> Page Index Export**, you can download
 #### Graph RAG (graph type)
 
 > How to design a graph by hand — what to make a node, how to shape it so retrieval actually finds things, with examples from the sample agent Hideto Komakino — is covered in the [Knowledge Graph Authoring Guide](docs/KNOWLEDGE_GRAPH_GUIDE.en.md).
+>
+> A Claude Skill that turns text into graph-column JSON is included as well: [docs/SKILL_KNOWLEDGE_GRAPH.md](docs/SKILL_KNOWLEDGE_GRAPH.md) (written in Japanese). Save it as `.claude/skills/digim-knowledge-graph/SKILL.md` and Claude Code picks it up whenever you ask for a knowledge graph (on claude.ai, zip that folder and upload it under Skills).
 
 Build a **pure-structure knowledge graph** (Entity nodes + predicate edges only, no chunk bodies) under a dedicated folder (`user/common/rag/graph/{DATA_NAME}/graph.json`) and reference it from a KNOWLEDGE / BOOK entry that sets `RETRIEVER: "Graph"`. Body-text retrieval stays on the Vector RAG (ChromaDB) side placed **alongside** the graph — the two split roles cleanly.
 
@@ -2247,7 +2249,7 @@ When `chain.PERSONAS = "THINKING"`, [`agent_65PersonaSelector.json`](user/common
 | `character_file` | str | File name under `character/` |
 | `active` | `Y`/`N` | Logical deletion |
 
-**RDB schema**: See the `digim_agent_personas` section of `SETUP_POSTGRESQL.en.md` for details.
+**RDB schema**: See the `digim_agent_personas` section of `docs/SETUP_POSTGRESQL.en.md` for details.
 
 ### Practice configuration
 

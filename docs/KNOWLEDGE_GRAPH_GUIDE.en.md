@@ -79,7 +79,7 @@ Write one JSON object per row (one fact).
 - A triple has non-empty `subject`, `relation` and `object` (a triple missing one is dropped on its own)
 - A node_prop has non-empty `entity` and `key`
 
-> **Pasting into Notion**: half-width spaces inside values can be wrapped into line breaks during the paste. A line break breaks the JSON and the row silently falls back to LLM extraction. Write `"バー Cielo"` as `"バー Cielo"` — the ` ` escape turns back into a normal space when the row is read.
+> **Pasting into Notion**: half-width spaces inside values can be wrapped into line breaks during the paste. A line break breaks the JSON and the row silently falls back to LLM extraction. Write `"バー Cielo"` as `"バー\u0020Cielo"` — the `\u0020` escape turns back into a normal space when the row is read.
 
 ---
 
@@ -320,7 +320,7 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/Sample01_Relations
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| One row was LLM-extracted instead | A half-width space in a value turned into a line break and broke the JSON | Write spaces as ` ` (section 2) |
+| One row was LLM-extracted instead | A half-width space in a value turned into a line break and broke the JSON | Write spaces as `\u0020` (section 2) |
 | A fact from another row is in the graph | The graph column was pasted by row position | Re-paste matched by ID (section 7) |
 | Asking about "outlets" or "reporting themes" returns nothing | Things were classified only by type (`object_type`), so no node has that name | Make the shared factor a real node (4.1) |
 | Questions about the protagonist return loosely related edges | Edges pile up on the protagonist and get cut by the cap | Split the hub with three layers (4.3) |
