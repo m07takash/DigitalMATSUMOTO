@@ -9640,7 +9640,7 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                                                 _ki_parent_data = dmu.read_json_file(_ki_parent_agent, agent_folder_path) if _ki_parent_agent else {}
                                                 _ki_agent_file = (
                                                     (_ki_parent_data.get("SUPPORT_AGENT", {}) or {}).get("KNOWLEDGE_INTERPRET")
-                                                    or "agent_77DigiMKnowledgeInterpret.json"
+                                                    or "agent_57KnowledgeInterpret.json"
                                                 )
                                                 _ki_user_query = (v2.get("prompt", {}).get("query", {}) or {}).get("input", "") or ""
                                                 _ki_ai_response = (v2.get("response", {}) or {}).get("text", "") or ""

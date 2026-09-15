@@ -187,7 +187,7 @@ def _detect_used_chunks(service_info, user_info, session_id, session_name,
     to the manifest.
 
     The selector agent (SUPPORT_AGENT.KNOWLEDGE_USAGE_SELECTOR, defaults to
-    agent_78DigiMKnowledgeUsageSelector.json) is a lightweight support
+    agent_58KnowledgeUsageSelector.json) is a lightweight support
     agent. Its prompt template is `Knowledge Usage Selector` — mirrors the
     Insight-Old "参照した【知識情報】と参考にした点(箇条書き)" idea but is
     RAG-name-agnostic and returns structured JSON.
@@ -200,7 +200,7 @@ def _detect_used_chunks(service_info, user_info, session_id, session_name,
     if not chunk_lookup or not primary_response:
         return []
     if not selector_agent_file:
-        selector_agent_file = "agent_78DigiMKnowledgeUsageSelector.json"
+        selector_agent_file = "agent_58KnowledgeUsageSelector.json"
     try:
         selector = dma.DigiM_Agent(selector_agent_file)
         model_type = "LLM"
@@ -1920,7 +1920,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                     _refresh_chunk_util(_cite_chunk_lookup, knowledge_selected)
                     _selector_agent = dma.resolve_support_agent(
                         (agent.agent.get("SUPPORT_AGENT") or {}).get(
-                            "KNOWLEDGE_USAGE_SELECTOR", "agent_78DigiMKnowledgeUsageSelector.json"),
+                            "KNOWLEDGE_USAGE_SELECTOR", "agent_58KnowledgeUsageSelector.json"),
                         agent.agent)
                     _ck_dbg["selector_agent"] = _selector_agent
                     _entries = _detect_used_chunks(

@@ -1,8 +1,8 @@
 {
     "DISPLAY": false,
-    "DISPLAY_NAME": "Knowledge Interpret (Generic)",
-    "NAME": "Knowledge Interpreter",
-    "ACT": "RAG/Vector DB の利用状況を分析・解釈する分析エージェント (任意のチャットエージェントが SUPPORT_AGENT.KNOWLEDGE_INTERPRET スロット経由で呼び出せる汎用版)",
+    "DISPLAY_NAME": "Knowledge Usage Selector (Generic)",
+    "NAME": "Knowledge Usage Selector",
+    "ACT": "本回答が生成される際に、どの Retrieved Knowledge チャンクが参照されたかを客観的に判定して構造化して返す判定エージェント (任意のチャットエージェントが SUPPORT_AGENT.KNOWLEDGE_USAGE_SELECTOR スロット経由で呼び出せる汎用版)",
     "PERSONALITY": {
         "LANGUAGE": "Japanese",
         "SPEAKING_STYLE": "Polite"
@@ -10,55 +10,10 @@
     "ENGINE": {
         "LLM": {
             "DEFAULT": "GPT-5.6-Luna",
-            "GPT-5.6-Terra": {
-                "NAME": "GPT-5.6-Terra",
-                "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5.6-terra",
-                "PARAMETER": {},
-                "TOKENIZER": "tiktoken",
-                "MEMORY": {
-                    "limit": 8000,
-                    "role": "both",
-                    "priority": "latest",
-                    "similarity_logic": "cosine",
-                    "digest": "Y"
-                },
-                "ACTIVE": true
-            },
             "GPT-5.6-Luna": {
                 "NAME": "GPT-5.6-Luna",
                 "FUNC_NAME": "generate_response_T_gpt",
                 "MODEL": "gpt-5.6-luna",
-                "PARAMETER": {},
-                "TOKENIZER": "tiktoken",
-                "MEMORY": {
-                    "limit": 8000,
-                    "role": "both",
-                    "priority": "latest",
-                    "similarity_logic": "cosine",
-                    "digest": "Y"
-                },
-                "ACTIVE": true
-            },
-            "GPT-5.4-mini": {
-                "NAME": "GPT-5.4-mini",
-                "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5.4-mini",
-                "PARAMETER": {},
-                "TOKENIZER": "tiktoken",
-                "MEMORY": {
-                    "limit": 8000,
-                    "role": "both",
-                    "priority": "latest",
-                    "similarity_logic": "cosine",
-                    "digest": "Y"
-                },
-                "ACTIVE": true
-            },
-            "GPT-5.4-nano": {
-                "NAME": "GPT-5.4-nano",
-                "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5.4-nano",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {
@@ -116,6 +71,36 @@
                     "digest": "Y"
                 },
                 "ACTIVE": true
+            },
+            "Grok-4-Fast-Non-Reasoning": {
+                "NAME": "Grok-4-Fast-Non-Reasoning",
+                "FUNC_NAME": "generate_response_T_grok",
+                "MODEL": "grok-4-fast-non-reasoning",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {
+                    "limit": 8000,
+                    "role": "both",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "Y"
+                },
+                "ACTIVE": true
+            },
+            "Grok-4-Fast-Reasoning": {
+                "NAME": "Grok-4-Fast-Reasoning",
+                "FUNC_NAME": "generate_response_T_grok",
+                "MODEL": "grok-4-fast-reasoning",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {
+                    "limit": 8000,
+                    "role": "both",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "Y"
+                },
+                "ACTIVE": true
             }
         }
     },
@@ -124,7 +109,7 @@
             "MAGIC_WORDS": [
                 ""
             ],
-            "PRACTICE": "practice_17KnowledgeInterpret.json",
+            "PRACTICE": "practice_19KnowledgeUsageSelector.json",
             "ADD_KNOWLEDGE": []
         }
     },

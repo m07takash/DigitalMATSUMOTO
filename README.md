@@ -972,7 +972,7 @@ RAGデータに `private` フラグを設定できます。`private: true` の�
 
 ```json
 "item_dict": {
-  "db": "DigiMATSU_Identity_Memo",
+  "db": "Sample02_Experience",
   "title": {"名前": "title"},
   "private": {"非公開": "chk"}
 }
@@ -1036,7 +1036,7 @@ WebUIのサイドバー **RAG** セクションから「**Update RAG Data**」�
     "active": "Y",
     "input": "notion",
     "data_type": "pageindex",
-    "data_name": "DigiMATSU_Book",
+    "data_name": "NotionDB",
     "bucket": "AIUCStandard",
     "item_dict": {
       "book": {"ブック名": "select"},
@@ -1173,6 +1173,8 @@ WebUIのサイドバー **RAG Management → Page Index Export** から、既存
 
 #### グラフRAG（graph型）
 
+> グラフを手で設計する方法（何をノードにするか、検索で引ける形にするコツ、サンプルの駒木乃英人を使った例）は [ナレッジグラフの書き方ガイド](docs/KNOWLEDGE_GRAPH_GUIDE.md) にまとめています。
+
 エンティティ（実体）と述語付きエッジだけを持つ**純構造の知識グラフ**を専用フォルダ (`user/common/rag/graph/{DATA_NAME}/graph.json`) にビルドし、`RETRIEVER: "Graph"` を指定した KNOWLEDGE / BOOK から参照します。本文チャンクはグラフに持たず、Vector RAG (ChromaDB) を**併置**して役割分担する設計 (→ 詳細は [Graph型 KNOWLEDGE / BOOK](#graph型-knowledge--bookgraphrag検索) 章)。
 
 **rags.json での定義例（Notion 増分ビルド）：**
@@ -1180,16 +1182,16 @@ WebUIのサイドバー **RAG Management → Page Index Export** から、既存
 同じ Notion DB を ChromaDB 側と graph 側の両方に接続する典型パターン。graph 側は **`data_type: "graph"`** と **`file_path`** (graph フォルダの絶対 or リポジトリ相対パス) が必須。
 
 ```json
-"DigiMATSU_Identity_Graph": {
+"Sample01_Relations_Notion": {
   "active": "Y",
   "input": "notion",
   "data_type": "graph",
-  "data_name": "DigiMATSU_Memo",
-  "bucket": "DigiMATSU_Identity_Graph",
-  "file_path": "user/common/rag/graph/digimatsu_identity/",
+  "data_name": "NotionDB",
+  "bucket": "Sample01_Relations_Notion",
+  "file_path": "user/common/rag/graph/sample01_relations_notion/",
   "extractor_agent": "agent_56GraphExtract.json",
   "item_dict": {
-    "db": "DigiMATSU_Identity_Graph",
+    "db": "Sample01_Relations_Notion",
     "title":       {"名前": "title"},
     "create_date": {"タイムスタンプ": "date"},
     "key_text":    [{"メモ": "rich_text"}],
@@ -1199,7 +1201,7 @@ WebUIのサイドバー **RAG Management → Page Index Export** から、既存
   },
   "chk_dict":     { "確定Chk": true },
   "date_dict":    {},
-  "category_dict":{ "RAGカテゴリ": "identity" },
+  "category_dict":{ "RAGカテゴリ": "relations" },
   "fin_flg":      {}
 }
 ```
@@ -1271,30 +1273,30 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/{DATA_NAME} --use-llm --embe
 ```json
 "PERSONALITY": {
   "SEX": "男性",
-  "BIRTHDAY": "01-Jan-1990",
+  "BIRTHDAY": "12-May-1986",
   "IS_ALIVE": true,
   "NATIONALITY": "Japanese",
-  "BLOOD_TYPE": "A",
-  "RESIDENCE": "横浜",
-  "HEIGHT": "173cm",
-  "WEIGHT": "75kg",
-  "FOOT_SIZE": "26.5cm",
+  "BLOOD_TYPE": "O",
+  "RESIDENCE": "東京",
+  "HEIGHT": "176cm",
+  "WEIGHT": "68kg",
+  "FOOT_SIZE": "27cm",
   "DOMINANT_HAND": "右",
-  "DOMINANT_FOOT": "右",
-  "HAIRSTYLE": "ロングヘアーでパーマ、ダークブラウン+グリーンの部分カラー",
-  "GLASSES": "あり",
-  "FAMILY": ["妻1人", "子供なし"],
-  "PERSONAL_COLOR": "スカイブルー(DeepSkyBlue)",
+  "DOMINANT_FOOT": "左",
+  "HAIRSTYLE": "無造作な黒髪",
+  "GLASSES": "取材時のみ",
+  "FAMILY": ["母・駒木乃佳代", "継父・駒木乃真吾（バー Cielo 経営）", "独身"],
+  "PERSONAL_COLOR": "インディゴ(Indigo)／パーソナルマークは8を回した∞",
   "BIG5": {
-    "Openness": 0.4,
-    "Conscientiousness": 0.6,
-    "Extraversion": 0.85,
-    "Agreeableness": 0.3,
-    "Neuroticism": 0.7
+    "Openness": 0.9,
+    "Conscientiousness": 0.5,
+    "Extraversion": 0.4,
+    "Agreeableness": 0.6,
+    "Neuroticism": 0.5
   },
-  "LANGUAGE": "日本語",
-  "SPEAKING_STYLE": "Light",
-  "CHARACTER": "DigitalMATSUMOTO.txt"
+  "LANGUAGE": "Japanese",
+  "SPEAKING_STYLE": "Polite",
+  "CHARACTER": "Sample_Eight.txt"
 }
 ```
 
@@ -1305,7 +1307,7 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/{DATA_NAME} --use-llm --embe
 | `DOMINANT_HAND` / `DOMINANT_FOOT` | str | 利き手 / 利き足 |
 | `HAIRSTYLE` / `GLASSES` | str | 髪型 / メガネ有無 |
 | `FAMILY` | list[str] | 家族構成 (`["妻1人", "子供2人"]` 等) |
-| `PERSONAL_COLOR` | str | パーソナルカラー（例: `"スカイブルー(DeepSkyBlue)"`） |
+| `PERSONAL_COLOR` | str | パーソナルカラー（例: `"インディゴ(Indigo)"`） |
 | `BIG5` | dict | `Openness` / `Conscientiousness` / `Extraversion` / `Agreeableness` / `Neuroticism` を 0.0〜1.0 で指定 (ネストされた dict) |
 | `LANGUAGE` | str | 使用言語 |
 | `SPEAKING_STYLE` | str | プロンプトテンプレートの `SPEAKING_STYLE` キー |
@@ -1688,8 +1690,7 @@ Notion保存時は `notion_name` でプロパティ名を個別に指定でき�
   "EXTRACT_DATE": "agent_54ExtractDate.json",
   "RAG_QUERY_GENERATOR": "agent_5AQGenUserIntent.json",
   "THINKING": "agent_50Thinking.json",
-  "KNOWLEDGE_INTERPRET": "agent_77DigiMKnowledgeInterpret.json",
-  "CITATION_INJECT": "agent_83DigiMCitationInject.json"
+  "KNOWLEDGE_INTERPRET": "agent_57KnowledgeInterpret.json"
 }
 ```
 
@@ -1751,7 +1752,7 @@ Notion保存時は `notion_name` でプロパティ名を個別に指定でき�
 ```json
 "SUPPORT_AGENT": {
     "RAG_QUERY_GENERATOR": [
-        "agent_7ADigiMQGenUserIntent.json",
+        "agent_5AQGenUserIntent.json",
         "agent_5BQGenGeneralKeywords.json"
     ]
 },
@@ -1778,8 +1779,8 @@ Notion保存時は `notion_name` でプロパティ名を個別に指定でき�
 | エージェント | 切り口 |
 |---|---|
 | `agent_5AQGenUserIntent.json` | 背景・動機・深層心理から掘り下げる（汎用） |
-| `agent_7ADigiMQGenUserIntent.json` | デジタルMATSUMOTO の Identity / Style を踏まえた人格寄りの切り口 |
 | `agent_5BQGenGeneralKeywords.json` | 固有名詞・専門用語・同義語・時期/数値条件など**事実側の検索語**を抽出（心理系と組むと網羅性が上がる） |
+| `agent_5CQGenAgentInterest.json` | エージェント自身の視点・専門性・こだわりから関心を持つキーワードを挙げる（その人格ならではの切り口。`INHERIT` でメインの KNOWLEDGE を渡すと効く） |
 
 **可視化**: Knowledge Utility / APE の散布図では `QUERY_SEQ` ごとに色分けされます。`0` = 元の質問（deepskyblue）、`1` = 質問＋会話履歴（blue）、**`2` 以降 = 生成されたクエリのバリエーション（紫系）**。ジェネレータが複数のときは `purple` → `darkviolet` → `mediumorchid` → `indigo` と紫の色相をローテーションするので、どのジェネレータ由来のヒットかを判別できます。
 
@@ -1902,6 +1903,8 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/Sample01_Relations --use-llm
 ```
 
 サンプル一式（`user/common/csv/Sample01_Relations.csv` の50行・mapping/dictionary・ビルド済み graph.json）は `user/common/rag/graph/Sample01_Relations/` に同梱しています。人物/場所/出来事/テーマを1つのCSVに同居させ、`所属` / `拠点` / `関与` / `取材テーマ` の4述語を生やす構成です。
+
+> Notion の1行にグラフを手書きする方法（グラフ列）と設計のコツは [ナレッジグラフの書き方ガイド](docs/KNOWLEDGE_GRAPH_GUIDE.md) を参照してください。
 
 #### レーンAの例：構造を最初からCSVで書く（LLM不要）
 
@@ -2087,16 +2090,16 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/Sample01_Relations --use-llm
 `rags.json` エントリを ChromaDB と同じ shape で書けば、サイドバーの **`Update RAG data`** ボタンで Notion → graph.json を増分同期できます（毎回全 LLM 呼び出しの再ビルドを避けられます）。
 
 ```json
-"DigiMATSU_Identity_Graph": {
+"Sample01_Relations_Notion": {
     "active": "Y",
     "input": "notion",
     "data_type": "graph",
-    "data_name": "DigiMATSU_Memo",
-    "file_path": "user/common/rag/graph/digimatsu_identity/",
+    "data_name": "NotionDB",
+    "file_path": "user/common/rag/graph/sample01_relations_notion/",
     "extractor_agent": "agent_56GraphExtract.json",
     "item_dict": { ... Notion カラム → chunk フィールドのマップ ... },
     "chk_dict": { "確定Chk": true },
-    "category_dict": { "RAGカテゴリ": "identity" },
+    "category_dict": { "RAGカテゴリ": "relations" },
     "fin_flg": {}
 }
 ```
@@ -2197,11 +2200,11 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/Sample01_Relations --use-llm
 **エージェントJSONへの追加項目**:
 ```json
 "ORG": [
-  {"company": "デジMラボ"},
-  {"company": "デジMラボ", "dept": "Consulting"},
-  {"company": "デジMラボ", "BU": "DX"}
+  {"company": "寄稿先エディター陣"},
+  {"company": "寄稿先エディター陣", "dept": "ATLAS日本版"},
+  {"company": "寄稿先エディター陣", "dept": "季刊SOIL"}
 ],
-"PERSONA_FILES": ["TheRound_personas.xlsx"],
+"PERSONA_FILES": ["Sample_personas.xlsx"],
 "PERSONA_SOURCE": "RDB"
 ```
 - `ORG`: 選択可能な組織dictのリスト（実行時にWebUI/プラクティスで1つ選ぶ）
@@ -2209,8 +2212,8 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/Sample01_Relations --use-llm
 - `PERSONA_SOURCE`: **エージェント単位で参照先を上書き**。`"EXCEL"`/`"RDB"`/`"BOTH"`から選択。**省略時は環境変数 `AGENT_PERSONA_SOURCE`** にフォールバック
 
 **マッチング**: `agent.ORG`（実行時に選択した1要素）の全キーを、`persona.org` が同値で含めばマッチ（agentがpersonaのサブセット）。例:
-- persona: `{company:"デジMラボ", dept:"Consulting", BU:"DX"}`
-- agent (selected): `{company:"デジMラボ", BU:"DX"}` → ✅ match
+- persona: `{company:"寄稿先エディター陣", dept:"ATLAS日本版"}`（`Sample_personas.xlsx` の三宅慧）
+- agent (selected): `{company:"寄稿先エディター陣"}` → ✅ match（エディター3人とも該当）/ `{company:"寄稿先エディター陣", dept:"ATLAS日本版"}` → 三宅慧のみ
 
 **Persona上書きの対象**（テンプレートに対して）:
 - 上書き: `NAME` / `ACT` / `PERSONALITY`（`character_text` または `character_file` を含む）/ `HABIT`（`["ALL"]`以外なら名前ホワイトリストでフィルタ）/ `KNOWLEDGE`（`["ALL"]`以外なら`RAG_NAME`でフィルタ）/ `DEFINE_CODE`
@@ -2537,7 +2540,7 @@ user/common/tool/local/*       # local/ 配下を全部除外
 | `/<unknown_skill>` | 「Skill is not registered」をチャットに表示 |
 | 通常テキスト | 既存のLLMフロー（無変更） |
 
-サンプル: agent_02DigitalMATSUMOTO_ToolUser.json は `fixed_message / forget_history / remember_history / management_analysis` を SKILL に登録した動作確認用エージェント。
+サンプル: `agent_10Sample.json` は `recall_similar_experience / analyze_attachment / mood_score / self_critique / translate_response / slide_deck_prompt` などを SKILL に登録しているので、`/skills` で一覧を出したり `/mood_score` のように直接呼び出したりして動作を確かめられます。
 
 #### Practice からの呼び出し（チェーン TYPE）
 
@@ -2618,7 +2621,7 @@ BOOK と KNOWLEDGE の区別は `agent.agent["BOOK"]` 内の `RAG_NAME` でフ�
 - **デフォルト ON**：`_parse_execution_settings` の `insert_citations` 既定値は `True`。WebUI 上にトグルはありません — 引用ソース（Web URL または BOOK チャンク）が1件以上あれば**自動発火**します。
 - **明示OFF**（API 等）：`execution["INSERT_CITATIONS"] = false` を渡せば無効化可能。
 - **Practice の CHAIN 単位 override**：Practice JSON の `CHAINS[i].SETTING.INSERT_CITATIONS` に `false` を書けば、そのチェーンステップだけ Citation Injector を止められます（例: マルチステップ Practice で「1つ目のチェーンは元の 参照した知識 を保ったまま出力したい／2つ目は最終応答なので Web References を付ける」といった使い分け）。未指定なら親の値を継承 ([DigiM_Execute.py:1500](DigiM_Execute.py))。
-- **エンジン切替**：`SUPPORT_AGENT.CITATION_INJECT` で agent_file を指定。デフォルトは `agent_83DigiMCitationInject.json`（Claude-Haiku-4.5 系）。
+- **エンジン切替**：`SUPPORT_AGENT.CITATION_INJECT` で agent_file を指定。デフォルトは `agent_63CitationInject.json`（既定エンジンは GPT-5.6-Luna）。
 
 #### 多段フォールバック
 
@@ -2635,12 +2638,12 @@ BOOK と KNOWLEDGE の区別は `agent.agent["BOOK"]` 内の `RAG_NAME` でフ�
 
 ```markdown
 （本回答本文）...新ジェネレーターは Apache 2.0 ライセンスで公開されている[1]。
-コア技術は2024年公開の論文に基づいている[2]。「真の創造は制約から生まれる」と言われる通り[3]、...
+コア技術は2024年公開の論文に基づいている[2]。現場を支える人ほど記事に名前が残らない、という指摘もある[3]。...
 
 ## References
 [1] (web) https://example.com/news/release - Press release
 [2] (web) https://arxiv.org/abs/2401.xxxxx - Original paper
-[3] (book: Quote) 「真の創造は制約から生まれる」 — 不明な著者の名言集...
+[3] (book: Articles) 「名前のない働き手たち」 — ブログ「南半球の風向き」...
 ```
 
 #### 動作ログ
@@ -2648,8 +2651,8 @@ BOOK と KNOWLEDGE の区別は `agent.agent["BOOK"]` 内の `RAG_NAME` でフ�
 Citation Injector 実行時には標準ログに以下が出ます。引用が出ない時の切り分けに有用です。
 
 ```
-[citation_inject] starting: web=2, book=1, book_rag_names=['Quote'],
-                  book_titles=['「真の創造は制約から...」'], agent_file='agent_79...', body_len=842
+[citation_inject] starting: web=2, book=1, book_rag_names=['Articles'],
+                  book_titles=['「名前のない働き手たち」'], agent_file='…CitationInject.json', body_len=842
 [citation_inject] applied: new body_len=950, contains '[1]': True, contains '## References': True
 ```
 
@@ -2738,7 +2741,7 @@ IMAGEGEN（画像生成）の実行ステップでは、プロンプト3000字�
 ```bash
 python3 DigiM_GeneUserMemory.py --backfill                        # 全層・全件（欠損のみ）
 python3 DigiM_GeneUserMemory.py --backfill --layer history        # 層を限定
-python3 DigiM_GeneUserMemory.py --backfill --user RealMatsumoto   # user_idで限定
+python3 DigiM_GeneUserMemory.py --backfill --user USER0001        # user_idで限定
 python3 DigiM_GeneUserMemory.py --backfill --dry-run              # LLM呼び出しのみ・保存しない
 python3 DigiM_GeneUserMemory.py --backfill --no-schema            # Notionプロパティ自動追加をスキップ
 ```
@@ -2771,7 +2774,7 @@ USER_MEMORY_PERSONA_BACKEND="EXCEL"
 ユーザーマスタの記述例:
 
 ```json
-"RealMatsumoto": {
+"USER0001": {
   "Allowed": {
     "User Memory": true,
     "User Memory Layers": ["persona", "nowaday", "history"]
@@ -2791,12 +2794,12 @@ USER_MEMORY_PERSONA_BACKEND="EXCEL"
 | `user_memory_nowaday` | 全ユーザーに対し当月のNowadayプロファイル更新 → Personaへの差分マージを順に実行。セッションは作成されない。 |
 | `agent_run` | エージェントをスケジュール実行し、結果を届ける。**配信先**（新規セッション／アクティブ全件／選択）と**メッセージ**（エージェント生成／固定文）を組み合わせて指定。新規セッションの場合は **所有者ユーザー** で発番（service_id=`Scheduler`、session_id=`SCH<日時>`、名前=`[Scheduler] <ジョブ名>`）し、応答は通常のチャット履歴として保存されます。 |
 
-**ワークフロー（`steps`）:** ジョブは直列に並んだステップとして組み立てます。**Add New Job** を開くとステップが1つだけあり、**＋ Add step** で下に追加、各ステップの **↑ / ↓** で並べ替え、**✕** で削除できます。ステップごとに Kind（`agent_run` / `rag_update` / `user_memory_nowaday`）とその設定を持つので、`agent_run` を複数並べてもそれぞれ別のエージェント・プロンプト・配信先で動きます。例えば「RAGを更新してからデイリーリフレクションを実行する」は、1つ目を `rag_update`、2つ目を `agent_run` にするだけです。
+**ワークフロー（`steps`）:** ジョブは直列に並んだステップとして組み立てます。**Add New Job** を開くとステップが1つだけあり、**＋ Add step** で下に追加、各ステップの **↑ / ↓** で並べ替え、**✕** で削除できます。ステップごとに Kind（`agent_run` / `rag_update` / `user_memory_nowaday`）とその設定を持つので、`agent_run` を複数並べてもそれぞれ別のエージェント・プロンプト・配信先で動きます。例えば「RAGを更新してから、サンプルの駒木乃英人（`agent_10Sample.json`）に今週の取材メモを振り返らせる」は、1つ目を `rag_update`、2つ目を `agent_run` にするだけです。
 
 ```json
 "steps": [
   {"id": "st_1a2b3c4d", "kind": "rag_update", "params": {}},
-  {"id": "st_5e6f7a8b", "kind": "agent_run", "params": {"agent_file": "agent_01DigitalMATSUMOTO.json", "user_input": "…"}}
+  {"id": "st_5e6f7a8b", "kind": "agent_run", "params": {"agent_file": "agent_10Sample.json", "user_input": "今週集めた取材メモを振り返って、次に書く記事の切り口を提案してください。"}}
 ]
 ```
 
@@ -3239,7 +3242,7 @@ Session Summary の更新と Memory Digest の生成は**別スレッドで完�
 }
 ```
 
-を追加 (既に `agent_01DigitalMATSUMOTO.json` と `agent_10Sample.json` は設定済み)。エージェント側で `DEFAULT` エンジンを `GPT-5.4-nano` や `Claude-Haiku-4.5` に変えれば、全体を切り替えることもできます。
+を追加 (既に `agent_10Sample.json` と `agent_11Sample.json` は設定済み)。エージェント側で `DEFAULT` エンジンを `GPT-5.4-nano` や `Claude-Haiku-4.5` に変えれば、全体を切り替えることもできます。
 
 **プロンプトへの注入位置**:
 
@@ -3581,7 +3584,7 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
 | `thinking_mode` | `false` | Thinking Mode。`true` にするとAIが質問を分析してHabit・Web検索・RAGクエリ生成・Book追加を動的に判定する |
 | `max_thinking_turns` | `1` | Thinking を何ターンまで走らせるか（1〜5に自動 clamp）。2以上にすると、sufficient=false のとき予備Web検索→次ターンThinkingを繰り返す。`thinking_mode=true` の時のみ意味を持つ |
 | `insert_citations` | `true` | 応答本文に `[N]` 引用マーカーを挿入し、末尾に `## Reference Info` セクション（Web / Book のソース一覧）を付ける |
-| `cite_knowledge` | `false` | 応答生成後に判定エージェント（`agent_78DigiMKnowledgeUsageSelector.json`）が実際に参照したKNOWLEDGEチャンクを判定し、末尾に `## Reference Knowledge` セクションを付ける（Knowledge Utility スコア併記） |
+| `cite_knowledge` | `false` | 応答生成後に判定エージェント（`agent_58KnowledgeUsageSelector.json`）が実際に参照したKNOWLEDGEチャンクを判定し、末尾に `## Reference Knowledge` セクションを付ける（Knowledge Utility スコア併記） |
 | `diagram_mode` | `false` | LLMにMarkdownの表と Mermaid 図（```mermaid）を用いた説明を指示 |
 | `emphasis_mode` | `false` | LLMに要点の**太字**強調 + 見出し・箇条書き整理を指示 |
 | `user_memory` | （未指定） | ユーザーメモリ（対話相手についての情報）を使うか。`true`=全層ON / `false`=全Off / 未指定= `users.json` の `Allowed["User Memory Layers"]`（無ければ `USER_MEMORY_DEFAULT_LAYERS`）に従う |
@@ -3846,7 +3849,7 @@ curl -s -X POST http://localhost:8899/run \
   -H "Content-Type: application/json" \
   -d '{
     "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
-    "user_info": {"USER_ID": "RealMatsumoto", "USER_DATA": {}},
+    "user_info": {"USER_ID": "USER0001", "USER_DATA": {}},
     "user_input": "最近の私の関心を踏まえて提案して",
     "agent_file": "agent_10Sample.json",
     "user_memory_layers": ["persona", "history"]
@@ -3857,7 +3860,7 @@ curl -s -X POST http://localhost:8899/run \
   -H "Content-Type: application/json" \
   -d '{
     "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
-    "user_info": {"USER_ID": "RealMatsumoto", "USER_DATA": {}},
+    "user_info": {"USER_ID": "USER0001", "USER_DATA": {}},
     "user_input": "一般的な観点で説明して",
     "agent_file": "agent_10Sample.json",
     "user_memory": false

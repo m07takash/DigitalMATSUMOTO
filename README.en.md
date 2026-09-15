@@ -967,7 +967,7 @@ You can set a `private` flag on RAG data. Data with `private: true` is excluded 
 
 ```json
 "item_dict": {
-  "db": "DigiMATSU_Identity_Memo",
+  "db": "Sample02_Experience",
   "title": {"Name": "title"},
   "private": {"Private": "chk"}
 }
@@ -1031,7 +1031,7 @@ Rather than vector search, this is an RAG method where the LLM selects relevant 
     "active": "Y",
     "input": "notion",
     "data_type": "pageindex",
-    "data_name": "DigiMATSU_Book",
+    "data_name": "NotionDB",
     "bucket": "AIUCStandard",
     "item_dict": {
       "book": {"BookName": "select"},
@@ -1168,21 +1168,23 @@ From the WebUI sidebar **RAG Management -> Page Index Export**, you can download
 
 #### Graph RAG (graph type)
 
+> How to design a graph by hand — what to make a node, how to shape it so retrieval actually finds things, with examples from the sample agent Hideto Komakino — is covered in the [Knowledge Graph Authoring Guide](docs/KNOWLEDGE_GRAPH_GUIDE.en.md).
+
 Build a **pure-structure knowledge graph** (Entity nodes + predicate edges only, no chunk bodies) under a dedicated folder (`user/common/rag/graph/{DATA_NAME}/graph.json`) and reference it from a KNOWLEDGE / BOOK entry that sets `RETRIEVER: "Graph"`. Body-text retrieval stays on the Vector RAG (ChromaDB) side placed **alongside** the graph — the two split roles cleanly.
 
 **rags.json example (Notion incremental build):**
 
 ```json
-"DigiMATSU_Identity_Graph": {
+"Sample01_Relations_Notion": {
   "active": "Y",
   "input": "notion",
   "data_type": "graph",
-  "data_name": "DigiMATSU_Memo",
-  "bucket": "DigiMATSU_Identity_Graph",
-  "file_path": "user/common/rag/graph/digimatsu_identity/",
+  "data_name": "NotionDB",
+  "bucket": "Sample01_Relations_Notion",
+  "file_path": "user/common/rag/graph/sample01_relations_notion/",
   "extractor_agent": "agent_56GraphExtract.json",
   "item_dict": {
-    "db": "DigiMATSU_Identity_Graph",
+    "db": "Sample01_Relations_Notion",
     "title":       {"名前": "title"},
     "create_date": {"タイムスタンプ": "date"},
     "key_text":    [{"メモ": "rich_text"}],
@@ -1192,7 +1194,7 @@ Build a **pure-structure knowledge graph** (Entity nodes + predicate edges only,
   },
   "chk_dict":      { "確定Chk": true },
   "date_dict":     {},
-  "category_dict": { "RAGカテゴリ": "identity" },
+  "category_dict": { "RAGカテゴリ": "relations" },
   "fin_flg":       {}
 }
 ```
@@ -1256,30 +1258,30 @@ Defines the personality of the agent. Fields with an empty / unset value are not
 ```json
 "PERSONALITY": {
   "SEX": "Male",
-  "BIRTHDAY": "01-Jan-1990",
+  "BIRTHDAY": "12-May-1986",
   "IS_ALIVE": true,
   "NATIONALITY": "Japanese",
-  "BLOOD_TYPE": "A",
-  "RESIDENCE": "Yokohama",
-  "HEIGHT": "173cm",
-  "WEIGHT": "75kg",
-  "FOOT_SIZE": "26.5cm",
+  "BLOOD_TYPE": "O",
+  "RESIDENCE": "Tokyo",
+  "HEIGHT": "176cm",
+  "WEIGHT": "68kg",
+  "FOOT_SIZE": "27cm",
   "DOMINANT_HAND": "right",
-  "DOMINANT_FOOT": "right",
-  "HAIRSTYLE": "Long perm, dark brown with green highlights",
-  "GLASSES": "yes",
-  "FAMILY": ["1 wife", "no children"],
-  "PERSONAL_COLOR": "Sky blue (DeepSkyBlue)",
+  "DOMINANT_FOOT": "left",
+  "HAIRSTYLE": "Messy black hair",
+  "GLASSES": "only when reporting",
+  "FAMILY": ["mother Kayo Komakino", "stepfather Shingo Komakino (runs Bar Cielo)", "single"],
+  "PERSONAL_COLOR": "Indigo / personal mark: a sideways 8 (∞)",
   "BIG5": {
-    "Openness": 0.4,
-    "Conscientiousness": 0.6,
-    "Extraversion": 0.85,
-    "Agreeableness": 0.3,
-    "Neuroticism": 0.7
+    "Openness": 0.9,
+    "Conscientiousness": 0.5,
+    "Extraversion": 0.4,
+    "Agreeableness": 0.6,
+    "Neuroticism": 0.5
   },
   "LANGUAGE": "Japanese",
-  "SPEAKING_STYLE": "Light",
-  "CHARACTER": "DigitalMATSUMOTO.txt"
+  "SPEAKING_STYLE": "Polite",
+  "CHARACTER": "Sample_Eight.txt"
 }
 ```
 
@@ -1290,7 +1292,7 @@ Defines the personality of the agent. Fields with an empty / unset value are not
 | `DOMINANT_HAND` / `DOMINANT_FOOT` | str | Dominant hand / foot |
 | `HAIRSTYLE` / `GLASSES` | str | Hairstyle / whether glasses are worn |
 | `FAMILY` | list[str] | Family composition (e.g. `["1 wife", "2 children"]`) |
-| `PERSONAL_COLOR` | str | Personal color (e.g. `"Sky blue (DeepSkyBlue)"`) |
+| `PERSONAL_COLOR` | str | Personal color (e.g. `"Indigo"`) |
 | `BIG5` | dict | Nested `{Openness, Conscientiousness, Extraversion, Agreeableness, Neuroticism}` each in the 0.0-1.0 range |
 | `LANGUAGE` | str | Language used |
 | `SPEAKING_STYLE` | str | Key defined in `SPEAKING_STYLE` of the prompt template |
@@ -1655,8 +1657,7 @@ Specifies Support Agents that assist the main dialogue. Each Support Agent is de
   "EXTRACT_DATE": "agent_54ExtractDate.json",
   "RAG_QUERY_GENERATOR": "agent_5AQGenUserIntent.json",
   "THINKING": "agent_50Thinking.json",
-  "KNOWLEDGE_INTERPRET": "agent_77DigiMKnowledgeInterpret.json",
-  "CITATION_INJECT": "agent_83DigiMCitationInject.json"
+  "KNOWLEDGE_INTERPRET": "agent_57KnowledgeInterpret.json"
 }
 ```
 
@@ -1718,7 +1719,7 @@ Register `RAG_QUERY_GENERATOR` as an **array** and each generator produces **one
 ```json
 "SUPPORT_AGENT": {
     "RAG_QUERY_GENERATOR": [
-        "agent_7ADigiMQGenUserIntent.json",
+        "agent_5AQGenUserIntent.json",
         "agent_5BQGenGeneralKeywords.json"
     ]
 },
@@ -1745,8 +1746,8 @@ Which path was taken is recorded in the log as `selection_mode` (`thinking` / `r
 | Agent | Angle |
 |---|---|
 | `agent_5AQGenUserIntent.json` | Digs into background / motive / underlying psychology (generic) |
-| `agent_7ADigiMQGenUserIntent.json` | Persona-flavoured, grounded in DigitalMATSUMOTO's Identity / Style |
 | `agent_5BQGenGeneralKeywords.json` | Extracts **factual search terms** — proper nouns, jargon, synonyms, period/number conditions. Pairs well with a psychology-oriented generator |
+| `agent_5CQGenAgentInterest.json` | Keywords the agent itself cares about, from its own viewpoint, expertise and fixations — a persona-specific angle (works best with `INHERIT` passing the main agent's KNOWLEDGE) |
 
 **Visualization**: Knowledge Utility / APE scatter plots colour points by `QUERY_SEQ`. `0` = the raw question (deepskyblue), `1` = question + chat history (blue), **`2`+ = generated query variations (purple family)**. With multiple generators the purple hue rotates `purple` → `darkviolet` → `mediumorchid` → `indigo` so you can tell which generator produced a hit.
 
@@ -1869,6 +1870,8 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/Sample01_Relations --use-llm
 ```
 
 A complete sample (the 50 rows of `user/common/csv/Sample01_Relations.csv`, mapping/dictionary, prebuilt graph.json) ships under `user/common/rag/graph/Sample01_Relations/`. People, places, events and themes share one CSV, and each row grows edges over four predicates: 所属 / 拠点 / 関与 / 取材テーマ.
+
+> For writing a graph by hand on a Notion row (the graph column) and design tips, see the [Knowledge Graph Authoring Guide](docs/KNOWLEDGE_GRAPH_GUIDE.en.md).
 
 #### Lane A example — writing the structure directly as CSV (no LLM)
 
@@ -2050,16 +2053,16 @@ An `input: "csv"` + `data_type: "graph"` entry in `rags.json` lets the sidebar *
 Write a `rags.json` entry in the same shape as ChromaDB and the sidebar **`Update RAG data`** button syncs Notion → graph.json incrementally (no full LLM re-build).
 
 ```json
-"DigiMATSU_Identity_Graph": {
+"Sample01_Relations_Notion": {
     "active": "Y",
     "input": "notion",
     "data_type": "graph",
-    "data_name": "DigiMATSU_Memo",
-    "file_path": "user/common/rag/graph/digimatsu_identity/",
+    "data_name": "NotionDB",
+    "file_path": "user/common/rag/graph/sample01_relations_notion/",
     "extractor_agent": "agent_56GraphExtract.json",
     "item_dict": { ... Notion property → chunk field map ... },
     "chk_dict": { "確定Chk": true },
-    "category_dict": { "RAGカテゴリ": "identity" },
+    "category_dict": { "RAGカテゴリ": "relations" },
     "fin_flg": {}
 }
 ```
@@ -2160,11 +2163,11 @@ For a single template agent, you can register **multiple personas** in PostgreSQ
 **Additional items added to the agent JSON**:
 ```json
 "ORG": [
-  {"company": "DigiM Lab"},
-  {"company": "DigiM Lab", "dept": "Consulting"},
-  {"company": "DigiM Lab", "BU": "DX"}
+  {"company": "寄稿先エディター陣"},
+  {"company": "寄稿先エディター陣", "dept": "ATLAS日本版"},
+  {"company": "寄稿先エディター陣", "dept": "季刊SOIL"}
 ],
-"PERSONA_FILES": ["TheRound_personas.xlsx"],
+"PERSONA_FILES": ["Sample_personas.xlsx"],
 "PERSONA_SOURCE": "RDB"
 ```
 - `ORG`: List of selectable org dicts (one is chosen at execution time by the WebUI / Practice)
@@ -2172,8 +2175,8 @@ For a single template agent, you can register **multiple personas** in PostgreSQ
 - `PERSONA_SOURCE`: **Per-agent override of the reference source**. Choose from `"EXCEL"`/`"RDB"`/`"BOTH"`. **If omitted, falls back to the environment variable `AGENT_PERSONA_SOURCE`**
 
 **Matching**: A match occurs if `persona.org` contains all keys of `agent.ORG` (the one element selected at execution time) with equal values (the agent is a subset of the persona). Example:
-- persona: `{company:"DigiM Lab", dept:"Consulting", BU:"DX"}`
-- agent (selected): `{company:"DigiM Lab", BU:"DX"}` -> match
+- persona: `{company:"寄稿先エディター陣", dept:"ATLAS日本版"}` (Kei Miyake in `Sample_personas.xlsx`)
+- agent (selected): `{company:"寄稿先エディター陣"}` -> matches all three editors; `{company:"寄稿先エディター陣", dept:"ATLAS日本版"}` -> Kei Miyake only
 
 **Targets of persona override (against the template)**:
 - Overridden: `NAME` / `ACT` / `PERSONALITY` (including `character_text` or `character_file`) / `HABIT` (if not `["ALL"]`, filtered by a name whitelist) / `KNOWLEDGE` (if not `["ALL"]`, filtered by `RAG_NAME`) / `DEFINE_CODE`
@@ -2516,7 +2519,7 @@ Typing `/<skill_name> <input>` in the chat box executes the tool directly. **The
 | `/<unknown_skill>` | Show "Skill is not registered" in chat |
 | Plain text | Existing LLM flow (unchanged) |
 
-Sample agent: `agent_02DigitalMATSUMOTO_ToolUser.json` is configured with `fixed_message / forget_history / remember_history / management_analysis` in `SKILL.TOOL_LIST` for hands-on testing.
+Sample agent: `agent_10Sample.json` registers `recall_similar_experience / analyze_attachment / mood_score / self_critique / translate_response / slide_deck_prompt` and more under `SKILL`, so you can list them with `/skills` or call one directly (e.g. `/mood_score`) to try it.
 
 #### Calling tools from a Practice chain
 
@@ -2596,7 +2599,7 @@ BOOK is distinguished from KNOWLEDGE by filtering on `agent.agent["BOOK"]` `RAG_
 - **Default ON**: `_parse_execution_settings.insert_citations` defaults to `True`. There is no WebUI toggle — the injector fires automatically whenever there is at least one citation source (a Web URL or a BOOK chunk).
 - **Explicit OFF** (API etc.): pass `execution["INSERT_CITATIONS"] = false` to disable.
 - **Per-chain override in Practice**: `CHAINS[i].SETTING.INSERT_CITATIONS = false` disables the injector for one chain step only (e.g. multi-step Practice where the first chain should keep its own "参照した知識" section intact and only the last chain adds `## References` for the web sources). Unset = inherits parent ([DigiM_Execute.py:1500](DigiM_Execute.py)).
-- **Engine override**: `SUPPORT_AGENT.CITATION_INJECT` selects the agent_file. Default is `agent_83DigiMCitationInject.json` (Claude-Haiku-4.5 family).
+- **Engine override**: `SUPPORT_AGENT.CITATION_INJECT` selects the agent_file. Default is `agent_63CitationInject.json` (default engine GPT-5.6-Luna).
 
 #### Graceful fallback
 
@@ -2613,13 +2616,13 @@ BOOK is distinguished from KNOWLEDGE by filtering on `agent.agent["BOOK"]` `RAG_
 
 ```markdown
 ... The new generator is released under Apache 2.0[1]. The core
-technology is based on a 2024 paper[2]. As the saying goes,
-"true creation is born from constraint"[3], so ...
+technology is based on a 2024 paper[2]. It has also been noted that the
+people who keep things running rarely get named[3], so ...
 
 ## References
 [1] (web) https://example.com/news/release - Press release
 [2] (web) https://arxiv.org/abs/2401.xxxxx - Original paper
-[3] (book: Quote) "true creation is born from constraint" — Unattributed quote collection ...
+[3] (book: Articles) "Nameless workers" — blog "Minami-hankyu no Kazamuki" ...
 ```
 
 #### Diagnostic logs
@@ -2627,8 +2630,8 @@ technology is based on a 2024 paper[2]. As the saying goes,
 The injector logs the following on every run — useful when citations don't appear:
 
 ```
-[citation_inject] starting: web=2, book=1, book_rag_names=['Quote'],
-                  book_titles=['"true creation is born ..."'], agent_file='agent_79...', body_len=842
+[citation_inject] starting: web=2, book=1, book_rag_names=['Articles'],
+                  book_titles=['"Nameless workers"'], agent_file='…CitationInject.json', body_len=842
 [citation_inject] applied: new body_len=950, contains '[1]': True, contains '## References': True
 ```
 
@@ -2717,7 +2720,7 @@ To backfill emotion/Big5 into existing records created before the schema extensi
 ```bash
 python3 DigiM_GeneUserMemory.py --backfill                        # All layers, all records (only missing fields)
 python3 DigiM_GeneUserMemory.py --backfill --layer history        # Limit to a specific layer
-python3 DigiM_GeneUserMemory.py --backfill --user RealMatsumoto   # Limit by user_id
+python3 DigiM_GeneUserMemory.py --backfill --user USER0001        # Limit by user_id
 python3 DigiM_GeneUserMemory.py --backfill --dry-run              # Run the LLM only, do not save
 python3 DigiM_GeneUserMemory.py --backfill --no-schema            # Skip auto-adding Notion properties
 ```
@@ -2750,7 +2753,7 @@ Whether a user can change their own `layers` is controlled by `Allowed["User Mem
 Example of user master entry:
 
 ```json
-"RealMatsumoto": {
+"USER0001": {
   "Allowed": {
     "User Memory": true,
     "User Memory Layers": ["persona", "nowaday", "history"]
@@ -2770,12 +2773,12 @@ The general-purpose scheduler is managed from the **Scheduler menu** (at the top
 | `user_memory_nowaday` | For all users, runs the current month's Nowaday profile update -> diff merge into Persona, in order. No session is created. |
 | `agent_run` | Runs an agent on a schedule and delivers the result. Combine a **target** (new session / all active / selected) with a **message** (agent-generated or fixed text). For new sessions the run issues one as the **owner user** (service_id=`Scheduler`, session_id=`SCH<datetime>`, name=`[Scheduler] <job name>`) and the response is saved to chat history as usual. |
 
-**Workflow (`steps`):** a job is a serial list of steps. **Add New Job** opens with a single step; **＋ Add step** appends one below, **↑ / ↓** reorder a step and **✕** removes it. Each step has its own Kind (`agent_run` / `rag_update` / `user_memory_nowaday`) and settings, so several `agent_run` steps can each use a different agent, prompt and target. "Update RAG, then run the daily reflection" is a `rag_update` step followed by an `agent_run` step:
+**Workflow (`steps`):** a job is a serial list of steps. **Add New Job** opens with a single step; **＋ Add step** appends one below, **↑ / ↓** reorder a step and **✕** removes it. Each step has its own Kind (`agent_run` / `rag_update` / `user_memory_nowaday`) and settings, so several `agent_run` steps can each use a different agent, prompt and target. "Update RAG, then have the sample agent Hideto Komakino (`agent_10Sample.json`) look back over this week's reporting notes" is a `rag_update` step followed by an `agent_run` step:
 
 ```json
 "steps": [
   {"id": "st_1a2b3c4d", "kind": "rag_update", "params": {}},
-  {"id": "st_5e6f7a8b", "kind": "agent_run", "params": {"agent_file": "agent_01DigitalMATSUMOTO.json", "user_input": "…"}}
+  {"id": "st_5e6f7a8b", "kind": "agent_run", "params": {"agent_file": "agent_10Sample.json", "user_input": "Look back over this week's reporting notes and suggest an angle for the next article."}}
 ]
 ```
 
@@ -3179,7 +3182,7 @@ By default `agent_62SessionSummary.json` (Gemini-3.5-Flash) is picked up as a gl
 }
 ```
 
-(`agent_01DigitalMATSUMOTO.json` and `agent_10Sample.json` already have this wired up.) To switch models globally, change the `DEFAULT` engine inside `agent_62SessionSummary.json` (e.g. `GPT-5.4-nano`, `Claude-Haiku-4.5`).
+(`agent_10Sample.json` and `agent_11Sample.json` already have this wired up.) To switch models globally, change the `DEFAULT` engine inside `agent_62SessionSummary.json` (e.g. `GPT-5.4-nano`, `Claude-Haiku-4.5`).
 
 **Prompt injection order**:
 
@@ -3521,7 +3524,7 @@ API default values are used for omitted parameters. These correspond to the WebU
 | `thinking_mode` | `false` | Thinking Mode. When `true`, the AI analyzes the question and dynamically decides Habit / Web search / RAG query generation / Book addition |
 | `max_thinking_turns` | `1` | Upper bound on Thinking iterations (auto-clamped to 1–5). With 2+ turns, if Thinking returns `sufficient=false` a reserve web search runs and feeds the next Thinking turn. Only meaningful when `thinking_mode=true` |
 | `insert_citations` | `true` | Insert `[N]` citation markers into the response body and append a `## Reference Info` section listing Web / Book sources |
-| `cite_knowledge` | `false` | After the response, a dedicated selector agent (`agent_78DigiMKnowledgeUsageSelector.json`) decides which KNOWLEDGE chunks were actually referenced and appends a `## Reference Knowledge` section (Knowledge Utility scores included) |
+| `cite_knowledge` | `false` | After the response, a dedicated selector agent (`agent_58KnowledgeUsageSelector.json`) decides which KNOWLEDGE chunks were actually referenced and appends a `## Reference Knowledge` section (Knowledge Utility scores included) |
 | `diagram_mode` | `false` | Ask the LLM to use Markdown tables and Mermaid diagrams (```mermaid) inside the explanation |
 | `emphasis_mode` | `false` | Ask the LLM to emphasise key points in **bold** and organise long answers with headings and bullet lists |
 | `user_memory` | (unspecified) | Whether to use User Memory (information about the dialogue partner). `true` = all layers ON / `false` = all Off / unspecified = follows `Allowed["User Memory Layers"]` in `users.json` (or `USER_MEMORY_DEFAULT_LAYERS` if absent) |
@@ -3786,7 +3789,7 @@ curl -s -X POST http://localhost:8899/run \
   -H "Content-Type: application/json" \
   -d '{
     "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
-    "user_info": {"USER_ID": "RealMatsumoto", "USER_DATA": {}},
+    "user_info": {"USER_ID": "USER0001", "USER_DATA": {}},
     "user_input": "Make a suggestion taking my recent interests into account",
     "agent_file": "agent_10Sample.json",
     "user_memory_layers": ["persona", "history"]
@@ -3797,7 +3800,7 @@ curl -s -X POST http://localhost:8899/run \
   -H "Content-Type: application/json" \
   -d '{
     "service_info": {"SERVICE_ID": "API_TEST", "SERVICE_DATA": {}},
-    "user_info": {"USER_ID": "RealMatsumoto", "USER_DATA": {}},
+    "user_info": {"USER_ID": "USER0001", "USER_DATA": {}},
     "user_input": "Explain from a general perspective",
     "agent_file": "agent_10Sample.json",
     "user_memory": false
