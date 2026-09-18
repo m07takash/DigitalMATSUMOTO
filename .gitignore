@@ -206,6 +206,8 @@ user/common/rag/graph/*
 !user/common/rag/graph/Sample01_Relations/
 !user/common/rag/graph/Sample01_Relations/**
 user/common/rag/pages/*
+!user/common/rag/pages/DigiMPGSystemGuide/
+!user/common/rag/pages/DigiMPGSystemGuide/**
 
 # DigiM Folder(csv)
 user/common/csv/*

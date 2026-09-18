@@ -1,0 +1,1089 @@
+{
+  "BOOK": {
+    "title": "DigiMPGシステムガイド"
+  },
+  "PAGES": [
+    {
+      "id": "1",
+      "title": "はじめに",
+      "timestamp": "2026-09-18",
+      "summary": "本PGはApache2.0Licenceで公開しており、商用利用を認めています。 ただし、本PGを用いたユーザー側での活動に対して、開発者は一切の責任を負いませんので、あくまで御自身の責任においてPGを利用してください。",
+      "tags": [
+        "Apache2",
+        "Digital",
+        "MATSUMOTO"
+      ],
+      "category": "はじめに",
+      "sort_order": 1
+    },
+    {
+      "id": "2",
+      "title": "本プログラム開発においてこだわっていること",
+      "timestamp": "2026-09-18",
+      "summary": "",
+      "tags": [
+        "本プログラム開発においてこだわっていること"
+      ],
+      "category": "本プログラム開発においてこだわっていること",
+      "sort_order": 2
+    },
+    {
+      "id": "3",
+      "title": "参考ドキュメント",
+      "timestamp": "2026-09-18",
+      "summary": "",
+      "tags": [
+        "Overview_of_DigitalMATSUMOTO",
+        "FEATURE_LIST"
+      ],
+      "category": "参考ドキュメント",
+      "sort_order": 3
+    },
+    {
+      "id": "4",
+      "title": "アーキテクチャ概要",
+      "timestamp": "2026-09-18",
+      "summary": "",
+      "tags": [
+        "アーキテクチャ概要"
+      ],
+      "category": "アーキテクチャ概要",
+      "sort_order": 4
+    },
+    {
+      "id": "5",
+      "title": "主要モジュール",
+      "timestamp": "2026-09-18",
+      "summary": "",
+      "tags": [
+        "DigiM_Execute",
+        "DigiM_Session",
+        "DigiM_SessionStore",
+        "JSON",
+        "PostgreSQL",
+        "CosmosDB"
+      ],
+      "category": "主要モジュール",
+      "sort_order": 5
+    },
+    {
+      "id": "6",
+      "title": "ディレクトリ構造",
+      "timestamp": "2026-09-18",
+      "summary": "DigitalMATSUMOTO/ ├── user/ │   ├── common/ │   │   ├── agent/                # エージェント設定JSON │   │   ├── agent/persona_data/   # エージェントペルソナのxlsx（複数ペルソナ並列実行用） │   │   ├── practice/             # プラクティス設定JSON │   │   ├── tool/",
+      "tags": [
+        "DigitalMATSUMOTO",
+        "Tool",
+        "RAG",
+        "ChromaDB",
+        "Excel",
+        "Knowledge"
+      ],
+      "category": "ディレクトリ構造",
+      "sort_order": 6
+    },
+    {
+      "id": "7",
+      "title": "環境構築・インストレーション",
+      "timestamp": "2026-09-18",
+      "summary": "",
+      "tags": [
+        "環境構築・インストレーション"
+      ],
+      "category": "環境構築・インストレーション",
+      "sort_order": 7
+    },
+    {
+      "id": "8",
+      "title": "セットアップガイド",
+      "timestamp": "2026-09-18",
+      "summary": "",
+      "tags": [
+        "セットアップガイド"
+      ],
+      "category": "セットアップガイド",
+      "sort_order": 8
+    },
+    {
+      "id": "9",
+      "title": "Knowledge Explorer",
+      "timestamp": "2026-09-18",
+      "summary": "Knowledge Explorerは、RAGデータの分析画面です。サイドバーのラジオボタン（Chat / Knowledge Explorer）から切り替えてアクセスします。",
+      "tags": [
+        "Knowledge",
+        "Explorer",
+        "Chat",
+        "Allowed",
+        "Overall",
+        "Trend"
+      ],
+      "category": "Knowledge Explorer",
+      "sort_order": 9
+    },
+    {
+      "id": "10",
+      "title": "User Memory Explorer",
+      "timestamp": "2026-09-18",
+      "summary": "ユーザーメモリ（Persona/Nowaday/History）を「ユーザー理解」の観点で分析する画面です。サイドバーのラジオボタン（Chat / Knowledge Explorer / **User Memory Explorer** / Scheduler）から切り替えます。バックエンドは `DigiM_UserMemoryExplorer.py`。",
+      "tags": [
+        "User",
+        "Memory",
+        "Explorer",
+        "Persona",
+        "Nowaday",
+        "History"
+      ],
+      "category": "User Memory Explorer",
+      "sort_order": 10
+    },
+    {
+      "id": "11",
+      "title": "Agent Performance Explorer (APE)",
+      "timestamp": "2026-09-18",
+      "summary": "User Memory Explorer のエージェント版。サイドバーの **Agent Performance Explorer** から、特定エージェントの累積パフォーマンスを横断分析します。バックエンドは `DigiM_AgentPerformanceExplorer.py`。`Allowed[\"Agent Performance Explorer\"]` が `true` のユーザーのみ利用可。",
+      "tags": [
+        "Agent",
+        "Performance",
+        "Explorer",
+        "APE",
+        "User",
+        "Memory"
+      ],
+      "category": "Agent Performance Explorer (APE)",
+      "sort_order": 11
+    },
+    {
+      "id": "12",
+      "title": "Chat タブのその他の機能",
+      "timestamp": "2026-09-18",
+      "summary": "",
+      "tags": [
+        "Chat"
+      ],
+      "category": "Chat タブのその他の機能",
+      "sort_order": 12
+    },
+    {
+      "id": "13",
+      "title": "Batch Test（一括 Q&A 評価）",
+      "timestamp": "2026-09-18",
+      "summary": "Chat 画面下部の `Batch Test (upload Q&A xlsx)` エクスパンダから、Excel に並べた質問群を **現在のセッション＋現在のチャット設定** で一括実行できます。Ground Truth が付いていれば、各回答を LLM＋決定的メトリクスで自動評価します。",
+      "tags": [
+        "Batch",
+        "Test",
+        "Chat",
+        "Excel",
+        "Ground",
+        "Truth"
+      ],
+      "category": "Batch Test（一括 Q&A 評価）",
+      "sort_order": 13
+    },
+    {
+      "id": "14",
+      "title": "Evaluation",
+      "timestamp": "2026-09-18",
+      "summary": "サイドバーの **Evaluation** から、プラグイン式の評価テストを実行できる画面です。`Allowed[\"Evaluation\"]` 必須。バックエンドは [DigiM_Evaluation.py](DigiM_Evaluation.py) (ローダー)。",
+      "tags": [
+        "Evaluation",
+        "Allowed",
+        "DigiM_Evaluation"
+      ],
+      "category": "Evaluation",
+      "sort_order": 14
+    },
+    {
+      "id": "15",
+      "title": "API リファレンス",
+      "timestamp": "2026-09-18",
+      "summary": "FastAPI を起動すると、REST API 経由でエージェントを実行できます。LINE・Slack 等の外部サービスからの呼び出しにも対応しています。",
+      "tags": [
+        "API",
+        "FastAPI",
+        "REST",
+        "LINE",
+        "Slack"
+      ],
+      "category": "API リファレンス",
+      "sort_order": 15
+    },
+    {
+      "id": "4-1",
+      "title": "概念モデル：Original / AI / User の三者循環",
+      "timestamp": "2026-09-18",
+      "summary": "本プログラムの基本思想は「オリジナル（リアル松本）」「デジタルツインAI（デジタルMATSUMOTO）」「ユーザー（リアル松本自身または対話相手）」の**三者が相互に理解し合いながら成長する循環**を作ることです。以下の技術構成はこの循環を実装するための手段として設計されています。",
+      "tags": [
+        "Original",
+        "AI",
+        "User",
+        "Personality",
+        "Knowledge",
+        "Habit"
+      ],
+      "category": "アーキテクチャ概要",
+      "sort_order": 401
+    },
+    {
+      "id": "4-2",
+      "title": "技術構成",
+      "timestamp": "2026-09-18",
+      "summary": "[Streamlit UI / FastAPI / Jupyter Notebook]",
+      "tags": [
+        "Streamlit",
+        "UI",
+        "FastAPI",
+        "Jupyter",
+        "Notebook",
+        "DigiM_Execute"
+      ],
+      "category": "アーキテクチャ概要",
+      "sort_order": 402
+    },
+    {
+      "id": "7-1",
+      "title": "前提条件",
+      "timestamp": "2026-09-18",
+      "summary": "",
+      "tags": [
+        "Docker",
+        "OpenAI",
+        "Google",
+        "Gemini",
+        "Anthropic",
+        "Claude"
+      ],
+      "category": "環境構築・インストレーション",
+      "sort_order": 701
+    },
+    {
+      "id": "7-2",
+      "title": "1. リポジトリの取得",
+      "timestamp": "2026-09-18",
+      "summary": "git clone https://github.com/m07takash/DigitalMATSUMOTO.git cd DigitalMATSUMOTO",
+      "tags": [
+        "DigitalMATSUMOTO"
+      ],
+      "category": "環境構築・インストレーション",
+      "sort_order": 702
+    },
+    {
+      "id": "7-3",
+      "title": "2. Dockerイメージのビルド",
+      "timestamp": "2026-09-18",
+      "summary": "docker build -t digimatsumoto .",
+      "tags": [
+        "Docker",
+        "Python3",
+        "MeCab",
+        "IPAex",
+        "Noto",
+        "CJK"
+      ],
+      "category": "環境構築・インストレーション",
+      "sort_order": 703
+    },
+    {
+      "id": "7-4",
+      "title": "3. コンテナの起動",
+      "timestamp": "2026-09-18",
+      "summary": "docker run -d --name digimatsumoto \\",
+      "tags": [
+        "Streamlit",
+        "WebUI",
+        "FastAPI",
+        "Dockerfile",
+        "EXPOSE",
+        "DigitalMATSUMOTO"
+      ],
+      "category": "環境構築・インストレーション",
+      "sort_order": 704
+    },
+    {
+      "id": "7-5",
+      "title": "4. 設定ファイルの作成（system.env / setting.yaml）",
+      "timestamp": "2026-09-18",
+      "summary": "コンテナに入り、雛形から 3 つの設定ファイルを作ります。いずれも `.gitignore` / `.dockerignore` の対象なので、**リポジトリにもイメージにも存在しません。必ず自分で作成します。**",
+      "tags": [
+        "system",
+        "env",
+        "setting",
+        "yaml",
+        "OPENAI_API_KEY",
+        "OpenAI"
+      ],
+      "category": "環境構築・インストレーション",
+      "sort_order": 705
+    },
+    {
+      "id": "7-6",
+      "title": "5. アプリケーションの起動（コンテナ内で実行）",
+      "timestamp": "2026-09-18",
+      "summary": "設定ファイルが揃ったら、**`./startup.sh` が標準の起動方法**です。WebUI（Streamlit）と FastAPI をまとめて起動します。",
+      "tags": [
+        "WebUI",
+        "Streamlit",
+        "FastAPI",
+        "Copy",
+        "WebDigiMatsuAgent",
+        "Ctrl"
+      ],
+      "category": "環境構築・インストレーション",
+      "sort_order": 706
+    },
+    {
+      "id": "7-7",
+      "title": "6. 動作確認",
+      "timestamp": "2026-09-18",
+      "summary": "`./startup.sh` を実行した状態で、ブラウザから `http://localhost:8501` にアクセスし WebUI が表示されれば完了です。",
+      "tags": [
+        "WebUI",
+        "MISSING"
+      ],
+      "category": "環境構築・インストレーション",
+      "sort_order": 707
+    },
+    {
+      "id": "7-8",
+      "title": "7. Nginx リバースプロキシの設定（本番環境向け）",
+      "timestamp": "2026-09-18",
+      "summary": "HTTPS対応やドメイン運用を行う場合、Nginxをリバースプロキシとして配置します。以下はAzure VM + Let's Encrypt での構成例です。",
+      "tags": [
+        "Nginx",
+        "VM",
+        "Let",
+        "Encrypt",
+        "PPTX",
+        "HTTP"
+      ],
+      "category": "環境構築・インストレーション",
+      "sort_order": 708
+    },
+    {
+      "id": "7-9",
+      "title": "8. 閉域ネットワーク（Azure）への構築",
+      "timestamp": "2026-09-18",
+      "summary": "pip / Git / apt が使えない閉域ネットワーク下の Azure 環境へ構築する場合は、ネット接続環境でビルド済みの Docker イメージを丸ごと持ち込む方式をとります。tar 化・分割転送・ロードから、Azure OpenAI への切り替え（エージェント定義の `FUNC_NAME` 変更）までの一連の手順は [docs/SETUP_OFFLINE_DOCKER.md](docs/SETUP_OFFLINE_DOCKER.md) を参照してください。",
+      "tags": [
+        "Azure",
+        "Git",
+        "Docker",
+        "OpenAI",
+        "FUNC_NAME",
+        "SETUP_OFFLINE_DOCKER"
+      ],
+      "category": "環境構築・インストレーション",
+      "sort_order": 709
+    },
+    {
+      "id": "8-1",
+      "title": "マスターデータの設定",
+      "timestamp": "2026-09-18",
+      "summary": "マスターデータは `user/common/mst/` 配下に配置します。`sample_` 付きのファイルがサンプルとして同梱されており、そのままでも動作しますが、通常は以下のようにコピーしてカスタマイズします。",
+      "tags": [
+        "Notion",
+        "USER_MST_FILE",
+        "RAG_MST_FILE",
+        "PROMPT_TEMPLATE_MST_FILE"
+      ],
+      "category": "セットアップガイド",
+      "sort_order": 801
+    },
+    {
+      "id": "8-2",
+      "title": "会話履歴の保存バックエンド",
+      "timestamp": "2026-09-18",
+      "summary": "`setting.yaml` の `SESSION_STORE_METHOD` で選択します。デフォルトは **JSON**（従来通り 1 セッション 1 ファイル）。数百ターン規模のセッションを扱う場合や複数プロセスから同時に書き込む場合は PostgreSQL / CosmosDB を推奨。",
+      "tags": [
+        "SESSION_STORE_METHOD",
+        "JSON",
+        "PostgreSQL",
+        "CosmosDB",
+        "JSONB",
+        "UPSERT"
+      ],
+      "category": "セットアップガイド",
+      "sort_order": 802
+    },
+    {
+      "id": "8-3",
+      "title": "RAGデータの設定",
+      "timestamp": "2026-09-18",
+      "summary": "RAGデータの構築は「データの準備」→「RAGマスターの設定」→「ベクトルDB生成」の3ステップです。",
+      "tags": [
+        "RAG",
+        "Step",
+        "UTF",
+        "Sample01_Relations",
+        "Knowledge",
+        "Graph"
+      ],
+      "category": "セットアップガイド",
+      "sort_order": 803
+    },
+    {
+      "id": "8-4",
+      "title": "エージェントの設定",
+      "timestamp": "2026-09-18",
+      "summary": "`user/common/agent/` 配下にエージェント定義JSONを配置します。`agent_10Sample.json` をコピーしてカスタマイズするのが推奨です。",
+      "tags": [
+        "Name",
+        "API",
+        "Sample",
+        "RAG",
+        "AX",
+        "RX"
+      ],
+      "category": "セットアップガイド",
+      "sort_order": 804
+    },
+    {
+      "id": "8-5",
+      "title": "プラクティスの設定",
+      "timestamp": "2026-09-18",
+      "summary": "プラクティスはエージェントの処理パイプラインを定義するJSONファイルです。`user/common/practice/` 配下に配置します。",
+      "tags": [
+        "NAME",
+        "Default",
+        "CHAIN",
+        "TYPE",
+        "LLM",
+        "AGENT_FILE"
+      ],
+      "category": "セットアップガイド",
+      "sort_order": 805
+    },
+    {
+      "id": "8-6",
+      "title": "Web検索の設定",
+      "timestamp": "2026-09-18",
+      "summary": "Web検索を有効にすると、LLMへの入力にWebの最新情報を付加できます。WebUIのチャット入力欄上部の「WEB Search」チェックボックスで有効化し、隣のセレクトボックスでエンジンを切り替えられます。",
+      "tags": [
+        "Web",
+        "WEB",
+        "Search",
+        "END",
+        "DigiM_Execute",
+        "LLM"
+      ],
+      "category": "セットアップガイド",
+      "sort_order": 806
+    },
+    {
+      "id": "8-7",
+      "title": "ツールプラグインシステム（SKILL / Tool / Slash Command）",
+      "timestamp": "2026-09-18",
+      "summary": "エージェントが LLM 以外の動作（履歴操作・Web検索・解析処理など）を実行する仕組みは、**エンジン非依存のツールレジストリ**を中心に統一されています。GPT / Gemini / Claude / Grok のどのエンジンでも同じツールが同じ手順で動作します。",
+      "tags": [
+        "SKILL",
+        "Tool",
+        "Slash",
+        "Command",
+        "LLM",
+        "GPT"
+      ],
+      "category": "セットアップガイド",
+      "sort_order": 807
+    },
+    {
+      "id": "8-8",
+      "title": "引用付与（Citation Injection）",
+      "timestamp": "2026-09-18",
+      "summary": "メインLLMが本回答を生成した後、軽量LLMによる**追加パス**で、Web検索URLとBOOKチャンクから引用ソースを抽出し、本文末文に `[N]` マーカーを挿入＋末尾に `## References` セクションを付与します。**本文の言い回しは変更しません**。",
+      "tags": [
+        "Citation",
+        "Injection",
+        "References",
+        "Injector",
+        "Execute",
+        "DigiM_Execute"
+      ],
+      "category": "セットアップガイド",
+      "sort_order": 808
+    },
+    {
+      "id": "8-9",
+      "title": "URL自動取得（添付ファイル化）",
+      "timestamp": "2026-09-18",
+      "summary": "ユーザー入力に `http(s)://...` のリンクが含まれていると、`DigiM_UrlFetch` が自動的にページ本文を取得し、添付ファイルとしてLLMの入力に追加します。",
+      "tags": [
+        "URL",
+        "DigiM_UrlFetch",
+        "Include",
+        "Subpages",
+        "OFF",
+        "MAX_BYTES"
+      ],
+      "category": "セットアップガイド",
+      "sort_order": 809
+    },
+    {
+      "id": "8-10",
+      "title": "ユーザーメモリ（階層的ユーザー理解）",
+      "timestamp": "2026-09-18",
+      "summary": "セッションを横断してユーザーの特徴や関心、価値観を蓄積し、以降のチャットへ自動的に文脈として注入する仕組みです。3層構造で、それぞれ異なる粒度・寿命を持ちます。",
+      "tags": [
+        "History",
+        "Nowaday",
+        "YYYY",
+        "MM",
+        "Persona",
+        "Big5"
+      ],
+      "category": "セットアップガイド",
+      "sort_order": 810
+    },
+    {
+      "id": "8-11",
+      "title": "バックグラウンドジョブの管理",
+      "timestamp": "2026-09-18",
+      "summary": "Streamlit上で走るバックグラウンドスレッド（RAG更新、知識活用分析、エージェント比較、会話ダイジェスト生成など）を `DigiM_JobRegistry` で追跡し、サイドバー **Sessions → Background Jobs** から稼働中ジョブの一覧表示・選択キャンセルが可能です。",
+      "tags": [
+        "DigiM_JobRegistry",
+        "Sessions",
+        "Background",
+        "Jobs",
+        "PyThreadState_SetAsyncExc",
+        "SystemExit"
+      ],
+      "category": "セットアップガイド",
+      "sort_order": 811
+    },
+    {
+      "id": "8-12",
+      "title": "起動方法",
+      "timestamp": "2026-09-18",
+      "summary": "./startup.sh",
+      "tags": [
+        "WebUI",
+        "API",
+        "WebDigiMatsuAgent",
+        "DigiM_API",
+        "DigiM_SupportEval"
+      ],
+      "category": "セットアップガイド",
+      "sort_order": 812
+    },
+    {
+      "id": "9-1",
+      "title": "データソースの選択",
+      "timestamp": "2026-09-18",
+      "summary": "ラジオボタンで **Collection（VectorDB）** / **Graph** / **PageIndex** を切り替えます。コレクション一覧は、選択中のエージェントの KNOWLEDGE および BOOK 設定に基づいてフィルタリングされます。PageIndex 選択時はツリー構造表示・ページ感度分析の専用画面になります。",
+      "tags": [
+        "Collection",
+        "VectorDB",
+        "Graph",
+        "PageIndex",
+        "KNOWLEDGE",
+        "BOOK"
+      ],
+      "category": "Knowledge Explorer",
+      "sort_order": 901
+    },
+    {
+      "id": "9-2",
+      "title": "1. Overall",
+      "timestamp": "2026-09-18",
+      "summary": "初期データ検索と散布図生成を統合したセクションです。",
+      "tags": [
+        "Overall",
+        "PCA",
+        "SNE",
+        "Color",
+        "Marker",
+        "Dot"
+      ],
+      "category": "Knowledge Explorer",
+      "sort_order": 902
+    },
+    {
+      "id": "9-3",
+      "title": "2. Trend（旧 時系列分析）",
+      "timestamp": "2026-09-18",
+      "summary": "`create_date` が存在する場合に利用できます。**Total / 各RAG NAME** で固定表示します（View Mode 選択は廃止）。",
+      "tags": [
+        "Trend",
+        "Total",
+        "NAME",
+        "View",
+        "Mode",
+        "RAG"
+      ],
+      "category": "Knowledge Explorer",
+      "sort_order": 903
+    },
+    {
+      "id": "9-4",
+      "title": "3. Topic（旧 感度分析）",
+      "timestamp": "2026-09-18",
+      "summary": "クエリテキストに対し、どの知識チャンクが強く反応するかを分析します（クラスタリングは含みません）。**Total / 各RAG NAME** で固定表示します。",
+      "tags": [
+        "Topic",
+        "Total",
+        "NAME",
+        "RAG",
+        "Collection",
+        "Overall"
+      ],
+      "category": "Knowledge Explorer",
+      "sort_order": 904
+    },
+    {
+      "id": "9-5",
+      "title": "4. Ask Agent",
+      "timestamp": "2026-09-18",
+      "summary": "チャットと同じパイプライン（DigiMatsuExecute）を使用してエージェントに質問できます。Overall/Trend/Topic の表示中の解説が文脈として渡されます。",
+      "tags": [
+        "Ask",
+        "Agent",
+        "DigiMatsuExecute",
+        "Overall",
+        "Trend",
+        "Topic"
+      ],
+      "category": "Knowledge Explorer",
+      "sort_order": 905
+    },
+    {
+      "id": "9-6",
+      "title": "PageIndex",
+      "timestamp": "2026-09-18",
+      "summary": "",
+      "tags": [
+        "PageIndex"
+      ],
+      "category": "Knowledge Explorer",
+      "sort_order": 906
+    },
+    {
+      "id": "9-7",
+      "title": "エクスポート・レポート",
+      "timestamp": "2026-09-18",
+      "summary": "",
+      "tags": [
+        "Generate",
+        "Report"
+      ],
+      "category": "Knowledge Explorer",
+      "sort_order": 907
+    },
+    {
+      "id": "9-8",
+      "title": "セッション管理",
+      "timestamp": "2026-09-18",
+      "summary": "",
+      "tags": [
+        "セッション管理"
+      ],
+      "category": "Knowledge Explorer",
+      "sort_order": 908
+    },
+    {
+      "id": "11-1",
+      "title": "データソース (PG → ライブ → アーカイブの優先順)",
+      "timestamp": "2026-09-18",
+      "summary": "session_id でユニオン de-dup (PG 優先)。これにより、すでに archive で圧縮済みのセッション・ライブのセッション・まだ Export していないセッション全部を横断集計できます。",
+      "tags": [
+        "PG",
+        "PostgreSQL",
+        "Sessions",
+        "Export",
+        "DB",
+        "ZIP"
+      ],
+      "category": "Agent Performance Explorer (APE)",
+      "sort_order": 1101
+    },
+    {
+      "id": "11-2",
+      "title": "Tab 1: Overview",
+      "timestamp": "2026-09-18",
+      "summary": "",
+      "tags": [
+        "Tab",
+        "Overview",
+        "Sessions",
+        "Turns",
+        "Users",
+        "Total"
+      ],
+      "category": "Agent Performance Explorer (APE)",
+      "sort_order": 1102
+    },
+    {
+      "id": "11-3",
+      "title": "Tab 2: Knowledge / Book Utilization",
+      "timestamp": "2026-09-18",
+      "summary": "各 KNOWLEDGE / BOOK / PageIndex の **累積参照状況** を可視化:",
+      "tags": [
+        "Tab",
+        "Knowledge",
+        "Book",
+        "Utilization",
+        "KNOWLEDGE",
+        "BOOK"
+      ],
+      "category": "Agent Performance Explorer (APE)",
+      "sort_order": 1103
+    },
+    {
+      "id": "11-4",
+      "title": "Chat の Analytics Results との連携",
+      "timestamp": "2026-09-18",
+      "summary": "Chat タブの「**Analytics Results - Knowledge Utility**」ボタンも、引用RAGに **PageIndex が含まれていれば Page Tree** をその位置で描画 (参照ページを青、件数表示)。同じツリー描画ヘルパー `_render_ape_pageindex_tree` を共有しています。",
+      "tags": [
+        "Chat",
+        "Analytics",
+        "Results",
+        "Knowledge",
+        "Utility",
+        "PageIndex"
+      ],
+      "category": "Agent Performance Explorer (APE)",
+      "sort_order": 1104
+    },
+    {
+      "id": "12-1",
+      "title": "Detail Information タブ構成",
+      "timestamp": "2026-09-18",
+      "summary": "Chat の各ターン下部の「**Detail Information**」エクスパンダは4つのタブで構成:",
+      "tags": [
+        "Detail",
+        "Information",
+        "Chat",
+        "LLM",
+        "Input",
+        "System"
+      ],
+      "category": "Chat タブのその他の機能",
+      "sort_order": 1201
+    },
+    {
+      "id": "12-2",
+      "title": "セッションサマリー（ユーザー定義のセッション状態文書）",
+      "timestamp": "2026-09-18",
+      "summary": "Session Summary の更新と Memory Digest の生成は**別スレッドで完全並列**に走ります (両方とも `threading.Thread(daemon=True).start()` で非同期起動)。どちらもチャット応答の返却をブロックしません。両方が同時に `status.yaml` を書き込む場合、[`DigiM_Util.save_yaml_file`](DigiM_Util.py) の per-file lock (`_yaml_file_l",
+      "tags": [
+        "Gemini",
+        "Flash",
+        "Current",
+        "Session",
+        "Summary",
+        "Agent"
+      ],
+      "category": "Chat タブのその他の機能",
+      "sort_order": 1202
+    },
+    {
+      "id": "12-3",
+      "title": "Compare Agent — Knowledge/Book 除外によるリグレッションテスト",
+      "timestamp": "2026-09-18",
+      "summary": "「Analytics Results - Compare Agents」で比較対象エージェントを選んだ後、`Exclude KNOWLEDGE (regression):` / `Exclude BOOK (regression):` のマルチセレクトで **特定の RAG_NAME を除外**して同一質問を再実行できます。",
+      "tags": [
+        "Compare",
+        "Agent",
+        "Knowledge",
+        "Book",
+        "Analytics",
+        "Results"
+      ],
+      "category": "Chat タブのその他の機能",
+      "sort_order": 1203
+    },
+    {
+      "id": "12-4",
+      "title": "下書きモード (chat_input)",
+      "timestamp": "2026-09-18",
+      "summary": "直前のターンが実行中でも、メッセージ欄は **常に編集可能**。Enter 押下時に:",
+      "tags": [
+        "chat_input",
+        "Enter",
+        "Send",
+        "Discard"
+      ],
+      "category": "Chat タブのその他の機能",
+      "sort_order": 1204
+    },
+    {
+      "id": "12-5",
+      "title": "Activate Sessions セレクタ（サイドバー）",
+      "timestamp": "2026-09-18",
+      "summary": "過去に非表示にした（`Del` ボタンで `active=N` にした）セッションを再表示するための multiselect。**セッション名** で表示され、**最終更新日 (`last_update_date`) の降順**でソートされます（内部では ID を値として保持しているため、同名セッションでも一意に選べます）。Admin 以外は自分のセッションのみが対象。選択後に **`Activate`** ボタンで一括再表示。",
+      "tags": [
+        "Activate",
+        "Sessions",
+        "Del",
+        "ID",
+        "Admin"
+      ],
+      "category": "Chat タブのその他の機能",
+      "sort_order": 1205
+    },
+    {
+      "id": "13-1",
+      "title": "入力 Excel フォーマット",
+      "timestamp": "2026-09-18",
+      "summary": "`Memory No` 列がある時は seq 追跡のため `MEMORY_SAVE` を自動的に True に昇格。区切りは カンマ / セミコロン / 空白すべてOK。Excel が `1.0` に自動変換しても `1` に正規化。",
+      "tags": [
+        "Excel",
+        "Question",
+        "Eval",
+        "Style",
+        "QuestionStyle",
+        "Agent"
+      ],
+      "category": "Batch Test（一括 Q&A 評価）",
+      "sort_order": 1301
+    },
+    {
+      "id": "13-2",
+      "title": "出力 Excel フォーマット",
+      "timestamp": "2026-09-18",
+      "summary": "入力カラムを維持しつつ、以下を追加（既存なら上書き）:",
+      "tags": [
+        "Excel",
+        "Persona",
+        "Answer",
+        "Verdict",
+        "LLM",
+        "Score"
+      ],
+      "category": "Batch Test（一括 Q&A 評価）",
+      "sort_order": 1302
+    },
+    {
+      "id": "13-3",
+      "title": "主要機能",
+      "timestamp": "2026-09-18",
+      "summary": "",
+      "tags": [
+        "Memory",
+        "Use",
+        "BatchTest",
+        "Save",
+        "Digest",
+        "OFF"
+      ],
+      "category": "Batch Test（一括 Q&A 評価）",
+      "sort_order": 1303
+    },
+    {
+      "id": "13-4",
+      "title": "Result Analysis（即表示）",
+      "timestamp": "2026-09-18",
+      "summary": "セッションフォルダの結果 xlsx を読み込み、シート横断サマリ＋シートごとの集計を表示:",
+      "tags": [
+        "Result",
+        "Analysis",
+        "Verdict",
+        "Score",
+        "Exact",
+        "Match"
+      ],
+      "category": "Batch Test（一括 Q&A 評価）",
+      "sort_order": 1304
+    },
+    {
+      "id": "13-5",
+      "title": "LLM 評価（オンデマンド）",
+      "timestamp": "2026-09-18",
+      "summary": "「LLM評価を生成」ボタンで、サマリ＋低スコア行（各シート 5 件まで）を LLM に渡し、以下を Markdown で生成。結果は `batch_results_<TS>.critique.md` に永続化:",
+      "tags": [
+        "LLM",
+        "Markdown",
+        "TS",
+        "Agent",
+        "JSON",
+        "KNOWLEDGE"
+      ],
+      "category": "Batch Test（一括 Q&A 評価）",
+      "sort_order": 1305
+    },
+    {
+      "id": "13-6",
+      "title": "内部実装メモ",
+      "timestamp": "2026-09-18",
+      "summary": "",
+      "tags": [
+        "MEMORY_SAVE",
+        "True",
+        "STATUS",
+        "LLM"
+      ],
+      "category": "Batch Test（一括 Q&A 評価）",
+      "sort_order": 1306
+    },
+    {
+      "id": "14-1",
+      "title": "プラグインアーキテクチャ",
+      "timestamp": "2026-09-18",
+      "summary": "`user/common/evaluation/<評価名>/main.py` に `Plugin` クラスを定義するだけで自動検出。**プラグイン契約**:",
+      "tags": [
+        "Plugin",
+        "None",
+        "Streamlit",
+        "Markdown",
+        "Generate",
+        "Report"
+      ],
+      "category": "Evaluation",
+      "sort_order": 1401
+    },
+    {
+      "id": "14-2",
+      "title": "プラグイン任意フック",
+      "timestamp": "2026-09-18",
+      "summary": "`Plugin` に以下を追加すると WebUI が対応した振る舞いをします:",
+      "tags": [
+        "Plugin",
+        "WebUI",
+        "Run",
+        "LLM",
+        "None"
+      ],
+      "category": "Evaluation",
+      "sort_order": 1402
+    },
+    {
+      "id": "14-3",
+      "title": "UI フロー",
+      "timestamp": "2026-09-18",
+      "summary": "1. **Evaluation プラグイン**ドロップダウン 2. **📎 Sample input: `<filename>`** — サンプル入力ファイル名だけ表示 (絶対パスは非開示、セキュリティ配慮)。 **Download template (.xlsx)** ボタンで元 xlsx を byte-for-byte 配信 (書式そのまま) 3. **Upload input (.xlsx)** — 記入済 xlsx をアップロード 4. **🔒 Evaluation",
+      "tags": [
+        "UI",
+        "Evaluation",
+        "Sample",
+        "Download",
+        "Upload",
+        "Run"
+      ],
+      "category": "Evaluation",
+      "sort_order": 1403
+    },
+    {
+      "id": "14-4",
+      "title": "PersonalEvaluation プラグイン",
+      "timestamp": "2026-09-18",
+      "summary": "人格評価7理論 (Big Five / Schwartz Value Theory / Self-Determination / Personal Strivings / Narrative Identity / Social Identity / Attachment) を一括スコアリング。テンプレートはプラグインフォルダ直下に同梱 (`user/common/evaluation/PersonalEvaluation/PersonalTestQA.xlsx`) — UI",
+      "tags": [
+        "PersonalEvaluation",
+        "Big",
+        "Five",
+        "Schwartz",
+        "Value",
+        "Theory"
+      ],
+      "category": "Evaluation",
+      "sort_order": 1404
+    },
+    {
+      "id": "14-5",
+      "title": "新評価の追加",
+      "timestamp": "2026-09-18",
+      "summary": "`user/common/evaluation/<新規名>/main.py` に `Plugin` クラスを実装するだけで、サイドバーの Evaluation メニューに自動的にプラグインが現れます (再起動不要)。既存の PersonalEvaluation / AnimalFortune (動物占い) が実装参考。",
+      "tags": [
+        "Plugin",
+        "Evaluation",
+        "PersonalEvaluation",
+        "AnimalFortune"
+      ],
+      "category": "Evaluation",
+      "sort_order": 1405
+    },
+    {
+      "id": "15-1",
+      "title": "エンドポイント一覧",
+      "timestamp": "2026-09-18",
+      "summary": "",
+      "tags": [
+        "POST",
+        "JSON",
+        "GET",
+        "CSV",
+        "API",
+        "API_PORT"
+      ],
+      "category": "API リファレンス",
+      "sort_order": 1501
+    },
+    {
+      "id": "15-2",
+      "title": "POST /run — メッセージ送信",
+      "timestamp": "2026-09-18",
+      "summary": "1回の HTTP リクエストで LLM 実行が完結し、応答を直接返します。同一 `session_id` を指定すれば会話が継続されます。",
+      "tags": [
+        "POST",
+        "run",
+        "HTTP",
+        "LLM",
+        "LOCKED",
+        "SERVICE_ID"
+      ],
+      "category": "API リファレンス",
+      "sort_order": 1502
+    },
+    {
+      "id": "15-3",
+      "title": "添付ファイル（`attachments` / `attachment_urls` / `/run_multipart`）",
+      "timestamp": "2026-09-18",
+      "summary": "WebUI と同じ経路（`DigiMatsuExecute_Practice` の `in_contents=`）で LLM に文脈として添付ファイルを渡せます。3つの受け口があり、いずれも混在させて1リクエストで送れます。",
+      "tags": [
+        "attachments",
+        "attachment_urls",
+        "run_multipart",
+        "WebUI",
+        "DigiMatsuExecute_Practice",
+        "LLM"
+      ],
+      "category": "API リファレンス",
+      "sort_order": 1503
+    },
+    {
+      "id": "15-4",
+      "title": "セッションサマリー API（`/sessions/{id}/summary` / `/session_summary_presets`）",
+      "timestamp": "2026-09-18",
+      "summary": "WebUI と同じ状態 (`status.yaml`) を API 経由で参照・変更できます。詳細な機能説明は [セッションサマリー](#セッションサマリーユーザー定義のセッション状態文書) を参照。",
+      "tags": [
+        "API",
+        "sessions",
+        "id",
+        "summary",
+        "session_summary_presets",
+        "WebUI"
+      ],
+      "category": "API リファレンス",
+      "sort_order": 1504
+    },
+    {
+      "id": "15-5",
+      "title": "実行例",
+      "timestamp": "2026-09-18",
+      "summary": "curl -s http://localhost:8899/health",
+      "tags": [
+        "POST",
+        "Content",
+        "Type",
+        "SERVICE_ID",
+        "API_TEST",
+        "SERVICE_DATA"
+      ],
+      "category": "API リファレンス",
+      "sort_order": 1505
+    },
+    {
+      "id": "15-6",
+      "title": "LINE 連携での利用例",
+      "timestamp": "2026-09-18",
+      "summary": "LINE Messaging API のWebhookからの呼び出しイメージです。",
+      "tags": [
+        "LINE",
+        "Messaging",
+        "API",
+        "Webhook",
+        "FastAPI",
+        "SERVICE_ID"
+      ],
+      "category": "API リファレンス",
+      "sort_order": 1506
+    }
+  ]
+}

@@ -156,8 +156,11 @@ class PgSessionStore(SessionStore):
         self._fallback = FileSessionStore()
 
     def _connect(self):
-        if self._conn is not None:
+        # `closed` flips only when psycopg2 itself noticed the drop; _cursor()
+        # validates the live ones.
+        if self._conn is not None and getattr(self._conn, "closed", 1) == 0:
             return self._conn
+        self._conn = None
         import psycopg2
         cfg = {
             "host":     os.getenv("POSTGRES_HOST"),
@@ -176,12 +179,32 @@ class PgSessionStore(SessionStore):
         return self._conn
 
     def _cursor(self):
-        conn = self._connect()
-        cur = conn.cursor()
-        if not self._ddl_done:
-            cur.execute(_PG_DDL)
-            self._ddl_done = True
-        return cur
+        # A cached connection can be dead (server restart, idle timeout, network
+        # blip) and psycopg2 only reports it once a statement runs. Validate and
+        # reconnect once here: without it the caller falls back to the file
+        # store, which has no rows for a PG-era session and so reads as an empty
+        # conversation — a silent data-loss look.
+        last = None
+        for attempt in (1, 2):
+            conn = self._connect()
+            try:
+                cur = conn.cursor()
+                cur.execute("SELECT 1")
+                cur.fetchone()
+                if not self._ddl_done:
+                    cur.execute(_PG_DDL)
+                    self._ddl_done = True
+                return cur
+            except Exception as _e:
+                last = _e
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                self._conn = None
+                self._ddl_done = False
+                if attempt == 2:
+                    raise last
 
     def _fresh(self):
         # Return a functional store — try PG, fall back to file store on any
@@ -191,8 +214,11 @@ class PgSessionStore(SessionStore):
         try:
             return self._cursor(), None
         except Exception as _e:
-            logger.warning("PgSessionStore: connect failed (%s); "
-                           "using file store for this call.", _e)
+            # Reads then come back empty (a PG-era session has no local file),
+            # so this must be loud enough to explain a blank history.
+            logger.error("PgSessionStore: connect failed (%s); using file store "
+                         "for this call — history of PG-stored sessions will "
+                         "read as empty until the DB is reachable.", _e)
             return None, self._fallback
 
     def exists(self, session_id: str, folder_path: Optional[str] = None) -> bool:
