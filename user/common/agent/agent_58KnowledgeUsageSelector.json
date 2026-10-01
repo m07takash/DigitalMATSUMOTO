@@ -9,11 +9,11 @@
     },
     "ENGINE": {
         "LLM": {
-            "DEFAULT": "GPT-5.6-Luna",
-            "GPT-5.6-Luna": {
-                "NAME": "GPT-5.6-Luna",
+            "DEFAULT": "GPT-6-Luna",
+            "GPT-6-Luna": {
+                "NAME": "GPT-6-Luna",
                 "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5.6-luna",
+                "MODEL": "gpt-6-luna",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {
@@ -25,10 +25,10 @@
                 },
                 "ACTIVE": true
             },
-            "Gemini-3.5-Flash": {
-                "NAME": "Gemini-3.5-Flash",
-                "FUNC_NAME": "generate_response_T_gemini",
-                "MODEL": "gemini-3.5-flash",
+            "GPT-5.6-Luna": {
+                "NAME": "GPT-5.6-Luna",
+                "FUNC_NAME": "generate_response_T_gpt",
+                "MODEL": "gpt-5.6-luna",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {

@@ -567,6 +567,19 @@ class DigiMSession:
                 chat_history_active_omit_dict[key] = {}
                 chat_history_active_omit_dict[key]["1"] = {}
                 chat_history_active_omit_dict[key]["1"]["setting"] = sub_dict[str(min_subseq)]["setting"]
+                # The collapsed turn is always keyed "1", but the raw history can
+                # hold a SKILL / PUSH / TOOL_PICK entry at that sub_seq, so anything
+                # re-reading the raw turn (get_detail_info) needs the real coordinate:
+                # the first entry that ran the chain, else the earliest one.
+                _detail_subseq = next(
+                    (str(n) for n in _conv_seqs
+                     if "engine" in ((sub_dict.get(str(n)) or {}).get("setting") or {})),
+                    str(min_subseq))
+                chat_history_active_omit_dict[key]["1"]["_src_sub_seq"] = _detail_subseq
+                # The answer, digest, log and feedback shown for a collapsed turn
+                # all come from its last entry, so writes triggered from that view
+                # (feedback) have to land there rather than on the collapsed key.
+                chat_history_active_omit_dict[key]["1"]["_src_sub_seq_last"] = str(max_subseq)
                 if "prompt" in sub_dict[str(max_subseq)]:
                     chat_history_active_omit_dict[key]["1"]["prompt"] = sub_dict[str(min_subseq)]["prompt"]
                 # Collect images from both max_subseq and intermediate sub_seqs (when IMAGEGEN is mid-chain)
@@ -586,6 +599,13 @@ class DigiMSession:
                     chat_history_active_omit_dict[key]["1"]["log"] = sub_dict[str(max_subseq)]["log"]
                 if "feedback" in sub_dict[str(max_subseq)]:
                     chat_history_active_omit_dict[key]["1"]["feedback"] = sub_dict[str(max_subseq)]["feedback"]
+                # Analytics is stamped onto the entry the run was started from,
+                # which is normally the last one but not always, so the collapsed
+                # turn surfaces the most recent entry that actually carries it.
+                _analytics_sub = next((str(n) for n in reversed(sub_seqs)
+                                       if "analytics" in (sub_dict.get(str(n)) or {})), "")
+                if _analytics_sub:
+                    chat_history_active_omit_dict[key]["1"]["analytics"] = sub_dict[_analytics_sub]["analytics"]
         return chat_history_active_omit_dict
 
     # Get the digest just before the given seq
@@ -1196,12 +1216,44 @@ class DigiMSession:
             _dmss.save_history(self.session_id, chat_history_dict, self.session_folder_path)
             _logger.info(f"set_analytics_history: seq={seq}, sub_seq={sub_seq} written to {self.session_file_path}")
 
+    # Detail block for turns stored without an engine (SKILL / PUSH / TOOL):
+    # they never ran the LLM chain, so the execution sections have nothing to
+    # read and only the little the entry carries is shown.
+    def _get_detail_info_no_engine(self, entry):
+        _setting = entry.get("setting") or {}
+        _prompt = entry.get("prompt") or {}
+        _response = entry.get("response") or {}
+        info = "\n[Execution info]\n"
+        info += "Type: "+str(_setting.get("type", ""))+"\n"
+        if _setting.get("name"):
+            info += "Name: "+str(_setting["name"])+"\n"
+        if _setting.get("skill_name"):
+            info += "Skill: "+str(_setting["skill_name"])+"\n"
+        if _setting.get("tool"):
+            info += "Tool: "+str(_setting["tool"])+"\n"
+        if _setting.get("job_name"):
+            info += "Job: "+str(_setting["job_name"])+"\n"
+
+        info += "\n[Execution result]\n"
+        info += "Agent: "+str(_setting.get("agent_file", ""))+"\n"
+        if _prompt.get("timestamp") and _response.get("timestamp"):
+            info += "Response time: "+dmu.get_time_diff(_prompt["timestamp"], _response["timestamp"], format_str="%Y-%m-%d %H:%M:%S.%f")+"\n"
+        if "token" in _prompt:
+            info += "Prompt tokens: "+str(_prompt["token"])+"\n"
+        if "token" in _response:
+            info += "Response tokens: "+str(_response["token"])+"\n"
+        return info
+
     # Get detailed info from chat history
     def get_detail_info(self, seq, sub_seq="1"):
         chat_detail_info = ""
         if _dmss.history_exists(self.session_id, self.session_folder_path):
             chat_history_dict = _dmss.load_history(self.session_id, self.session_folder_path)
-            chat_history_dict_seq = chat_history_dict[seq][sub_seq]
+            chat_history_dict_seq = (chat_history_dict.get(seq) or {}).get(sub_seq)
+            if not chat_history_dict_seq:
+                return f"(no history entry for seq {seq} / sub_seq {sub_seq})\n"
+            if "engine" not in (chat_history_dict_seq.get("setting") or {}):
+                return self._get_detail_info_no_engine(chat_history_dict_seq)
 
             chat_detail_info += "\n[Execution info]\n"
             chat_detail_info += "Function: "+chat_history_dict_seq["setting"]["engine"]["FUNC_NAME"]+"\n"

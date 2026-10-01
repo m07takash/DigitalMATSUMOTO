@@ -126,10 +126,10 @@
                 },
                 "ACTIVE": true
             },
-            "Gemini-3.5-Flash": {
-                "NAME": "Gemini-3.5-Flash",
+            "Gemini-3.8-Flash": {
+                "NAME": "Gemini-3.8-Flash",
                 "FUNC_NAME": "generate_response_T_gemini",
-                "MODEL": "gemini-3.5-flash",
+                "MODEL": "gemini-3.8-flash",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {
@@ -156,10 +156,10 @@
                 },
                 "ACTIVE": true
             },
-            "Claude-Sonnet-5": {
-                "NAME": "Claude-Sonnet-5",
+            "Claude-Sonnet-5.5": {
+                "NAME": "Claude-Sonnet-5.5",
                 "FUNC_NAME": "generate_response_T_claude",
-                "MODEL": "claude-sonnet-5",
+                "MODEL": "claude-sonnet-5-5",
                 "PARAMETER": {
                     "max_tokens": 64000
                 },

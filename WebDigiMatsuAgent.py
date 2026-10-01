@@ -3642,6 +3642,9 @@ def _knowledge_explorer():
             # style tag disappears when you switch tabs). We accept the
             # tradeoff that any other buttons rendered on THIS same tab
             # would also be left-aligned — there aren't any.
+            # A long page title would otherwise run past the tree column and under
+            # the body viewer, so the label is clipped with an ellipsis at whatever
+            # width the column is actually rendered at (full title stays in `help`).
             st.markdown(
                 """
                 <style>
@@ -3655,13 +3658,17 @@ def _knowledge_explorer():
                     font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace !important;
                     font-size: 12.5px !important;
                     white-space: pre !important;
+                    overflow: hidden !important;
                 }
                 div[data-testid="stButton"] > button > div,
                 div[data-testid="stButton"] > button p {
                     text-align: left !important;
                     justify-content: flex-start !important;
                     width: 100% !important;
+                    min-width: 0 !important;
                     margin: 0 !important;
+                    overflow: hidden !important;
+                    text-overflow: ellipsis !important;
                 }
                 div[data-testid="stButton"] { margin-bottom: 2px !important; }
                 </style>
@@ -3686,6 +3693,7 @@ def _knowledge_explorer():
                     # (unlike <a href> navigation which broke cookie-based login).
                     if st.button(_label, key=f"pi_tree_btn_{_pi_name}_{pid}",
                                   use_container_width=True,
+                                  help=f"[{pid}] {title}",
                                   type="primary" if _selected else "secondary"):
                         st.session_state[_pi_sel_key] = pid
                         st.rerun()
@@ -9081,18 +9089,22 @@ def main():
                                                 if feedback[fb_item]["memo"]=="":
                                                     feedback[fb_item]["flg"] = False
 
+                                            # The collapsed (SUMMARY) view is keyed "1" while the
+                                            # answer it shows — and the feedback it displays — belong
+                                            # to the turn's last entry, so write back to that one.
+                                            _fb_sub = v2.get("_src_sub_seq_last", k2)
                                             if any(k != "name" for k in fb_item):
-                                                st.session_state.session.set_feedback_history(k, k2, feedback)
+                                                st.session_state.session.set_feedback_history(k, _fb_sub, feedback)
                                                 dmgf.create_feedback_data(st.session_state.session.session_id, v2["setting"]["agent_file"])
-                                                st.session_state.sidebar_message = f"Saved feedback ({k}_{k2})"
+                                                st.session_state.sidebar_message = f"Saved feedback ({k}_{_fb_sub})"
                                                 st.rerun()
                                             else:
-                                                st.session_state.sidebar_message = f"No changes to feedback ({k}_{k2})"
+                                                st.session_state.sidebar_message = f"No changes to feedback ({k}_{_fb_sub})"
 
                         # Detail
                         if st.session_state.allowed_details:
                             with st.chat_message("detail"):
-                                download_data.append({"role": "detail", "content": st.session_state.session.get_detail_info(k, k2)})
+                                download_data.append({"role": "detail", "content": st.session_state.session.get_detail_info(k, v2.get("_src_sub_seq", k2))})
                                 chat_expander = st.expander("Detail Information")
                                 with chat_expander:
                                     # Three tabs: the LLM-input recon and the
@@ -9106,7 +9118,7 @@ def main():
                                     with _dt_t2:
                                         _render_token_usage_tab(v2)
                                     with _dt_t3:
-                                        _detail_info = st.session_state.session.get_detail_info(k, k2)
+                                        _detail_info = st.session_state.session.get_detail_info(k, v2.get("_src_sub_seq", k2))
                                         # Split into per-section blocks and attach a Copy button to each.
                                         # Current marker is "[Section]"; older sessions saved with "【...】" still split correctly.
                                         import re as _re
@@ -9138,6 +9150,10 @@ def main():
                                     analytics_dict = {}
                                     if "analytics" in v2:
                                         analytics_dict = v2["analytics"]
+                                    # The collapsed (SUMMARY) view is keyed "1" while analytics
+                                    # belongs to the entry that ran the chain, so the runs below
+                                    # and the image file names follow that coordinate.
+                                    _an_sub = v2.get("_src_sub_seq_last", k2)
                                     if "LLM" == v2["setting"]["type"]:
                                         if st.session_state.allowed_analytics_compare:
                                             if compare_agent_id_selected := st.selectbox("Select Compare Agent:", st.session_state.agent_list, index=st.session_state.agent_list_index, key=f"conpareAgent_list{k}_{k2}"):
@@ -9187,7 +9203,7 @@ def main():
                                             compare_col1, _ = st.columns(2)
                                             if compare_col1.button("Analytics Results - Compare Agents", key=f"conpareAgent_btn{k}_{k2}", disabled=bool(st.session_state._bg_task)):
                                                 _cmp_seq = k
-                                                _cmp_sub_seq = str(int(k2)-1)
+                                                _cmp_sub_seq = str(int(_an_sub)-1)
                                                 _cmp_agent_file = next((a2["FILE"] for a2 in st.session_state.agents if a2["AGENT"] == st.session_state.compare_agent_id), None)
                                                 _cmp_agent_data = dmu.read_json_file(_cmp_agent_file, agent_folder_path) if _cmp_agent_file else {}
                                                 _cmp_overwrite = {}
@@ -9214,7 +9230,7 @@ def main():
                                                 _cmp_usr = dict(st.session_state.web_user)
                                                 _cmp_agent_id = st.session_state.compare_agent_id
                                                 _cmp_analytics_dict = analytics_dict
-                                                _cmp_k, _cmp_k2 = k, k2
+                                                _cmp_k, _cmp_k2 = k, _an_sub
                                                 _cmp_session = st.session_state.session
                                                 def _run_compare():
                                                     _, _, cmp_resp, cmp_model, _, cmp_know_ref = dmva.genLLMAgentSimple(
@@ -9261,11 +9277,11 @@ def main():
                                                     st.session_state.analytics_dimension_mode["params"]["perplexity"] = ak_col3.number_input(label="t-SNE Perplexity:", value=40, step=1, format="%d", key=f"tsne_perplexity_{k}_{k2}")
                                             if ak_col1.button("Analytics Results - Knowledge Utility", key=f"knowledgeUtil_btn{k}_{k2}", disabled=bool(st.session_state._bg_task)):
                                                 _ak_agent_file = v2["setting"]["agent_file"]
-                                                _ak_title = f"{k}-{k2}-{st.session_state.session.session_id}"
+                                                _ak_title = f"{k}-{_an_sub}-{st.session_state.session.session_id}"
                                                 _ak_folder = st.session_state.session.session_analytics_folder_path
                                                 _ak_mode = st.session_state.analytics_knowledge_mode
                                                 _ak_dim = dict(st.session_state.analytics_dimension_mode)
-                                                _ak_k, _ak_k2 = k, k2
+                                                _ak_k, _ak_k2 = k, _an_sub
                                                 _ak_analytics_dict = analytics_dict
                                                 _ak_session = st.session_state.session
                                                 # ---- Graph branch: replay retrieval + response linking (sync, no LLM cost) ----
@@ -9418,7 +9434,7 @@ def main():
                                                         if "image_files" in compare_agent_info["knowledge_utility"]:
                                                             image_files = compare_agent_info["knowledge_utility"]["image_files"]
                                                             ext_for = lambda k: "csv" if "csv" in k else "png"
-                                                            _ku_seq, _ku_sub = k, k2
+                                                            _ku_seq, _ku_sub = k, _an_sub
                                                             rag_to_files = {
                                                                 rag: {lk: _resolve_ku_file(st.session_state.session.session_analytics_folder_path, _ku_seq, _ku_sub, v, lk, rag) for lk, v in image_files.items()}
                                                                 for rag in sorted({os.path.splitext(f)[0].rsplit("_", 1)[-1] for v in image_files.values() for f in v})
@@ -9653,7 +9669,7 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                                                     # to alphabetical for unknown names).
                                                     rag_categories = sorted(similarity_utility_dict.keys(),
                                                                             key=_ku_order_key)
-                                                    _ku_seq, _ku_sub = k, k2
+                                                    _ku_seq, _ku_sub = k, _an_sub
                                                     rag_to_files = {
                                                         rag: {lk: _resolve_ku_file(st.session_state.session.session_analytics_folder_path, _ku_seq, _ku_sub, v, lk, rag) for lk, v in image_files.items()}
                                                         #for rag in sorted({os.path.splitext(f)[0].rsplit("_", 1)[-1] for v in image_files.values() for f in v})
