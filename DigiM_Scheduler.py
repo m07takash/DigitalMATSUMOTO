@@ -592,12 +592,25 @@ def _start_all_locked() -> dict:
                 logger.warning(f"[scheduler] invalid cron job_id={job_id} cron={expr}: {e}")
                 continue
 
-        def _make_fn(job_def):
+        def _make_fn(_job_id, snapshot):
             def _fn():
-                _run_job(job_def)
+                # Read the job back at fire time. A trigger registered here keeps
+                # whatever the job looked like then, so an edited prompt would go
+                # on running in its old form until the next reload — while "Run
+                # Now", which reads the master, already used the new one.
+                _j = dmsj.get(_job_id) or snapshot
+                if not _j.get("enabled"):
+                    logger.info(f"[scheduler] skip disabled job_id={_job_id}; reload to drop its trigger")
+                    return
+                # The trigger itself cannot follow an edit without re-registering.
+                if _normalize_expr(_j.get("cron")) != _normalize_expr(snapshot.get("cron")):
+                    logger.info(f"[scheduler] job_id={_job_id} cron changed since registration "
+                                f"('{snapshot.get('cron')}' -> '{_j.get('cron')}'); still firing on the old "
+                                f"schedule until reload")
+                _run_job(_j)
             return _fn
 
-        _scheduler.add_job(_make_fn(j), trigger=trigger, id=job_id, replace_existing=True)
+        _scheduler.add_job(_make_fn(job_id, j), trigger=trigger, id=job_id, replace_existing=True)
         _active[job_id] = expr
         started.append(job_id)
         logger.info(f"[scheduler] job added job_id={job_id} cron='{expr}'")
