@@ -44,6 +44,13 @@ DB_EXPORT_DONE = "DONE"
 DB_EXPORT_UNDO = "UNDO"
 
 # Get the list of sessions
+# A status.yaml missing a field is filled in from the session itself, and
+# get_last_update_date / get_agent_file / get_ids each load the whole history —
+# seconds per listing, repeated every time the UI rebuilds the list. Keep the
+# resolved status per folder, keyed on the file's mtime so edits still land.
+_session_status_cache = {}
+
+
 def get_session_list():
     sessions = []
     for session_folder_name in os.listdir(user_folder_path):
@@ -51,6 +58,14 @@ def get_session_list():
             if session_folder_name.startswith(session_folder_prefix):
                 session_folder_path = os.path.join(user_folder_path, session_folder_name)
                 session_status_path = str(Path(session_folder_path) / session_status_file_name)
+                try:
+                    _status_mtime = os.path.getmtime(session_status_path)
+                except OSError:
+                    _status_mtime = 0
+                _cached = _session_status_cache.get(session_folder_name)
+                if _cached and _cached[0] == _status_mtime:
+                    sessions.append(dict(_cached[1]))
+                    continue
                 status_dict = {}
                 status_dict = dmu.read_yaml_file(session_status_path)
                 if "id" not in status_dict:
@@ -70,6 +85,7 @@ def get_session_list():
                         status_dict["service_id"] = service_id
                     if "user_id" not in status_dict:
                         status_dict["user_id"] = user_id
+                _session_status_cache[session_folder_name] = (_status_mtime, dict(status_dict))
                 sessions.append(status_dict)
         except Exception as e:
             logger.warning(f"Skipped {session_folder_name} due to error: {e}")
@@ -485,6 +501,13 @@ class DigiMSession:
         self.session_contents_folder_path = str(_session_base / session_contents_folder) + "/"
         self.session_analytics_folder_path = str(_session_base / session_analytics_folder) + "/"
         self.set_history()
+
+    # Keep the in-memory view in step with a write. Callers already hold the
+    # freshly loaded dict, so this only rebuilds the derived views.
+    def _refresh_history_cache(self, chat_history_dict):
+        self.chat_history_dict = chat_history_dict
+        self.chat_history_active_dict = self.get_history_active()
+        self.chat_history_active_omit_dict = self.get_history_active_omit()
 
     # Reload chat history
     def set_history(self):
@@ -1179,6 +1202,7 @@ class DigiMSession:
                     chat_history_dict[seq][sub_seq]["setting"] = {}
                 chat_history_dict[seq][sub_seq]["setting"]["memory_flg"] = value
                 _dmss.save_history(self.session_id, chat_history_dict, self.session_folder_path)
+                self._refresh_history_cache(chat_history_dict)
 
     # Add a key/value to the per-sub_seq setting (Phase 6: for assigning chain_index / chain_role etc.)
     def update_subseq_setting(self, seq, sub_seq, updates):
@@ -1193,6 +1217,7 @@ class DigiMSession:
                     chat_history_dict[seq][sub_seq]["setting"] = {}
                 chat_history_dict[seq][sub_seq]["setting"].update(updates)
                 _dmss.save_history(self.session_id, chat_history_dict, self.session_folder_path)
+                self._refresh_history_cache(chat_history_dict)
 
     # Save feedback into chat history
     def set_feedback_history(self, seq, sub_seq, feedbacks={}):
@@ -1202,6 +1227,7 @@ class DigiMSession:
             chat_history_dict = _dmss.load_history(self.session_id, self.session_folder_path)
             chat_history_dict[seq][sub_seq]["feedback"] = feedbacks
             _dmss.save_history(self.session_id, chat_history_dict, self.session_folder_path)
+            self._refresh_history_cache(chat_history_dict)
 
     # Save analytics result into chat history
     def set_analytics_history(self, seq, sub_seq, analytics={}):
@@ -1214,6 +1240,7 @@ class DigiMSession:
             chat_history_dict = _dmss.load_history(self.session_id, self.session_folder_path)
             chat_history_dict[seq][sub_seq]["analytics"] = analytics
             _dmss.save_history(self.session_id, chat_history_dict, self.session_folder_path)
+            self._refresh_history_cache(chat_history_dict)
             _logger.info(f"set_analytics_history: seq={seq}, sub_seq={sub_seq} written to {self.session_file_path}")
 
     # Detail block for turns stored without an engine (SKILL / PUSH / TOOL):
@@ -1247,8 +1274,13 @@ class DigiMSession:
     # Get detailed info from chat history
     def get_detail_info(self, seq, sub_seq="1"):
         chat_detail_info = ""
-        if _dmss.history_exists(self.session_id, self.session_folder_path):
-            chat_history_dict = _dmss.load_history(self.session_id, self.session_folder_path)
+        # The chat screen calls this for every visible turn on every rerun, so a
+        # store round-trip per call dominates the page load. Serve the history
+        # already in hand; writers refresh it via _refresh_history_cache.
+        _cached = ((self.chat_history_dict or {}).get(seq) or {}).get(sub_seq)
+        if _cached is not None or _dmss.history_exists(self.session_id, self.session_folder_path):
+            chat_history_dict = (self.chat_history_dict if _cached is not None
+                                 else _dmss.load_history(self.session_id, self.session_folder_path))
             chat_history_dict_seq = (chat_history_dict.get(seq) or {}).get(sub_seq)
             if not chat_history_dict_seq:
                 return f"(no history entry for seq {seq} / sub_seq {sub_seq})\n"

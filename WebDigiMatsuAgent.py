@@ -8373,8 +8373,13 @@ def main():
             # only via format_func while the multiselect value stays the
             # session id for stable identity (name duplicates would otherwise
             # collide).
-            st.session_state.session_inactive_list = dms.get_session_list_inactive_visible(
-                st.session_state.service_id, st.session_state.user_id, st.session_state.user_admin_flg)
+            # Building this list walks every session folder (and loads the history
+            # of any whose status.yaml lacks a field), so it is far too slow to
+            # repeat on every rerun. Refresh it when it is missing or an action
+            # below invalidated it.
+            if st.session_state.get("session_inactive_list") is None:
+                st.session_state.session_inactive_list = dms.get_session_list_inactive_visible(
+                    st.session_state.service_id, st.session_state.user_id, st.session_state.user_admin_flg)
             _inact_label_map = {
                 item["id"]: (item.get("name") or item["id"])
                 for item in st.session_state.session_inactive_list
@@ -8391,6 +8396,9 @@ def main():
                     activate_session.save_user_dialog_session("UNSAVED")
                 _activated_labels = [_inact_label_map.get(_sid, _sid) for _sid in st.session_state.session_inactive_list_selected]
                 st.session_state.sidebar_message = f"Re-displayed sessions ({', '.join(_activated_labels)})"
+                st.session_state.session_inactive_list = None
+                st.session_state.session_list = dms.get_session_list_visible(
+                    st.session_state.service_id, st.session_state.user_id, st.session_state.user_admin_flg)
                 st.rerun()
 
             # DB Export / Archive (shown only to users with Session Archive permission)
@@ -8938,8 +8946,13 @@ def main():
 
     # Configure the chat session name
     if session_name := st.text_input("Chat Name:", value=st.session_state.session.session_name):
-        st.session_state.session = dms.DigiMSession(st.session_state.session.session_id, session_name)
-        if session_name != dms.get_session_name(st.session_state.session.session_id) and dms.get_session_name(st.session_state.session.session_id) != "":
+        # Rebuilding the session object reloads the whole history from the store,
+        # and this runs on every rerun, so only do it when the box actually holds
+        # a different name than the session in hand.
+        if session_name != st.session_state.session.session_name:
+            st.session_state.session = dms.DigiMSession(st.session_state.session.session_id, session_name)
+        _saved_session_name = dms.get_session_name(st.session_state.session.session_id)
+        if session_name != _saved_session_name and _saved_session_name != "":
             if st.button("Change Session Name", key="chg_session_name"):
                 st.session_state.session.chg_session_name(session_name)
                 st.session_state.sidebar_message = "Changed the session name"
@@ -9104,7 +9117,8 @@ def main():
                         # Detail
                         if st.session_state.allowed_details:
                             with st.chat_message("detail"):
-                                download_data.append({"role": "detail", "content": st.session_state.session.get_detail_info(k, v2.get("_src_sub_seq", k2))})
+                                _detail_info = st.session_state.session.get_detail_info(k, v2.get("_src_sub_seq", k2))
+                                download_data.append({"role": "detail", "content": _detail_info})
                                 chat_expander = st.expander("Detail Information")
                                 with chat_expander:
                                     # Three tabs: the LLM-input recon and the
@@ -9118,7 +9132,7 @@ def main():
                                     with _dt_t2:
                                         _render_token_usage_tab(v2)
                                     with _dt_t3:
-                                        _detail_info = st.session_state.session.get_detail_info(k, v2.get("_src_sub_seq", k2))
+                                        # Already built above for the export payload.
                                         # Split into per-section blocks and attach a Copy button to each.
                                         # Current marker is "[Section]"; older sessions saved with "【...】" still split correctly.
                                         import re as _re

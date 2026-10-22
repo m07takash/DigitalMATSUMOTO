@@ -531,6 +531,11 @@ def save_json_file(data, file_path, indent=2):
         raise
 
 # Read a YAML file
+# libyaml's loader is ~10x faster than the pure-Python one, and session listing
+# parses one status.yaml per session on every call; fall back where it is absent.
+_YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
 def read_yaml_file(file_name, folder_path=""):
     # See `read_json_file` for why the retry is here: although writers go through
     # temp + rename, very rare partial reads can still occur on edge-case filesystems.
@@ -546,7 +551,7 @@ def read_yaml_file(file_name, folder_path=""):
     for _attempt in range(2):
         try:
             with open(file_path, 'r', encoding="utf-8") as file:
-                data = yaml.safe_load(file)
+                data = yaml.load(file, Loader=_YAML_LOADER)
             break
         except yaml.YAMLError:
             if _attempt == 0:
