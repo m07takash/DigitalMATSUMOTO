@@ -10303,6 +10303,10 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                     # Background completed: clean up and full reload
                     st.session_state._bg_user_input = ""
                     st.session_state.is_processing = False
+                    # The run wrote its turn straight to the store, so the session
+                    # object in hand is a turn behind. The render path never
+                    # re-reads the store (see CLAUDE.md), so pull it in once here.
+                    st.session_state.session.set_history()
                     refresh_session_list(st.session_state.service_id, st.session_state.user_id, st.session_state.user_admin_flg)
                     st.rerun(scope="app")
                 _partial = st.session_state.session.get_status_response()
@@ -11599,6 +11603,8 @@ f"Target sheet (sheets with Question: {len(_q_sheets)})"
                         skill_input=_skill[1],
                     )
                 st.session_state.is_processing = False
+                # The skill saved a turn of its own; same reason as _lock_monitor.
+                st.session_state.session.set_history()
                 st.rerun()
             # Attachment settings
             uploaded_contents = []

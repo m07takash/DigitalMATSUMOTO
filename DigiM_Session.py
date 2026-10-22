@@ -1178,6 +1178,7 @@ class DigiMSession:
             chat_history_dict = _dmss.load_history(self.session_id, self.session_folder_path)
             chat_history_dict[seq]["SETTING"]["FLG"] = value
             _dmss.save_history(self.session_id, chat_history_dict, self.session_folder_path)
+            self._refresh_history_cache(chat_history_dict)
 
     # Change the memory-reference flag of a chat-history sequence
     # MEMORY_FLG="N": display remains but excluded from memory references (LLM context)
@@ -1189,6 +1190,7 @@ class DigiMSession:
             if seq in chat_history_dict and "SETTING" in chat_history_dict[seq]:
                 chat_history_dict[seq]["SETTING"]["MEMORY_FLG"] = value
                 _dmss.save_history(self.session_id, chat_history_dict, self.session_folder_path)
+                self._refresh_history_cache(chat_history_dict)
 
     # Change the per-sub_seq memory-reference flag (Phase 6: for chain.PERSONAS)
     # sub_seq with setting.memory_flg = "N" still displays but is excluded from memory references
