@@ -6,6 +6,17 @@ import json
 import hmac
 import hashlib
 import datetime
+import faulthandler
+import signal
+
+# A hung app has no stacks to show otherwise (a deadlock leaves every thread
+# idle and the port unanswered), so allow `kill -USR1 <pid>` to dump every
+# thread's Python stack to the log without killing the process.
+faulthandler.enable()
+try:
+    faulthandler.register(signal.SIGUSR1)
+except (AttributeError, ValueError, RuntimeError):
+    pass
 from datetime import datetime, timedelta, time as dt_time
 from pathlib import Path
 import pytz
@@ -8966,6 +8977,12 @@ def main():
     # Search / Situation / Personality Override / User Memory / Session
     # Summary / Skills all consolidated into the "Conversation Settings"
     # expander further down (see the block after the file uploader).
+    # A background run or a skill wrote its turn straight to the store; the render
+    # path below deliberately never re-reads it (see CLAUDE.md), so take the one
+    # reload here, on a normal script run.
+    if st.session_state.pop("_history_stale", False):
+        st.session_state.session.set_history()
+
     _hdr_history_cols = st.columns([1, 1, 1, 1])
     with _hdr_history_cols[0]:
         num_seq_visible = 10
@@ -10304,9 +10321,10 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                     st.session_state._bg_user_input = ""
                     st.session_state.is_processing = False
                     # The run wrote its turn straight to the store, so the session
-                    # object in hand is a turn behind. The render path never
-                    # re-reads the store (see CLAUDE.md), so pull it in once here.
-                    st.session_state.session.set_history()
+                    # object in hand is a turn behind. Flag it and let the app
+                    # rerun below do the reload: store I/O inside a `run_every`
+                    # fragment holds it open across the rerun it is requesting.
+                    st.session_state._history_stale = True
                     refresh_session_list(st.session_state.service_id, st.session_state.user_id, st.session_state.user_admin_flg)
                     st.rerun(scope="app")
                 _partial = st.session_state.session.get_status_response()
@@ -11604,7 +11622,7 @@ f"Target sheet (sheets with Question: {len(_q_sheets)})"
                     )
                 st.session_state.is_processing = False
                 # The skill saved a turn of its own; same reason as _lock_monitor.
-                st.session_state.session.set_history()
+                st.session_state._history_stale = True
                 st.rerun()
             # Attachment settings
             uploaded_contents = []

@@ -8,11 +8,11 @@
     },
     "ENGINE": {
         "LLM": {
-            "DEFAULT": "GPT-5.5",
-            "GPT-5.5": {
-                "NAME": "GPT-5.5",
+            "DEFAULT": "GPT-6.1-Sol",
+            "GPT-6.1-Sol": {
+                "NAME": "GPT-6.1-Sol",
                 "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5.5",
+                "MODEL": "gpt-6.1-sol",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {
@@ -24,10 +24,10 @@
                 },
                 "ACTIVE": true
             },
-            "GPT-5.4": {
-                "NAME": "GPT-5.4",
+            "GPT-5.6-Terra": {
+                "NAME": "GPT-5.6-Terra",
                 "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5.4",
+                "MODEL": "gpt-5.6-terra",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {
@@ -37,12 +37,13 @@
                     "similarity_logic": "cosine",
                     "digest": "Y"
                 },
-                "ACTIVE": true
+                "ACTIVE": false
             },
-            "Gemini-3.1": {
-                "NAME": "Gemini-3.1",
+
+            "Gemini-4-Argon": {
+                "NAME": "Gemini-4-Argon",
                 "FUNC_NAME": "generate_response_T_gemini",
-                "MODEL": "gemini-3.1-pro-preview",
+                "MODEL": "gemini-4-argon",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {
@@ -54,10 +55,25 @@
                 },
                 "ACTIVE": true
             },
-            "Claude-Opus-4.7": {
-                "NAME": "Claude-Opus-4.7",
+            "Gemini-3.8-Flash": {
+                "NAME": "Gemini-3.8-Flash",
+                "FUNC_NAME": "generate_response_T_gemini",
+                "MODEL": "gemini-3.8-flash",
+                "PARAMETER": {},
+                "TOKENIZER": "tiktoken",
+                "MEMORY": {
+                    "limit": 8000,
+                    "role": "both",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "Y"
+                },
+                "ACTIVE": true
+            },
+            "Claude-Opus-5.5": {
+                "NAME": "Claude-Opus-5.5",
                 "FUNC_NAME": "generate_response_T_claude",
-                "MODEL": "claude-opus-4-7",
+                "MODEL": "claude-opus-5-5",
                 "PARAMETER": {
                     "max_tokens": 128000
                 },
@@ -71,10 +87,10 @@
                 },
                 "ACTIVE": true
             },
-            "Claude-Sonnet-4.6": {
-                "NAME": "Claude-Sonnet-4.6",
+            "Claude-Sonnet-5.5": {
+                "NAME": "Claude-Sonnet-5.5",
                 "FUNC_NAME": "generate_response_T_claude",
-                "MODEL": "claude-sonnet-4-6",
+                "MODEL": "claude-sonnet-5-5",
                 "PARAMETER": {
                     "max_tokens": 64000
                 },
@@ -88,10 +104,10 @@
                 },
                 "ACTIVE": true
             },
-            "Grok-4": {
-                "NAME": "Grok-4",
+            "Grok-4.7": {
+                "NAME": "Grok-4.7",
                 "FUNC_NAME": "generate_response_T_grok",
-                "MODEL": "grok-4",
+                "MODEL": "grok-4.7",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {
@@ -103,91 +119,14 @@
                 },
                 "ACTIVE": true
             },
-            "GPT-5.1": {
-                "NAME": "GPT-5.1",
+            "GPT-6-Luna": {
+                "NAME": "GPT-6-Luna",
                 "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5.1",
+                "MODEL": "gpt-6-luna",
                 "PARAMETER": {},
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {
                     "limit": 10000,
-                    "role": "both",
-                    "priority": "latest",
-                    "similarity_logic": "cosine",
-                    "digest": "Y"
-                },
-                "ACTIVE": true
-            },
-            "Gemini-2.5": {
-                "NAME": "Gemini-2.5",
-                "FUNC_NAME": "generate_response_T_gemini",
-                "MODEL": "gemini-2.5-pro",
-                "PARAMETER": {},
-                "TOKENIZER": "tiktoken",
-                "MEMORY": {
-                    "limit": 8000,
-                    "role": "both",
-                    "priority": "latest",
-                    "similarity_logic": "cosine",
-                    "digest": "Y"
-                },
-                "ACTIVE": true
-            },
-            "Claude-Sonnet-4.5": {
-                "NAME": "Claude-Sonnet-4.5",
-                "FUNC_NAME": "generate_response_T_claude",
-                "MODEL": "claude-sonnet-4-5",
-                "PARAMETER": {
-                    "max_tokens": 64000
-                },
-                "TOKENIZER": "tiktoken",
-                "MEMORY": {
-                    "limit": 8000,
-                    "role": "both",
-                    "priority": "latest",
-                    "similarity_logic": "cosine",
-                    "digest": "Y"
-                },
-                "ACTIVE": true
-            },
-            "GPT-5.4-mini": {
-                "NAME": "GPT-5.4-mini",
-                "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5.4-mini",
-                "PARAMETER": {},
-                "TOKENIZER": "tiktoken",
-                "MEMORY": {
-                    "limit": 8000,
-                    "role": "both",
-                    "priority": "latest",
-                    "similarity_logic": "cosine",
-                    "digest": "Y"
-                },
-                "ACTIVE": true
-            },
-            "GPT-5.4-nano": {
-                "NAME": "GPT-5.4-nano",
-                "FUNC_NAME": "generate_response_T_gpt",
-                "MODEL": "gpt-5.4-nano",
-                "PARAMETER": {},
-                "TOKENIZER": "tiktoken",
-                "MEMORY": {
-                    "limit": 8000,
-                    "role": "both",
-                    "priority": "latest",
-                    "similarity_logic": "cosine",
-                    "digest": "Y"
-                },
-                "ACTIVE": true
-            },
-            "Gemini-3.5-Flash": {
-                "NAME": "Gemini-3.5-Flash",
-                "FUNC_NAME": "generate_response_T_gemini",
-                "MODEL": "gemini-3.5-flash",
-                "PARAMETER": {},
-                "TOKENIZER": "tiktoken",
-                "MEMORY": {
-                    "limit": 8000,
                     "role": "both",
                     "priority": "latest",
                     "similarity_logic": "cosine",
@@ -210,10 +149,10 @@
                 },
                 "ACTIVE": true
             },
-            "Claude-Haiku-4.5": {
-                "NAME": "Claude-Haiku-4.5",
+            "Claude-Haiku-5.5": {
+                "NAME": "Claude-Haiku-5.5",
                 "FUNC_NAME": "generate_response_T_claude",
-                "MODEL": "claude-haiku-4-5",
+                "MODEL": "claude-haiku-5-5",
                 "PARAMETER": {
                     "max_tokens": 20000
                 },
@@ -227,41 +166,13 @@
                 },
                 "ACTIVE": true
             },
-            "Grok-4-Fast-Non-Reasoning": {
-                "NAME": "Grok-4-Fast-Non-Reasoning",
-                "FUNC_NAME": "generate_response_T_grok",
-                "MODEL": "grok-4-fast-non-reasoning",
-                "PARAMETER": {},
-                "TOKENIZER": "tiktoken",
-                "MEMORY": {
-                    "limit": 8000,
-                    "role": "both",
-                    "priority": "latest",
-                    "similarity_logic": "cosine",
-                    "digest": "Y"
-                },
-                "ACTIVE": true
-            },
-            "Grok-4-Fast-Reasoning": {
-                "NAME": "Grok-4-Fast-Reasoning",
-                "FUNC_NAME": "generate_response_T_grok",
-                "MODEL": "grok-4-fast-reasoning",
-                "PARAMETER": {},
-                "TOKENIZER": "tiktoken",
-                "MEMORY": {
-                    "limit": 8000,
-                    "role": "both",
-                    "priority": "latest",
-                    "similarity_logic": "cosine",
-                    "digest": "Y"
-                },
-                "ACTIVE": true
-            },
             "GPT-Azure": {
                 "NAME": "GPT-Azure",
                 "FUNC_NAME": "generate_response_T_azure_openai",
-                "MODEL": "gpt-5.1",
-                "PARAMETER": {},
+                "MODEL": "gpt-5.4",
+                "PARAMETER": {
+                    "max_completion_tokens": 20000
+                },
                 "TOKENIZER": "tiktoken",
                 "MEMORY": {
                     "limit": 10000,
