@@ -1415,6 +1415,7 @@ For image generation, you can similarly use Azure's `gpt-image-1`/`dall-e-3` dep
 | `generate_image_dalle` | Image generation by OpenAI DALL-E |
 | `generate_image_gemini` | Image generation by Google Gemini |
 | `generate_image_azure_dalle` | dall-e/gpt-image deployments on Azure OpenAI Service |
+| `generate_image_grok` | Image generation by xAI Grok Imagine (`XAI_API_KEY`). `PARAMETER` takes `n` (1-10) / `aspect_ratio` (`1:1`, `4:3`, `16:9`, `9:16`, …) / `resolution` (`1k`, `1.5k`, `2k`) / `response_format` (`b64_json`, `url`). `size` is not supported and is ignored |
 
 #### THINKING (per-agent Thinking Mode defaults)
 

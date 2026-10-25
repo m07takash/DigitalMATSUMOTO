@@ -12,7 +12,10 @@ import anthropic
 from llamaapi import LlamaAPI
 
 import mimetypes
+import logging
 import DigiM_Util as dmu
+
+logger = logging.getLogger(__name__)
 
 def _get_image_mime(image_path):
     """Detect MIME type from the file path (default: image/png)."""
@@ -851,3 +854,80 @@ def generate_image_azure_dalle(prompt, system_prompt, model, memories=[], image_
 
     response = "Image generated."
     yield prompt_str, response, img_files
+
+
+# Image generation via xAI (Grok Imagine)
+# Posted over REST rather than through xai_sdk: the pinned SDK (1.2.0) can only
+# express prompt / model / n / user / format, while the endpoint also takes
+# aspect_ratio and resolution. The API rejects `size` outright and silently
+# ignores any other unknown key, so DALL-E leftovers are dropped with a warning
+# instead of failing the turn (or being quietly ineffective).
+_XAI_IMAGE_URL = "https://api.x.ai/v1/images/generations"
+# aspect_ratio: 1:1 / 3:4 / 4:3 / 9:16 / 16:9 / 2:3 / 3:2 / 9:19.5 / 19.5:9 /
+#               9:20 / 20:9 / 1:2 / 2:1 / 21:9 / 5:2 / auto
+# resolution:   1k / 1.5k / 2k      n: 1-10      response_format: url / b64_json
+_XAI_IMAGE_UNSUPPORTED = ("size", "quality", "style", "output_format")
+
+
+def generate_image_grok(prompt, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
+    import requests
+
+    # Build the system prompt
+    system_message = [{"role": "system", "content": system_prompt}]
+
+    # Build the user prompt
+    user_message = [{"role": "user", "content": prompt}]
+
+    # Add memory to the prompt
+    memory_message = []
+    for memory in memories:
+        memory_message.append({"role": memory["role"], "content": memory["text"]})
+
+    # Stringify the prompt (strip invalid characters)
+    prompt_str = json.dumps(_sanitize_messages(memory_message + user_message), ensure_ascii=False).replace("\n", "").replace("\\", "")
+
+    params = dict(model.get("PARAMETER") or {})
+    # Kept for engines written against the earlier SDK-based implementation.
+    _legacy_format = params.pop("image_format", None)
+    if _legacy_format and "response_format" not in params:
+        params["response_format"] = "b64_json" if _legacy_format == "base64" else _legacy_format
+    _dropped = [k for k in list(params) if k in _XAI_IMAGE_UNSUPPORTED]
+    for k in _dropped:
+        params.pop(k)
+    if _dropped:
+        logger.warning(f"generate_image_grok: PARAMETER keys not supported by the xAI image API ignored: {sorted(_dropped)}")
+    params.setdefault("response_format", "b64_json")
+
+    body = {"model": model["MODEL"], "prompt": prompt_str[:3000]}
+    body.update(params)
+    res = requests.post(
+        _XAI_IMAGE_URL,
+        headers={"Authorization": f"Bearer {xai_api_key}", "Content-Type": "application/json"},
+        json=body,
+        timeout=600,
+    )
+    if res.status_code >= 400:
+        # The body names the offending field and its allowed values, which is
+        # the only hint the operator gets in the UI.
+        raise RuntimeError(f"xAI image generation failed ({res.status_code}): {res.text[:500]}")
+
+    # Save under the temp folder. The API picks the encoding, so take it from
+    # the bytes rather than assuming PNG.
+    img_files = []
+    for num, item in enumerate(res.json().get("data") or []):
+        if item.get("b64_json"):
+            image_data = base64.b64decode(item["b64_json"])
+        else:
+            image_res = requests.get(item["url"], timeout=120)
+            image_res.raise_for_status()
+            image_data = image_res.content
+        ext = "png" if image_data[:8] == b"\x89PNG\r\n\x1a\n" else "jpg"
+        img_file = temp_folder_path + f"{num}_grok.{ext}"
+        with open(img_file, "wb") as f:
+            f.write(image_data)
+        img_files.append(img_file)
+
+    response = "Image generated."
+    completion = img_files
+
+    yield prompt_str, response, completion

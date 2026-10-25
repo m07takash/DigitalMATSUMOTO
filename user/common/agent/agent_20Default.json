@@ -221,6 +221,26 @@
                     "digest": "Y"
                 },
                 "ACTIVE": true
+            },
+            "Grok-Imagine": {
+                "NAME": "Grok-Imagine",
+                "FUNC_NAME": "generate_image_grok",
+                "MODEL": "grok-imagine-image",
+                "PARAMETER": {
+                    "n": 1,
+                    "aspect_ratio": "1:1",
+                    "resolution": "2k",
+                    "response_format": "b64_json"
+                },
+                "TOKENIZER": "",
+                "MEMORY": {
+                    "limit": 3000,
+                    "role": "both",
+                    "priority": "latest",
+                    "similarity_logic": "cosine",
+                    "digest": "Y"
+                },
+                "ACTIVE": true
             }
         }
     },
