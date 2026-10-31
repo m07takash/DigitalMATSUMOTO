@@ -3259,7 +3259,7 @@ When a `Memory No` column is present, `MEMORY_SAVE` is auto-promoted to True so 
 
 - **Multi-sheet xlsx** is supported: every sheet that has a `Question` column is auto-detected; a dropdown lets you target one sheet or run them all. Each input sheet is written back to a same-named output sheet.
 - **Sheet name is arbitrary** (no need to be called `Test`).
-- Sample: `test/Sample_BatchTest.xlsx`.
+- Sample: grab it from `Download sample (.xlsx)` in the Batch Test expander (the `_Columns` sheet documents each column).
 
 ### Output Excel format
 

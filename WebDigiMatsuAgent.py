@@ -8,6 +8,10 @@ import hashlib
 import datetime
 import faulthandler
 import signal
+import time as _time
+import logging as _logging
+
+_perf_logger = _logging.getLogger("digim.perf")
 
 # A hung app has no stacks to show otherwise (a deadlock leaves every thread
 # idle and the port unanswered), so allow `kill -USR1 <pid>` to dump every
@@ -1016,6 +1020,107 @@ def _resolve_persona_for_analytics(agent_file: str, setting_dict: dict):
         return next((p for p in _all if p.get("persona_id") == pid), None)
     except Exception:
         return None
+
+# Knowledge Utility is produced one turn at a time, so a long session needs the
+# per-turn button clicked over and over. These two helpers back the bulk button
+# above the chat history: the first lists the displayed turns that retrieved
+# knowledge but carry no analysis yet, the second performs one turn's run with
+# the same dispatch (Vector scatter / Graph replay) as the per-turn button.
+def _knowledge_utility_targets(visible_dict, seq_from):
+    targets = []
+    for _k, _v in (visible_dict or {}).items():
+        if not str(_k).isdigit() or int(_k) < seq_from:
+            continue
+        for _k2, _v2 in (_v or {}).items():
+            if _k2 == "SETTING" or not isinstance(_v2, dict):
+                continue
+            if (_v2.get("setting") or {}).get("type") != "LLM":
+                continue
+            _refs = ((_v2.get("response") or {}).get("reference") or {}).get("knowledge_rag") or []
+            if not _refs:
+                continue
+            _an = _v2.get("analytics") or {}
+            # Parsing every ref of every visible turn on each rerun is wasted
+            # work for turns that are already analyzed, so get the settled ones
+            # out of the way on a substring test first (a false hit only costs
+            # the parse this check was meant to skip).
+            if "knowledge_utility" in _an and (
+                    "graph_utility" in _an
+                    or not any("graph" in str(_rd).lower() for _rd in _refs)):
+                continue
+            _parsed = [_p for _p in (dmu.parse_log_template(_rd) for _rd in _refs) if "similarity_Q" in _p]
+            _vec = [_p for _p in _parsed if str(_p.get("DB", "")).lower() != "graph"]
+            _graph = [_p for _p in _parsed if str(_p.get("DB", "")).lower() == "graph"]
+            _todo_vec = _vec if "knowledge_utility" not in _an else []
+            _todo_graph = _graph if "graph_utility" not in _an else []
+            if not (_todo_vec or _todo_graph):
+                continue
+            targets.append({
+                # The collapsed (SUMMARY) view is keyed "1" while analytics
+                # belongs to the entry that ran the chain, so follow the same
+                # coordinate the per-turn button writes to.
+                "seq": str(_k),
+                "sub_seq": str(_v2.get("_src_sub_seq_last", _k2)),
+                "entry": _v2,
+                "vec_refs": _todo_vec,
+                "graph_refs": _todo_graph,
+            })
+    targets.sort(key=lambda _t: (int(_t["seq"]), int(_t["sub_seq"])))
+    return targets
+
+
+def _run_knowledge_utility_turn(session, target, ak_mode, dim_mode, exec_info):
+    _v2 = target["entry"]
+    _seq, _sub = target["seq"], target["sub_seq"]
+    _agent_file = (_v2.get("setting") or {}).get("agent_file")
+    # Shallow copy: the source dict is the one on screen, and a failed run
+    # should leave it as it was.
+    _analytics = dict(_v2.get("analytics") or {})
+    if target["graph_refs"]:
+        import DigiM_Graph as _dmg_gu
+        _agent_data_gu = dmu.read_json_file(_agent_file, agent_folder_path) or {}
+        _gu_agent_rags = [
+            _kk for _kk in (_agent_data_gu.get("KNOWLEDGE") or []) + (_agent_data_gu.get("BOOK") or [])
+            if _kk.get("RETRIEVER") == "Graph"
+        ]
+        _gu_by_name = {}
+        for _gp in target["graph_refs"]:
+            _gu_by_name.setdefault(_gp.get("rag", ""), []).append(_gp)
+        _q_text_gu = ((_v2.get("prompt") or {}).get("query") or {}).get("input", "") or ""
+        _resp_text_gu = (_v2.get("response") or {}).get("text", "") or ""
+        _saved_traces = ((_v2.get("response") or {}).get("reference") or {}).get("graph_seed_traces") or {}
+        _gu_out = {}
+        for _gu_rag_name in _gu_by_name.keys():
+            _gu_rag_cfg = next(
+                (_rr for _rr in _gu_agent_rags if _rr.get("RAG_NAME") == _gu_rag_name),
+                None,
+            )
+            if _gu_rag_cfg is None:
+                _gu_out[_gu_rag_name] = {"error": f"KNOWLEDGE/BOOK config not found for RAG_NAME '{_gu_rag_name}'"}
+                continue
+            try:
+                _usage = _dmg_gu.analyze_graph_usage(
+                    _q_text_gu, _resp_text_gu, _gu_rag_cfg,
+                    queries=(_saved_traces.get(_gu_rag_name) or {}).get("queries") or None,
+                )
+                _gu_out[_gu_rag_name] = _usage or {"error": "analyze_graph_usage returned None"}
+            except Exception as _gu_e:
+                _gu_out[_gu_rag_name] = {"error": str(_gu_e)}
+        _analytics["graph_utility"] = _gu_out
+    if target["vec_refs"]:
+        _analytics["knowledge_utility"] = dmva.analytics_knowledge(
+            _agent_file,
+            (_v2.get("prompt") or {}).get("timestamp"),
+            f"{_seq}-{_sub}-{session.session_id}",
+            list(target["vec_refs"]),
+            session.session_analytics_folder_path,
+            ak_mode, dim_mode,
+            persona=_resolve_persona_for_analytics(_agent_file, _v2.get("setting") or {}),
+            exec_info=exec_info,
+            query_points=_build_query_points(_v2, session, _seq, _sub),
+        )
+    session.set_analytics_history(_seq, _sub, _analytics)
+
 
 def _read_bg_task_status():
     try:
@@ -2166,6 +2271,63 @@ def _html_png_tag(raw):
     and never written to the analytics folder)."""
     import base64
     return f'<img src="data:image/png;base64,{base64.b64encode(raw).decode()}" alt="">'
+
+
+@st.cache_data(show_spinner=False)
+def _batch_test_sample_xlsx():
+    """Template for the Batch Test uploader, built from the columns the runner
+    actually reads so it cannot drift from the code. The second sheet carries
+    the column notes and is skipped by the sheet detector (no `Question`)."""
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    rows = [
+        ["No", "Question Style", "Question", "Memory No", "Ground Truth", "Baseline", "BaselineModel"],
+        [1, "", "AIガバナンスとは何か、3行で説明してください。", "All",
+         "AIのリスクを管理しながら利活用を進めるための仕組み。", "", ""],
+        [2, "専門家として回答してください", "リスクチェーンモデルの3つのフェーズを挙げてください。", "1",
+         "パーパスアセスメント／リスクアセスメント／コントロールコーディネーション", "", ""],
+        [3, "", "前の回答を踏まえて、最初に着手すべきことは何ですか？", "1, 2", "", "", ""],
+        [4, "", "この質問は履歴を参照せずに回答してください。", "", "", "", ""],
+    ]
+    notes = [
+        ["列", "必須", "説明"],
+        ["Question", "◯", "質問本文（Eval only モードでは不要）"],
+        ["No", "", "行識別子。Memory No から参照される"],
+        ["Memory No", "", "All=全履歴 / 1, 2=その行だけ / 空=履歴なし / 列ごと無しでも履歴なし"],
+        ["Question Style", "", "指定すると Question の前に付けて投入される"],
+        ["Ground Truth", "", "期待回答。あれば自動評価（Verdict / Score / Match ほか）が走る"],
+        ["Baseline", "", "比較対象モデルの回答。入力のまま保持され上書きされない"],
+        ["BaselineModel", "", "Baseline を生成したモデル名"],
+        ["その他の列", "", "そのまま出力に保持される（Memo など自由に追加可）"],
+        ["Answer ほか", "", "実行結果の列は自動で追加されるので、入力側に用意する必要はない"],
+    ]
+
+    wb = Workbook()
+    head_font = Font(bold=True, color="FFFFFF")
+    head_fill = PatternFill("solid", fgColor="4472C4")
+    for title, data, widths in (("BatchTest", rows, (6, 28, 52, 12, 44, 20, 18)),
+                                 ("_Columns", notes, (18, 8, 72))):
+        ws = wb.create_sheet(title) if title != "BatchTest" else wb.active
+        ws.title = title
+        for row in data:
+            ws.append(row)
+        for cell in ws[1]:
+            cell.font = head_font
+            cell.fill = head_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+        for i, width in enumerate(widths, start=1):
+            ws.column_dimensions[get_column_letter(i)].width = width
+        for row in ws.iter_rows(min_row=2):
+            for cell in row:
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+        ws.freeze_panes = "A2"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 def set_dl_html(chat_history, dl_type="Chats Only", file_id="Chat_History", title=""):
@@ -9016,6 +9178,61 @@ def main():
                 st.session_state.sidebar_message = "Deleted chat history"
                 st.session_state.seq_memory = []
                 st.rerun()
+        if st.session_state.allowed_analytics_knowledge:
+            # Same visible range the render loop below uses, so the count on the
+            # button matches the turns actually on screen.
+            _ku_bulk_from = (int(dms.max_seq_dict(st.session_state.chat_history_visible_dict)) - num_seq_visible
+                             if st.session_state.seq_visible_set else 0)
+            # Scanning the refs costs ~5ms per turn, which the rerun-per-widget
+            # model would pay on every click. The visible dict is replaced (not
+            # mutated) whenever the history changes, so identity is enough to
+            # tell a settled screen from a changed one.
+            _ku_bulk_vis = st.session_state.chat_history_visible_dict
+            _ku_bulk_cache = st.session_state.get("_ku_bulk_cache")
+            if _ku_bulk_cache is not None and _ku_bulk_cache[0] is _ku_bulk_vis and _ku_bulk_cache[1] == _ku_bulk_from:
+                _ku_bulk_targets = _ku_bulk_cache[2]
+            else:
+                _ku_bulk_targets = _knowledge_utility_targets(_ku_bulk_vis, _ku_bulk_from)
+                st.session_state._ku_bulk_cache = (_ku_bulk_vis, _ku_bulk_from, _ku_bulk_targets)
+            if st.button(f"Knowledge Utility (Not Run: {len(_ku_bulk_targets)})",
+                         key="bulk_knowledge_utility",
+                         disabled=bool(st.session_state._bg_task) or not _ku_bulk_targets,
+                         help="Runs Analytics Results - Knowledge Utility for every turn shown below that retrieved knowledge but has no result yet."):
+                _ku_bulk_jobs = list(_ku_bulk_targets)
+                _ku_bulk_session = st.session_state.session
+                _ku_bulk_mode = st.session_state.analytics_knowledge_mode or "Norm(All)"
+                _ku_bulk_dim = dict(st.session_state.analytics_dimension_mode) or {"method": "PCA", "params": {}}
+                _ku_bulk_exec_info = {
+                    "SERVICE_INFO": dict(st.session_state.web_service),
+                    "USER_INFO":    dict(st.session_state.web_user),
+                }
+                # The status file path is derived from session_state, which the
+                # worker thread must not touch, so resolve it here.
+                _ku_bulk_task_file = _bg_task_path()
+                _ku_bulk_label = f"Analyzing knowledge utility ({len(_ku_bulk_jobs)} turns)"
+
+                def _run_ku_bulk():
+                    _failed = []
+                    for _i, _t in enumerate(_ku_bulk_jobs, 1):
+                        try:
+                            with open(_ku_bulk_task_file, "r") as _f:
+                                _status = _json.load(_f)
+                        except Exception:
+                            _status = {}
+                        _status.update({"status": "running", "error": "",
+                                        "message": f"{_ku_bulk_label} {_i}/{len(_ku_bulk_jobs)}: {_t['seq']}-{_t['sub_seq']}"})
+                        _write_bg_task_status_to(_ku_bulk_task_file, _status)
+                        try:
+                            _run_knowledge_utility_turn(
+                                _ku_bulk_session, _t, _ku_bulk_mode, _ku_bulk_dim, _ku_bulk_exec_info)
+                        except Exception as _ku_e:
+                            # One unanalyzable turn must not abandon the rest.
+                            _failed.append(f"{_t['seq']}-{_t['sub_seq']}: {_ku_e}")
+                    if _failed:
+                        raise RuntimeError(f"{len(_failed)}/{len(_ku_bulk_jobs)} turns failed - " + "; ".join(_failed))
+
+                _run_bg_task("knowledge", _ku_bulk_label, _run_ku_bulk)
+                st.rerun()
 
     # Placeholders for local vars set inside the Conversation Settings
     # expander below (they must be defined here in case the expander is
@@ -9032,6 +9249,9 @@ def main():
         seq_visible_key = 0
 
     # Render chat history
+    # Temporary instrumentation: one line per rerun in logs/streamlit.log, so the
+    # "the UI feels slow" report can be read as numbers instead of guessed at.
+    _perf_t0 = _time.perf_counter()
     download_data = []
     for k, v in st.session_state.chat_history_visible_dict.items():
         if int(k) >= seq_visible_key:
@@ -10278,6 +10498,8 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                             "Add tool names to the agent JSON's `SKILL.TOOL_LIST` to expose them as `/<name>` chat commands."
                         )
 
+    _perf_history = _time.perf_counter() - _perf_t0
+
     # File downloader
     if st.session_state.allowed_download_md:
         footer_col1, footer_col2, footer_col3 = st.columns(3)
@@ -10300,6 +10522,14 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
             help="Self-contained snapshot of this page — chat, Detail Information and "
                  "Analytics Results, with scrollable tables and live diagrams. "
                  "Always full, regardless of Download Mode.")
+
+    _perf_logger.info(
+        "[perf] rerun: history_render=%.2fs download_payload=%.2fs total=%.2fs "
+        "turns=%d dl_md=%dKB dl_html=%dKB",
+        _perf_history, _time.perf_counter() - _perf_t0 - _perf_history,
+        _time.perf_counter() - _perf_t0, len(download_data),
+        len(locals().get("dl_data") or "") // 1024,
+        len(locals().get("html_data") or "") // 1024)
 
     # User query input
     if st.session_state.session_user_id == st.session_state.user_id:
@@ -11178,6 +11408,14 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                 "those `No` values, empty cell or column missing = NO history. "
                 "`Save Digest (BatchTest only)` (OFF = skip digest generation) is independent of the "
                 "chat header toggle."
+            )
+            st.download_button(
+                "Download sample (.xlsx)",
+                data=_batch_test_sample_xlsx(),
+                file_name="Sample_BatchTest.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="batch_test_sample_dl",
+                help="Template with the input columns filled in as examples. The `_Columns` sheet lists what each column does.",
             )
             _batch_uploader_key = f"batch_test_uploader_{st.session_state.get('batch_test_uploader_counter', 0)}"
             _batch_file = st.file_uploader(
