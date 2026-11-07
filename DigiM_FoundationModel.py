@@ -44,6 +44,15 @@ azure_openai_api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2025-04-01-pre
 azure_ai_api_key = os.getenv("AZURE_AI_API_KEY")
 azure_ai_endpoint = os.getenv("AZURE_AI_ENDPOINT")
 azure_ai_api_version = os.getenv("AZURE_AI_API_VERSION", "2024-05-01-preview")
+# Amazon Bedrock, reached through its OpenAI-compatible surface. Two endpoints
+# with different feature sets: `runtime` is the one AWS recommends, `mantle` is
+# the only one that serves the server-side tools (Web Search) and the Responses
+# API for GPT OSS. The model value differs with them — runtime takes a
+# cross-Region inference profile (`us.openai.gpt-5.6-sol`), mantle takes the
+# model id (`openai.gpt-5.6-sol`).
+bedrock_api_key = os.getenv("AWS_BEARER_TOKEN_BEDROCK") or os.getenv("BEDROCK_API_KEY")
+bedrock_region = os.getenv("BEDROCK_REGION", "us-east-1")
+bedrock_endpoint = os.getenv("BEDROCK_ENDPOINT", "runtime")
 
 # Singleton LLM clients
 _clients = {}
@@ -93,6 +102,43 @@ def _get_azure_foundry_client(timeout=None, api_version=None):
             default_query={"api-version": _api_version},
             timeout=timeout,
         )
+    return _clients[key]
+
+
+# bedrock-mantle serves most models under /v1 but some under /openai/v1, and a
+# request on the wrong prefix is rejected outright; the model card states which.
+_BEDROCK_BASE_URLS = {
+    "runtime": "https://bedrock-runtime.{region}.amazonaws.com/openai/v1",
+    "mantle": "https://bedrock-mantle.{region}.api.aws/v1",
+    "mantle-openai": "https://bedrock-mantle.{region}.api.aws/openai/v1",
+}
+
+def _bedrock_base_url(endpoint=None, region=None):
+    _kind = str(endpoint or bedrock_endpoint or "runtime").lower()
+    if _kind.startswith("http"):
+        return _kind
+    if _kind not in _BEDROCK_BASE_URLS:
+        raise ValueError(
+            f"BEDROCK_ENDPOINT / PARAMETER.endpoint must be one of "
+            f"{sorted(_BEDROCK_BASE_URLS)} or a full URL; got '{_kind}'")
+    return _BEDROCK_BASE_URLS[_kind].format(region=region or bedrock_region)
+
+def _get_bedrock_client(timeout=None, endpoint=None, region=None):
+    """Amazon Bedrock client.
+
+    Bedrock speaks the OpenAI protocol, so the stock SDK reaches it with a
+    base_url swap and a Bedrock API key — the same shape as the Foundry client.
+    An OpenAI API key does NOT work here, and pointing at OpenAI's own base_url
+    silently talks to OpenAI instead of Bedrock.
+    """
+    _base = _bedrock_base_url(endpoint, region)
+    key = f"bedrock_{timeout}_{_base}"
+    if key not in _clients:
+        if not bedrock_api_key:
+            raise ValueError(
+                "AWS_BEARER_TOKEN_BEDROCK (or BEDROCK_API_KEY) is not set; "
+                "required for the Amazon Bedrock engines")
+        _clients[key] = OpenAI(base_url=_base, api_key=bedrock_api_key, timeout=timeout)
     return _clients[key]
 
 
@@ -407,6 +453,117 @@ def generate_response_T_azure_foundry(query, system_prompt, model, memories=[], 
 
     completion = client.chat.completions.create(
         model=model["MODEL"],   # Foundry deployment name
+        **params,
+        messages=prompt,
+        stream=stream_mode,
+    )
+
+    if stream_mode:
+        for chunk_completion in completion:
+            if chunk_completion.choices:
+                response = chunk_completion.choices[0].delta.content
+                yield str(prompt), response, chunk_completion
+    else:
+        response = completion.choices[0].message.content
+        yield str(prompt), response, completion
+
+# Run an OpenAI model hosted on Amazon Bedrock (Responses API)
+def generate_response_T_bedrock_openai(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
+    # The closed-weight OpenAI GPT models on Bedrock serve the Responses API
+    # only, so this is the single path for them. GPT OSS is the other way round
+    # on bedrock-runtime — use `generate_response_T_bedrock_openai_chatcompletion`
+    # for those, or point this one at `mantle`.
+    params = dict(model.get("PARAMETER") or {})
+    # Endpoint and region pick the base URL; they are routing, not model
+    # parameters, so they must not reach the request body.
+    _endpoint = params.pop("endpoint", None)
+    _region = params.pop("region", None)
+    client = _get_bedrock_client(timeout=600, endpoint=_endpoint, region=_region)
+
+    instructions = system_prompt
+
+    # See `generate_response_T_gpt` for the rationale — Responses gates the
+    # content type on the role (assistant -> output_text).
+    memory_items = [
+        {"role": memory["role"],
+         "content": [{
+             "type": ("output_text" if memory["role"] == "assistant"
+                        else "input_text"),
+             "text": memory["text"],
+         }]}
+        for memory in memories
+    ]
+
+    image_parts = []
+    for image_path in image_paths:
+        image_base64 = dmu.encode_image_file(image_path)
+        image_parts.append({
+            "type": "input_image",
+            "image_url": f"data:{_get_image_mime(image_path)};base64,{image_base64}",
+        })
+
+    user_item = {
+        "role": "user",
+        "content": [{"type": "input_text", "text": query}] + image_parts,
+    }
+
+    input_items = _sanitize_messages(memory_items + [user_item])
+
+    if "max_tokens" in params and "max_output_tokens" not in params:
+        params["max_output_tokens"] = params.pop("max_tokens")
+    # Bedrock keeps a stored copy of the request and response for 30 days when
+    # `store` is left at its default of true. This project carries its own
+    # history, so opt out unless the agent asked for server-side state.
+    params.setdefault("store", False)
+
+    prompt_dump = str(
+        [{"role": "system", "content": instructions}] + input_items
+    )
+
+    completion = client.responses.create(
+        model=model["MODEL"],   # Bedrock: inference profile id on runtime, model id on mantle
+        instructions=instructions,
+        input=input_items,
+        stream=stream_mode,
+        **params,
+    )
+
+    if stream_mode:
+        for event in completion:
+            _t = getattr(event, "type", "")
+            if _t == "response.output_text.delta":
+                yield prompt_dump, event.delta, event
+            elif _t in ("response.completed", "response.error"):
+                yield prompt_dump, "", event
+    else:
+        yield prompt_dump, completion.output_text, completion
+
+# Run a Chat-Completions-only Bedrock deployment (GPT OSS on bedrock-runtime)
+def generate_response_T_bedrock_openai_chatcompletion(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
+    params = dict(model.get("PARAMETER") or {})
+    _endpoint = params.pop("endpoint", None)
+    _region = params.pop("region", None)
+    client = _get_bedrock_client(timeout=600, endpoint=_endpoint, region=_region)
+
+    system_message = [{"role": "system", "content": system_prompt}]
+
+    memory_message = []
+    for memory in memories:
+        memory_message.append({"role": memory["role"], "content": memory["text"]})
+
+    image_message = []
+    for image_path in image_paths:
+        image_base64 = dmu.encode_image_file(image_path)
+        image_message.append({"type": "image_url", "image_url": {"url": f"data:{_get_image_mime(image_path)};base64,{image_base64}"}})
+
+    # GPT OSS rejects the multimodal content array, so send a plain string
+    # unless an image is actually attached.
+    user_content = ([{"type": "text", "text": query}] + image_message) if image_message else query
+    user_message = [{"role": "user", "content": user_content}]
+    prompt = _sanitize_messages(system_message + memory_message + user_message)
+
+    completion = client.chat.completions.create(
+        model=model["MODEL"],   # Bedrock model id / inference profile
         **params,
         messages=prompt,
         stream=stream_mode,

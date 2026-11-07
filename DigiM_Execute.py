@@ -1331,6 +1331,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         _web_model_map = {
             "Perplexity": _setting.get("PERPLEXITY_MODEL", "sonar"),
             "OpenAI": _setting.get("OPENAI_SEARCH_MODEL", "gpt-4.1-mini"),
+            "AzureOpenAI": _setting.get("AZURE_OPENAI_SEARCH_MODEL", ""),
+            "Bedrock": _setting.get("BEDROCK_SEARCH_MODEL", ""),
             "Google": _setting.get("GOOGLE_SEARCH_MODEL", "gemini-2.5-flash"),
         }
         web_model = _web_model_map.get(web_engine, "")

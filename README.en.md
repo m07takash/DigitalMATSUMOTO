@@ -1335,6 +1335,8 @@ The model with the key name specified in `DEFAULT` is used. It can also be switc
 | XAI | `generate_response_T_grok` | Grok-4, etc. |
 | **Azure OpenAI** | `generate_response_T_azure_openai` | gpt-* deployments on Azure OpenAI Service (deployment name in `MODEL`) |
 | **Azure AI Foundry** | `generate_response_T_azure_foundry` | **Claude / Gemini / Llama etc.** deployed on Foundry (deployment name in `MODEL`) |
+| **Amazon Bedrock** | `generate_response_T_bedrock_openai` | **OpenAI GPT** models on Bedrock (Responses API). `MODEL` is an inference profile or a model id |
+| **Amazon Bedrock (ChatCompletions)** | `generate_response_T_bedrock_openai_chatcompletion` | **GPT OSS** on Bedrock (which has no Responses API on bedrock-runtime) |
 
 **Using Azure AI Foundry (running Claude / Gemini on Azure)**
 
@@ -1383,6 +1385,41 @@ Set `AZURE_OPENAI_ENDPOINT` / `AZURE_OPENAI_API_KEY` / `AZURE_OPENAI_API_VERSION
 ```
 
 For image generation, you can similarly use Azure's `gpt-image-1`/`dall-e-3` deployments via `generate_image_azure_dalle`.
+
+**Using Amazon Bedrock (running OpenAI GPT on AWS)**
+
+Bedrock also exposes an OpenAI-compatible endpoint, so — as with Azure Foundry — **only the base_url changes**. The key must be a **Bedrock API key**; an OpenAI key does not work here (it comes back as a 401).
+
+```
+AWS_BEARER_TOKEN_BEDROCK="<Bedrock API key>"
+BEDROCK_REGION=us-east-1
+BEDROCK_ENDPOINT=runtime
+```
+
+There are two endpoints, and **what they support and how `MODEL` is written differ**.
+
+| `BEDROCK_ENDPOINT` | base_url | What goes in `MODEL` | Use for |
+|---|---|---|---|
+| `runtime` (recommended) | `https://bedrock-runtime.{region}.amazonaws.com/openai/v1` | an inference profile (`us.openai.gpt-5.6-sol` / `global.openai.…`) | ordinary chat; synchronous only |
+| `mantle` | `https://bedrock-mantle.{region}.api.aws/v1` | a model id (`openai.gpt-5.6-sol`) | **server-side tools (Web Search)**, Responses for GPT OSS, background inference |
+| `mantle-openai` | `https://bedrock-mantle.{region}.api.aws/openai/v1` | same as above | models served under `/openai/v1` on mantle |
+
+On `runtime`, a **bare foundation-model id is rejected** (a cross-Region inference profile is required), and **server-side tools are unavailable** — so Bedrock Web Search is reached through the web-search engine below, which is pinned to mantle.
+
+In the agent JSON, set `FUNC_NAME` to `generate_response_T_bedrock_openai`. `PARAMETER.endpoint` / `PARAMETER.region` **override the endpoint per engine** (neither is forwarded in the request body):
+
+```json
+"GPT-Bedrock": {
+  "NAME": "GPT-Bedrock",
+  "FUNC_NAME": "generate_response_T_bedrock_openai",
+  "MODEL": "us.openai.gpt-5.6-sol",
+  "PARAMETER": {"endpoint": "runtime", "max_output_tokens": 20000},
+  "TOKENIZER": "tiktoken",
+  "MEMORY": {"limit": 10000, "role": "both", ...}
+}
+```
+
+By default the Bedrock Responses API **retains the request and the response server-side for 30 days** (`store: true`). This system keeps its own history, so `store: false` is the default here. Override it with `PARAMETER.store` only if you want server-side conversation state (`previous_response_id`).
 
 **IMAGEGEN (image generation):**
 
@@ -2346,7 +2383,7 @@ A web-search query is assembled from the user's chat input, so posting it to a t
 
 **Built-in rules**: provider API keys (OpenAI / Anthropic / GitHub / AWS / Google / Slack), JWTs, private-key blocks, Bearer tokens, `key: value` credentials, email addresses, JP mobile/landline numbers, and credit-card numbers (**Luhn-validated**, so a plain 16-digit identifier is not a false positive). The 12-digit My Number rule is **off by default** because it over-matches; enable it in the config when needed.
 
-**Applied at**: the head of all five engine functions (Perplexity / OpenAI / AzureOpenAI / Google / Claude). Each engine is also registered as its own callable tool, so the guard is wired **per engine** rather than only in the dispatcher. The `[guardrail]` log records **rule names and hit counts only** - never the matched values.
+**Applied at**: the head of all six engine functions (Perplexity / OpenAI / AzureOpenAI / Bedrock / Google / Claude). Each engine is also registered as its own callable tool, so the guard is wired **per engine** rather than only in the dispatcher. The `[guardrail]` log records **rule names and hit counts only** - never the matched values.
 
 #### Supported engines
 
@@ -2354,6 +2391,7 @@ A web-search query is assembled from the user's chat input, so posting it to a t
 |---------|---------|------|
 | **Perplexity** | `PERPLEXITY_API_KEY` | A model specialized for Web search. Responses include source URLs |
 | **OpenAI** | `OPENAI_API_KEY` | Searches via GPT's `web_search_preview` tool. High accuracy |
+| **Bedrock** | `AWS_BEARER_TOKEN_BEDROCK` | Amazon Bedrock's `web_search` server-side tool. Searches Amazon's own web index and returns sources as `url_citation` annotations. **bedrock-mantle only** (unavailable on `bedrock-runtime`), GPT-5.4 or later, in the supported Regions |
 | **Google** | `GEMINI_API_KEY` | Gemini's Google Search Grounding. Google search based |
 | **Claude** | `ANTHROPIC_API_KEY` | Anthropic's `web_search_20260209` server-side tool. Dynamic Filtering returns results efficiently |
 
@@ -2362,7 +2400,7 @@ A web-search query is assembled from the user's chat input, so posting it to a t
 Set the default engine and parameters of each engine in `setting.yaml`.
 
 ```yaml
-# Default search engine (Perplexity / OpenAI / Google / Claude)
+# Default search engine (Perplexity / OpenAI / AzureOpenAI / Bedrock / Google / Claude)
 WEB_SEARCH_DEFAULT: "OpenAI"
 
 # Perplexity
@@ -2377,6 +2415,16 @@ PERPLEXITY_REASONING_EFFORT: "medium"
 OPENAI_SEARCH_MODEL: "gpt-5-mini"
 OPENAI_SEARCH_SYSTEM_PROMPT: "Be precise and concise."
 OPENAI_SEARCH_USER_PROMPT: "Based on the following input, provide related information."
+
+# Amazon Bedrock Web Search (bedrock-mantle only / GPT-5.4 or later)
+BEDROCK_SEARCH_MODEL: "openai.gpt-5.6-terra"
+BEDROCK_SEARCH_SYSTEM_PROMPT: "Be precise and concise."
+BEDROCK_SEARCH_USER_PROMPT: "Based on the following input, provide related information."
+BEDROCK_SEARCH_CONTEXT_SIZE: "medium"   # low(5) / medium(11) / high(25) observations
+# false = Amazon's web index + cache only (stays inside the AWS boundary)
+# true  = also fetches live pages; needs the IAM action bedrock-websearch:ExternalWebAccess
+BEDROCK_SEARCH_EXTERNAL_WEB_ACCESS: false
+BEDROCK_SEARCH_ALLOWED_DOMAINS: []      # optional; up to 100 domains (subdomains included)
 
 # Google Grounding Search
 GOOGLE_SEARCH_MODEL: "gemini-3.5-flash"
@@ -2437,7 +2485,7 @@ All non-LLM agent capabilities (history operations, web search, analysis, etc.) 
 | Analysis | `analysis.py` | `extract_date`, `management_analysis`, `compare_texts` |
 | Persona | `persona.py` | `select_personas` |
 | Image critique | `art_critic.py` | `art_critics` |
-| Web search | `web_search.py` | `WebSearch` (dispatcher), `WebSearch_PerplexityAI`, `WebSearch_OpenAI`, `WebSearch_Google`, `WebSearch_Claude` |
+| Web search | `web_search.py` | `WebSearch` (dispatcher), `WebSearch_PerplexityAI`, `WebSearch_OpenAI`, `WebSearch_AzureOpenAI`, `WebSearch_Bedrock`, `WebSearch_Google`, `WebSearch_Claude` |
 | Knowledge Utility | `knowledge_interpret.py` | `knowledge_utility_interpret` |
 | Citation injection | `citation_inject.py` | `inject_citations` |
 | Utility | `current_time.py` | `current_time` |

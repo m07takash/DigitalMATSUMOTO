@@ -10203,7 +10203,7 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                     try:
                         _ws_all = list(dmt.WEB_SEARCH_ENGINES.keys())
                     except AttributeError:
-                        _ws_all = ["Perplexity", "OpenAI", "AzureOpenAI", "Google", "Claude"]
+                        _ws_all = ["Perplexity", "OpenAI", "AzureOpenAI", "Bedrock", "Google", "Claude"]
                     _ws_allow = _ws_setting.get("WEB_SEARCH_ENGINES_AVAILABLE") or []
                     _ws_engines = [e for e in _ws_allow if e in _ws_all] or _ws_all
                     if ("web_search_engine" not in st.session_state

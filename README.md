@@ -1350,6 +1350,8 @@ python3 DigiM_GraphBuilder.py user/common/rag/graph/{DATA_NAME} --use-llm --embe
 | XAI | `generate_response_T_grok` | Grok-4 等 |
 | **Azure OpenAI** | `generate_response_T_azure_openai` | Azure OpenAI Service 上の gpt-* デプロイ（`MODEL`にデプロイ名を指定） |
 | **Azure AI Foundry** | `generate_response_T_azure_foundry` | Foundry 上の **Claude / Gemini / Llama 等**のデプロイ（`MODEL`にデプロイ名を指定） |
+| **Amazon Bedrock** | `generate_response_T_bedrock_openai` | Bedrock 上の **OpenAI GPT** モデル（Responses API）。`MODEL` は推論プロファイル or モデルID |
+| **Amazon Bedrock (ChatCompletions)** | `generate_response_T_bedrock_openai_chatcompletion` | Bedrock 上の **GPT OSS**（bedrock-runtime では Responses 非対応のため） |
 
 **Azure AI Foundry の利用（Claude / Gemini 等を Azure 上で動かす）**
 
@@ -1398,6 +1400,41 @@ Foundry は OpenAI 互換の chat completions を `<endpoint>/models` で提供�
 ```
 
 画像生成も同様に `generate_image_azure_dalle` で Azure 上の `gpt-image-1`/`dall-e-3` deployment を使えます。
+
+**Amazon Bedrock の利用（OpenAI GPT を AWS 上で動かす）**
+
+Bedrock も OpenAI 互換のエンドポイントを提供するため、**Azure Foundry と同じく base_url の差し替えだけ**で動きます。ただしキーは **Bedrock の API キー**で、OpenAI のキーは使えません（OpenAI のキーを渡すと 401 になります）。
+
+```
+AWS_BEARER_TOKEN_BEDROCK="<Bedrock API キー>"
+BEDROCK_REGION=us-east-1
+BEDROCK_ENDPOINT=runtime
+```
+
+エンドポイントが2種類あり、**できることと `MODEL` の書き方が違います**。
+
+| `BEDROCK_ENDPOINT` | base_url | `MODEL` に書くもの | 用途 |
+|---|---|---|---|
+| `runtime`（推奨） | `https://bedrock-runtime.{region}.amazonaws.com/openai/v1` | 推論プロファイル（`us.openai.gpt-5.6-sol` / `global.openai.…`） | 通常のチャット。同期のみ |
+| `mantle` | `https://bedrock-mantle.{region}.api.aws/v1` | モデルID（`openai.gpt-5.6-sol`） | **サーバーサイドツール（Web検索）**、GPT OSS の Responses、非同期 |
+| `mantle-openai` | `https://bedrock-mantle.{region}.api.aws/openai/v1` | 同上 | mantle で `/openai/v1` 配下に提供されるモデル |
+
+`runtime` では **MODEL に素のモデルIDを書くと通りません**（クロスリージョン推論プロファイル必須）。また `runtime` では **サーバーサイドツールが使えない**ため、Bedrock の Web検索は後述の Web検索エンジン側（mantle 固定）で使います。
+
+エージェント JSON では `FUNC_NAME` に `generate_response_T_bedrock_openai` を指定します。`PARAMETER.endpoint` / `PARAMETER.region` で**エンジン単位にエンドポイントを上書き**できます（これらはリクエストボディには渡りません）:
+
+```json
+"GPT-Bedrock": {
+  "NAME": "GPT-Bedrock",
+  "FUNC_NAME": "generate_response_T_bedrock_openai",
+  "MODEL": "us.openai.gpt-5.6-sol",
+  "PARAMETER": {"endpoint": "runtime", "max_output_tokens": 20000},
+  "TOKENIZER": "tiktoken",
+  "MEMORY": {"limit": 10000, "role": "both", ...}
+}
+```
+
+Bedrock の Responses API は既定で**リクエストと応答を30日間サーバー側に保持**します（`store: true`）。本システムは履歴を自前で持つため `store: false` を既定にしています。サーバー側の会話状態（`previous_response_id`）を使いたい場合のみ `PARAMETER.store` で上書きしてください。
 
 **IMAGEGEN（画像生成）：**
 
@@ -2384,7 +2421,7 @@ Web検索クエリはユーザーのチャット入力から組み立てられ�
 
 **組込みルール**: 各社APIキー（OpenAI / Anthropic / GitHub / AWS / Google / Slack）、JWT、秘密鍵ブロック、Bearerトークン、`key: value` 形式の資格情報、メールアドレス、日本の携帯・固定電話、クレジットカード番号（**Luhnチェックで検証**し、単なる16桁の識別子は誤検知しない）。マイナンバー（12桁）は誤検知が多いため**既定は無効**で、必要なら設定で有効化します。
 
-**適用点**: 5エンジン（Perplexity / OpenAI / AzureOpenAI / Google / Claude）それぞれの関数先頭。各エンジンは個別のツールとしても登録されており直接呼び出せるため、ディスパッチャだけでなく**全エンジンに個別配線**しています。検出ログ（`[guardrail]`）には**ルール名と件数のみ**を記録し、検出した値そのものは残しません。
+**適用点**: 6エンジン（Perplexity / OpenAI / AzureOpenAI / Bedrock / Google / Claude）それぞれの関数先頭。各エンジンは個別のツールとしても登録されており直接呼び出せるため、ディスパッチャだけでなく**全エンジンに個別配線**しています。検出ログ（`[guardrail]`）には**ルール名と件数のみ**を記録し、検出した値そのものは残しません。
 
 #### 対応エンジン
 
@@ -2392,6 +2429,7 @@ Web検索クエリはユーザーのチャット入力から組み立てられ�
 |---------|---------|------|
 | **Perplexity** | `PERPLEXITY_API_KEY` | Web検索特化モデル。検索ソースURL付きで回答 |
 | **OpenAI** | `OPENAI_API_KEY` | GPTの `web_search_preview` ツールで検索。高精度 |
+| **Bedrock** | `AWS_BEARER_TOKEN_BEDROCK` | Amazon Bedrock の `web_search` サーバーサイドツール。Amazon 自前のWebインデックスから検索し `url_citation` で出典を返す。**bedrock-mantle 専用**（`bedrock-runtime` では使えない）／GPT-5.4 以降／対応リージョンのみ |
 | **Google** | `GEMINI_API_KEY` | Gemini の Google Search Grounding。Google検索ベース |
 | **Claude** | `ANTHROPIC_API_KEY` | Anthropicの `web_search_20260209` サーバーサイドツール。Dynamic Filtering で検索結果を効率的に取得 |
 
@@ -2400,7 +2438,7 @@ Web検索クエリはユーザーのチャット入力から組み立てられ�
 デフォルトエンジンと各エンジンのパラメータを `setting.yaml` で設定します。
 
 ```yaml
-# デフォルトの検索エンジン（Perplexity / OpenAI / Google / Claude）
+# デフォルトの検索エンジン（Perplexity / OpenAI / AzureOpenAI / Bedrock / Google / Claude）
 WEB_SEARCH_DEFAULT: "OpenAI"
 
 # Perplexity
@@ -2415,6 +2453,16 @@ PERPLEXITY_REASONING_EFFORT: "medium"
 OPENAI_SEARCH_MODEL: "gpt-5-mini"
 OPENAI_SEARCH_SYSTEM_PROMPT: "Be precise and concise."
 OPENAI_SEARCH_USER_PROMPT: "以下の入力に基づいて、関連する情報を提供してください。"
+
+# Amazon Bedrock Web Search（bedrock-mantle 専用 / GPT-5.4 以降）
+BEDROCK_SEARCH_MODEL: "openai.gpt-5.6-terra"
+BEDROCK_SEARCH_SYSTEM_PROMPT: "Be precise and concise."
+BEDROCK_SEARCH_USER_PROMPT: "以下の入力に基づいて、関連する情報を提供してください。"
+BEDROCK_SEARCH_CONTEXT_SIZE: "medium"   # low(5) / medium(11) / high(25) 件
+# false = Amazon の Webインデックス＋キャッシュのみ（AWS 境界内で完結）
+# true  = 実ページも取得。IAM の bedrock-websearch:ExternalWebAccess が必要
+BEDROCK_SEARCH_EXTERNAL_WEB_ACCESS: false
+BEDROCK_SEARCH_ALLOWED_DOMAINS: []      # 任意。最大100ドメイン（サブドメイン込み）
 
 # Google Grounding Search
 GOOGLE_SEARCH_MODEL: "gemini-3.5-flash"
@@ -2475,7 +2523,7 @@ ANTHROPIC_API_KEY=AnthropicのAPIキー（LLMと共用）
 | 解析 | `analysis.py` | `extract_date`, `management_analysis`, `compare_texts` |
 | ペルソナ | `persona.py` | `select_personas` |
 | 画像批評 | `art_critic.py` | `art_critics` |
-| Web検索 | `web_search.py` | `WebSearch`（dispatcher）, `WebSearch_PerplexityAI`, `WebSearch_OpenAI`, `WebSearch_Google`, `WebSearch_Claude` |
+| Web検索 | `web_search.py` | `WebSearch`（dispatcher）, `WebSearch_PerplexityAI`, `WebSearch_OpenAI`, `WebSearch_AzureOpenAI`, `WebSearch_Bedrock`, `WebSearch_Google`, `WebSearch_Claude` |
 | Knowledge Utility | `knowledge_interpret.py` | `knowledge_utility_interpret` |
 | 引用付与 | `citation_inject.py` | `inject_citations` |
 | ユーティリティ | `current_time.py` | `current_time` |

@@ -172,6 +172,83 @@ def WebSearch_AzureOpenAI(service_info, user_info, session_id, session_name, age
     return service_info, user_info, response_text, export_urls
 
 
+# Web search (Amazon Bedrock hosted Web Search — Responses API on bedrock-mantle)
+def WebSearch_Bedrock(service_info, user_info, session_id, session_name, agent_file,
+                      input, import_contents=[], add_info={}):
+    # Outbound guardrail: the query is built from the user's chat input, so
+    # redact secrets/PII before it reaches this third-party API. Applied per
+    # engine (not just in the dispatcher) because each engine is also
+    # registered as its own tool and can be invoked directly.
+    input, _guard_findings, _guard_blocked = dmg.guard_web_query(input)
+    if _guard_blocked:
+        return service_info, user_info, dmg.block_message(_guard_findings), []
+
+    from openai import OpenAI
+    if os.path.exists("system.env"):
+        load_dotenv("system.env")
+    api_key = os.getenv("AWS_BEARER_TOKEN_BEDROCK") or os.getenv("BEDROCK_API_KEY")
+    if not api_key:
+        # Without this the OpenAI SDK falls back to OPENAI_API_KEY and posts an
+        # OpenAI key to Bedrock, which comes back as an opaque 401.
+        raise ValueError(
+            "AWS_BEARER_TOKEN_BEDROCK (or BEDROCK_API_KEY) is not set; "
+            "required for the Bedrock web-search engine")
+    # Web Search is strictly regional and lives in a subset of the Regions that
+    # serve inference, so it gets its own override.
+    region = os.getenv("BEDROCK_SEARCH_REGION") or os.getenv("BEDROCK_REGION", "us-west-2")
+
+    system_setting_dict = dmu.read_yaml_file("setting.yaml")
+    system_prompt = system_setting_dict.get("BEDROCK_SEARCH_SYSTEM_PROMPT", "Be precise and concise.")
+    user_prompt = system_setting_dict.get("BEDROCK_SEARCH_USER_PROMPT", "以下の入力に基づいて、関連する情報を提供してください。")
+    model = system_setting_dict.get("BEDROCK_SEARCH_MODEL", "openai.gpt-5.6-terra")
+    context_size = system_setting_dict.get("BEDROCK_SEARCH_CONTEXT_SIZE", "medium")
+    # Fetch reaches the live web only when the caller also holds
+    # bedrock-websearch:ExternalWebAccess. Leaving the API default of true
+    # without that permission makes every Fetch fail its authorization check
+    # (silently — the request still returns 200 off Search observations), so
+    # this is off unless deliberately turned on. Off also keeps the query
+    # inside the AWS boundary, which matches the guardrail above.
+    external_web_access = bool(system_setting_dict.get("BEDROCK_SEARCH_EXTERNAL_WEB_ACCESS", False))
+    # Server-side tools are served by bedrock-mantle only, and that endpoint
+    # puts the OpenAI models under /openai/v1 rather than /v1.
+    base_url = (system_setting_dict.get("BEDROCK_SEARCH_BASE_URL")
+                or f"https://bedrock-mantle.{region}.api.aws/openai/v1")
+
+    web_search_tool = {
+        "type": "web_search",
+        "search_context_size": context_size,
+        "external_web_access": external_web_access,
+    }
+    _domains = system_setting_dict.get("BEDROCK_SEARCH_ALLOWED_DOMAINS") or []
+    if _domains:
+        web_search_tool["filters"] = {"allowed_domains": list(_domains)}
+
+    client = OpenAI(base_url=base_url, api_key=api_key)
+    response = client.responses.create(
+        model=model,
+        tools=[web_search_tool],
+        input=user_prompt + "\n" + input,
+        instructions=system_prompt,
+        store=False,
+    )
+
+    response_text = ""
+    export_urls = []
+    seen_urls = set()
+    for item in response.output:
+        if item.type == "message":
+            for content in item.content:
+                if hasattr(content, "text"):
+                    response_text += content.text
+                    for ann in (getattr(content, "annotations", None) or []):
+                        url = getattr(ann, "url", None)
+                        if url and url not in seen_urls:
+                            seen_urls.add(url)
+                            export_urls.append({"url": url, "title": getattr(ann, "title", "") or ""})
+
+    return service_info, user_info, response_text, export_urls
+
+
 # Web search (Google Grounding Search)
 def WebSearch_Google(service_info, user_info, session_id, session_name, agent_file,
                      input, import_contents=[], add_info={}):
@@ -267,6 +344,7 @@ WEB_SEARCH_ENGINES = {
     "Perplexity": WebSearch_PerplexityAI,
     "OpenAI": WebSearch_OpenAI,
     "AzureOpenAI": WebSearch_AzureOpenAI,
+    "Bedrock": WebSearch_Bedrock,
     "Google": WebSearch_Google,
     "Claude": WebSearch_Claude,
 }
@@ -294,7 +372,7 @@ dmtr.register_tool(
     "WebSearch",
     description=(
         "Run a web search via the engine specified in args.engine "
-        "('Perplexity' | 'OpenAI' | 'AzureOpenAI' | 'Google' | 'Claude'; default Perplexity). "
+        "('Perplexity' | 'OpenAI' | 'AzureOpenAI' | 'Bedrock' | 'Google' | 'Claude'; default Perplexity). "
         "Use when the question requires up-to-date information from the open web."
     ),
     schema={
@@ -303,7 +381,7 @@ dmtr.register_tool(
             "input": _INPUT_TEXT,
             "engine": {
                 "type": "string",
-                "enum": ["Perplexity", "OpenAI", "AzureOpenAI", "Google", "Claude"],
+                "enum": ["Perplexity", "OpenAI", "AzureOpenAI", "Bedrock", "Google", "Claude"],
                 "description": "Which web-search backend to use.",
                 "default": "Perplexity",
             },
@@ -336,6 +414,14 @@ dmtr.register_tool(
     schema={"type": "object", "properties": {"input": _INPUT_TEXT}, "required": ["input"]},
     func=WebSearch_AzureOpenAI,
     example="/WebSearch_AzureOpenAI Azure OpenAI Service の最新リージョン",
+)
+
+dmtr.register_tool(
+    "WebSearch_Bedrock",
+    description="Web search via the Amazon Bedrock hosted Web Search tool (Responses API on bedrock-mantle). Uses AWS_BEARER_TOKEN_BEDROCK / BEDROCK_SEARCH_* settings. Prefer the generic 'WebSearch' tool unless a specific engine is required.",
+    schema={"type": "object", "properties": {"input": _INPUT_TEXT}, "required": ["input"]},
+    func=WebSearch_Bedrock,
+    example="/WebSearch_Bedrock Amazon Bedrock の最新モデル",
 )
 
 dmtr.register_tool(
