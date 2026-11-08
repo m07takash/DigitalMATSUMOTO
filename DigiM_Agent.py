@@ -296,15 +296,85 @@ def _filter_active_skill(skill):
     return out
 
 
-_VALID_SKILL_PHASES = ("BEFORE", "CONTEXT", "AFTER")
+# A SKILL runs inside one generation, so there are only two places it can go:
+# before the answer is produced or after. The old third phase said *how* a
+# BEFORE result was merged (wrapped as reference material), which is now MERGE.
+_VALID_SKILL_PHASES = ("BEFORE", "AFTER")
+_SKILL_PHASE_ALIASES = {"CONTEXT": "BEFORE"}
+
+# What happens to the tool's output.
+#   BEFORE  CONTEXT  wrap as reference material and append to the prompt
+#           PROMPT   append to the prompt as-is (an instruction, not material)
+#           RECORD   inject nothing; the call ran for its side effect
+#   AFTER   REPLACE  the result becomes the answer (proofreading, citations)
+#           APPEND   shown after the answer under HEADER, kept out of
+#                    `response.text` so memory and digests stay clean
+#           RECORD   recorded only; the answer is untouched
+_SKILL_MERGE_MODES = {
+    "BEFORE": ("CONTEXT", "PROMPT", "RECORD"),
+    "AFTER": ("REPLACE", "APPEND", "RECORD"),
+}
+_SKILL_MERGE_DEFAULT = {"BEFORE": "CONTEXT", "AFTER": "APPEND"}
+# Skills with no ORDER land here, so an explicitly ordered one can be placed
+# either side of the unordered ones.
+_SKILL_ORDER_DEFAULT = 100
+
+
+def normalize_skill_phase(phase, default="BEFORE"):
+    """Fold a stored or authored PHASE onto the two-phase model."""
+    _p = str(phase or "").strip().upper()
+    _p = _SKILL_PHASE_ALIASES.get(_p, _p)
+    return _p if _p in _VALID_SKILL_PHASES else default
+
+# Conversation-Setting toggles surfaced as SKILL.TOOLS entries, so one picker
+# covers every capability an agent has instead of a row of loose checkboxes.
+# They are NOT registry tools: nothing is invoked and no SKILL turn is written
+# — selecting one just turns its execution flag on. PHASE places them in the
+# picker by what they act on; BEFORE shapes the request, AFTER edits the
+# finished answer.
+FLAG_SKILLS = {
+    "diagram_mode": {
+        "PHASE": "BEFORE",
+        "EXEC_KEY": "DIAGRAM_MODE",
+        "LABEL": "Diagrams",
+        "DESCRIPTION": ("Ask for Markdown tables and Mermaid diagrams where they "
+                        "clarify the explanation."),
+    },
+    "emphasis_mode": {
+        "PHASE": "BEFORE",
+        "EXEC_KEY": "EMPHASIS_MODE",
+        "LABEL": "Emphasis",
+        "DESCRIPTION": ("Ask for the points that carry the answer in bold, with "
+                        "headings and bullets once the reply gets long."),
+    },
+    "match_input_language": {
+        "PHASE": "BEFORE",
+        "EXEC_KEY": "MATCH_INPUT_LANGUAGE",
+        "LABEL": "Match input language",
+        "DESCRIPTION": ("Reply in the language the user wrote in, overriding "
+                        "PERSONALITY.LANGUAGE. An explicit in-prompt request for "
+                        "another language still wins."),
+    },
+    "cite_knowledge": {
+        "PHASE": "AFTER",
+        "EXEC_KEY": "CITE_KNOWLEDGE",
+        "LABEL": "Reference Knowledge",
+        "DESCRIPTION": ("Append a '## Reference Knowledge' section listing the "
+                        "KNOWLEDGE chunks the turn actually used."),
+    },
+}
 
 
 def normalize_skill_tools(skill_raw):
-    """Return {name: {PHASE, ACTIVE, AS_REFERENCE, ARGS_HINT, MAGIC_WORDS}}.
+    """Return {name: {PHASE, ACTIVE, DEFAULT, FLAG, MERGE, HEADER, ORDER,
+    AS_REFERENCE, ARGS_HINT, MAGIC_WORDS}}.
+
     Accepts both the new `SKILL.TOOLS` (dict of dicts) and the legacy
-    `SKILL.TOOL_LIST` (list of str) + `INACTIVE_TOOLS` shape. Every legacy
-    entry lands on PHASE=CONTEXT since that mirrors the historical Web
-    Search prepend behaviour. Inactive entries are dropped."""
+    `SKILL.TOOL_LIST` (list of str) + `INACTIVE_TOOLS` shape. Legacy entries
+    land on BEFORE/CONTEXT, mirroring the historical Web Search prepend.
+    `PHASE: "CONTEXT"` and `REWRITE: true` are read as `BEFORE` + `MERGE`, so
+    agent files and saved sessions written against the three-phase model keep
+    working. Inactive entries are dropped."""
     if not isinstance(skill_raw, dict):
         return {}
     out = {}
@@ -314,17 +384,33 @@ def normalize_skill_tools(skill_raw):
             if not isinstance(name, str) or not name:
                 continue
             cfg = cfg if isinstance(cfg, dict) else {}
-            phase = str(cfg.get("PHASE") or "CONTEXT").upper()
-            if phase not in _VALID_SKILL_PHASES:
-                phase = "CONTEXT"
+            _declared = str(cfg.get("PHASE") or "").strip().upper()
+            phase = normalize_skill_phase(_declared)
             active = cfg.get("ACTIVE", True)
             if isinstance(active, str):
                 active = active.strip().lower() not in ("false", "no", "n", "0", "")
             if not bool(active):
                 continue
+            # A flag skill's phase comes from FLAG_SKILLS, not the agent JSON:
+            # it decides which picker column the toggle belongs in, and a typo
+            # in one agent file should not be able to move it.
+            if name in FLAG_SKILLS:
+                phase = FLAG_SKILLS[name]["PHASE"]
             out[name] = {
                 "PHASE": phase,
                 "ACTIVE": True,
+                # ACTIVE says the skill is available on this agent; DEFAULT says
+                # it starts out selected in the Skills picker. Kept apart so
+                # "available but off by default" is expressible and so the
+                # per-session Temporary Override keeps owning ACTIVE. None means
+                # the agent did not declare one, which leaves the user's own
+                # default (users.json) in charge.
+                "DEFAULT": (bool(cfg["DEFAULT"]) if "DEFAULT" in cfg else None),
+                "FLAG": name in FLAG_SKILLS,
+                "MERGE": _normalize_skill_merge(
+                    {**cfg, "_FLAG": name in FLAG_SKILLS}, phase, _declared),
+                "HEADER": str(cfg.get("HEADER") or ""),
+                "ORDER": _normalize_skill_order(cfg.get("ORDER")),
                 "AS_REFERENCE": bool(cfg.get("AS_REFERENCE", True)),
                 "ARGS_HINT": cfg.get("ARGS_HINT") or {},
                 "MAGIC_WORDS": list(cfg.get("MAGIC_WORDS") or []),
@@ -335,9 +421,16 @@ def normalize_skill_tools(skill_raw):
         for name in tool_list:
             if not isinstance(name, str) or not name or name in inactive:
                 continue
+            _phase = FLAG_SKILLS[name]["PHASE"] if name in FLAG_SKILLS else "BEFORE"
             out[name] = {
-                "PHASE": "CONTEXT",
+                "PHASE": _phase,
                 "ACTIVE": True,
+                "DEFAULT": False,
+                "FLAG": name in FLAG_SKILLS,
+                "MERGE": ("RECORD" if name in FLAG_SKILLS
+                          else _SKILL_MERGE_DEFAULT[_phase]),
+                "HEADER": "",
+                "ORDER": _SKILL_ORDER_DEFAULT,
                 "AS_REFERENCE": True,
                 "ARGS_HINT": {},
                 "MAGIC_WORDS": [],
@@ -345,11 +438,50 @@ def normalize_skill_tools(skill_raw):
     return out
 
 
+def _normalize_skill_merge(cfg, phase, declared_phase=""):
+    """MERGE for this entry, honouring the shapes that came before it.
+
+    `REWRITE: true` predates MERGE and meant exactly REPLACE. A BEFORE skill
+    authored as `PHASE: "CONTEXT"` wanted its result wrapped as reference
+    material, which is MERGE=CONTEXT — the same default, stated explicitly so
+    the intent survives even if the default ever changes.
+    """
+    _valid = _SKILL_MERGE_MODES[phase]
+    _merge = str(cfg.get("MERGE") or "").strip().upper()
+    if _merge in _valid:
+        return _merge
+    if cfg.get("_FLAG"):
+        # A flag skill produces no text, so there is nothing to merge; its
+        # effect is the execution key it sets.
+        return "RECORD"
+    if phase == "AFTER" and bool(cfg.get("REWRITE", False)):
+        return "REPLACE"
+    if phase == "BEFORE" and declared_phase == "CONTEXT":
+        return "CONTEXT"
+    return _SKILL_MERGE_DEFAULT[phase]
+
+
+def _normalize_skill_order(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return _SKILL_ORDER_DEFAULT
+
+
+def sort_skill_names(names, skill_tools):
+    """ORDER ascending, declaration order breaking ties."""
+    _idx = {n: i for i, n in enumerate(skill_tools or {})}
+    return sorted(names, key=lambda n: (
+        _normalize_skill_order((skill_tools.get(n) or {}).get("ORDER")),
+        _idx.get(n, 1 << 30)))
+
+
 def skill_tool_list_from_normalized(skill_tools):
     """Flat list of active tool names for callers that still expect
     `SKILL.TOOL_LIST` (Thinking prompt renderer, slash-command validator,
-    TOOL_PICK chain fallback)."""
-    return [n for n in (skill_tools or {}).keys()]
+    TOOL_PICK chain fallback). Flag skills are left out: they have no registry
+    entry, so anything that dispatches by name would only fail on them."""
+    return [n for n in (skill_tools or {}).keys() if n not in FLAG_SKILLS]
 
 # Set the properties of the LLM agent
 def get_agent_item(agent_file, item):

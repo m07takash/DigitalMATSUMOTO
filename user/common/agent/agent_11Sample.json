@@ -450,15 +450,40 @@
         }
     ],
     "SKILL": {
-        "TOOL_LIST": [
-            "WebSearch",
-            "current_time",
-            "compare_texts",
-            "select_personas",
-            "dialog_persona_merge",
-            "inject_citations"
-        ],
-        "INACTIVE_TOOLS": []
+        "TOOLS": {
+            "WebSearch": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "DEFAULT": false,
+                "MERGE": "CONTEXT"
+            },
+            "current_time": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "DEFAULT": false,
+                "MERGE": "CONTEXT"
+            },
+            "diagram_mode": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "DEFAULT": false
+            },
+            "emphasis_mode": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "DEFAULT": false
+            },
+            "match_input_language": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "DEFAULT": false
+            },
+            "cite_knowledge": {
+                "PHASE": "AFTER",
+                "ACTIVE": true,
+                "DEFAULT": false
+            }
+            }
     },
     "DEFINE_CODE": {
         "COMPANY_CODE": [],

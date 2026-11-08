@@ -24,6 +24,49 @@ _INPUT_TEXT = {
 }
 
 
+# ----- the text that actually gets searched ----------------------------------
+# Composing it is this tool's job, not the executor's: the built-in path,
+# Thinking's preview search and a WebSearch SKILL must produce the SAME string
+# or the preview cache stops matching and the turn pays for two searches.
+def build_web_search_text(query, thinking_query="", digest_text="",
+                           situation_prompt="", situation_support=""):
+    """Search text shared by the built-in web search, Thinking's preview search
+    and WebSearch SKILLs.
+
+    Every path carries the situation and a date anchor — engines resolve
+    "yesterday" / "recently" against their own idea of today otherwise — and
+    the paths must agree byte-for-byte for the preview cache to be reused.
+    """
+    ref = ""
+    if digest_text:
+        ref += "\n\n[参考]これまでの会話:\n" + digest_text
+    if situation_prompt:
+        ref += "\n\n[参考]今の状況:\n" + situation_prompt
+    if thinking_query:
+        text = "検索して欲しい内容:\n" + thinking_query + "\n\n[参考]元の質問:\n" + query + ref
+    elif ref:
+        text = "検索して欲しい内容:\n" + query + ref
+    else:
+        text = query
+    return text + _date_note(situation_support)
+
+
+def _date_note(situation_support: str) -> str:
+    """Date anchor appended to every web-search query.
+
+    Search engines resolve "last week" / "recently" against their own idea of
+    the current date, so without this a question about the past week comes
+    back with months-old articles.
+    """
+    import re as _re_d
+    m = _re_d.search(r"(\d{4})/(\d{2})/(\d{2})", situation_support or "")
+    if not m:
+        return ""
+    return (f"\n\n[重要]今日の日付は {m.group(1)}年{m.group(2)}月{m.group(3)}日 です。"
+            f"「先週」「最近」などの相対表現はこの日付を基準に解釈し、"
+            f"この日付より新しい情報は存在しない点に注意してください。")
+
+
 # ----- engine implementations ------------------------------------------------
 
 # Web search (Perplexity AI)

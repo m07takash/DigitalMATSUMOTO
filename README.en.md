@@ -1474,9 +1474,9 @@ Optional top-level block on the agent JSON. Holds this agent's recommended defau
 - `Skills`: only when `SKILL.TOOLS` / `SKILL.TOOL_LIST` is non-empty
 - `Personas`: only when the agent has `ORG`
 
-**Skills target**: The Thinking Agent inspects each `- name: description` entry in the SKILL list and returns SKILL names (the JSON key `tools` is kept for compat). The dispatcher then runs each selected SKILL **at the PHASE declared in `SKILL.TOOLS[name].PHASE`** (BEFORE / CONTEXT / AFTER). The old `HABIT.TOOL_PICK` routing is retired — see the SKILL section below.
+**Skills target**: The Thinking Agent inspects each `- name: description` entry in the SKILL list and returns SKILL names (the JSON key `tools` is kept for compat). The dispatcher then runs each selected SKILL **at the PHASE declared in `SKILL.TOOLS[name].PHASE`** (BEFORE / AFTER). The old `HABIT.TOOL_PICK` routing is retired — see the SKILL section below.
 
-**`web_search` flag vs. `tools[]` conflict guard**: prompt-side rule that says "if a WebSearch-shaped SKILL appears in ToolInfo, prefer `tools=[<WebSearch>]` + `web_search=false`" + code-side auto-promotion when the LLM ignores it (`reasoning` gets a `[auto-promoted: ...]` line, visible in Detail Information).
+**`web_search` flag vs. `tools[]` conflict guard**: prompt-side **routing** rule that says "**once you have judged a search is needed**, and a WebSearch-shaped SKILL appears in ToolInfo, prefer `tools=[<WebSearch>]` + `web_search=false`" + code-side auto-promotion when the LLM ignores it (`reasoning` gets a `[auto-promoted: ...]` line, visible in Detail Information). Phrase that rule as "always include it" and it swallows the needed-or-not judgement, so every turn searches. When a declined WebSearch drops out of the candidates, the built-in flag path (`execution.WEB_SEARCH`) goes down with it — leave it up and the turn searches regardless of the decision.
 
 #### EXECUTION_DEFAULTS (per-agent execution defaults)
 
@@ -1491,12 +1491,8 @@ Optional top-level block on the agent JSON. Holds this agent's defaults for the 
     "MAGIC_WORD_USE": true,
     "RAG_QUERY_GENE": true,
     "META_SEARCH": true,
-    "WEB_SEARCH": false,
     "WEB_SEARCH_GUARDRAIL": true,
     "WEB_SEARCH_ENGINE": "",
-    "CITE_KNOWLEDGE": true,
-    "DIAGRAM_MODE": false,
-    "EMPHASIS_MODE": false,
     "MAX_PERSONAS": 3,
     "TIME_MODE": "Real Date"
 }
@@ -1508,7 +1504,9 @@ Optional top-level block on the agent JSON. Holds this agent's defaults for the 
 
 `TIME_MODE` is the one exception: the mode a session was actually run with is stored on the session, so it resolves as **stored mode > `EXECUTION_DEFAULTS.TIME_MODE` > whatever is currently selected** — reopening an old session keeps the time setting it was run with.
 
-Fields you omit fall through to the user's `Defaults`. The natural split: pure user preferences (language, speaking style, Streaming on/off) live in `Defaults`; per-agent recommendations (turn RAG on/off for a lightweight assistant, default WEB_SEARCH=true for a research-oriented agent) live here.
+Fields you omit fall through to the user's `Defaults`. The natural split: pure user preferences (language, speaking style, Streaming on/off) live in `Defaults`; per-agent recommendations (RAG query generation, meta search on/off) live here.
+
+> **Settings that became SKILLs do not belong here.** Web Search / Reference Knowledge / Diagrams / Match input language moved to SKILL, so their per-agent default lives in `SKILL.TOOLS.<name>.DEFAULT`. `WEB_SEARCH` / `CITE_KNOWLEDGE` / `DIAGRAM_MODE` / `EMPHASIS_MODE` are **no longer read from EXECUTION_DEFAULTS** — writing one setting in two places lets the SKILL side win silently. `WEB_SEARCH_GUARDRAIL` and `WEB_SEARCH_ENGINE` stay, because those widgets still exist inside Skills.
 
 #### HABIT (behavior switching)
 
@@ -1570,20 +1568,37 @@ Defines the RAG data sources referenced in ordinary dialogue.
 
 #### SKILL (auxiliary phase-driven tools)
 
-SKILL is **fully independent of HABIT**. Each SKILL entry declares a `PHASE` and fires automatically at that position around the HABIT practice. HABITs never invoke SKILLs.
+**TOOL and SKILL are different things.**
+
+- **TOOL** — the work itself. Plugins under `user/common/tool/` register them, and the caller is either a **SKILL** or **one chain of a HABIT (Practice)**
+- **SKILL** — the slot that runs a TOOL **inside one generation**. There are only `BEFORE` and `AFTER`, and **a SKILL never becomes a turn of its own**
+
+SKILL is **fully independent of HABIT**; HABITs never invoke SKILLs.
 
 ```json
 "SKILL": {
     "TOOLS": {
         "WebSearch": {
-            "PHASE": "CONTEXT",
+            "PHASE": "BEFORE",
             "ACTIVE": true,
+            "DEFAULT": true,
+            "MERGE": "CONTEXT",
             "AS_REFERENCE": true,
             "ARGS_HINT": {}
         },
-        "management_analysis": {
+        "refine_expression": {
             "PHASE": "AFTER",
-            "ACTIVE": true
+            "ACTIVE": true,
+            "DEFAULT": true,
+            "MERGE": "REPLACE"
+        },
+        "mood_score": {
+            "PHASE": "AFTER",
+            "ACTIVE": true,
+            "DEFAULT": false,
+            "MERGE": "APPEND",
+            "HEADER": "## Mood Score",
+            "ORDER": 10
         }
     }
 }
@@ -1591,30 +1606,65 @@ SKILL is **fully independent of HABIT**. Each SKILL entry declares a `PHASE` and
 
 | Key | Type | Meaning |
 |---|---|---|
-| `PHASE` | `"BEFORE"` / `"CONTEXT"` / `"AFTER"` | When the SKILL fires around the HABIT practice |
-| `ACTIVE` | bool | Enable flag; `false` skips the entry (Temporary Override respects this) |
-| `AS_REFERENCE` | bool | CONTEXT only — expose the SKILL result in Detail Information's User query pane |
+| `PHASE` | `"BEFORE"` / `"AFTER"` | Before or after the answer is generated. A legacy `"CONTEXT"` reads as `BEFORE` + `MERGE: "CONTEXT"` |
+| `ACTIVE` | bool | **Whether it is available**; `false` keeps it out of the picker (Temporary Override can bring it back for one session) |
+| `DEFAULT` | bool | **Whether it starts selected.** Separate from `ACTIVE`, so "available but off by default" is expressible. **Omit the key** and a flag skill follows the user's `Defaults` in `users.json` (never `EXECUTION_DEFAULTS`) while a real tool stays off. **A BEFORE skill that is on only because of its `DEFAULT` is a candidate**: where Thinking Mode makes the call, it runs only if Thinking keeps it (see the trigger stack below) |
+| `MERGE` | str | **Where the tool's output goes** — see below. A legacy `REWRITE: true` reads as `MERGE: "REPLACE"` |
+| `HEADER` | str | Header template used when the output is embedded; `{name}` is substituted. The block title for BEFORE/CONTEXT, the heading above the block for AFTER/APPEND (e.g. `"## Mood Score"`). Omit it for the built-in heading |
+| `ORDER` | int | **Embedding / display order**, ascending (default 100, ties keep declaration order). Applied within each phase |
+| `AS_REFERENCE` | bool | `MERGE: "CONTEXT"` only — expose the SKILL result in Detail Information's User query pane |
 | `ARGS_HINT` | dict | Fixed arguments forwarded as the tool call's `add_info` |
 
+**`MERGE` values**
+
+| PHASE | MERGE | Where the output goes |
+|---|---|---|
+| BEFORE | `CONTEXT` (default) | Wrapped in the guardrail text as reference material and appended to the prompt |
+| BEFORE | `PROMPT` | Appended to the prompt as written — an instruction, not material |
+| BEFORE | `RECORD` | Nothing injected; the tool was called for its side effect (history control) |
+| AFTER | `REPLACE` | **The result becomes the answer** (proofreading, citations) |
+| AFTER | `APPEND` (default) | Shown after the answer under `HEADER`; kept out of `response.text` |
+| AFTER | `RECORD` | Recorded only; the answer is untouched |
+
+> **Only `REPLACE` reaches `response.text`.** An `APPEND` result is stored in `response.skills` and concatenated at display time, because folding it into the answer would make a mood score or a translation come back as the agent's own words in the next turn's memory, in the digest and in the analytics.
+> What a BEFORE skill injects is likewise **kept out of the conversation**: it is stripped from `prompt.query.text` and the full block lives in `prompt.skills[<name>].wrapped`. Stored inline, a web-search dump was retrieved as the user's own message on the following turn.
+
+> The bundled agents **state `DEFAULT` on every skill**, so what starts selected is readable from the agent file alone; none of them rely on the omitted-key fallback.
+
+**Flag skills (the former checkboxes)**:
+
+The output toggles that used to sit in Conversation Settings are SKILL.TOOLS entries now. They are **not registry tools**: selecting one just turns its execution flag on — nothing is invoked, and they normalize to `MERGE: "RECORD"` since they produce no text to merge. Defined in `DigiM_Agent.FLAG_SKILLS`.
+
+| Skill | PHASE | Former checkbox | Execution flag |
+|---|---|---|---|
+| `diagram_mode` | BEFORE | Diagrams | `DIAGRAM_MODE` |
+| `emphasis_mode` | BEFORE | Emphasis | `EMPHASIS_MODE` |
+| `match_input_language` | BEFORE | Match input language (Auto) | `PERSONALITY.LANGUAGE = "__AUTO__"` |
+| `cite_knowledge` | AFTER | Reference Knowledge | `CITE_KNOWLEDGE` |
+
+Their PHASE follows what they act on (BEFORE shapes the request, AFTER edits the finished answer) and comes from `FLAG_SKILLS`, not from the agent JSON. They are hidden from the LLM — left out of `TOOL_LIST`, so the Thinking Agent cannot pick them either, because there is no function to call. Manual selection and MAGIC_WORDS do reach them.
+
 **Phase semantics**:
-- **BEFORE**: runs before the HABIT practice. Saved as its own sub_seq (`role="skill"`, `agent_name="SKILL(<name>)"`). Does not influence HABIT
-- **CONTEXT**: runs before the HABIT practice; the wrapped tool output is appended to `user_query`, so both the RAG query generator and the main LLM see it. Same shape as the built-in Web Search injection. Designed for Web / doc search
-- **AFTER**: runs after the HABIT produced its response; receives the HABIT's final response as input. Saved as its own sub_seq
+- **BEFORE**: runs before the HABIT practice and merges its result into the prompt per `MERGE` (with `CONTEXT`, both the RAG query generator and the main LLM see it). **No sub_seq of its own**
+- **AFTER**: runs after the HABIT produced its response, on **the saved answer** — after citation injection, so it is what the reader sees. The `## Reference Info` tail, fenced blocks and `[1]`-style markers are held out of a `REPLACE` edit and restored verbatim. **No sub_seq of its own**
+
+Several `REPLACE` skills are handled as **one post-processing step**: the body is split, written back and recorded once, so no intermediate version is ever saved or shown. The LLM calls are still one per skill, since each tool owns its prompt; merging them into a single call needs the tools to expose their instructions, which is a contract worth designing once a second REPLACE tool exists.
 
 **How a SKILL fires (4-tier trigger stack, priority-ordered, merged)**:
 - **1. Slash command**: `/<name> <query>` — if the name resolves in `SKILL.TOOLS`, the tool fires at its declared PHASE and `<query>` becomes the HABIT's user_query
-- **2. SKILL multiselect (shown only when Thinking Mode is OFF)**: a **`SKILL`** multiselect appears under BOOK in Conversation Settings. Picked SKILLs fire this turn at their declared PHASE. Options render as `name (PHASE)`, and SKILLs disabled via Temporary Override are excluded
-- **3. `SKILL.TOOLS[name].MAGIC_WORDS` match**: if any word in the list appears in the user's query, the SKILL is auto-selected (same idea as HABIT.MAGIC_WORDS — write phrases that naturally invoke this SKILL)
-- **4. Thinking Mode**: with `Skills` in Thinking Targets, the Thinking Agent picks SKILLs by reading their `description`. The multiselect from tier 2 is hidden while Thinking Mode is ON
-- **Dedup**: same SKILL selected by multiple tiers only runs once. Order: slash → manual → magic → thinking
+- **2. Skills picker**: Conversation Settings has a **`Skills (N)`** expander under the Thinking block holding **one multiselect per phase (BEFORE / AFTER)**, each listing its skills in `ORDER`, for the SKILLs to run this turn. It is shown whether Thinking Mode is on or off, since flag skills can only be toggled here. SKILLs disabled through Temporary Override do not appear, and the initial selection comes from each entry's `DEFAULT`. A skill you tick yourself is an order and always runs; one left on by its `DEFAULT` is a candidate (see 4).
 
-**`WEB Search` checkbox vs. the `WebSearch` SKILL**: with Thinking Mode OFF, Conversation Settings shows two entry points for web search — the Row 4 **`WEB Search` checkbox** (built-in `execution.WEB_SEARCH` path) and **`WebSearch (CONTEXT)`** in the SKILL multiselect (SKILL path). **Selecting both still searches only once**: if a CONTEXT-phase WebSearch-family SKILL (`WebSearch` / `WebSearch_*`) already ran, the built-in path is skipped automatically (recorded as `prompt.web_search.skipped_reason` / `skipped_by`). The SKILL path wins because it carries PHASE and `ARGS_HINT`. Selecting just one behaves exactly as before.
+- **3. `SKILL.TOOLS[name].MAGIC_WORDS` match**: a magic word anywhere in the query fires the skill unconditionally, the same idea as `HABIT.MAGIC_WORDS` — write the natural phrasing that asks for that skill
+- **4. Thinking Mode**: with `Skills` in `Thinking Targets`, the Thinking Agent picks from the SKILL `description`s. **A BEFORE skill that is on only because of its `DEFAULT` then runs only when Thinking keeps it** — otherwise a default-on tool fires on every single turn and the judgement is decoration. Three things are never candidates: a skill the user ticked in the picker, an AFTER skill (that is output policy, and Thinking is asked what the turn needs in order to answer), and a flag skill (invisible to Thinking). If Thinking returns no decision, or `Skills` is absent from `Thinking Targets`, candidates run as they always did. The multiselect is shown either way.
+- **Combined & deduped**: all four paths may select the same SKILL and it still runs **once**, in the order slash → picker → magic → thinking
+
+**Where web search is turned on**: the old `WEB Search` checkbox is gone — selecting `WebSearch` in the Skills picker's BEFORE column is now the only entry point, and `execution.WEB_SEARCH` is derived from that selection. The engine and guardrail controls appear inside Skills only when a `WebSearch*` skill is selected, or when Thinking Mode is on (its internal search uses the same engine). Engine-specific variants (`WebSearch_Google` and friends) name their own backend, so the engine picker shows only for the generic `WebSearch`. The dedup that keeps the built-in path and the SKILL path from both firing in one turn is unchanged (recorded in `prompt.web_search.skipped_reason` / `skipped_by`), and `execution.WEB_SEARCH` from the API or the scheduler still works as before.
 
 **Sample SKILLs on `agent_10Sample.json`** (persona-tailored for Eight, the freelance journalist):
 
 | SKILL | PHASE | Purpose | MAGIC_WORDS |
 |---|---|---|---|
-| `WebSearch` | CONTEXT | Web search on current events | (Thinking / slash) |
+| `WebSearch` | BEFORE | Web search on current events | (Thinking / slash) |
 | `recall_similar_experience` | BEFORE | Recall the agent's own past similar experience from Vector KNOWLEDGE | 「過去の似た経験を思い出してください。」「似た経験を振り返ってください。」 |
 | `analyze_attachment` | BEFORE | Extract logical features from attached CSV/TXT/MD | 「添付データを分析してください。」「添付ファイルの特徴を分析してください。」 |
 | `mood_score` | AFTER | Score user & assistant emotions on Plutchik's 8 axes | 「感情スコアを表示してください。」「お互いの感情を分析してください。」 |
@@ -1626,15 +1676,17 @@ None fires "always" — the description of each tool explicitly reads `Use ONLY 
 
 
 **MAGIC_WORDS must be explicit imperative sentences**: fragments like 「英訳して」 or 「パワポで」 show up in ordinary conversation and make SKILLs fire constantly. Follow the HABIT convention (`エシカルチェックしてください。`) and include the full 「〜してください。」 ending. Leave fuzzy triggering to Thinking Mode.
-**Retired**: `HABIT.TOOL_PICK` and `practice_55ToolPick.json` are no longer needed. Bundled agents have `HABIT.TOOL_PICK` removed. Legacy `SKILL.TOOL_LIST` + `INACTIVE_TOOLS` is auto-converted at load time (every entry lands on `PHASE: "CONTEXT"`).
+**Retired**: `HABIT.TOOL_PICK` and `practice_55ToolPick.json` are no longer needed. Bundled agents have `HABIT.TOOL_PICK` removed. Legacy `SKILL.TOOL_LIST` + `INACTIVE_TOOLS` is auto-converted at load time (every entry lands on `BEFORE` + `MERGE: "CONTEXT"`).
 
 **Persistence & display**:
-- CONTEXT SKILL results: saved under `prompt.skills` as `{name: {phase, as_reference, raw, wrapped, export_contents}}`, rendered in Detail Information's User query pane as `--- SKILL:<name> (CONTEXT) ---`
+- BEFORE SKILL results: saved under `prompt.skills` as `{name: {phase, merge, order, header, as_reference, raw, wrapped, input, export_contents, model, prompt_token, response_token}}`, rendered as a block in Detail Information's User query pane
+- AFTER SKILL results: saved under `response.skills` in the same shape (`text` for `APPEND`; `chars_in` / `chars_out` / `applied` for `REPLACE`). A `REPLACE` edit is also recorded in `response.rewrites`
+- Tokens a SKILL spent on its own LLM call are kept in `prompt_token` / `response_token` and reported in Detail Information as **Skill tokens** and **Turn total tokens** (`prompt.token` / `response.token` are left alone: they are this entry's memory budget)
 - **Chat bubble**: the reference-material wrap is stripped via `_strip_skill_wraps()` before rendering. **`chat_memory` keeps the wrapped `prompt.query.input` / `text`** so subsequent memory retrieval / digest still see the SKILL content
-- **URLs / citations**: when a CONTEXT SKILL returns URLs in the tool's 4-tuple 4th slot (`export_contents`), `DigiMatsuExecute` **merges them into `web_search_log["urls"]`** — the existing `citation_inject` then treats them like built-in Web Search URLs (appends `## References` at the tail and injects `[N]` markers into the body)
+- **URLs / citations**: when a `MERGE: "CONTEXT"` BEFORE SKILL returns URLs in the tool's 4-tuple 4th slot (`export_contents`), `DigiMatsuExecute` **merges them into `web_search_log["urls"]`** — the existing `citation_inject` then treats them like built-in Web Search URLs (appends `## References` at the tail and injects `[N]` markers into the body)
 - BEFORE / AFTER SKILL results: saved as separate sub_seqs with `role="skill"` and `setting.agent_name="SKILL(<name>)"`
 
-**CONTEXT SKILL reference-material wrap**: the LLM is told to keep specific facts (proper nouns, numbers, dates, quotes) accurate to the material, rephrase in its own voice (no verbatim paragraph copies), let the persona lead tone/vocabulary, and reuse numbered citations like `[1]` verbatim when the material contains them. Built-in Web Search wraps its output with the same rules.
+**`MERGE: "CONTEXT"` reference-material wrap**: the LLM is told to keep specific facts (proper nouns, numbers, dates, quotes) accurate to the material, rephrase in its own voice (no verbatim paragraph copies), let the persona lead tone/vocabulary, and reuse numbered citations like `[1]` verbatim when the material contains them. Built-in Web Search wraps its output with the same rules.
 
 **When the `Skills` option shows up in Thinking Targets**: the multiselect adds `Skills` whenever either the new `SKILL.TOOLS` (dict) or the legacy `SKILL.TOOL_LIST` (list) is non-empty (agent JSONs still saying `Tools` are normalized to `Skills` on load). `THINKING_TARGETS.tools` defaults to `True` (matches the other target flags) — a missing key means "honor Thinking's tool picks" rather than "block them".
 
@@ -1711,6 +1763,7 @@ Specifies Support Agents that assist the main dialogue. Each Support Agent is de
 | `THINKING` | Analyzes the user's question and dynamically decides on Habit selection / Web search / RAG query generation / Book addition / **Tool invocation** (when Thinking Mode is enabled). When `Skills` is included in Thinking Targets, the Thinking Agent inspects each SKILL entry (with its description) and, when it picks any, the dispatcher auto-switches the HABIT to `TOOL_PICK` and hands the narrowed tool list to the engine-agnostic dispatcher via `in_execution["_THINKING_TOOL_LIST"]`. **Multi-turn support**: setting `Max Thinking Turns > 1` enables the B-type loop — each turn's JSON carries a `sufficient` flag; when it is `false` the pipeline runs a **preview Web search** and feeds the result into the next Thinking turn. The loop breaks on `sufficient=true` or when the turn cap is reached. The preview search is reused by the main response path via `_WEB_SEARCH_CACHE` (no double-fire).<br>**Prompt-template placeholders**: `PROMPT_TEMPLATE."Thinking Agent"` embeds `{PreviousThinking}` (last turn's decision JSON) and `{WebSearchPreview}` (preview search text) — [user/common/tool/thinking.py](user/common/tool/thinking.py) substitutes them at runtime via `.replace()`. Preserve both placeholders + the `sufficient` field in the output JSON when customizing the template (removing them would cost the loop its memory across turns) |
 | `KNOWLEDGE_INTERPRET` | Invoked by the "Interpret with LLM" buttons under Analytics Results - Knowledge Utility. Reads the inventory CSV / similarity rank (+ optional scatter / bar images) and returns three sections: overall composition vs. this-query selection, contribution analysis using delta = response_sim − question_sim, and notable / improvement points. Back-data centric; images are optional for vision-capable models. |
 | `CITATION_INJECT` | After the main response is generated, this agent inserts `[N]` markers at sentences grounded in web URLs or BOOK chunks and appends a `## References` section. Fires automatically whenever a web URL or a BOOK chunk was used (KNOWLEDGE entries are not cited — they are treated as the agent's internalised knowledge). Defaults to a lightweight model (Claude-Haiku-4.5 / Gemini Flash Lite / GPT-5.4-mini). On LLM failure, falls back to leaving the body untouched and appending only the References list. **If the LLM output contains neither `[N]` markers nor a `## References` section, it is treated as "no correspondence" and the original body is kept verbatim** (protects the real answer when the LLM returns an apology instead of citations). |
+| `REFINE_EXPRESSION` | A proofreading pass over the finished response that fixes only its Japanese expression. Invoked by the `refine_expression` SKILL (PHASE=AFTER), it repairs just three things: (1) wording no one would actually say, (2) overblown phrasing that reads like translated English, and (3) sentences that do not connect. Facts, claims, tone and paragraph structure are left alone, and only the corrected body is returned. The criteria live in `PROMPT_TEMPLATE."Refine Expression"` as **seven named tests, T1-T7** (dangling referent / phrasing no one says / subject-predicate mismatch / needless framing of a plain fact / stating the obvious / a word stronger than its subject / no bridge to the previous sentence), so a newly noticed habit is added to the prompt rather than to the code. The model is made to **list what it found before rewriting** (`<<<CHECK>>>` / `<<<FIXED>>>`) and the tool returns only what follows the marker: naming the problems first raised detection from 4 findings to 16 on the same text, and the list goes to `logger.info` rather than into the output. On LLM failure, or when the output is under 70% of the original length, the original body is returned verbatim (a proofreading pass must never lose the response). It is registered with `REWRITE: true`, so **the result replaces the answer** rather than adding a turn. Its input is the saved final body — after citation injection — and the `## Reference Info` tail, fenced blocks and `[1]`-style citation markers are held out of the edit and restored verbatim. The edit and the original length are recorded in `response.rewrites` and shown in the Detail tab. |
 
 ##### Inheriting from the main agent into a support agent (`INHERIT`)
 
@@ -2365,7 +2418,7 @@ Enabling Web search lets you supplement the input to the LLM with the latest inf
 
 **Injection guardrail**: The raw web-search body is not mixed straight into `user_query`; it is wrapped in `[参考資料 — Web検索結果 (ここから)]` / `[参考資料 END]` (see [DigiM_Execute.py `web_context`](DigiM_Execute.py)) with four rules — do not copy verbatim, respect the personality voice, prioritize the ongoing conversation and user intent, and use only what's necessary. This suppresses the failure mode where the LLM starts echoing the web page's tone and loses its own persona / conversation context.
 
-**Search text and situation**: the built-in web search, Thinking's preview search and the `WebSearch` CONTEXT SKILL all build their search text with the same function (`_build_web_search_text`): what to search for (Thinking's query when it made one), the original question, the conversation so far (with MEMORY_USE), the current situation (situation text and date/time), plus a date anchor ("今日の日付は YYYY年MM月DD日 です"). Engines resolve "yesterday" / "recently" against their own idea of today, so every path carries the situation's date (the real date under No Date). The `WebSearch` SKILL uses the engine selected in the UI unless its ARGS_HINT names one, and reuses Thinking's preview result when the text and engine match instead of searching twice. The text actually sent is visible as `search_text` in the web-search log under Detail Information.
+**Search text and situation**: the built-in web search, Thinking's preview search and the `WebSearch` BEFORE SKILL all build their search text with the same function (`_build_web_search_text`): what to search for (Thinking's query when it made one), the original question, the conversation so far (with MEMORY_USE), the current situation (situation text and date/time), plus a date anchor ("今日の日付は YYYY年MM月DD日 です"). Engines resolve "yesterday" / "recently" against their own idea of today, so every path carries the situation's date (the real date under No Date). The `WebSearch` SKILL uses the engine selected in the UI unless its ARGS_HINT names one, and reuses Thinking's preview result when the text and engine match instead of searching twice. The text actually sent is visible as `search_text` in the web-search log under Detail Information.
 
 #### Outbound guardrail (confidential-data filter)
 
@@ -2475,7 +2528,7 @@ All non-LLM agent capabilities (history operations, web search, analysis, etc.) 
 - **`DigiM_Tool.pick_tools(agent, query, allowed=...)`** — Engine-agnostic tool picker. `render_tools_for_prompt` advertises the tools as a JSON-Schema block in the system prompt; the LLM replies with `{"tool_calls":[{"name":..., "args":...}]}` which `parse_tool_calls` decodes. **No vendor-specific `tools=[]` parameter is used, so the exact same code works on Claude / Gemini / GPT / Grok.**
 - **`__getattr__` shim** — PEP 562 fallback at the bottom of `DigiM_Tool`. Resolution order: registry → plugin module namespaces. Legacy callers like `dmt.fixed_message(...)` keep working after their functions move into plugin files.
 
-#### Bundled tools (21 — all plugins)
+#### Bundled tools (34 — all plugins)
 
 | Category | Plugin file | Tools |
 |---|---|---|
@@ -2486,9 +2539,24 @@ All non-LLM agent capabilities (history operations, web search, analysis, etc.) 
 | Persona | `persona.py` | `select_personas` |
 | Image critique | `art_critic.py` | `art_critics` |
 | Web search | `web_search.py` | `WebSearch` (dispatcher), `WebSearch_PerplexityAI`, `WebSearch_OpenAI`, `WebSearch_AzureOpenAI`, `WebSearch_Bedrock`, `WebSearch_Google`, `WebSearch_Claude` |
+| Expression refining | `refine_expression.py` | `refine_expression` |
 | Knowledge Utility | `knowledge_interpret.py` | `knowledge_utility_interpret` |
 | Citation injection | `citation_inject.py` | `inject_citations` |
 | Utility | `current_time.py` | `current_time` |
+| Persona skills | `persona_skills.py` | `analyze_attachment`, `mood_score`, `recall_similar_experience`, `self_critique`, `slide_deck_prompt`, `translate_response` |
+| Evaluation / extraction | `analysis.py` | `meta_extract`, `critique_batch_results`, `eval_answer_vs_groundtruth` |
+
+**Plugins that register nothing** — where work and prompt text live when there is no function to dispatch by name:
+
+| File | Contents | Read as |
+|---|---|---|
+| `output_format.py` | The wording `diagram_mode` / `emphasis_mode` add to the main prompt | `dmt.DIAGRAM_INSTRUCTION` / `dmt.EMPHASIS_INSTRUCTION` |
+| `cite_knowledge.py` | The Reference Knowledge pipeline (build the manifest, decide which chunks were used, render the section) | `dmt.build_manifest()` / `detect_used_chunks()` / `refresh_chunk_util()` / `build_util_fallback_entries()` / `build_knowledge_section()` |
+
+Neither calls `register_tool()`. `DigiM_Tool.__getattr__` resolves plugin module namespaces, so they are reachable as `dmt.<name>`.
+
+> **`DigiM_Execute.py` holds no individual tool content.** Both the work and the prompt text live in `DigiM_Tool.py` or under `user/common/tool/`; what stays in the executor is *when* to call something — phase, order, dedup, status messages.
+> Recently relocated: the SKILL embedding contract (`wrap_skill_context` / `wrap_skill_prompt` / `strip_skill_wraps` / `render_skill_header` → `DigiM_Tool.py`), web-search text composition (`build_web_search_text` → `web_search.py`), the Reference Info block (`build_plain_references_block` / `sanitize_reference_snippet` → `citation_inject.py`), the diagram / emphasis instructions (→ `output_format.py`) and the whole Reference Knowledge decision path (→ `cite_knowledge.py`).
 
 #### Adding a new tool
 
@@ -3191,10 +3259,19 @@ The "**Detail Information**" expander under each turn is split into four tabs:
    - **Components Breakdown** — User Memory / RAG / Prompt Template Code / Situation / Web Context / AgentSearch / FunctionSearch
 2. **Token Usage** — per-role table of consumed tokens
    - **Main LLM / Thinking / RAG Query Gen / Meta Search / Dialog Digest** — real token counts
+   - **SKILL[BEFORE]:<name> / SKILL[AFTER]:<name>** — real counts for the support agent a SKILL called itself, with its MERGE in `Note` (context / replace / append …). Listed in execution order: BEFORE above Main LLM, AFTER at the bottom. A SKILL that calls no LLM gets no row
    - **Web Search / Embedding** — estimated via `dmu.count_token` (`Note: estimated`)
    - **AgentSearch / FunctionSearch** — chunk count + response tokens
    - TOTAL row + a **Per-Model Summary** when multiple models were used
+
+   > SKILLs are rows, so they **count toward TOTAL**. A proofreading or translating SKILL runs a support agent per turn — cost that used to appear nowhere.
+   > In history they live under `prompt.skills[<name>]` / `response.skills[<name>]` as `prompt_token` / `response_token`. They are deliberately NOT folded into `prompt.token` / `response.token`, which are the **memory budget** for this entry's text: inflating those desynchronises the budget from the text actually injected.
 3. **Detail** — the previous text-block view (per-section Copy buttons)
+   - **`[Skills]`** — the SKILLs this turn actually used, in phase order (BEFORE → AFTER → flag skills), each as `name (PHASE/MERGE) <output size> <tokens>`; a `REPLACE` shows `before -> after` characters and a flag skill shows the execution key it set
+     - CONTEXT: its `as_reference` setting and the size of the raw output that was injected
+     - BEFORE / AFTER: the sub_seq they saved themselves plus the output size (read from the raw turn, so the collapsed view shows them too)
+     - Flag skills: the execution flag they turned on (e.g. `diagram_mode (BEFORE, flag) -> DIAGRAM_MODE`)
+     - The selection is recorded in `prompt.skills_selected`; turns saved before that existed are reconstructed from what actually ran (`prompt.skills` and the SKILL sub_seqs)
 4. **Session Summary** — the current session-scoped user-defined dossier (see below)
 
 ### Session Summary (user-defined session dossier)

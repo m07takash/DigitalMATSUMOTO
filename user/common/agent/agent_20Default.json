@@ -272,13 +272,61 @@
         }
     },
     "KNOWLEDGE": [],
-    "SKILL": {},
+    "SKILL": {
+        "TOOLS": {
+            "refine_expression": {
+                "PHASE": "AFTER",
+                "ACTIVE": true,
+                "DEFAULT": false,
+                "MERGE": "REPLACE",
+                "AS_REFERENCE": false,
+                "MAGIC_WORDS": [
+                    "表現を直してください。",
+                    "変な表現を修正してください。",
+                    "日本語を校正してください。"
+                ]
+            },
+            "diagram_mode": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "DEFAULT": false
+            },
+            "emphasis_mode": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "DEFAULT": false
+            },
+            "match_input_language": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "DEFAULT": false
+            },
+            "cite_knowledge": {
+                "PHASE": "AFTER",
+                "ACTIVE": true,
+                "DEFAULT": false
+            },
+            "WebSearch": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "DEFAULT": false,
+                "MERGE": "CONTEXT"
+            },
+            "current_time": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "DEFAULT": false,
+                "MERGE": "CONTEXT"
+            }
+            }
+    },
     "FEEDBACK": {},
     "SUPPORT_AGENT": {
         "DIALOG_DIGEST": "agent_60DialogDigest.json",
         "ART_CRITICS": "agent_24ArtCritic.json",
         "EXTRACT_DATE": "agent_54ExtractDate.json",
         "META_EXTRACT": "agent_53MetaExtract.json",
-        "RAG_QUERY_GENERATOR": "agent_5AQGenUserIntent.json"
+        "RAG_QUERY_GENERATOR": "agent_5AQGenUserIntent.json",
+        "REFINE_EXPRESSION": "agent_6ARefineExpression.json"
     }
 }

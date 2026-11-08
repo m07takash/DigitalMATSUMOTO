@@ -19,6 +19,88 @@ character_folder_path = system_setting_dict["CHARACTER_FOLDER"]
 practice_folder_path = system_setting_dict["PRACTICE_FOLDER"]
 tool_folder_path = system_setting_dict.get("TOOL_FOLDER", "user/common/tool/")
 
+# ---------------------------------------------------------------------------
+# How a SKILL result is embedded
+# ---------------------------------------------------------------------------
+# The wording and the sentinels are a property of the SKILL contract, not of
+# any one tool, so they live next to the dispatcher rather than in the
+# executor: both the orchestrator and the WebUI need to read them back.
+def render_skill_header(template, name, default=""):
+    """A skill's HEADER with `{name}` filled in, or `default` when unset.
+
+    Authors write the heading they want to see (`## 感情スコア`), so a bad
+    placeholder must not take the turn down with a KeyError.
+    """
+    _t = (template or "").strip()
+    if not _t:
+        return default
+    try:
+        return _t.format(name=name, skill=name)
+    except (KeyError, IndexError, ValueError):
+        return _t
+
+
+# Sentinels, not the block title: HEADER is author-supplied, so a stripper
+# keyed on the title would start leaving blocks behind the moment someone sets
+# one. Everything a BEFORE skill injects sits between these.
+SKILL_BLOCK_RULES = (
+    "Rules for using this block:\n"
+    "- Ground your answer in this material: keep specific facts (proper "
+    "nouns, numbers, dates, quotes) accurate to what's written here.\n"
+    "- Do NOT quote whole paragraphs verbatim — rephrase in your own voice.\n"
+    "- Tone, vocabulary, and perspective follow your own persona.\n"
+    "- The user's intent leads; use only the facts relevant to their question.\n"
+    "- If the material contains numbered citations like [1], [2], you may "
+    "reuse those markers verbatim in your answer to attribute claims.\n"
+)
+
+
+def wrap_skill_context(name, text, header=""):
+    """Guardrail wrapper around a MERGE=CONTEXT skill result. Softer than the
+    original Web Search wording so the LLM keeps concrete facts (proper
+    nouns, numbers, dates) from the reference — the 'don't copy verbatim'
+    rule kept discouraging the LLM from naming specific entities like
+    player names in Web Search results. Persona still wins on tone."""
+    _title = render_skill_header(header, name,
+                                  f"Reference material — SKILL:{name} result")
+    return (
+        f"\n[SKILL:{name} BEGIN] {_title}\n"
+        f"{SKILL_BLOCK_RULES}"
+        "---\n"
+        f"{text}\n"
+        f"---\n[SKILL:{name} END]\n"
+    )
+
+
+def wrap_skill_prompt(name, text, header=""):
+    """MERGE=PROMPT: the result is an instruction, not material, so it goes in
+    as written — inside the same sentinels so it is stripped from the stored
+    conversation like any other injected block."""
+    _title = render_skill_header(header, name, "")
+    _head = f"{_title}\n" if _title else ""
+    return f"\n[SKILL:{name} BEGIN]\n{_head}{text}\n[SKILL:{name} END]\n"
+
+
+_SKILL_WRAP_RE = re.compile(
+    r"\n?\[SKILL:[^\]]+ BEGIN\].*?\[SKILL:[^\]]+ END\]\n?", re.DOTALL)
+# Blocks written before the sentinels existed, so an old session's stored
+# prompt still displays without the guardrail text inlined.
+_SKILL_WRAP_LEGACY_RE = re.compile(
+    r"\n?\[Reference material — SKILL:[^\]]+ result \(start\)\].*?\[SKILL:[^\]]+ END\]\n?",
+    re.DOTALL,
+)
+
+
+def strip_skill_wraps(text):
+    """Remove injected BEFORE-SKILL blocks from a stored prompt string. The
+    blocks are needed at LLM generation time but must not become part of the
+    conversation: they would show up as huge inline blocks in the previous
+    user turn and be retrieved again as memory."""
+    if not text:
+        return text
+    return _SKILL_WRAP_RE.sub("", _SKILL_WRAP_LEGACY_RE.sub("", text))
+
+
 # Resolve a function by its string name.
 # Lookup order: tool registry (declarative source of truth) -> module globals (legacy).
 def call_function_by_name(service_info, user_info, func_name, *args, **kwargs):

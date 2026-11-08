@@ -478,8 +478,7 @@ def _apply_agent_execution_defaults(agent_data):
     Fields (all optional):
       Booleans — STREAM_MODE, MEMORY_USE, MEMORY_SAVE, SAVE_DIGEST,
                  PRIVATE_MODE, MAGIC_WORD_USE, RAG_QUERY_GENE, META_SEARCH,
-                 WEB_SEARCH, WEB_SEARCH_GUARDRAIL, CITE_KNOWLEDGE,
-                 DIAGRAM_MODE, EMPHASIS_MODE
+                 WEB_SEARCH_GUARDRAIL
       Int      — MAX_PERSONAS (clamped 1..20)
       String   — WEB_SEARCH_ENGINE, TIME_MODE ("Real Date"/"Custom Date"/"No Date")
 
@@ -488,6 +487,10 @@ def _apply_agent_execution_defaults(agent_data):
     e = (agent_data or {}).get("EXECUTION_DEFAULTS") if isinstance(agent_data, dict) else None
     if not isinstance(e, dict):
         return
+    # WEB_SEARCH / CITE_KNOWLEDGE / DIAGRAM_MODE / EMPHASIS_MODE are not read
+    # here any more: they became SKILLs, so their per-agent default belongs to
+    # SKILL.TOOLS.<name>.DEFAULT. Honouring both would make one setting
+    # readable from two places, with the SKILL side silently winning.
     _bool_map = {
         "STREAM_MODE": "stream_mode",
         "MEMORY_USE": "memory_use",
@@ -497,11 +500,7 @@ def _apply_agent_execution_defaults(agent_data):
         "MAGIC_WORD_USE": "magic_word_use",
         "RAG_QUERY_GENE": "RAG_query_gene",
         "META_SEARCH": "meta_search",
-        "WEB_SEARCH": "web_search",
         "WEB_SEARCH_GUARDRAIL": "web_search_guardrail",
-        "CITE_KNOWLEDGE": "cite_knowledge",
-        "DIAGRAM_MODE": "diagram_mode",
-        "EMPHASIS_MODE": "emphasis_mode",
     }
     for _k, _attr in _bool_map.items():
         if _k in e:
@@ -791,19 +790,24 @@ def _render_llm_input_tab(v2: dict):
                     else:
                         _ws += f"\n - {_u}"
             _parts.append(_ws)
-        # CONTEXT-phase SKILL outputs (each keyed by skill name; contains raw
-        # tool text, the guardrail-wrapped block that got appended to
-        # user_query, and export_contents). Rendered only when
-        # AS_REFERENCE=true on the SKILL entry.
+        # BEFORE-phase SKILL outputs (each keyed by skill name; contains raw
+        # tool text, the block that got appended to user_query, and
+        # export_contents). This pane is where the injected block is visible
+        # at all, since it is deliberately stripped from the stored query.
         if isinstance(_skills_ctx, dict):
-            for _skill_name, _skill_log in _skills_ctx.items():
+            for _skill_name, _skill_log in sorted(
+                    _skills_ctx.items(),
+                    key=lambda kv: (dmu.to_int((kv[1] or {}).get("order"), 100), kv[0])
+                    if isinstance(kv[1], dict) else (100, kv[0])):
                 if not isinstance(_skill_log, dict) or not _skill_log.get("as_reference", True):
                     continue
                 _sk_text = (_skill_log.get("wrapped") or _skill_log.get("raw") or "").strip()
                 if not _sk_text:
                     continue
-                _sk_block = f"--- SKILL:{_skill_name} ({_skill_log.get('phase', 'CONTEXT')}) ---\n{_sk_text}"
-                _parts.append(_sk_block)
+                _sk_phase = _skill_log.get("phase") or "BEFORE"
+                _sk_merge = _skill_log.get("merge") or ""
+                _sk_label = f"{_sk_phase}/{_sk_merge}" if _sk_merge else _sk_phase
+                _parts.append(f"--- SKILL:{_skill_name} ({_sk_label}) ---\n{_sk_text}")
         st.code("\n\n".join(_parts) or "(empty)", language=None)
 
     # ---- 4. Situation ----
@@ -852,6 +856,28 @@ def _render_token_usage_tab(v2: dict):
             "Output": int(out) if isinstance(out, (int, float)) else 0,
             "Note":   note,
         })
+
+    def _add_skill_rows(bucket, phase):
+        """One row per SKILL that called an LLM of its own. Without these the
+        TOTAL under-reports the turn: a proofreading or translating SKILL runs
+        a support agent whose cost appears nowhere else."""
+        if not isinstance(bucket, dict):
+            return
+        for _n, _c in sorted(
+                bucket.items(),
+                key=lambda kv: (dmu.to_int((kv[1] or {}).get("order"), 100), kv[0])
+                if isinstance(kv[1], dict) else (100, kv[0])):
+            if not isinstance(_c, dict):
+                continue
+            _pt = dmu.to_int(_c.get("prompt_token"))
+            _rt = dmu.to_int(_c.get("response_token"))
+            if not (_pt or _rt):
+                continue
+            _mg = _c.get("merge") or ""
+            _add(f"SKILL[{phase}]:{_n}", "", _c.get("model", ""), _pt, _rt,
+                 note=_mg.lower() if _mg else "")
+
+    _add_skill_rows((v2.get("prompt") or {}).get("skills"), "BEFORE")
 
     _eng = (v2.get("setting") or {}).get("engine") or {}
     _add("Main LLM",
@@ -944,6 +970,8 @@ def _render_token_usage_tab(v2: dict):
              "",
              _fn.get("function_name", ""),
              0, 0)
+
+    _add_skill_rows((v2.get("response") or {}).get("skills"), "AFTER")
 
     _df = pd.DataFrame(rows)
     _df["Total"] = _df["Input"] + _df["Output"]
@@ -1120,6 +1148,32 @@ def _run_knowledge_utility_turn(session, target, ak_mode, dim_mode, exec_info):
             query_points=_build_query_points(_v2, session, _seq, _sub),
         )
     session.set_analytics_history(_seq, _sub, _analytics)
+
+
+def _append_skill_text(entry):
+    """Text that MERGE=APPEND skills contribute below the answer.
+
+    Their output is stored in `response.skills`, never in `response.text`, so
+    the answer stays the answer — for memory, the digest and analytics alike.
+    Display is where the two are put back together, in SKILL.ORDER.
+    """
+    _skills = ((entry or {}).get("response") or {}).get("skills")
+    if not isinstance(_skills, dict):
+        return ""
+    _rows = []
+    for _name, _cfg in _skills.items():
+        if not isinstance(_cfg, dict) or _cfg.get("merge") != "APPEND":
+            continue
+        _text = (_cfg.get("text") or "").strip()
+        if not _text or _cfg.get("error"):
+            continue
+        _rows.append((dmu.to_int(_cfg.get("order"), 100), _name,
+                      (_cfg.get("header") or "").strip(), _text))
+    if not _rows:
+        return ""
+    _rows.sort(key=lambda r: (r[0], r[1]))
+    return "".join(f"\n\n{_h}\n\n{_t}" if _h else f"\n\n{_t}"
+                    for _o, _n, _h, _t in _rows)
 
 
 def _read_bg_task_status():
@@ -1349,6 +1403,8 @@ def initialize_session_states():
         st.session_state.book_selected = []
     if 'skill_selected' not in st.session_state:
         st.session_state.skill_selected = []
+    if 'skill_candidates' not in st.session_state:
+        st.session_state.skill_candidates = []
     if 'dl_type' not in st.session_state:
         st.session_state.dl_type = "Chats Only"
     if 'analytics_knowledge_mode' not in st.session_state:
@@ -1428,6 +1484,13 @@ def refresh_session_states():
     st.session_state.web_search = False
     st.session_state.book_selected = []
     st.session_state.skill_selected = []
+    st.session_state.skill_candidates = []
+    # The DEFAULT seeding runs once per agent, so clearing the selection
+    # without clearing its marker left the Skills picker empty for the rest of
+    # the login — every session you opened lost the agent's default skills.
+    for _sk_seed in [_k for _k in st.session_state
+                      if str(_k).startswith("_skills_seeded")]:
+        del st.session_state[_sk_seed]
     st.session_state.dl_type = "Chats Only"
     st.session_state.analytics_knowledge_mode = ""
     st.session_state.analytics_dimension_mode = {}
@@ -1635,9 +1698,11 @@ def _render_temporary_override():
             for _i, _t in enumerate(_all_tool_names):
                 _cfg = _skill_tools_norm.get(_t) or {}
                 _default = bool(_cfg.get("ACTIVE", False)) or (_t in _skill_tools_norm)
-                _phase = (_cfg.get("PHASE") or "CONTEXT")
+                _phase = dma.normalize_skill_phase(_cfg.get("PHASE"))
+                _merge = _cfg.get("MERGE") or ""
                 _cols[_i % len(_cols)].checkbox(
-                    f"{_t} ({_phase})", value=_default,
+                    f"{_t} ({_phase}/{_merge})" if _merge else f"{_t} ({_phase})",
+                    value=_default,
                     key=f"to_SKILL_{_sid}_{_t}",
                 )
 
@@ -1762,6 +1827,39 @@ def _session_active_book_names(agent_data):
     return out
 
 
+# Skills that replaced a Conversation Setting, mapped to the session attribute
+# that setting still lives on. Lets an agent JSON with no DEFAULT keep honouring
+# the user's own Defaults instead of silently ignoring them.
+_SKILL_LEGACY_DEFAULT_KEY = {
+    "diagram_mode": "diagram_mode",
+    "emphasis_mode": "emphasis_mode",
+    "cite_knowledge": "cite_knowledge",
+    "match_input_language": "po_LANG_AUTO",
+    "WebSearch": "web_search",
+}
+
+
+def _flag_skill_session_value(name):
+    """What the user's existing default said about this skill."""
+    _key = _SKILL_LEGACY_DEFAULT_KEY.get(name)
+    return bool(st.session_state.get(_key, False)) if _key else False
+
+
+def _skill_option_label(name):
+    """Flag skills read better under the Conversation-Setting name they
+    replaced; real tools are shown by the name used to call them."""
+    _lbl = (dma.FLAG_SKILLS.get(name) or {}).get("LABEL")
+    return f"{_lbl} ({name})" if _lbl else name
+
+
+def _skill_description(name):
+    _flag = dma.FLAG_SKILLS.get(name)
+    if _flag:
+        return _flag.get("DESCRIPTION", "")
+    _entry = dmtr.get_tool(name) or {}
+    return (_entry.get("description") or "").strip()
+
+
 def _session_active_skills(agent_data):
     """{name: cfg} for SKILLs effectively active given the Temporary Override
     widgets — the SKILL counterpart of `_session_active_book_names`. Falls
@@ -1778,8 +1876,17 @@ def _session_active_skills(agent_data):
         for _n, _cfg in _raw_tools.items():
             if _n not in _all:
                 _c = _cfg if isinstance(_cfg, dict) else {}
-                _phase = str(_c.get("PHASE") or "CONTEXT").upper()
-                _all[_n] = {"PHASE": _phase if _phase in ("BEFORE", "CONTEXT", "AFTER") else "CONTEXT",
+                _phase = _dma_local.normalize_skill_phase(_c.get("PHASE"))
+                if _n in _dma_local.FLAG_SKILLS:
+                    _phase = _dma_local.FLAG_SKILLS[_n]["PHASE"]
+                _all[_n] = {"PHASE": _phase,
+                            "DEFAULT": (bool(_c["DEFAULT"]) if "DEFAULT" in _c else None),
+                            "FLAG": _n in _dma_local.FLAG_SKILLS,
+                            "MERGE": _dma_local._normalize_skill_merge(
+                                {**_c, "_FLAG": _n in _dma_local.FLAG_SKILLS}, _phase,
+                                str(_c.get("PHASE") or "").strip().upper()),
+                            "HEADER": str(_c.get("HEADER") or ""),
+                            "ORDER": _dma_local._normalize_skill_order(_c.get("ORDER")),
                             "AS_REFERENCE": bool(_c.get("AS_REFERENCE", True)),
                             "ARGS_HINT": _c.get("ARGS_HINT") or {},
                             "MAGIC_WORDS": list(_c.get("MAGIC_WORDS") or [])}
@@ -9275,7 +9382,7 @@ def main():
                         # the multi-hundred-line reference block inline makes
                         # the transcript unreadable.
                         _raw_input = v2["prompt"]["query"]["input"]
-                        _display_input = dme._strip_skill_wraps(_raw_input)
+                        _display_input = dmt.strip_skill_wraps(_raw_input)
                         content_text = f"**{prompt_role}{_u_ts}:**\n\n" + _display_input
                         download_data.append({"role": v2["prompt"]["role"], "content": content_text})
 #                        st.markdown(content_text.replace("\n", "<br>"), unsafe_allow_html=True)
@@ -9284,7 +9391,9 @@ def main():
                             download_data.append({"role": v2["prompt"]["role"], "image": st.session_state.session.session_folder_path +"contents/"+ uploaded_content["file_name"]})
                             show_uploaded_files_memory(seq_key, st.session_state.session.session_folder_path +"contents/", uploaded_content["file_name"], uploaded_content["file_type"])
                     with st.chat_message("ai"):
-                        content_text = f"**{v2['setting']['name']}{_a_ts}:**\n\n" + v2["response"]["text"]
+                        _append_text = _append_skill_text(v2)
+                        content_text = (f"**{v2['setting']['name']}{_a_ts}:**\n\n"
+                                        + v2["response"]["text"] + _append_text)
                         download_data.append({"role": v2["response"]["role"], "content": content_text})
 #                        st.markdown(content_text.replace("\n", "<br>").replace("#", ""), unsafe_allow_html=True)
                         render_response_markdown(content_text)
@@ -9292,7 +9401,8 @@ def main():
                             for gen_content in v2["image"].values():
                                 download_data.append({"role": v2["response"]["role"], "image": st.session_state.session.session_folder_path +"contents/"+ gen_content["file_name"]})
                                 show_uploaded_files_memory(seq_key, st.session_state.session.session_folder_path +"contents/", gen_content["file_name"], gen_content["file_type"])
-                        render_copy_button(v2["response"]["text"], f"copy_{k}_{k2}")
+                        render_copy_button(v2["response"]["text"] + _append_text,
+                                            f"copy_{k}_{k2}")
 
                     if v2["setting"]["type"] in ["LLM","IMAGEGEN"]:
                         if st.session_state.allowed_feedback:
@@ -10142,7 +10252,7 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                 if st.session_state.thinking_mode:
                     # Options are filtered by the currently-loaded agent's
                     # capability: hide Books when the agent has no BOOK,
-                    # hide Tools when SKILL.TOOL_LIST is empty. Habit /
+                    # hide Skills when the agent declares none. Habit /
                     # RAG Query / Web Search are always relevant.
                     _thinking_options = ["Habit", "Web Search", "RAG Query"]
                     _ad = st.session_state.agent_data or {}
@@ -10185,14 +10295,8 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                             help="Upper bound for PersonaSelector in chain.PERSONAS=\"THINKING\" steps.",
                         )
 
-                # --- Row 4: WEB Search / Engine ---
-                # Thinking Mode ON  → the WEB Search toggle is dynamic (Thinking
-                #                     decides per-turn), so we hide it. But the
-                #                     ENGINE selector is still meaningful because
-                #                     Thinking's internal search uses this engine
-                #                     — surface it as a standalone row.
-                # Thinking Mode OFF → normal WEB Search checkbox + nested engine
-                #                     (only visible when the checkbox is on).
+                # Resolves the engine list for the Skills picker's web-search
+                # controls below. Defined here because it reads setting.yaml.
                 def _resolve_ws_engines():
                     _ws_setting = dmu.read_yaml_file("setting.yaml")
                     _ws_default = _ws_setting.get("WEB_SEARCH_DEFAULT", "Perplexity")
@@ -10210,37 +10314,119 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                             or st.session_state.web_search_engine not in _ws_engines):
                         st.session_state.web_search_engine = _ws_default if _ws_default in _ws_engines else _ws_engines[0]
                     return _ws_engines
-                if st.session_state.thinking_mode:
-                    # Standalone engine selector for Thinking Mode's internal
-                    # web search. Only render when the agent is allowed to do
-                    # web search at all (respects the same Allowed key).
-                    if st.session_state.allowed_web_search:
-                        _ws_engines = _resolve_ws_engines()
-                        _ws_col1, _ws_col2 = st.columns([1, 2])
-                        _ws_col1.markdown("**WEB Search Engine** (Thinking)")
-                        _ws_col2.selectbox(
-                            "Engine:", _ws_engines,
-                            key="web_search_engine",
-                            label_visibility="collapsed",
-                            help="Engine used when Thinking Mode decides to run web search this turn.",
+                # --- Row 4: Skills -------------------------------------
+                # Every agent capability is a SKILL.TOOLS entry, picked here by
+                # the PHASE it runs in. This replaced the WEB Search row, the
+                # old SKILL multiselect, and the Reference Knowledge / Diagrams
+                # / Emphasis / Match-input-language checkboxes. Flag skills
+                # (dma.FLAG_SKILLS) have no registry function — selecting one
+                # sets the execution flag it stands for.
+                _skill_active = _session_active_skills(st.session_state.agent_data)
+                with st.expander(f"Skills ({len(_skill_active)})", expanded=False):
+                    if not _skill_active:
+                        st.session_state.skill_selected = []
+                        st.session_state.skill_candidates = []
+                        st.caption(
+                            "This agent has no `SKILL.TOOLS` configured, so there is nothing to "
+                            "run this turn. Add entries to the agent JSON to offer them here."
                         )
-                elif st.session_state.allowed_web_search:
-                    _ws_col1, _ws_col2 = st.columns([1, 2])
-                    if _ws_col1.checkbox("WEB Search", value=st.session_state.web_search):
-                        st.session_state.web_search = True
-                        _ws_engines = _resolve_ws_engines()
-                        _ws_col2.selectbox("Engine:", _ws_engines, key="web_search_engine", label_visibility="collapsed")
                     else:
-                        st.session_state.web_search = False
+                        # Seed from the agent's DEFAULT flags once per agent. A
+                        # flag skill without DEFAULT inherits whatever the
+                        # user's Defaults already put in state, so existing
+                        # per-user defaults keep working.
+                        _seed_key = f"_skills_seeded::{st.session_state.get('agent_file', '')}"
+                        if not st.session_state.get(_seed_key):
+                            _seeded = []
+                            for _n, _c in _skill_active.items():
+                                _d = _c.get("DEFAULT")
+                                if _d is None:
+                                    # Not declared: a skill that replaced a
+                                    # Conversation Setting keeps whatever the
+                                    # user's Defaults set; any other tool stays
+                                    # off until asked for.
+                                    _d = _flag_skill_session_value(_n)
+                                if _d:
+                                    _seeded.append(_n)
+                            st.session_state.skill_selected = _seeded
+                            st.session_state[_seed_key] = True
+                            st.session_state[_seed_key + "::names"] = list(_seeded)
+                        _PHASE_HELP = {
+                            "BEFORE": "Run before the answer is generated; shapes the request "
+                                      "or feeds reference material into it.",
+                            "AFTER": "Run on the finished answer.",
+                        }
+                        _picked = []
+                        _sk_cols = st.columns(2)
+                        for _pi, _phase in enumerate(("BEFORE", "AFTER")):
+                            _opts = dma.sort_skill_names(
+                                [_n for _n, _c in _skill_active.items()
+                                  if dma.normalize_skill_phase(_c.get("PHASE")) == _phase],
+                                _skill_active)
+                            if not _opts:
+                                _sk_cols[_pi].caption(f"**{_phase}** — none")
+                                continue
+                            _saved = [_s for _s in (st.session_state.get("skill_selected") or [])
+                                       if _s in _opts]
+                            _picked += _sk_cols[_pi].multiselect(
+                                _phase, _opts, default=_saved,
+                                format_func=_skill_option_label,
+                                help=_PHASE_HELP[_phase],
+                            )
+                        st.session_state.skill_selected = _picked
+                        # A skill that is only on because of its DEFAULT is a
+                        # suggestion Thinking may decline; one the user ticked
+                        # is an order. Dropping a seeded name once it has been
+                        # deselected is what makes re-ticking it an order.
+                        st.session_state.skill_candidates = [
+                            _s for _s in (st.session_state.get(_seed_key + "::names") or [])
+                            if _s in _picked]
+                        st.session_state[_seed_key + "::names"] = list(
+                            st.session_state.skill_candidates)
+                        for _sn in _picked:
+                            _sd = _skill_description(_sn)
+                            if _sd:
+                                st.caption(f"**{_skill_option_label(_sn)}** — {_sd}")
 
-                # --- Row 4b: Web search guardrail — applies to both normal
-                # WEB Search AND Thinking Mode's internal web search. ---
-                if st.session_state.thinking_mode or st.session_state.web_search:
-                    st.session_state.web_search_guardrail = st.checkbox(
-                        "Web Search Guardrail",
-                        value=st.session_state.get("web_search_guardrail", True),
-                        help="When ON, the web-search result is wrapped in an instruction telling the LLM to keep persona/context in charge and use the snippet only as reference. When OFF, the raw snippet is passed through unwrapped.",
-                    )
+                    # A flag skill's selection IS its toggle. Only flags the
+                    # agent actually declares are driven from here; one it does
+                    # not declare keeps whatever the user's Defaults or an
+                    # API caller set, so those paths are unaffected.
+                    for _fn in dma.FLAG_SKILLS:
+                        if _fn not in _skill_active:
+                            continue
+                        _fon = _fn in (st.session_state.skill_selected or [])
+                        if _fn == "match_input_language":
+                            st.session_state.po_LANG_AUTO = _fon
+                        else:
+                            setattr(st.session_state, _fn, _fon)
+
+                    # Web-search settings belong to the WebSearch skill, so they
+                    # appear once it is picked. Thinking Mode runs its own
+                    # internal search, so the engine stays reachable then too.
+                    _ws_picked = [_n for _n in (st.session_state.skill_selected or [])
+                                   if _n == "WebSearch" or _n.startswith("WebSearch_")]
+                    st.session_state.web_search = bool(_ws_picked)
+                    if st.session_state.allowed_web_search and (_ws_picked or st.session_state.thinking_mode):
+                        st.markdown("---")
+                        # An engine-specific skill (WebSearch_Google etc.) names
+                        # its own backend, so the picker would be a no-op there.
+                        if "WebSearch" in _ws_picked or not _ws_picked:
+                            _ws_engines = _resolve_ws_engines()
+                            _ws_col1, _ws_col2 = st.columns([1, 2])
+                            _ws_col1.markdown("**WEB Search Engine**"
+                                               + (" (Thinking)" if not _ws_picked else ""))
+                            _ws_col2.selectbox(
+                                "Engine:", _ws_engines,
+                                key="web_search_engine",
+                                label_visibility="collapsed",
+                                help="Backend used by the generic WebSearch skill and by Thinking Mode's internal search.",
+                            )
+                        st.session_state.web_search_guardrail = st.checkbox(
+                            "Web Search Guardrail",
+                            value=st.session_state.get("web_search_guardrail", True),
+                            help="When ON, the web-search result is wrapped in an instruction telling the LLM to keep persona/context in charge and use the snippet only as reference. When OFF, the raw snippet is passed through unwrapped.",
+                        )
 
                 # --- Row 5: BOOK multiselect (hidden when Thinking Mode ON;
                 # Thinking auto-selects Books based on PURPOSE in that case) ---
@@ -10255,49 +10441,10 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                             "BOOK", _book_opts,
                         )
 
-                # --- Row 5b: SKILL multiselect (hidden when Thinking Mode ON;
-                # Thinking picks SKILLs from their descriptions in that case).
-                # With Thinking OFF the only automatic trigger left is
-                # MAGIC_WORDS, so this gives an explicit manual path. ---
-                if not st.session_state.thinking_mode:
-                    _skill_active = _session_active_skills(st.session_state.agent_data)
-                    if _skill_active:
-                        _skill_opts = list(_skill_active.keys())
-                        _skill_labels = {
-                            _n: f"{_n} ({(_cfg.get('PHASE') or 'CONTEXT')})"
-                            for _n, _cfg in _skill_active.items()
-                        }
-                        _skill_saved = [s for s in (st.session_state.get("skill_selected") or [])
-                                         if s in _skill_opts]
-                        st.session_state.skill_selected = st.multiselect(
-                            "SKILL", _skill_opts, default=_skill_saved,
-                            format_func=lambda _n: _skill_labels.get(_n, _n),
-                            help=("Run these SKILLs this turn at their declared PHASE "
-                                  "(BEFORE / CONTEXT / AFTER). Slash commands and "
-                                  "MAGIC_WORDS still fire on top of this selection."),
-                        )
-                else:
-                    st.session_state.skill_selected = []
-
                 # --- Row 6: URL fetch subpages (kept with fetch-related controls) ---
                 st.session_state.url_fetch_subpages = st.checkbox(
                     "Include URL Subpages", value=st.session_state.url_fetch_subpages,
                     help="If the input contains a URL, it is fetched automatically. When ON, also fetches in-domain links (caps in setting.yaml URL_FETCH).",
-                )
-
-                # --- Row 7: Reference Knowledge / Diagrams / Emphasis ---
-                _out = st.columns(3)
-                st.session_state.cite_knowledge = _out[0].checkbox(
-                    "Reference Knowledge", value=st.session_state.cite_knowledge,
-                    help="At the end of the reply, list the KNOWLEDGE chunks actually referenced this turn as '## Reference Knowledge' (a separate section from ## Reference Info for Web/BOOK).",
-                )
-                st.session_state.diagram_mode = _out[1].checkbox(
-                    "Diagrams", value=st.session_state.diagram_mode,
-                    help="Tell the LLM to use Markdown tables and Mermaid diagrams (```mermaid) inside the explanation.",
-                )
-                st.session_state.emphasis_mode = _out[2].checkbox(
-                    "Emphasis", value=st.session_state.emphasis_mode,
-                    help="Tell the LLM to emphasise key points in **bold** and to organise long answers with headings and bullet lists.",
                 )
 
                 # --- Language / Speaking Style (elevated from Personality
@@ -10325,12 +10472,11 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                 _cur_style = str(_cur_pers.get("SPEAKING_STYLE", "") or "")
                 if _speaking_options and _cur_style and _cur_style not in _speaking_options:
                     _speaking_options = [_cur_style] + _speaking_options
-                _lang_auto = st.checkbox(
-                    "Match input language (Auto)",
-                    value=bool(st.session_state.get("po_LANG_AUTO", _cur_lang == "__AUTO__")),
-                    key="po_LANG_AUTO",
-                    help="Reply in the same language as the user's input. If the user explicitly asks for a different language in-prompt, that request is honored.",
-                )
+                # Driven by the `match_input_language` skill in the Skills
+                # picker above; only the resulting value is read here.
+                _lang_auto = bool(st.session_state.get("po_LANG_AUTO", _cur_lang == "__AUTO__"))
+                if _lang_auto:
+                    st.caption("Language is set by the **Match input language** skill.")
                 _lang_cols = st.columns(2)
                 _lang_cols[0].selectbox(
                     "Language", _lang_options, index=_lidx,
@@ -10461,43 +10607,6 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                 situation_setting = st.text_input("Situation Setting:",
                                                      value=st.session_state.situation_setting)
 
-                # --- Nested: Skills available (moved from just above the chat_input) ---
-                _agent_skill_list = (st.session_state.get("agent_data", {}) or {}).get("SKILL", {}).get("TOOL_LIST") or []
-                if _agent_skill_list:
-                    _skill_count = len(_agent_skill_list)
-                    _skill_expander_label = f"Skills available on this agent ({_skill_count}) — slash commands"
-                else:
-                    _skill_expander_label = "Skills available on this agent (0) — none configured for this agent"
-                with st.expander(_skill_expander_label, expanded=False):
-                    if _agent_skill_list:
-                        _registry_entries = {e["name"]: e for e in dmtr.list_tools(_agent_skill_list)}
-                        for _sname in _agent_skill_list:
-                            _entry = _registry_entries.get(_sname)
-                            if _entry is None:
-                                st.markdown(f"- `/{_sname}` *(not registered in tool registry)*")
-                                continue
-                            _desc = (_entry.get("description") or "").strip()
-                            _example = (_entry.get("example") or "").strip()
-                            if _example:
-                                if "\n" in _example:
-                                    st.markdown(f"- **/{_sname}**")
-                                    st.code(_example, language=None)
-                                    st.markdown(f"&nbsp;&nbsp;&nbsp;&nbsp;{_desc}", unsafe_allow_html=True)
-                                else:
-                                    st.markdown(f"- `{_example}`\n  &nbsp;&nbsp;&nbsp;&nbsp;{_desc}",
-                                                 unsafe_allow_html=True)
-                            else:
-                                _required = (_entry.get("schema") or {}).get("required") or []
-                                _syntax = f"/{_sname} " + " ".join(f"<{a}>" for a in _required) if _required else f"/{_sname}"
-                                st.markdown(f"- `{_syntax}`\n  &nbsp;&nbsp;&nbsp;&nbsp;{_desc}",
-                                             unsafe_allow_html=True)
-                        st.caption("Type `/skills` (or `/help`) in chat to re-list this anywhere.")
-                    else:
-                        st.markdown(
-                            "This agent has no `SKILL.TOOL_LIST` configured. "
-                            "Add tool names to the agent JSON's `SKILL.TOOL_LIST` to expose them as `/<name>` chat commands."
-                        )
-
     _perf_history = _time.perf_counter() - _perf_t0
 
     # File downloader
@@ -10597,26 +10706,38 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                                     raw_text, skill_name, skill_input):
             """Execute a SKILL tool, persist as a chat turn, and refresh history.
 
-            * Validates skill_name against the agent's SKILL.TOOL_LIST.
+            * Validates skill_name against the agent's SKILL.TOOLS.
             * Calls dmt.call_function_by_name and normalises the return shape.
             * Saves a TOOL-type entry into chat_memory.json so the session sees
               it (digest pipeline, next-turn memory loading, Detail Info).
             """
             import inspect as _inspect
             ts_begin = str(datetime.now())
-            tool_list = (agent_data or {}).get("SKILL", {}).get("TOOL_LIST") or []
+            # SKILL.TOOLS is the live declaration; TOOL_LIST stays accepted for
+            # agent JSONs written before it. Flag skills are excluded by the
+            # normalizer because they have no registry function to call.
+            tool_list = dma.skill_tool_list_from_normalized(
+                dma.normalize_skill_tools((agent_data or {}).get("SKILL") or {}))
             _agent_name = (agent_data or {}).get("NAME") or (agent_data or {}).get("DISPLAY_NAME") or ""
 
             # Meta: list available skills for this agent
             if skill_name == "_LIST_SKILLS":
                 if tool_list:
+                    # PHASE/MERGE say what the skill does to a normal turn; run
+                    # by slash it is a turn of its own, so show them as context
+                    # rather than as a promise about this command.
+                    _norm_list = dma.normalize_skill_tools(
+                        (agent_data or {}).get("SKILL") or {})
                     response_text = "[Available skills for this agent]\n" + "\n".join(
-                        f"- /{n}  <input>" for n in tool_list
+                        f"- /{n}  <input>"
+                        f"  ({(_norm_list.get(n) or {}).get('PHASE', '?')}"
+                        f"/{(_norm_list.get(n) or {}).get('MERGE', '?')})"
+                        for n in dma.sort_skill_names(tool_list, _norm_list)
                     ) + "\n\nType `/<skill_name> <text>` to run."
                 else:
                     response_text = (
-                        "This agent has no SKILL.TOOL_LIST configured. "
-                        "Add tools to SKILL.TOOL_LIST in the agent JSON to expose them here."
+                        "This agent has no SKILL.TOOLS configured. "
+                        "Add entries to SKILL.TOOLS in the agent JSON to expose them here."
                     )
                 _save_skill_turn(session, svc, usr, agent_file,
                                  raw_text, response_text, ts_begin, tool_name="_LIST_SKILLS",
@@ -10626,7 +10747,7 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
             # Validate skill is allowed for this agent
             if skill_name not in tool_list:
                 response_text = (
-                    f"Skill `{skill_name}` is not registered in this agent's SKILL.TOOL_LIST. "
+                    f"Skill `{skill_name}` is not registered in this agent's SKILL.TOOLS. "
                     f"Available: {', '.join(tool_list) if tool_list else '(none)'}.\n"
                     f"Type `/skills` to list."
                 )
@@ -12044,6 +12165,13 @@ f"Target sheet (sheets with Question: {len(_q_sheets)})"
             _manual_skills = list(st.session_state.get("skill_selected") or [])
             if _manual_skills:
                 execution["_MANUAL_SKILL_PICKS"] = _manual_skills
+            # Picks that are only on by DEFAULT travel separately so Thinking
+            # can decline them; the executor treats them as orders when
+            # Thinking has no say this turn.
+            _cand_skills = [_s for _s in (st.session_state.get("skill_candidates") or [])
+                             if _s in _manual_skills]
+            if _cand_skills:
+                execution["_CANDIDATE_SKILL_PICKS"] = _cand_skills
             # Phase 7: inject PersonaSelector cap into execution
             execution["MAX_PERSONAS"] = int(st.session_state.get("max_personas", 3))
             execution["MAX_THINKING_TURNS"] = int(st.session_state.get("max_thinking_turns", 1))

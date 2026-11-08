@@ -74,407 +74,6 @@ def _parse_execution_settings(execution):
     }
 
 
-# Instruction appended to the main prompt when DIAGRAM_MODE is on. Mermaid is
-# fenced so the WebUI renderer can pick the blocks out of the Markdown body.
-DIAGRAM_INSTRUCTION = (
-    "\n\n【図解の指示】\n"
-    "説明の理解を助ける箇所では、文章に加えて図解を用いてください。\n"
-    "・比較・分類・一覧は Markdown の表にする\n"
-    "・関係性/流れ/構造は Mermaid のコードブロック（```mermaid）で図示する\n"
-    "　（flowchart, sequenceDiagram, graph TD などを用途に応じて使い分ける）\n"
-    "・図解が不要な内容に無理に図を付けない。文章だけで足りる場合はそのままでよい\n"
-)
-
-# Instruction appended when EMPHASIS_MODE is on. Bounded on purpose: emphasis
-# only reads as emphasis while it stays rare, so the rules cap how much of the
-# text may be marked up rather than just asking for "more emphasis".
-EMPHASIS_INSTRUCTION = (
-    "\n\n【強調の指示】\n"
-    "読み手が要点を拾えるよう、本文中の重要箇所に Markdown の強調を用いてください。\n"
-    "・結論・判断・数値・固有名詞など、その回答の核心となる語句を **太字** にする\n"
-    "・特に注意すべき点や例外は **太字** に加えて簡潔な理由を添える\n"
-    "・回答が長くなる場合は見出し（##／###）で区切り、箇条書きを併用する\n"
-    "・強調は多用しない。1段落あたり1〜2箇所を目安とし、文全体を太字にしない\n"
-    "・口調や人格設定は変えない。あくまで書式のみの指示\n"
-)
-
-
-_KV_RE_CI = re.compile(r"'([^']+)'\s*:\s*'((?:[^'\\]|\\.)*)'")
-_NUM_RE_CI = re.compile(r"'([^']+)'\s*:\s*(-?\d+\.?\d*)")
-
-
-def _iter_knowledge_chunks(knowledge_selected, book_names):
-    """Yield (rag, cid, title, sim_q, sim_a, util, value_text) per non-book
-    chunk.
-
-    cid is the chunk's stable identifier (the `id`/`ID` field ChromaDB or the
-    PageIndex layer stamps in). We use it — not title — to key the manifest
-    the second-pass selector references, because titles collide across RAGs
-    and can be edited by the LLM's fuzzy paraphrasing.
-
-    knowledge_selected is a mixed list — Vector chunks are dicts, PageIndex
-    entries arrive as pre-formatted LOG_TEMPLATE strings. Normalise both."""
-    def _as_float(v):
-        try:
-            return float(v) if v is not None else 0.0
-        except (TypeError, ValueError):
-            return 0.0
-    for c in knowledge_selected or []:
-        if isinstance(c, dict):
-            rag = c.get("rag", "") or c.get("rag_name", "")
-            cid = str(c.get("id", "") or c.get("ID", "") or "")
-            title = c.get("title", "") or cid
-            sim_q = _as_float(c.get("similarity_prompt", c.get("similarity_Q", 0.0)))
-            sim_a = _as_float(c.get("similarity_response", c.get("similarity_A", 0.0)))
-            body = c.get("value_text_short") or c.get("value_text") or ""
-        elif isinstance(c, str):
-            kv = dict(_KV_RE_CI.findall(c))
-            nums = dict(_NUM_RE_CI.findall(c))
-            rag = kv.get("rag", "")
-            cid = kv.get("ID", "") or kv.get("id", "") or kv.get("page_id", "")
-            title = kv.get("title", "") or cid
-            sim_q = _as_float(nums.get("similarity_Q", nums.get("similarity_prompt", 0.0)))
-            sim_a = _as_float(nums.get("similarity_A", nums.get("similarity_response", 0.0)))
-            body = kv.get("summary", "") or kv.get("text_short", "")
-        else:
-            continue
-        if not rag or rag in book_names or not cid:
-            continue
-        yield rag, cid, title, sim_q, sim_a, (sim_q - sim_a), body
-
-
-def _build_cite_knowledge_manifest(knowledge_selected, agent_data):
-    """Build a lookup of every non-book chunk in this turn's retrieval.
-
-    Returns {(rag, id): {rag, id, title, body, sim_q, sim_a, util}, ...}.
-    No cap — the second-pass selector needs to see every chunk to decide
-    what was actually referenced (the user explicitly asked us to stop
-    truncating at top-60). Empty when no non-book chunks were retrieved.
-
-    Selection of "which chunks the LLM actually used" is delegated to a
-    dedicated support agent call (see _detect_used_chunks below), so we
-    no longer inject an inline directive into the primary prompt."""
-    _book_names = {(b or {}).get("RAG_NAME")
-                   for b in (agent_data.get("BOOK") or [])
-                   if isinstance(b, dict) and b.get("RAG_NAME")}
-    lookup = {}
-    for rag, cid, title, sim_q, sim_a, util, body in _iter_knowledge_chunks(
-            knowledge_selected, _book_names):
-        key = (rag, cid)
-        if key in lookup:
-            continue
-        lookup[key] = {"rag": rag, "id": cid, "title": title,
-                       "body": body, "sim_q": sim_q, "sim_a": sim_a,
-                       "util": util}
-    import logging as _lg_bd
-    if not lookup:
-        _lg_bd.getLogger(__name__).info(
-            "[cite_knowledge] manifest empty — no non-book knowledge chunks "
-            f"(knowledge_selected size={len(knowledge_selected or [])}, "
-            f"book_rags={sorted(_book_names)})")
-    else:
-        _lg_bd.getLogger(__name__).info(
-            f"[cite_knowledge] manifest built — size={len(lookup)} "
-            f"(from {len(knowledge_selected or [])} knowledge chunks)")
-    return lookup
-
-
-def _detect_used_chunks(service_info, user_info, session_id, session_name,
-                         selector_agent_file, primary_response, chunk_lookup):
-    """Second-pass LLM call that decides which chunks the primary answer
-    actually referenced. Returns [(rag, cid, usage_note), ...] preserving
-    the selector's order, dropping any (rag, cid) pair that doesn't map back
-    to the manifest.
-
-    The selector agent (SUPPORT_AGENT.KNOWLEDGE_USAGE_SELECTOR, defaults to
-    agent_58KnowledgeUsageSelector.json) is a lightweight support
-    agent. Its prompt template is `Knowledge Usage Selector` — mirrors the
-    Insight-Old "参照した【知識情報】と参考にした点(箇条書き)" idea but is
-    RAG-name-agnostic and returns structured JSON.
-
-    Returns [] on any failure (missing agent, LLM error, parse error) so
-    the caller falls through to the util-based fallback and Reference
-    Knowledge still ends up populated when possible."""
-    import logging as _lg_ku
-    _log = _lg_ku.getLogger(__name__)
-    if not chunk_lookup or not primary_response:
-        return []
-    if not selector_agent_file:
-        selector_agent_file = "agent_58KnowledgeUsageSelector.json"
-    try:
-        selector = dma.DigiM_Agent(selector_agent_file)
-        model_type = "LLM"
-        practice_file = selector.agent["HABIT"]["DEFAULT"]["PRACTICE"]
-        practice_path = Path(practice_folder_path) / practice_file
-        try:
-            practice = dmu.read_json_file(str(practice_path))
-            first_chain = practice.get("CHAINS", [{}])[0]
-            prompt_temp_cd = (first_chain.get("SETTING") or {}).get(
-                "PROMPT_TEMPLATE", "Knowledge Usage Selector")
-        except Exception:
-            prompt_temp_cd = "Knowledge Usage Selector"
-        prompt_template = selector.set_prompt_template(prompt_temp_cd)
-    except Exception as _e:
-        _log.warning(f"[cite_knowledge] selector agent load failed: {_e}")
-        return []
-
-    # Build the Retrieved Knowledge manifest the selector reads. Include ID
-    # (the identifier it must return), RAG name, title, and a body preview
-    # so it can judge whether content appears in the answer.
-    from collections import defaultdict
-    grouped = defaultdict(list)
-    for meta in chunk_lookup.values():
-        grouped[meta["rag"]].append(meta)
-    manifest_lines = []
-    for rag in sorted(grouped.keys()):
-        manifest_lines.append(f"■ RAG: {rag}")
-        for m in grouped[rag]:
-            _body = (m.get("body") or "").replace("\n", " ")
-            if len(_body) > 300:
-                _body = _body[:300] + "..."
-            manifest_lines.append(
-                f"  - ID: {m['id']}\n"
-                f"    タイトル: {m.get('title','')}\n"
-                f"    本文抜粋: {_body}"
-            )
-    prompt = (
-        f"{prompt_template}\n\n"
-        f"【本回答】\n{primary_response}\n\n"
-        f"【Retrieved Knowledge】\n" + "\n".join(manifest_lines) + "\n"
-    )
-
-    try:
-        raw = ""
-        for _p, chunk, _c in selector.generate_response(
-                model_type, prompt, [], stream_mode=False):
-            if chunk:
-                raw += chunk
-    except Exception as _e:
-        _log.warning(f"[cite_knowledge] selector LLM call failed: {_e}")
-        return []
-
-    # Extract the JSON list from the response. Selector is instructed to
-    # wrap in a ```json fence but be tolerant if it forgets.
-    _json_fence_re = re.compile(
-        r"```(?:json)?\s*(?P<body>\[.*?\])\s*```",
-        re.DOTALL | re.IGNORECASE)
-    m = _json_fence_re.search(raw or "")
-    payload = m.group("body") if m else None
-    if payload is None:
-        # No fence — try to find a bare JSON array.
-        m2 = re.search(r"(\[.*\])", raw or "", re.DOTALL)
-        payload = m2.group(1) if m2 else "[]"
-    import json as _json
-    try:
-        arr = _json.loads(payload)
-    except Exception as _e:
-        _log.warning(f"[cite_knowledge] selector JSON parse failed: {_e}; "
-                     f"raw_tail={(raw or '')[-200:]!r}")
-        return []
-    if not isinstance(arr, list):
-        return []
-    entries = []
-    for item in arr:
-        if not isinstance(item, dict):
-            continue
-        rag = str(item.get("rag", "")).strip()
-        cid = str(item.get("ID", item.get("id", ""))).strip()
-        usage = str(item.get("usage", "")).strip()
-        if not rag or not cid:
-            continue
-        entries.append((rag, cid, usage))
-    _log.info(f"[cite_knowledge] selector returned {len(entries)} entries "
-              f"(manifest size={len(chunk_lookup)})")
-    return entries
-
-
-def _refresh_chunk_util(chunk_lookup, knowledge_selected):
-    """Refresh sim_a / util in the lookup after the LLM's response has been
-    embedded and similarity_response has been stamped into knowledge_selected
-    by `get_knowledge_reference`. Lookup is keyed by (rag, id)."""
-    if not chunk_lookup or not knowledge_selected:
-        return
-    by_key = {}
-    def _f(v):
-        try: return float(v) if v is not None else 0.0
-        except (TypeError, ValueError): return 0.0
-    for c in knowledge_selected:
-        if isinstance(c, dict):
-            rag = c.get("rag") or c.get("rag_name") or ""
-            cid = str(c.get("id", "") or c.get("ID", "") or "")
-            if not rag or not cid:
-                continue
-            by_key[(rag, cid)] = (
-                _f(c.get("similarity_prompt", c.get("similarity_Q", 0.0))),
-                _f(c.get("similarity_response", c.get("similarity_A", 0.0))),
-            )
-        elif isinstance(c, str):
-            kv = dict(_KV_RE_CI.findall(c))
-            nums = dict(_NUM_RE_CI.findall(c))
-            rag = kv.get("rag", "")
-            cid = kv.get("ID", "") or kv.get("id", "") or kv.get("page_id", "")
-            if not rag or not cid:
-                continue
-            by_key[(rag, cid)] = (
-                _f(nums.get("similarity_Q", nums.get("similarity_prompt", 0.0))),
-                _f(nums.get("similarity_A", nums.get("similarity_response", 0.0))),
-            )
-    for key, meta in chunk_lookup.items():
-        pair = by_key.get(key)
-        if pair is None:
-            continue
-        sim_q, sim_a = pair
-        meta["sim_q"] = sim_q
-        meta["sim_a"] = sim_a
-        meta["util"] = sim_q - sim_a
-
-
-def _sanitize_reference_snippet(text, max_len=60):
-    """Flatten a book/knowledge snippet so it fits on one bullet line.
-
-    Book snippets are raw chunk bodies — they can contain markdown headers
-    (`# ...`), tables (`| ... |`), fenced code blocks, bullet lists and
-    embedded newlines. Left as-is, they poison the Reference Info block
-    (each snippet renders as a nested heading + table, splitting the
-    numbered list). This helper strips the structural markers and
-    collapses whitespace so the snippet reads as a short prose fragment."""
-    if not text:
-        return ""
-    s = str(text)
-    # Drop fenced code / mermaid blocks entirely — they'd render as a
-    # multi-line code box under the reference list.
-    s = re.sub(r"```.*?```", " ", s, flags=re.DOTALL)
-    # Strip leading heading / bullet / blockquote markers per line.
-    s = re.sub(r"(^|\n)\s*(#+|>|\-|\*|\+|\d+\.)\s+", r"\1", s)
-    # Table pipes → visual dividers.
-    s = s.replace("|", " ")
-    # Collapse any remaining whitespace (newlines, tabs, runs of spaces).
-    s = re.sub(r"\s+", " ", s).strip()
-    if len(s) > max_len:
-        s = s[:max_len].rstrip() + "..."
-    return s
-
-
-def _build_plain_references_block(sources):
-    """Same shape citation_inject._build_references_block produces, inlined
-    here so the outer code can append it without depending on tool-plugin
-    import paths. Empty when there are no citable sources.
-
-    Dedup: web by URL, book by (rag_name, title). Ordering follows the input
-    list — matches whatever call site already prioritised."""
-    if not sources:
-        return ""
-    seen = set()
-    lines = []
-    for s in sources:
-        if not isinstance(s, dict):
-            continue
-        kind = (s.get("type") or "web").lower()
-        if kind == "web":
-            url = (s.get("url") or "").strip()
-            if not url:
-                continue
-            key = ("web", url)
-            if key in seen:
-                continue
-            seen.add(key)
-            title = (s.get("title") or "").strip()
-            lines.append(f"(web) {url}" + (f" - {title}" if title else ""))
-        elif kind == "book":
-            rag_name = (s.get("rag_name") or "").strip()
-            title = (s.get("title") or "").strip()
-            if not title:
-                continue
-            key = ("book", rag_name, title)
-            if key in seen:
-                continue
-            seen.add(key)
-            # Belt-and-suspenders sanitize (upstream _ci_sources build
-            # already applied this, but the plain-references path is also
-            # called by the WebUI skill fallback which builds sources with
-            # raw snippets).
-            snippet = _sanitize_reference_snippet(
-                s.get("snippet") or "", max_len=60)
-            tag = f"(book: {rag_name})" if rag_name else "(book)"
-            parts = [tag, title]
-            if snippet:
-                parts.append("— " + snippet)
-            lines.append(" ".join(parts))
-    if not lines:
-        return ""
-    return "## Reference Info\n" + "\n".join(
-        f"[{i}] {lbl}" for i, lbl in enumerate(lines, 1))
-
-
-def _build_util_fallback_entries(chunk_lookup):
-    """Fallback when the second-pass selector returned nothing.
-
-    One representative from EVERY RAG in the manifest (best util within
-    each RAG), ordered by util descending. Returns list of (rag, id, note)
-    triples matching the selector output shape."""
-    if not chunk_lookup:
-        return []
-    from collections import defaultdict
-    by_rag = defaultdict(list)
-    for meta in chunk_lookup.values():
-        by_rag[meta.get("rag", "")].append(meta)
-    picked = []
-    for rag, items in by_rag.items():
-        best = max(items, key=lambda m: m.get("util", 0.0))
-        picked.append(best)
-    picked.sort(key=lambda m: -m.get("util", 0.0))
-    return [(m.get("rag", ""), m.get("id", ""), "(auto: 選定エージェント未実行)")
-            for m in picked]
-
-
-def _build_knowledge_section(entries, chunk_lookup, title_cap=20,
-                              note_cap=30):
-    """Assemble the ## Reference Knowledge section from the selector output.
-
-    entries       — list of (rag, id, usage_note) from _detect_used_chunks
-                    or _build_util_fallback_entries.
-    chunk_lookup  — {(rag, id): {rag, id, title, util, ...}} from
-                    _build_cite_knowledge_manifest.
-
-    Format per line:
-        - (RAG_NAME)Title-truncated: note-truncated
-
-    (The Knowledge Utility score is intentionally omitted here — the
-    numeric value routed via the manifest didn't reliably correspond to
-    the actual chunk the selector picked, so showing it was misleading.
-    The util is still stored in the debug dict for [Reference Knowledge
-    Debug] in Detail Information if needed.)
-
-    Entries whose (rag, id) doesn't map back to the manifest are dropped
-    silently — the selector occasionally hallucinates an ID, and showing
-    those rows confused the user more than it helped. If every entry
-    drops, the whole section is suppressed (returns ""); the caller must
-    NOT emit a bare header in that case."""
-    import logging as _lg_ks
-    if not entries:
-        return ""
-    lines = []
-    dropped = 0
-    for rag, cid, note in entries:
-        meta = chunk_lookup.get((rag, cid))
-        if meta is None:
-            dropped += 1
-            continue
-        display_rag = meta.get("rag", rag)
-        display_title = meta.get("title", cid)
-        _t = display_title[:title_cap] + "..." if len(display_title) > title_cap else display_title
-        _n = (note or "").replace("\n", " ").strip()
-        if len(_n) > note_cap:
-            _n = _n[:note_cap] + "..."
-        lines.append(f"- ({display_rag}){_t}: {_n}")
-    _lg_ks.getLogger(__name__).info(
-        f"[cite_knowledge] emitting {len(lines)} rows "
-        f"({len(entries) - dropped}/{len(entries)} matched against manifest of "
-        f"{len(chunk_lookup)} chunks; {dropped} dropped as unmatched)")
-    if not lines:
-        return ""
-    return "## Reference Knowledge\n" + "\n".join(lines)
-
 # B-3: Common USER_INPUT resolution
 def _resolve_chain_ref(results, ref_subseq, field):
     """Resolve `OUTPUT_n` / `INPUT_n` against the chain results.
@@ -702,45 +301,6 @@ def _situation_prompts(situation):
     return situation_prompt, situation_prompt_support
 
 
-def _build_web_search_text(query, thinking_query="", digest_text="",
-                           situation_prompt="", situation_support=""):
-    """Search text shared by the built-in web search, Thinking's preview search
-    and WebSearch SKILLs.
-
-    Every path carries the situation and a date anchor — engines resolve
-    "yesterday" / "recently" against their own idea of today otherwise — and
-    the paths must agree byte-for-byte for the preview cache to be reused.
-    """
-    ref = ""
-    if digest_text:
-        ref += "\n\n[参考]これまでの会話:\n" + digest_text
-    if situation_prompt:
-        ref += "\n\n[参考]今の状況:\n" + situation_prompt
-    if thinking_query:
-        text = "検索して欲しい内容:\n" + thinking_query + "\n\n[参考]元の質問:\n" + query + ref
-    elif ref:
-        text = "検索して欲しい内容:\n" + query + ref
-    else:
-        text = query
-    return text + _web_search_date_note(situation_support)
-
-
-def _web_search_date_note(situation_support: str) -> str:
-    """Date anchor appended to every web-search query.
-
-    Search engines resolve "last week" / "recently" against their own idea of
-    the current date, so without this a question about the past week comes
-    back with months-old articles.
-    """
-    import re as _re_d
-    m = _re_d.search(r"(\d{4})/(\d{2})/(\d{2})", situation_support or "")
-    if not m:
-        return ""
-    return (f"\n\n[重要]今日の日付は {m.group(1)}年{m.group(2)}月{m.group(3)}日 です。"
-            f"「先週」「最近」などの相対表現はこの日付を基準に解釈し、"
-            f"この日付より新しい情報は存在しない点に注意してください。")
-
-
 def _build_meta_searches(service_info, user_info, session_id, session_name, support_agent,
                          user_query, memories_selected, situation_prompt, query_vec, meta_search,
                          agent=None):
@@ -819,32 +379,49 @@ def _build_meta_searches(service_info, user_info, session_id, session_name, supp
 
     return [], {}
 
-# SKILL orchestrator: BEFORE / CONTEXT / AFTER phased runners around HABIT.
+# SKILL orchestrator: BEFORE / AFTER runners around HABIT.
 # ---------------------------------------------------------------------------
-# Skills are agent capabilities independent of HABIT. Each entry declares a
-# PHASE that decides when it runs:
-#   BEFORE  — runs before the HABIT practice; each execution is saved to the
-#             chat history as its own sub_seq with role="skill" so it appears
-#             as "SKILL(<name>)" in the transcript.
-#   CONTEXT — runs before the HABIT practice; the tool's textual output is
-#             wrapped as reference material and appended to user_query so
-#             the HABIT LLM (and RAG query generator) sees it. Also logged
-#             to output_reference for the Reference Info card.
-#   AFTER   — runs after the HABIT practice; the HABIT response is passed
-#             as input. Saved as its own sub_seq like BEFORE.
-# Selection is `slash_pick > thinking-picked`, deduped, order preserved.
+# A SKILL is an agent capability that runs inside one generation, so it never
+# becomes a turn of its own — it has two places to go and a MERGE that says
+# what happens to its output:
+#   BEFORE — runs before the HABIT practice.
+#            CONTEXT: wrapped as reference material and appended to user_query
+#                     so the HABIT LLM and the RAG query generator see it.
+#            PROMPT:  appended to user_query as-is (an instruction).
+#            RECORD:  nothing injected; the call ran for its side effect.
+#            The injected text stays out of the stored conversation; only
+#            `prompt.skills[<name>]` keeps it, for Detail / Reference Info.
+#   AFTER  — runs after the HABIT practice, on the answer of record.
+#            REPLACE: the result becomes the answer. Several REPLACE skills are
+#                     run as ONE post-processing pass where the tools allow it,
+#                     since chaining them means one LLM round trip each.
+#            APPEND:  shown after the answer under HEADER, recorded in
+#                     `response.skills[<name>]` rather than in `response.text`
+#                     so memory, digests and analytics keep seeing the answer.
+#            RECORD:  recorded only; the answer is untouched.
+# Flag skills (dma.FLAG_SKILLS) ride the same selection path but are not
+# invoked: they come back under the "FLAGS" key and the caller turns their
+# execution flag on instead.
+# Selection is `slash_pick > manual > magic word > thinking`, deduped; each
+# phase is then run in SKILL.ORDER so the embedding order is the author's.
 def _collect_skill_selections(agent, thinking_result, slash_pick=None,
-                                user_query="", manual_picks=None):
+                                user_query="", manual_picks=None,
+                                candidate_picks=None, thinking_decides=False):
     """Return {phase: [names]} using agent.skill_tools for phase lookup.
 
     Selection precedence (highest first, dedup preserves order):
       1. slash_pick               — explicit /command
-      2. manual_picks              — the SKILL multiselect shown when
-                                     Thinking Mode is OFF (explicit choice)
+      2. manual_picks              — the SKILL multiselect (explicit choice)
       3. SKILL.MAGIC_WORDS match   — auto-fire when a magic word is in the
                                      user's query (mirrors HABIT.MAGIC_WORDS)
       4. thinking_result["tools"]  — Thinking Agent judged based on the
                                      SKILL description
+
+    `candidate_picks` are the picks that are only on because of their
+    `SKILL.DEFAULT`. With `thinking_decides` they are suggestions rather than
+    orders: Thinking has to keep one for it to run. A default-on tool used to
+    fire on every single turn no matter what Thinking judged, which made the
+    judgement cosmetic.
     """
     skill_tools = getattr(agent, "skill_tools", {}) or {}
     slash_names = [slash_pick] if slash_pick and slash_pick in skill_tools else []
@@ -857,26 +434,50 @@ def _collect_skill_selections(agent, thinking_result, slash_pick=None,
                 magic_names.append(name)
     thinking_names = [n for n in list((thinking_result or {}).get("tools") or [])
                        if n in skill_tools]
+    # Thinking is asked what the turn needs in order to *answer*, so only a
+    # BEFORE skill is a question it can rule on. An AFTER skill is output
+    # policy, and a flag skill is kept out of the Thinking prompt entirely
+    # (it has no registry entry to describe), so putting either up for
+    # judgement would just switch it off on every turn.
+    cand_names = set()
+    if thinking_decides:
+        cand_names = {n for n in (candidate_picks or [])
+                       if n in skill_tools and n not in dma.FLAG_SKILLS
+                       and dma.normalize_skill_phase(
+                           (skill_tools.get(n) or {}).get("PHASE")) == "BEFORE"}
+    forced = set(slash_names) | set(magic_names) | set(thinking_names)
     seen = set()
     ordered = []
     for n in slash_names + manual_names + magic_names + thinking_names:
-        if n not in seen:
-            seen.add(n)
-            ordered.append(n)
-    out = {"BEFORE": [], "CONTEXT": [], "AFTER": []}
+        if n in seen or (n in cand_names and n not in forced):
+            continue
+        seen.add(n)
+        ordered.append(n)
+    out = {"BEFORE": [], "AFTER": [], "FLAGS": []}
     for n in ordered:
-        phase = (skill_tools.get(n, {}).get("PHASE") or "CONTEXT").upper()
-        if phase in out:
-            out[phase].append(n)
+        # A flag skill has no registry entry, so routing it to a phase would
+        # only produce an "[Error running SKILL:...]" result.
+        if n in dma.FLAG_SKILLS:
+            out["FLAGS"].append(n)
+            continue
+        out[dma.normalize_skill_phase((skill_tools.get(n) or {}).get("PHASE"))].append(n)
+    for _phase in ("BEFORE", "AFTER"):
+        out[_phase] = dma.sort_skill_names(out[_phase], skill_tools)
     return out
 
 
 def _invoke_skill(service_info, user_info, session_id, session_name,
                    agent_file, skill_name, skill_input, add_info=None):
-    """Call a registered tool by name. Normalises 4-tuple / generator returns
-    into (text, export_contents). Any exception is surfaced as a
-    `[Error]` prefixed text so the caller can still complete the turn."""
+    """Call a registered tool by name.
+
+    Returns `(text, export_contents, meta)`. `meta` carries the model and the
+    token counts an LLM-backed tool reports, which used to be dropped here —
+    a SKILL that calls a support agent then cost tokens nothing accounted for.
+    Any exception is surfaced as an `[Error]` prefixed text so the caller can
+    still complete the turn.
+    """
     add_info = add_info or {}
+    _meta = {"model": "", "prompt_token": 0, "response_token": 0, "error": False}
     try:
         result = dmt.call_function_by_name(
             service_info, user_info, skill_name,
@@ -884,7 +485,8 @@ def _invoke_skill(service_info, user_info, session_id, session_name,
             skill_input, [], add_info,
         )
     except Exception as _e:
-        return f"[Error running SKILL:{skill_name}] {_e}", []
+        _meta["error"] = True
+        return f"[Error running SKILL:{skill_name}] {_e}", [], _meta
     if inspect.isgenerator(result):
         out_text = ""
         exp = []
@@ -895,92 +497,99 @@ def _invoke_skill(service_info, user_info, session_id, session_name,
                 out_text += dmu.sanitize_text(str(tup[2]))
             if len(tup) >= 4 and tup[3] is not None:
                 exp = tup[3]
-        return out_text, exp
+        return out_text, exp, _meta
     if isinstance(result, (list, tuple)):
         n = len(result)
         # LLM tools return 6-tuples (svc, usr, text, model, ptok, rtok);
         # direct-action tools return 4-tuples (svc, usr, text, export).
         # Disambiguate by exact length so index 3 isn't mis-read as export.
         if n == 6:
-            return str(result[2] or ""), []
+            _meta["model"] = str(result[3] or "")
+            _meta["prompt_token"] = _as_int(result[4])
+            _meta["response_token"] = _as_int(result[5])
+            return str(result[2] or ""), [], _meta
         if n >= 4:
             _, _, out_text, exp = result[:4]
-            return str(out_text or ""), (exp or [])
-    return str(result), []
+            return str(out_text or ""), (exp or []), _meta
+    return str(result), [], _meta
 
 
-def _wrap_skill_context(name, text):
-    """Guardrail wrapper around a CONTEXT skill result. Softer than the
-    original Web Search wording so the LLM keeps concrete facts (proper
-    nouns, numbers, dates) from the reference — the 'don't copy verbatim'
-    rule kept discouraging the LLM from naming specific entities like
-    player names in Web Search results. Persona still wins on tone."""
-    return (
-        f"\n[Reference material — SKILL:{name} result (start)]\n"
-        "Rules for using this block:\n"
-        "- Ground your answer in this material: keep specific facts (proper "
-        "nouns, numbers, dates, quotes) accurate to what's written here.\n"
-        "- Do NOT quote whole paragraphs verbatim — rephrase in your own voice.\n"
-        "- Tone, vocabulary, and perspective follow your own persona.\n"
-        "- The user's intent leads; use only the facts relevant to their question.\n"
-        "- If the material contains numbered citations like [1], [2], you may "
-        "reuse those markers verbatim in your answer to attribute claims.\n"
-        "---\n"
-        f"{text}\n"
-        f"---\n[SKILL:{name} END]\n"
-    )
+def _as_int(value):
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
-_SKILL_WRAP_RE = re.compile(
-    r"\n?\[Reference material — SKILL:[^\]]+ result \(start\)\].*?\[SKILL:[^\]]+ END\]\n?",
-    re.DOTALL,
-)
+def _replace_status_messages(names):
+    """Status lines for the REPLACE group — one line when several skills share
+    the pass, so the UI does not look like it is doing N separate things."""
+    if len(names) == 1:
+        return [f"SKILL[AFTER]:{names[0]}"]
+    return [f"SKILL[AFTER]:{'+'.join(names)}"]
 
 
-def _strip_skill_wraps(text):
-    """Remove CONTEXT-SKILL guardrail-wrapped blocks from a stored prompt
-    string. The wraps are needed at LLM generation time but users don't want
-    them in the chat display or in later memory retrieval — they show up as
-    huge inline blocks in the previous-user-turn body otherwise."""
-    if not text:
-        return text
-    return _SKILL_WRAP_RE.sub("", text)
+def _run_replace_skills(service_info, user_info, session_id, session_name,
+                         agent_file, agent, names, body):
+    """Run the REPLACE skills as ONE post-processing step over `body`.
 
+    Returns `(new_body, logs)`. Whatever the skills do, the answer is split,
+    written and recorded once, so the turn carries a single rewrite instead of
+    one per skill and the chat never shows an intermediate version.
 
-def _skill_history_entry(name, skill_input, output_text, export_contents,
-                          seq, sub_seq, situation, agent_file, session_name):
-    """Build the save_history_batch payload for a BEFORE / AFTER SKILL turn."""
-    ts = str(datetime.now())
-    return {
-        str(sub_seq): {
-            "setting": {
-                "response_service_info": {},
-                "response_user_info": {},
-                "session_name": session_name,
-                "situation": situation,
-                "type": "SKILL",
-                "agent_file": agent_file,
-                "agent_name": f"SKILL({name})",
-                "name": f"SKILL:{name}",
-                "skill_name": name,
-                "phase": None,  # filled by caller
-            },
-            "prompt": {
-                "role": "neither",
-                "timestamp": ts,
-                "text": skill_input,
-                "query": {"token": 0, "input": skill_input, "text": skill_input,
-                          "contents": [], "situation": {}},
-            },
-            "response": {
-                "role": "skill",
-                "timestamp": ts,
-                "token": 0,
-                "text": output_text,
-                "export_contents": export_contents or [],
-            },
+    The LLM calls are still one per skill, because each tool owns its own
+    prompt. Sharing a single call needs the tools to expose their instructions
+    so they can be merged, which is only decidable once a second REPLACE tool
+    exists — until then the chain is what keeps the result correct, since each
+    skill must see what the previous one produced.
+    """
+    _logs = {}
+    _text = body
+    for _sk in names:
+        _cfg_sk = agent.skill_tools.get(_sk) or {}
+        _out, _exp, _meta = _invoke_skill(
+            service_info, user_info, session_id, session_name,
+            agent_file, _sk, _text, add_info=(_cfg_sk.get("ARGS_HINT") or {}),
+        )
+        _failed = (not _out) or _meta.get("error") or _out.startswith("[Error running SKILL:")
+        if _failed:
+            import logging as _lg_rw
+            _lg_rw.getLogger(__name__).warning(
+                f"[skill:{_sk}] REPLACE skipped; answer left as it was")
+        _logs[_sk] = {
+            "phase": "AFTER",
+            "merge": "REPLACE",
+            "order": _cfg_sk.get("ORDER"),
+            "header": "",
+            "applied": not _failed,
+            "chars_in": len(_text),
+            "chars_out": 0 if _failed else len(_out.rstrip()),
+            "export_contents": _exp or [],
+            "model": _meta.get("model", ""),
+            "prompt_token": _meta.get("prompt_token", 0),
+            "response_token": _meta.get("response_token", 0),
+            "error": bool(_meta.get("error")),
         }
-    }
+        if not _failed:
+            _text = _out.rstrip()
+    return _text, _logs
+
+
+def _saved_answer(session, seq):
+    """(sub_seq, text) of the turn's answer of record — the last LLM entry.
+
+    Taken from the saved history rather than the chain's return value because
+    citation injection happens while the entry is written, so only the stored
+    text is what the user actually sees.
+    """
+    _turn = (session.get_history() or {}).get(str(seq)) or {}
+    _llm = [k for k, v in _turn.items()
+            if str(k).isdigit() and isinstance(v, dict)
+            and (v.get("setting") or {}).get("type") == "LLM"]
+    if not _llm:
+        return None, ""
+    _k = max(_llm, key=lambda n: int(n))
+    return _k, ((_turn[_k].get("response") or {}).get("text") or "")
 
 
 # B-4: Run Thinking Agent (analyze the question and decide execution parameters)
@@ -1323,7 +932,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         timestamp_log += "[06.Web search start]" + str(datetime.now()) + "<br>"
         # Prefer the Thinking-generated web search query, if any
         _thinking_result = execution.get("_THINKING_RESULT", {})
-        search_text = _build_web_search_text(
+        search_text = dmt.build_web_search_text(
             user_query, _thinking_result.get("web_search_query", ""), digest_text,
             situation_prompt, situation_prompt_support)
         _setting = system_setting_dict
@@ -1572,8 +1181,12 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
 
     # Formatting instructions ride at the tail so they apply to the whole turn
     # without displacing the persona/template voice set above.
-    _format_prompt = DIAGRAM_INSTRUCTION if cfg.get("diagram_mode") else ""
-    _format_prompt += EMPHASIS_INSTRUCTION if cfg.get("emphasis_mode") else ""
+    # Wording lives in `user/common/tool/output_format.py`; a missing plugin
+    # must not take the turn down, so the flag just adds nothing.
+    _format_prompt = (getattr(dmt, "DIAGRAM_INSTRUCTION", "")
+                      if cfg.get("diagram_mode") else "")
+    _format_prompt += (getattr(dmt, "EMPHASIS_INSTRUCTION", "")
+                       if cfg.get("emphasis_mode") else "")
 
     # Cite-knowledge manifest: pre-build the (rag, id) -> meta lookup of
     # every non-book chunk in this turn. The primary prompt no longer
@@ -1582,7 +1195,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     # which chunks were used after the primary answer is produced.
     _cite_chunk_lookup = {}
     if cfg.get("cite_knowledge") and model_type == "LLM":
-        _cite_chunk_lookup = _build_cite_knowledge_manifest(
+        _cite_chunk_lookup = dmt.build_manifest(
             knowledge_selected, agent.agent)
 
     if model_type == "LLM":
@@ -1686,7 +1299,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                 query_labels.append({
                     "seq": _qi,
                     "kind": _kind,
-                    "preview": _strip_skill_wraps(str(_qt or "")).replace("\n", " ").strip()[:60],
+                    "preview": dmt.strip_skill_wraps(str(_qt or "")).replace("\n", " ").strip()[:60],
                 })
         except Exception as _qv_e:
             import logging as _lg_qv
@@ -1703,12 +1316,24 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             "persona_id": getattr(agent, "persona_id", "") or "",
             "persona_name": getattr(agent, "persona_name", "") or "",
         }
+        _stored_query_text = dmt.strip_skill_wraps(user_query)
+        # Re-counted rather than reused: this number is the memory budget for
+        # the text actually stored, so it has to describe that text.
+        _stored_query_tokens = (query_tokens if _stored_query_text == user_query
+                                else dmu.count_token(tokenizer, model_name, _stored_query_text))
         prompt_chat_dict = {
             "role": "user",
             "timestamp": timestamp_begin,
             "token": prompt_tokens,
             "query": {
-                "input": user_input, "token": query_tokens, "text": user_query,
+                # What a BEFORE skill injected is not part of the conversation:
+                # it is reference material for this one generation. Stored
+                # unstripped it came back as the user's own words on the next
+                # turn, because memory retrieval reads this field verbatim.
+                # The full block stays in `prompt.skills[<name>].wrapped`.
+                "input": dmt.strip_skill_wraps(user_input),
+                "token": _stored_query_tokens,
+                "text": _stored_query_text,
                 "contents": contents_record_to, "situation": situation,
                 "tools": [], "vec_file": query_vec_file,
                 "queries_vec_file": queries_vec_file, "query_labels": query_labels
@@ -1716,6 +1341,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             "thinking": thinking_log,
             "web_search": web_search_log,
             "skills": execution.get("_SKILL_CONTEXT_LOGS") or {},
+            "skills_selected": execution.get("_SELECTED_SKILLS") or {},
             "agent_search": exec_info.get("_AGENT_SEARCH_LOG", []),
             "function_search": exec_info.get("_FUNCTION_SEARCH_LOG", []),
             "RAG_query_genetor": RAG_query_gene_log,
@@ -1785,7 +1411,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                     "type": "book",
                     "rag_name": _c.get("rag", ""),
                     "title": _c.get("title", "") or _c.get("ID", ""),
-                    "snippet": _sanitize_reference_snippet(
+                    "snippet": dmt.sanitize_reference_snippet(
                         _c.get("value_text_short") or _c.get("value_text") or "",
                         max_len=60),
                 })
@@ -1796,7 +1422,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                     "type": "book",
                     "rag_name": _kv.get("rag", ""),
                     "title": _kv.get("title", "") or _kv.get("page_id", ""),
-                    "snippet": _sanitize_reference_snippet(
+                    "snippet": dmt.sanitize_reference_snippet(
                         _kv.get("summary") or "", max_len=60),
                 })
 
@@ -1855,7 +1481,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                     # Search + Reference Knowledge were both on. Fall back to
                     # a plain References block built directly from the source
                     # list, without inline [N] markers in the body.
-                    _refs_block = _build_plain_references_block(_ci_sources)
+                    _refs_block = dmt.build_plain_references_block(_ci_sources)
                     if _refs_block and "## Reference Info" not in response:
                         response = f"{(response or '').rstrip()}\n\n{_refs_block}"
                         response_chat_dict["text"] = response
@@ -1886,7 +1512,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                 # Same fallback as the rejected-injection path — the user
                 # asked to see references whenever Web/Book were searched,
                 # so even on injector failure we surface the source list.
-                _refs_block = _build_plain_references_block(_ci_sources)
+                _refs_block = dmt.build_plain_references_block(_ci_sources)
                 if _refs_block and "## Reference Info" not in response:
                     response = f"{(response or '').rstrip()}\n\n{_refs_block}"
                     response_chat_dict["text"] = response
@@ -1919,13 +1545,13 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                 else:
                     # Refresh util now that similarity_response is stamped
                     # (Detail Information reads this from the debug dict).
-                    _refresh_chunk_util(_cite_chunk_lookup, knowledge_selected)
+                    dmt.refresh_chunk_util(_cite_chunk_lookup, knowledge_selected)
                     _selector_agent = dma.resolve_support_agent(
                         (agent.agent.get("SUPPORT_AGENT") or {}).get(
                             "KNOWLEDGE_USAGE_SELECTOR", "agent_58KnowledgeUsageSelector.json"),
                         agent.agent)
                     _ck_dbg["selector_agent"] = _selector_agent
-                    _entries = _detect_used_chunks(
+                    _entries = dmt.detect_used_chunks(
                         service_info, user_info, session_id, session_name,
                         _selector_agent, response, _cite_chunk_lookup)
                     _ck_dbg["selector_entries"] = len(_entries)
@@ -1936,13 +1562,13 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                         for rag, cid, note in _entries
                     ]
                     if not _entries:
-                        _entries = _build_util_fallback_entries(_cite_chunk_lookup)
+                        _entries = dmt.build_util_fallback_entries(_cite_chunk_lookup)
                         _ck_dbg["fallback_used"] = True
                         _log.info(
                             f"[cite_knowledge] fallback (one per RAG) -> "
                             f"{len(_entries)} entries"
                         )
-                    _ks = _build_knowledge_section(_entries, _cite_chunk_lookup)
+                    _ks = dmt.build_knowledge_section(_entries, _cite_chunk_lookup)
                     if _ks:
                         # Append AFTER any ## Reference Info the citation
                         # injector just added, so the two sections coexist:
@@ -1951,7 +1577,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                         response = f"{(response or '').rstrip()}\n\n{_ks}"
                         response_chat_dict["text"] = response
                         # Count matched only — unmatched rows are dropped from
-                        # the visible section by _build_knowledge_section.
+                        # the visible section by cite_knowledge.build_knowledge_section.
                         _ck_dbg["emitted_rows"] = sum(
                             1 for rag, cid, _n in _entries
                             if (rag, cid) in _cite_chunk_lookup)
@@ -2031,8 +1657,10 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             # Use user_info.NAME for the speaker; fall back to USER_ID when absent (no master lookup)
             _udisp = (user_info or {}).get("NAME") or (user_info or {}).get("USER_ID") or "(unknown)"
             _aname = getattr(agent, "name", "") or "AI"
+            # The digest summarises the conversation, so it gets the user's
+            # words — not the reference material a BEFORE skill injected.
             _slim_memories.append({"role": "user", "kind": "latest_turn",
-                                     "text": f"[User: {_udisp}] {user_query}"})
+                                     "text": f"[User: {_udisp}] {dmt.strip_skill_wraps(user_query)}"})
             _slim_memories.append({"role": "assistant", "kind": "latest_turn",
                                      "text": f"[Agent: {_aname}] {response}"})
 
@@ -2103,7 +1731,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             _summary_enabled, _summary_tpl, _summary_prev = False, "", ""
         if _summary_enabled and _summary_tpl:
             _summ_job_id = djr.new_job_id()
-            _summ_agent_file = _get_session_summary_agent_file(agent, in_agent_file)
+            _summ_agent_file = _get_session_summary_agent_file(agent, agent_file)
             def _summary_wrapper():
                 try:
                     _new_summary, _ = update_session_summary(
@@ -2325,7 +1953,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                     continue
                 _preview_query = _tr.get("web_search_query", "") or ""
                 _ws_main, _ws_support = _situation_prompts(in_situation)
-                _search_text = _build_web_search_text(
+                _search_text = dmt.build_web_search_text(
                     user_query, _preview_query, _thinking_digest, _ws_main, _ws_support)
                 session.save_status_message(f"{_label}: preview web search")
                 yield service_info, user_info, f"[STATUS]{_label}: preview web search...", {}
@@ -2428,14 +2056,46 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
         # user explicitly opts out via the multiselect.
         _slash_pick = in_execution.get("_SLASH_SKILL_PICK") or None
         _thinking_tools_target_on = bool(_targets.get("tools", True))
+        # Only hand the decision over when Thinking actually produced one:
+        # an empty result (Thinking off, or its call failed) must not strip
+        # the agent's default skills.
+        _candidate_picks = in_execution.get("_CANDIDATE_SKILL_PICKS") or []
+        _thinking_decides = bool(_thinking_tools_target_on and thinking_result)
         _selected_skills = _collect_skill_selections(
             agent,
             thinking_result if _thinking_tools_target_on else None,
             slash_pick=_slash_pick,
             user_query=user_query,
             manual_picks=in_execution.get("_MANUAL_SKILL_PICKS") or [],
+            candidate_picks=_candidate_picks,
+            thinking_decides=_thinking_decides,
         )
         in_execution["_SELECTED_SKILLS"] = _selected_skills
+
+        # The WebSearch flag path searches on its own behalf, so a declined
+        # WebSearch SKILL has to take the flag down with it — otherwise the
+        # turn searches anyway and only the attribution changes.
+        if cfg["web_search"] and _thinking_decides:
+            _sel_all = set(_selected_skills["BEFORE"]) | set(_selected_skills["AFTER"]) \
+                        | set(_selected_skills["FLAGS"])
+            if any((n == "WebSearch" or n.startswith("WebSearch_")) and n not in _sel_all
+                    for n in _candidate_picks):
+                cfg["web_search"] = False
+
+        # Fold the selected flag skills into the settings every chain parses.
+        # Done here rather than in the UI alone so a Thinking-picked or
+        # magic-word-triggered flag reaches the chains too.
+        for _fs in (_selected_skills.get("FLAGS") or []):
+            _exec_key = (dma.FLAG_SKILLS.get(_fs) or {}).get("EXEC_KEY")
+            if _exec_key:
+                in_execution[_exec_key] = True
+        if in_execution.get("MATCH_INPUT_LANGUAGE"):
+            # The auto-language policy lives in the system prompt, so it has to
+            # arrive as a PERSONALITY override. Rebind instead of mutating the
+            # caller's dict.
+            _pers_auto = dict((in_overwrite_items or {}).get("PERSONALITY") or {})
+            _pers_auto["LANGUAGE"] = "__AUTO__"
+            in_overwrite_items = {**(in_overwrite_items or {}), "PERSONALITY": _pers_auto}
 
         # Book selection: auto-add based on Thinking output
         if thinking_result and _targets.get("books", True) and "books" in thinking_result:
@@ -2495,37 +2155,19 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
             in_execution["_THINKING_RESULT"]["personas_selected_ids"] = _selected_ids
             yield service_info, user_info, f"[STATUS]Personas selected: {len(_thinking_personas)} ({', '.join(p.get('name','?') for p in _thinking_personas)})", {}
 
-        # -------- SKILL orchestrator (BEFORE + CONTEXT) --------
-        _sel = in_execution.get("_SELECTED_SKILLS") or {"BEFORE": [], "CONTEXT": [], "AFTER": []}
+        # -------- SKILL orchestrator (BEFORE) --------
+        # One loop for every BEFORE skill, run in SKILL.ORDER. MERGE decides
+        # where the result goes; none of them becomes a turn, so the practice
+        # chain keeps the sub_seq it would have had with no skills selected.
+        _sel = in_execution.get("_SELECTED_SKILLS") or {"BEFORE": [], "AFTER": []}
         _skill_ctx_logs = {}
-        _seq_now = session.get_seq_history() + 1 if sub_seq == 1 else session.get_seq_history()
 
-        # BEFORE — each skill saved as its own sub_seq with role="skill".
-        # Each entry advances sub_seq, so the practice chain sub_seqs pick up
-        # from the next value automatically.
         for _sk in _sel.get("BEFORE") or []:
+            _cfg_sk = agent.skill_tools.get(_sk) or {}
+            _merge = _cfg_sk.get("MERGE") or "CONTEXT"
             session.save_status_message(f"SKILL[BEFORE]:{_sk}")
             yield service_info, user_info, f"[STATUS]SKILL[BEFORE]:{_sk}", {}
-            _skill_out, _skill_exp = _invoke_skill(
-                service_info, user_info, session_id, session_name,
-                in_agent_file, _sk, user_query,
-                add_info=(agent.skill_tools.get(_sk, {}).get("ARGS_HINT") or {}),
-            )
-            _entry = _skill_history_entry(_sk, user_query, _skill_out, _skill_exp,
-                                           _seq_now, sub_seq, in_situation,
-                                           in_agent_file, session.session_name)
-            _entry[str(sub_seq)]["setting"]["phase"] = "BEFORE"
-            session.save_history_batch(str(_seq_now), _entry)
-            sub_seq += 1
-
-        # CONTEXT — result wrapped as reference material and appended to
-        # user_query, so it flows into RAG query gen + the main LLM chain
-        # identically to the existing Web Search injection. Also logged to
-        # output_reference for the Reference Info panel.
-        for _sk in _sel.get("CONTEXT") or []:
-            session.save_status_message(f"SKILL[CONTEXT]:{_sk}")
-            yield service_info, user_info, f"[STATUS]SKILL[CONTEXT]:{_sk}", {}
-            _add_info = dict(agent.skill_tools.get(_sk, {}).get("ARGS_HINT") or {})
+            _add_info = dict(_cfg_sk.get("ARGS_HINT") or {})
             _skill_input = user_query
             _is_ws = _sk == "WebSearch" or str(_sk).startswith("WebSearch_")
             if _is_ws:
@@ -2537,7 +2179,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                     _, _, _dd = session.get_history_max_digest()
                     _ws_digest = _dd.get("text", "") if isinstance(_dd, dict) else ""
                 _ws_main, _ws_support = _situation_prompts(in_situation)
-                _skill_input = _build_web_search_text(
+                _skill_input = dmt.build_web_search_text(
                     user_query, (thinking_result or {}).get("web_search_query", ""),
                     _ws_digest, _ws_main, _ws_support)
                 if _sk == "WebSearch":
@@ -2547,23 +2189,39 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
             if (_sk == "WebSearch" and _wsc.get("result_text") is not None
                     and _wsc.get("engine") == _add_info.get("engine")
                     and _wsc.get("search_text") == _skill_input):
-                _skill_out, _skill_exp = _wsc["result_text"], (_wsc.get("urls") or [])
+                _skill_out = _wsc["result_text"]
+                _skill_exp = _wsc.get("urls") or []
+                _skill_meta = {"model": "", "prompt_token": 0, "response_token": 0,
+                               "error": False, "cached": True}
             else:
-                _skill_out, _skill_exp = _invoke_skill(
+                _skill_out, _skill_exp, _skill_meta = _invoke_skill(
                     service_info, user_info, session_id, session_name,
                     in_agent_file, _sk, _skill_input, add_info=_add_info,
                 )
-            _wrapped = _wrap_skill_context(_sk, _skill_out)
-            user_query = f"{user_query}\n{_wrapped}"
+            _wrapped = ""
+            if _skill_out and not _skill_meta.get("error"):
+                if _merge == "CONTEXT":
+                    _wrapped = dmt.wrap_skill_context(_sk, _skill_out, _cfg_sk.get("HEADER"))
+                elif _merge == "PROMPT":
+                    _wrapped = dmt.wrap_skill_prompt(_sk, _skill_out, _cfg_sk.get("HEADER"))
+            if _wrapped:
+                user_query = f"{user_query}\n{_wrapped}"
             _skill_ctx_logs[_sk] = {
-                "phase": "CONTEXT",
-                "as_reference": bool(agent.skill_tools.get(_sk, {}).get("AS_REFERENCE", True)),
+                "phase": "BEFORE",
+                "merge": _merge,
+                "order": _cfg_sk.get("ORDER"),
+                "header": _cfg_sk.get("HEADER") or "",
+                "as_reference": bool(_cfg_sk.get("AS_REFERENCE", True)),
                 "raw": _skill_out,
                 "wrapped": _wrapped,
                 "export_contents": _skill_exp or [],
                 "input": _skill_input,
+                "model": _skill_meta.get("model", ""),
+                "prompt_token": _skill_meta.get("prompt_token", 0),
+                "response_token": _skill_meta.get("response_token", 0),
+                "error": bool(_skill_meta.get("error")),
             }
-        # Stash CONTEXT logs on the practice-execution so downstream can
+        # Stash BEFORE logs on the practice-execution so downstream can
         # persist them into `prompt.skills` (mirrors how `web_search_log`
         # is persisted via `prompt.web_search`).
         in_execution["_SKILL_CONTEXT_LOGS"] = _skill_ctx_logs
@@ -2653,6 +2311,10 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                     # per-chain DigiMatsuExecute can persist them into
                     # `prompt.skills` (visible in Detail Info → User query).
                     "_SKILL_CONTEXT_LOGS": in_execution.get("_SKILL_CONTEXT_LOGS", {}),
+                    # The whole per-phase selection, so the turn records which
+                    # SKILLs ran — including the flag ones, which leave no log
+                    # of their own because they are never invoked.
+                    "_SELECTED_SKILLS":  in_execution.get("_SELECTED_SKILLS", {}),
                     "_UNLOCK_ON_DIGEST": _is_last_chain,
                     # User Memory: propagate the immediate UI override downstream (None=unspecified -> downstream falls back to user master / system default)
                     "USER_MEMORY_LAYERS": in_execution.get("USER_MEMORY_LAYERS"),
@@ -2937,25 +2599,78 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
             sub_seq += 1
 
         # -------- SKILL orchestrator (AFTER) --------
-        # AFTER skills see the HABIT's final response as input, so they can
-        # e.g. post-process / archive / summarise it. Each execution is
-        # saved as its own sub_seq with role="skill".
-        _after_input_text = (results[-1]["OUTPUT"] if results else user_query) or user_query
+        # Nothing here becomes a turn. REPLACE skills edit the answer of
+        # record; APPEND / RECORD skills are stored beside it so memory,
+        # digests and analytics keep seeing the answer the agent gave.
         _after_seq = session.get_seq_history()
-        for _sk in (_sel.get("AFTER") or []):
+        # Two views of the same answer, because they are not interchangeable.
+        # A rewriter has to edit the answer of record, and citation markers and
+        # the `## Reference Info` section are added while the entry is written
+        # — so the in-memory output is only a pre-citation draft. Skills that
+        # produce something new keep receiving that draft, as they always did.
+        _after_input_text = (results[-1]["OUTPUT"] if results else "") or user_query
+        _answer_sub_seq, _answer_text = _saved_answer(session, _after_seq) if cfg["memory_save"] \
+            else (None, "")
+        _after_all = list(_sel.get("AFTER") or [])
+        _replace_names = [n for n in _after_all
+                           if (agent.skill_tools.get(n) or {}).get("MERGE") == "REPLACE"]
+        _other_names = [n for n in _after_all if n not in _replace_names]
+        _skill_resp_logs = {}
+
+        # REPLACE — a rewriter never sees the citation list or the knowledge
+        # dump: those rows are parsed elsewhere and must survive verbatim.
+        if _replace_names:
+            _body, _tail = dmu.split_display_only_sections(
+                _answer_text or _after_input_text)
+            for _status in _replace_status_messages(_replace_names):
+                session.save_status_message(_status)
+                yield service_info, user_info, f"[STATUS]{_status}", {}
+            _new_body, _replace_logs = _run_replace_skills(
+                service_info, user_info, session_id, session_name, in_agent_file,
+                agent, _replace_names, _body)
+            _skill_resp_logs.update(_replace_logs)
+            if _new_body and _new_body.strip() != _body.strip():
+                _rewritten = _new_body.rstrip() + _tail
+                _answer_text = _rewritten
+                _after_input_text = _new_body.rstrip()
+                if results:
+                    results[-1]["OUTPUT"] = _rewritten
+                if _answer_sub_seq is not None:
+                    session.set_response_text_history(
+                        str(_after_seq), str(_answer_sub_seq), _rewritten,
+                        rewrite={"skill": "+".join(_replace_names),
+                                 "skills": _replace_names,
+                                 "original": _body,
+                                 "chars": len(_new_body.rstrip()),
+                                 "timestamp": str(datetime.now())},
+                    )
+
+        # APPEND / RECORD — recorded next to the answer, never inside it.
+        for _sk in _other_names:
+            _cfg_sk = agent.skill_tools.get(_sk) or {}
             session.save_status_message(f"SKILL[AFTER]:{_sk}")
             yield service_info, user_info, f"[STATUS]SKILL[AFTER]:{_sk}", {}
-            _skill_out, _skill_exp = _invoke_skill(
+            _skill_out, _skill_exp, _skill_meta = _invoke_skill(
                 service_info, user_info, session_id, session_name,
                 in_agent_file, _sk, _after_input_text,
-                add_info=(agent.skill_tools.get(_sk, {}).get("ARGS_HINT") or {}),
+                add_info=(_cfg_sk.get("ARGS_HINT") or {}),
             )
-            _entry = _skill_history_entry(_sk, _after_input_text, _skill_out, _skill_exp,
-                                           _after_seq, sub_seq, in_situation,
-                                           in_agent_file, session.session_name)
-            _entry[str(sub_seq)]["setting"]["phase"] = "AFTER"
-            session.save_history_batch(str(_after_seq), _entry)
-            sub_seq += 1
+            _skill_resp_logs[_sk] = {
+                "phase": "AFTER",
+                "merge": _cfg_sk.get("MERGE") or "APPEND",
+                "order": _cfg_sk.get("ORDER"),
+                "header": dmt.render_skill_header(_cfg_sk.get("HEADER"), _sk,
+                                                f"## SKILL:{_sk}"),
+                "text": _skill_out,
+                "export_contents": _skill_exp or [],
+                "model": _skill_meta.get("model", ""),
+                "prompt_token": _skill_meta.get("prompt_token", 0),
+                "response_token": _skill_meta.get("response_token", 0),
+                "error": bool(_skill_meta.get("error")),
+            }
+        if _skill_resp_logs and _answer_sub_seq is not None:
+            session.set_response_skills_history(
+                str(_after_seq), str(_answer_sub_seq), _skill_resp_logs)
 
         # B-5: Bulk-save SEQ-level logs
         seq = session.get_seq_history()

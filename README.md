@@ -1491,7 +1491,7 @@ Bedrock の Responses API は既定で**リクエストと応答を30日間サ�
 
 **Skills ターゲット**: Thinking Agent が SKILL リストの `- name: description` を見て SKILL 名を配列で返します（`tools` キーは互換維持）。返された SKILL は、`SKILL.TOOLS[name].PHASE` に従って **BEFORE / CONTEXT / AFTER のいずれかで自動発火** します。`HABIT.TOOL_PICK` を経由する旧設計は廃止（下の SKILL 節を参照）。
 
-**`web_search` フラグ vs `tools[]` の衝突対策**: Thinking Agent の判定に `web_search: true` と `tools: []` の二重路が存在するため、時事系クエリでは `web_search: true` が採用されて Tools 経路が発火しないことがあります。プロンプト側で「ToolInfo に WebSearch 系 SKILL があるなら必ず tools[] に入れて `web_search: false`」ルールを明示 + コード側で条件が揃えば `tools=["WebSearch"]` に自動昇格します（`reasoning` に `[auto-promoted: ...]` 追記、Detail Information で確認可能）。
+**`web_search` フラグ vs `tools[]` の衝突対策**: Thinking Agent の判定に `web_search: true` と `tools: []` の二重路が存在するため、時事系クエリでは `web_search: true` が採用されて Tools 経路が発火しないことがあります。プロンプト側で「**検索が必要と判定した場合に限り**、ToolInfo に WebSearch 系 SKILL があるなら tools[] に入れて `web_search: false`」という**経路のルール**を明示 + コード側で条件が揃えば `tools=["WebSearch"]` に自動昇格します（`reasoning` に `[auto-promoted: ...]` 追記、Detail Information で確認可能）。ここを「必ず入れる」と書くと検索の要否判定ごと潰れ、全ターン検索になるので注意。検索不要と判定したときに WebSearch が候補から落ちた場合は、組込みフラグ経路（`execution.WEB_SEARCH`）も一緒に落とします — ここを残すと判定に関係なく検索が走ります。
 
 #### EXECUTION_DEFAULTS（エージェント単位の実行既定値）
 
@@ -1506,12 +1506,8 @@ Bedrock の Responses API は既定で**リクエストと応答を30日間サ�
     "MAGIC_WORD_USE": true,
     "RAG_QUERY_GENE": true,
     "META_SEARCH": true,
-    "WEB_SEARCH": false,
     "WEB_SEARCH_GUARDRAIL": true,
     "WEB_SEARCH_ENGINE": "",
-    "CITE_KNOWLEDGE": true,
-    "DIAGRAM_MODE": false,
-    "EMPHASIS_MODE": false,
     "MAX_PERSONAS": 3,
     "TIME_MODE": "Real Date"
 }
@@ -1523,7 +1519,9 @@ Bedrock の Responses API は既定で**リクエストと応答を30日間サ�
 
 ただし `TIME_MODE` だけは、そのセッションを実際に実行したときのモードがセッションに保存されているため、**保存されたモード > `EXECUTION_DEFAULTS.TIME_MODE` > 現在の選択** の順で解決されます（過去セッションを開いても、そのとき使っていた時刻設定が保たれます）。
 
-省略されたフィールドはユーザー Defaults が生きます。「ユーザーの好み（言語 / speaking style / streaming ON/OFF 等）」は Defaults、「エージェントごとの推奨（RAG 検索の ON/OFF、Web Search をデフォルト ON にしたい支援エージェント等）」は EXECUTION_DEFAULTS、という棲み分け。
+省略されたフィールドはユーザー Defaults が生きます。「ユーザーの好み（言語 / speaking style / streaming ON/OFF 等）」は Defaults、「エージェントごとの推奨（RAG クエリ生成やメタ検索の ON/OFF 等）」は EXECUTION_DEFAULTS、という棲み分け。
+
+> **SKILL になった項目はここに書きません。** Web Search / Reference Knowledge / Diagrams / Match input language は SKILL に移ったため、エージェント単位の既定値は `SKILL.TOOLS.<name>.DEFAULT` が持ちます。`WEB_SEARCH` / `CITE_KNOWLEDGE` / `DIAGRAM_MODE` / `EMPHASIS_MODE` は **EXECUTION_DEFAULTS から読まなくなりました**（同じ設定を2か所に書けると、SKILL 側が黙って勝つ形になるため）。`WEB_SEARCH_GUARDRAIL` と `WEB_SEARCH_ENGINE` は Skills の中に残っているウィジェットなので、ここに残ります。
 
 #### HABIT（振る舞いの切り替え）
 
@@ -1603,20 +1601,37 @@ WARNING [駒木乃英人] KNOWLEDGE.Experience is RETRIEVER=Vector but missing T
 
 #### SKILL（補助能力・フェーズ制御ツール）
 
-SKILL は **HABIT とは完全に独立した補助能力**（外部 API・関数・データ取得等）です。各 SKILL には `PHASE` を設定し、**HABIT の実行前後・入力コンテキスト** のいずれかで自動的に発火します。HABIT 側から SKILL を呼ぶことはありません。
+**TOOL と SKILL は別の概念です。**
+
+- **TOOL** — 実行される処理そのもの。`user/common/tool/` のプラグインがレジストリに登録します。呼び出し元は **SKILL** か **HABIT（Practice）の1チェーン**のどちらかです
+- **SKILL** — その TOOL を**1回の生成の中に組み込む枠**。`BEFORE` と `AFTER` の2つだけで、**独立した会話履歴にはなりません**
+
+SKILL は **HABIT とは完全に独立した補助能力**です。HABIT 側から SKILL を呼ぶことはありません。
 
 ```json
 "SKILL": {
     "TOOLS": {
         "WebSearch": {
-            "PHASE": "CONTEXT",
+            "PHASE": "BEFORE",
             "ACTIVE": true,
+            "DEFAULT": true,
+            "MERGE": "CONTEXT",
             "AS_REFERENCE": true,
             "ARGS_HINT": {}
         },
-        "management_analysis": {
+        "refine_expression": {
             "PHASE": "AFTER",
-            "ACTIVE": true
+            "ACTIVE": true,
+            "DEFAULT": true,
+            "MERGE": "REPLACE"
+        },
+        "mood_score": {
+            "PHASE": "AFTER",
+            "ACTIVE": true,
+            "DEFAULT": false,
+            "MERGE": "APPEND",
+            "HEADER": "## Mood Score",
+            "ORDER": 10
         }
     }
 }
@@ -1624,26 +1639,60 @@ SKILL は **HABIT とは完全に独立した補助能力**（外部 API・関�
 
 | キー | 型 | 意味 |
 |---|---|---|
-| `PHASE` | `"BEFORE"` / `"CONTEXT"` / `"AFTER"` | HABIT に対する実行位置 |
-| `ACTIVE` | bool | 有効フラグ。`false` にすると無視される（Temporary Override 対応） |
-| `AS_REFERENCE` | bool | CONTEXT 時のみ有効。true なら Detail Information の User query に SKILL 結果を露出 |
+| `PHASE` | `"BEFORE"` / `"AFTER"` | 生成の前か後か。旧 `"CONTEXT"` は `BEFORE` + `MERGE: "CONTEXT"` として読まれます |
+| `ACTIVE` | bool | **使えるか**。`false` にすると選択肢に出ない（Temporary Override で一時的に戻せる） |
+| `DEFAULT` | bool | **最初から選択済みにするか**。`ACTIVE` とは別物で、「使えるが既定はOFF」を書き分けられる。**キー自体を書かなければ**、フラグ型スキルは `users.json` の `Defaults` に従い、通常のツールはOFF（`EXECUTION_DEFAULTS` は参照しません）。**`DEFAULT` でONになっているだけの BEFORE スキルは「候補」**で、Thinking Mode が判定に関与するときは Thinking の選定に従います（下の起動パス参照）|
+| `MERGE` | str | **ツールの出力をどこに入れるか**。下表参照。旧 `REWRITE: true` は `MERGE: "REPLACE"` として読まれます |
+| `HEADER` | str | 組み込むときに付けるヘッダーのテンプレート。`{name}` が使えます。BEFORE/CONTEXT ではブロックの見出し、AFTER/APPEND では本文に付く見出し（例 `"## Mood Score"`）。未指定なら既定の見出し |
+| `ORDER` | int | **組み込み／表示の順番**（昇順、既定 100、同値は宣言順）。BEFORE と AFTER で別々に効きます |
+| `AS_REFERENCE` | bool | `MERGE: "CONTEXT"` 時のみ有効。true なら Detail Information の User query に SKILL 結果を露出 |
 | `ARGS_HINT` | dict | ツール実行時に `add_info` として渡す固定引数（任意） |
 
+**`MERGE` の値**
+
+| PHASE | MERGE | 出力の行き先 |
+|---|---|---|
+| BEFORE | `CONTEXT`（既定） | 参照材料としてガードレール文でラップし、プロンプトに追加 |
+| BEFORE | `PROMPT` | 指示文としてそのままプロンプトに追加 |
+| BEFORE | `RECORD` | プロンプトには入れない（履歴操作など、副作用のために呼ぶツール） |
+| AFTER | `REPLACE` | **結果が回答本文になる**（校正・引用注釈） |
+| AFTER | `APPEND`（既定） | `HEADER` を付けて**回答の後ろに表示**。`response.text` には入れない |
+| AFTER | `RECORD` | 記録のみ。回答は変えない |
+
+> **`response.text` に入るのは `REPLACE` だけ**です。`APPEND` の出力は `response.skills` に保存して表示時に連結します。本文に混ぜると、感情スコアや翻訳が次のターンのメモリ・ダイジェスト・アナリティクスで「エージェント自身の発言」として扱われてしまうためです。
+> BEFORE が注入したブロックも**会話履歴には残しません**（`prompt.query.text` からは除去し、`prompt.skills[<name>].wrapped` に全文を保持）。残すと次のターンで Web 検索結果がユーザーの発言として読み込まれます。
+
+> 同梱エージェントは**全スキルに `DEFAULT` を明示**してあります。既定の挙動をエージェントファイルだけで読み切れるようにするためで、省略時フォールバックに依存している箇所はありません。
+
+**フラグ型スキル（旧チェックボックス）**:
+
+Conversation Settings に並んでいた出力系チェックボックスは、すべて SKILL.TOOLS のエントリになりました。これらは**レジストリのツールではなく**、選択すると対応する実行フラグが立つだけです（ツールとしては呼ばれず、`SKILL(<name>)` のターンも増えません）。定義は `DigiM_Agent.FLAG_SKILLS`。
+
+| スキル名 | PHASE | 旧チェックボックス | 実行フラグ |
+|---|---|---|---|
+| `diagram_mode` | BEFORE | Diagrams | `DIAGRAM_MODE` |
+| `emphasis_mode` | BEFORE | Emphasis | `EMPHASIS_MODE` |
+| `match_input_language` | BEFORE | Match input language (Auto) | `PERSONALITY.LANGUAGE = "__AUTO__"` |
+| `cite_knowledge` | AFTER | Reference Knowledge | `CITE_KNOWLEDGE` |
+
+PHASE は「何に効くか」で決まっており（BEFORE＝リクエストを形作る / AFTER＝出来た回答に効く）、エージェント JSON 側の記述ではなく `FLAG_SKILLS` の値が使われます。LLM からは見えません（`TOOL_LIST` に出さないので Thinking Agent も選べません）— 呼べる関数が無いためです。手動選択と MAGIC_WORDS からは効きます。
+
 **PHASE 定義**:
-- **BEFORE**: HABIT の practice 実行前に走る。**会話履歴に別 sub_seq として保存**され、Detail Information の transcript には `SKILL(<name>)` と表示。HABIT には影響しない
-- **CONTEXT**: HABIT の practice 実行前に走り、**結果を reference material としてラップして `user_query` に append**（既存の Web Search 経路と同形）。RAG クエリ生成 + メイン LLM の入力の両方に反映される。Web 検索・ドキュメント検索を想定
-- **AFTER**: HABIT の応答生成後に走る。**HABIT の応答を入力**として受け取る。**会話履歴に別 sub_seq として保存**
+- **BEFORE**: HABIT の practice 実行前に走る。`MERGE` に従って結果をプロンプトへ組み込む（`CONTEXT` なら RAG クエリ生成とメイン LLM の両方に反映）。**独立した sub_seq は作らない**
+- **AFTER**: HABIT の応答生成後に走り、**保存された回答本文**を入力として受け取る（引用注釈の後なので、画面に出ているものと一致します）。`## Reference Info` 以降・コードブロック・`[1]` の引用マーカーは `REPLACE` の対象から外して原文のまま戻します。**独立した sub_seq は作らない**
+
+`REPLACE` が複数選ばれたときは、本文の切り出し・書き戻し・記録を**1回の後処理としてまとめて**実行します（途中の版は保存も表示もされません）。LLM 呼び出し自体は各ツールが自分のプロンプトを持つため1件ずつで、1回に束ねるには各 TOOL が指示文を外に出す契約が必要です（REPLACE ツールが2種類になった時点で設計します）。
 
 **SKILL の起動パス（4 段構え、優先順・マージ実行）**:
 - **1. Slash command**: `/<name> <query>` — SKILL 名がヒットしたら、そのエントリの PHASE で発火。`<query>` は HABIT の user_query として使われる（rest-of-line）
-- **2. SKILL マルチセレクト（Thinking Mode OFF 時のみ表示）**: Conversation Settings の BOOK の下に **`SKILL`** マルチセレクトが出ます。選んだ SKILL はそのターンで登録済み PHASE で発火。選択肢は `名前 (PHASE)` 形式で、Temporary Override で無効化した SKILL は出てきません
+- **2. Skills ピッカー**: Conversation Settings の Thinking 設定の下に **`Skills (N)`** エクスパンダがあり、**BEFORE / AFTER の2つのマルチセレクト**（各列は `ORDER` 順）でそのターンに走らせる SKILL を選びます。Thinking Mode の ON/OFF に関係なく表示されます（フラグ型スキルはここでしか切り替えられないため）。Temporary Override で無効化した SKILL は出てきません。初期選択は各エントリの `DEFAULT` で決まります。自分でチェックしたものは「指示」として必ず実行され、`DEFAULT` でONになっているだけのものは「候補」扱いになります（下の 4 参照）
 - **3. `SKILL.TOOLS[name].MAGIC_WORDS` マッチ**: ユーザーのクエリに magic word が含まれていれば無条件で発火（HABIT.MAGIC_WORDS と同じ発想。「そのスキルを呼ぶ自然表現」を書いておく）
-- **4. Thinking Mode**: `Thinking Targets` に `Skills` を含めると Thinking Agent が SKILL の `description` を見て選定。Thinking Mode ON のときは上記 2 のマルチセレクトは非表示になります
+- **4. Thinking Mode**: `Thinking Targets` に `Skills` を含めると Thinking Agent が SKILL の `description` を見て選定。このとき、**`DEFAULT` でONになっているだけの BEFORE スキルは Thinking が選んだときだけ実行されます**（既定ONのツールが毎ターン発火して判定が飾りになるのを防ぐため）。以下は候補にしません — ユーザーがピッカーで自分でチェックしたスキル、AFTER スキル（出力ポリシーであり、Thinking は「質問を解くために必要か」を聞かれているため）、フラグ型スキル（Thinking から見えない）。Thinking が判定を返せなかったときや `Thinking Targets` に `Skills` が入っていないときは、候補も従来どおり実行されます。マルチセレクトは Thinking Mode の ON/OFF に関係なく表示されます
 - **同時使用可 & dedup**: 上記 4 経路が同じ SKILL を選んでも **1 回だけ実行**。順序は slash → 手動選択 → magic → thinking
 
-**`WEB Search` チェックボックス と `WebSearch` SKILL の関係**: Thinking Mode OFF のとき、Conversation Settings には Web 検索の入口が 2 つ並びます — Row 4 の **`WEB Search` チェックボックス**（`execution.WEB_SEARCH` の組込み経路）と、SKILL マルチセレクトの **`WebSearch (CONTEXT)`**（SKILL 経路）。**両方選んでも Web 検索は 1 回だけ**走ります: CONTEXT SKILL の WebSearch 系（`WebSearch` / `WebSearch_*`）が実行済みなら、組込み経路は自動でスキップされます（`prompt.web_search.skipped_reason` / `skipped_by` に記録）。SKILL 側を優先するのは、そちらが PHASE と `ARGS_HINT` を持っていて制御が効くためです。どちらか片方だけ選べば従来どおりその経路で走ります。
+**Web 検索の入口**: 旧 `WEB Search` チェックボックスは廃止され、**Skills の BEFORE で `WebSearch` を選ぶ**のが唯一の入口になりました（`execution.WEB_SEARCH` は選択から導出されます）。エンジン選択とガードレールは `WebSearch` 系を選んだとき、または Thinking Mode が ON のとき（Thinking が内部検索に使うため）だけ Skills の中に出ます。エンジン個別版（`WebSearch_Google` など）は自分でバックエンドを決めているので、エンジン選択は汎用 `WebSearch` のときだけ出ます。組込み経路と SKILL 経路が同じターンで二重に走らないための dedup はそのまま残っています（`prompt.web_search.skipped_reason` / `skipped_by` に記録）。API・スケジューラから渡す `execution.WEB_SEARCH` は従来どおり効きます。
 
-**`agent_10Sample.json` に登録済みの 5 サンプル SKILL**（Eight ペルソナ向け）:
+**`agent_10Sample.json`** は**複製して新しいエージェントを作るためのテンプレート**なので、ユーザーが呼べるツール全部（19件）とフラグ型スキル4件を宣言済みです。コピーしたら不要なものを削るだけで済みます。主なものを抜粋:
 
 | SKILL | PHASE | 用途 | MAGIC_WORDS |
 |---|---|---|---|
@@ -1659,15 +1708,17 @@ SKILL は **HABIT とは完全に独立した補助能力**（外部 API・関�
 
 
 **MAGIC_WORDS は明示的な命令文で書く**: 「英訳して」「パワポで」のような断片は通常の会話でも現れるため、SKILL が乱発します。HABIT の `エシカルチェックしてください。` `川柳を詠んでください。` と同じく、**「〜してください。」まで含んだ文**にして誤発火を防ぎます。曖昧な発火は Thinking Mode に任せる方が安全です。
-**旧設計の廃止**: `HABIT.TOOL_PICK` エントリと `practice_55ToolPick.json` は不要になりました。既存エージェント JSON から `HABIT.TOOL_PICK` は削除済み。旧 `SKILL.TOOL_LIST` + `INACTIVE_TOOLS` シェイプも自動変換されて動作（全て `PHASE: "CONTEXT"` として import）。
+**旧設計の廃止**: `HABIT.TOOL_PICK` エントリと `practice_55ToolPick.json` は不要になりました。既存エージェント JSON から `HABIT.TOOL_PICK` は削除済み。旧 `SKILL.TOOL_LIST` + `INACTIVE_TOOLS` シェイプも自動変換されて動作（全て `BEFORE` + `MERGE: "CONTEXT"` として import）。
 
 **永続化 & 表示**:
-- CONTEXT SKILL 結果: `prompt.skills` に `{name: {phase, as_reference, raw, wrapped, export_contents}}` として保存。Detail Information の User query セクションに `--- SKILL:<name> (CONTEXT) ---` ブロックで露出
+- BEFORE SKILL 結果: `prompt.skills` に `{name: {phase, merge, order, header, as_reference, raw, wrapped, input, export_contents, model, prompt_token, response_token}}` として保存。Detail Information の User query セクションにブロックで露出
+- AFTER SKILL 結果: `response.skills` に同形で保存（`APPEND` は `text`、`REPLACE` は `chars_in` / `chars_out` / `applied`）。`REPLACE` が本文を書き換えたことは `response.rewrites` にも残ります
+- SKILL が自分で呼んだ LLM のトークンは `prompt_token` / `response_token` に記録され、Detail Information に **Skill tokens** と **Turn total tokens** として出ます（`prompt.token` / `response.token` はメモリ予算に使われるため据え置き）
 - **チャット画面のユーザーバブル**: `_strip_skill_wraps()` で reference material の wrap を削除して表示（可読性優先）。**chat_memory の `prompt.query.input` / `text` には wrap 付きのまま保存**されるので、次ターンの memory retrieval / digest では引き続き SKILL 内容が参照可能
-- **URL / 引用**: CONTEXT SKILL が 4-tuple の 4 番目に URL リスト (`export_contents`) を返した場合、`DigiMatsuExecute` が **自動的に `web_search_log["urls"]` にマージ** → 既存の `citation_inject` が web 引用として処理し、応答本文末尾に `## References` セクション + 本文中 `[N]` マーカーを付与。built-in Web Search と完全に同じ経路
+- **URL / 引用**: `MERGE: "CONTEXT"` の BEFORE SKILL が 4-tuple の 4 番目に URL リスト (`export_contents`) を返した場合、`DigiMatsuExecute` が **自動的に `web_search_log["urls"]` にマージ** → 既存の `citation_inject` が web 引用として処理し、応答本文末尾に `## References` セクション + 本文中 `[N]` マーカーを付与。built-in Web Search と完全に同じ経路
 - BEFORE / AFTER SKILL 結果: chat_memory の別 sub_seq として `role="skill"`, `setting.agent_name="SKILL(<name>)"` で保存
 
-**CONTEXT SKILL の Reference material ラッピング**: LLM がツール結果を「口調はペルソナで、固有名詞・数字・日付は忠実に、段落丸ごとコピーは NG、`[1][2]` マーカーは引用に活用可」で扱うよう指示する guardrail 文言でラップされます。built-in Web Search 側も同じ文言に統一済み。
+**`MERGE: "CONTEXT"` の Reference material ラッピング**: LLM がツール結果を「口調はペルソナで、固有名詞・数字・日付は忠実に、段落丸ごとコピーは NG、`[1][2]` マーカーは引用に活用可」で扱うよう指示する guardrail 文言でラップされます。built-in Web Search 側も同じ文言に統一済み。
 
 **Thinking Targets の `Skills` オプション露出条件**: 新 `SKILL.TOOLS` (dict) または旧 `SKILL.TOOL_LIST` (list) の**どちらか一方でも非空**なら multiselect に自動追加（旧称 `Tools` の JSON も読み込み時に `Skills` へ正規化）。`THINKING_TARGETS.tools` フラグの既定値は他フラグと同様 `True`（キー欠落時は tool 経路を honor する保守的 default）。
 
@@ -1744,6 +1795,7 @@ Notion保存時は `notion_name` でプロパティ名を個別に指定でき�
 | `THINKING` | ユーザーの質問を分析し、Habit選択・Web検索・RAGクエリ生成・Book追加・**Tool呼び出し** を動的に判定（Thinking Mode有効時）。Thinking Targets に `Skills` を含めているとき、Thinking Agent は SKILL 一覧の名前 + description を見て「この質問にどの tool を呼ぶか」を判定し、選ばれた場合は自動で HABIT を `TOOL_PICK` に切り替えて engine-agnostic dispatcher に narrow 済み tool リストを渡す（`in_execution["_THINKING_TOOL_LIST"]` 経由）。**マルチターン対応**: `Max Thinking Turns > 1` にすると、各ターンの Thinking JSON の `sufficient=false` を検知して**予備 Web 検索**を実行 → 結果を次ターンの Thinking プロンプトに渡す B型ループ が動作。`sufficient=true` か上限到達で break。予備検索は `_WEB_SEARCH_CACHE` 経由でメイン応答パスに流用（二重発火なし）。<br>**プロンプトテンプレの placeholder**: `PROMPT_TEMPLATE.Thinking Agent` は `{PreviousThinking}` (前ターンの判定 JSON) と `{WebSearchPreview}` (予備検索結果テキスト) を含み、[user/common/tool/thinking.py](user/common/tool/thinking.py) が実行時に `.replace()` で差し込みます。カスタマイズする際はこの2つの placeholder を残してください（削除すると 2ターン目以降が前情報無しで走ることになります）。出力 JSON にも `sufficient` フィールドを含めることが必須 |
 | `KNOWLEDGE_INTERPRET` | Analytics Results - Knowledge Utility の「LLM解釈」ボタンが押されたときに、CSV/類似度ランク（+任意で散布図画像）を読んで「全体構成と今回の選択傾向」「貢献度分析（回答距離−質問距離）」「注目点・改善示唆」を返す（バックデータ中心・Vision任意） |
 | `CITATION_INJECT` | 本回答生成後、Web検索URLとBOOKチャンクを引用ソースとして `[N]` マーカーを本文末文に挿入し、末尾に `## References` セクションを付与する。Web検索URL or BOOKチャンクのどちらかが使われていれば自動発火（KNOWLEDGE は対象外）。デフォルトは Claude-Haiku-4.5 等の軽量モデル。LLM失敗時は本文不変で References のみ追加するフォールバックあり。**LLM出力に `[N]` マーカーも `## References` も含まれない場合は「対応関係なし」とみなして元の本文をそのまま維持**（LLMが弁解文を返しても元回答が守られる） |
+| `REFINE_EXPRESSION` | 回答の日本語表現だけを直す校正パス。`refine_expression` SKILL（PHASE=AFTER）から呼ばれ、(1) 実際には言わない表現、(2) 英語の直訳のような大げさな表現、(3) 文の繋がりがおかしいところ の3点だけを直す。事実・主張・口調・段落構成は変えず、直した本文だけを返す。直す基準は `PROMPT_TEMPLATE."Refine Expression"` に **T1〜T7 の7パターン**として置いてあり（指示語の指す先が無い／日本語として言わない言い回し／主語述語の不一致／事実への不要な枠／自明な宣言／対象とずれた強い語／前文と繋がっていない）、新しい癖が見つかったらプロンプト側に足すだけでよい。LLM には**まず該当箇所を列挙させ、そのあとに直した本文を出させる**形式（`<<<CHECK>>>` / `<<<FIXED>>>`）で、ツール側はマーカー以降だけを返す。列挙させると検出数が大きく増えるため（例の列挙だけのプロンプトでは4件→16件）、列挙結果は `logger.info` に残して出力には含めない。LLM失敗時・出力が元の7割未満のときは元の本文をそのまま返す（校正パスが回答を失わないため）。`REWRITE: true` で登録されており、**結果は回答本文を置き換える**（別ターンを作らない）。入力は保存された最終本文なので引用注釈の後であり、`## Reference Info` 以降と ``` で囲まれたブロック、`[1]` のような引用マーカーは校正対象から外して原文のまま戻す。書き換えた事実と元の文字数は `response.rewrites` に残り、Detail タブに出る |
 
 ##### サポートエージェントへのメインエージェント継承（`INHERIT`）
 
@@ -2513,7 +2565,7 @@ ANTHROPIC_API_KEY=AnthropicのAPIキー（LLMと共用）
 - **`DigiM_Tool.pick_tools(agent, query, allowed=...)`** — エンジン非依存のツールピッカー。`render_tools_for_prompt` でツール一覧を JSON Schema 付きでプロンプト化し、LLM の応答を `{"tool_calls":[{"name":..., "args":...}]}` 形式で `parse_tool_calls` でパース。**Vendor固有の tools=[] パラメータを使わないので、Claude/Gemini/GPT/Grok すべてで同じコードで動く**。
 - **`__getattr__` シム** — `DigiM_Tool` モジュール末尾の PEP 562 フォールバック。レジストリ → プラグインモジュール名前空間 の順で解決するため、`dmt.fixed_message(...)` のような既存呼び出しもプラグイン移行後にそのまま動く。
 
-#### 同梱されているツール（21個・全てプラグイン）
+#### 同梱されているツール（34個・全てプラグイン）
 
 | カテゴリ | プラグインファイル | ツール |
 |---|---|---|
@@ -2524,9 +2576,24 @@ ANTHROPIC_API_KEY=AnthropicのAPIキー（LLMと共用）
 | ペルソナ | `persona.py` | `select_personas` |
 | 画像批評 | `art_critic.py` | `art_critics` |
 | Web検索 | `web_search.py` | `WebSearch`（dispatcher）, `WebSearch_PerplexityAI`, `WebSearch_OpenAI`, `WebSearch_AzureOpenAI`, `WebSearch_Bedrock`, `WebSearch_Google`, `WebSearch_Claude` |
+| 表現校正 | `refine_expression.py` | `refine_expression` |
 | Knowledge Utility | `knowledge_interpret.py` | `knowledge_utility_interpret` |
 | 引用付与 | `citation_inject.py` | `inject_citations` |
 | ユーティリティ | `current_time.py` | `current_time` |
+| ペルソナ系スキル | `persona_skills.py` | `analyze_attachment`, `mood_score`, `recall_similar_experience`, `self_critique`, `slide_deck_prompt`, `translate_response` |
+| 評価／抽出 | `analysis.py` | `meta_extract`, `critique_batch_results`, `eval_answer_vs_groundtruth` |
+
+**ツールを登録しないプラグイン**（レジストリ関数を持たない処理・プロンプトの置き場）
+
+| ファイル | 中身 | 読み方 |
+|---|---|---|
+| `output_format.py` | `diagram_mode` / `emphasis_mode` がメインプロンプトに足す指示文 | `dmt.DIAGRAM_INSTRUCTION` / `dmt.EMPHASIS_INSTRUCTION` |
+| `cite_knowledge.py` | Reference Knowledge のパイプライン（manifest 構築 → 使用チャンク判定 → セクション生成） | `dmt.build_manifest()` / `detect_used_chunks()` / `refresh_chunk_util()` / `build_util_fallback_entries()` / `build_knowledge_section()` |
+
+いずれも `register_tool()` を呼びません（名前で dispatch する関数が無い）。`DigiM_Tool.__getattr__` がプラグインのモジュール名前空間まで解決するので、`dmt.<名前>` で参照できます。
+
+> **`DigiM_Execute.py` には個別 TOOL の中身を置きません。** 処理もプロンプト文も `DigiM_Tool.py` か `user/common/tool/*.py` 側にあります。executor に残るのは「いつ呼ぶか」（フェーズ・順番・dedup・ステータス表示）だけです。
+> 直近で移したもの: SKILL の埋め込み規約（`wrap_skill_context` / `wrap_skill_prompt` / `strip_skill_wraps` / `render_skill_header` → `DigiM_Tool.py`）、Web 検索テキストの組み立て（`build_web_search_text` → `web_search.py`）、Reference Info ブロックの生成（`build_plain_references_block` / `sanitize_reference_snippet` → `citation_inject.py`）、図解・強調の指示文（→ `output_format.py`）、Reference Knowledge の判定一式（→ `cite_knowledge.py`）。
 
 #### 新規ツールの追加手順
 
@@ -3252,10 +3319,19 @@ Chat の各ターン下部の「**Detail Information**」エクスパンダは4�
    - **Components Breakdown**: User Memory / RAG / Prompt Template Code / Situation / Web Context / AgentSearch / FunctionSearch の内訳
 2. **Token Usage** — モデル別トークン消費表
    - **Main LLM / Thinking / RAG Query Gen / Meta Search / Dialog Digest** は実トークン値
+   - **SKILL[BEFORE]:<名前> / SKILL[AFTER]:<名前>** — SKILL が自分で呼んだ支援エージェントの実トークン値。`Note` に MERGE（context / replace / append …）が出ます。実行順に並び、BEFORE は Main LLM の上、AFTER は末尾。LLM を呼ばない SKILL（履歴操作など）は行を作りません
    - **Web Search / Embedding** は `dmu.count_token` ベースの推定値 (`Note: estimated`)
    - **AgentSearch / FunctionSearch** はチャンク数 + response_tokens
    - 末尾に TOTAL 行、複数モデル使用時は **Per-Model Summary** も自動表示
+
+   > SKILL の分を行として足したので **TOTAL にも含まれます**。校正や翻訳の SKILL は1回ごとに支援エージェントを呼ぶため、以前はここに現れないコストでした。
+   > 履歴側は `prompt.skills[<名前>]` / `response.skills[<名前>]` の `prompt_token` / `response_token` に入っています。`prompt.token` / `response.token` は**メモリ予算**に使われるので、SKILL の分を混ぜていません（混ぜると注入する文字数と予算がずれてメモリが壊れる）。
 3. **Detail** — 旧来の `get_detail_info` テキストブロック (Copy ボタン付き各セクション)
+   - **`[Skills]`** — そのターンで実際に使われた SKILL の一覧。PHASE 順（BEFORE → AFTER → フラグ型）で、`名前 (PHASE/MERGE) 出力文字数 トークン数` の形で並びます。`REPLACE` は `変更前 -> 変更後` の文字数、フラグ型は立てた実行フラグを表示します
+     - CONTEXT: `as_reference` と注入した生出力の文字数
+     - BEFORE / AFTER: 自前で保存した sub_seq 番号と出力文字数（畳んだ表示でも生履歴から拾います）
+     - フラグ型: 立った実行フラグ名（例 `diagram_mode (BEFORE, flag) -> DIAGRAM_MODE`）
+     - 選択の記録は `prompt.skills_selected`。この記録が無い過去ターンでも、実際に走った分（`prompt.skills` と SKILL の sub_seq）から復元して表示します
 4. **Session Summary** — セッション横断のユーザー定義サマリー本文 (詳細は [セッションサマリー](#セッションサマリーユーザー定義のセッション状態文書))
 
 ### セッションサマリー（ユーザー定義のセッション状態文書）

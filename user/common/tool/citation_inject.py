@@ -104,6 +104,86 @@ def _normalise_sources(sources):
     return out
 
 
+def sanitize_reference_snippet(text, max_len=60):
+    """Flatten a book/knowledge snippet so it fits on one bullet line.
+
+    Book snippets are raw chunk bodies — they can contain markdown headers
+    (`# ...`), tables (`| ... |`), fenced code blocks, bullet lists and
+    embedded newlines. Left as-is, they poison the Reference Info block
+    (each snippet renders as a nested heading + table, splitting the
+    numbered list). This helper strips the structural markers and
+    collapses whitespace so the snippet reads as a short prose fragment."""
+    if not text:
+        return ""
+    s = str(text)
+    # Drop fenced code / mermaid blocks entirely — they'd render as a
+    # multi-line code box under the reference list.
+    s = re.sub(r"```.*?```", " ", s, flags=re.DOTALL)
+    # Strip leading heading / bullet / blockquote markers per line.
+    s = re.sub(r"(^|\n)\s*(#+|>|\-|\*|\+|\d+\.)\s+", r"\1", s)
+    # Table pipes → visual dividers.
+    s = s.replace("|", " ")
+    # Collapse any remaining whitespace (newlines, tabs, runs of spaces).
+    s = re.sub(r"\s+", " ", s).strip()
+    if len(s) > max_len:
+        s = s[:max_len].rstrip() + "..."
+    return s
+
+
+def build_plain_references_block(sources):
+    """A plain `## Reference Info` block, for the paths that append it without
+    going through the citation LLM. Empty when there are no citable sources.
+
+    Kept separate from `_build_references_block`: this one sanitises markdown
+    structure out of a book snippet, which that path does not, and relocating
+    the two into one place is not the same decision as unifying them.
+
+    Dedup: web by URL, book by (rag_name, title). Ordering follows the input
+    list — matches whatever call site already prioritised."""
+    if not sources:
+        return ""
+    seen = set()
+    lines = []
+    for s in sources:
+        if not isinstance(s, dict):
+            continue
+        kind = (s.get("type") or "web").lower()
+        if kind == "web":
+            url = (s.get("url") or "").strip()
+            if not url:
+                continue
+            key = ("web", url)
+            if key in seen:
+                continue
+            seen.add(key)
+            title = (s.get("title") or "").strip()
+            lines.append(f"(web) {url}" + (f" - {title}" if title else ""))
+        elif kind == "book":
+            rag_name = (s.get("rag_name") or "").strip()
+            title = (s.get("title") or "").strip()
+            if not title:
+                continue
+            key = ("book", rag_name, title)
+            if key in seen:
+                continue
+            seen.add(key)
+            # Belt-and-suspenders sanitize (upstream _ci_sources build
+            # already applied this, but the plain-references path is also
+            # called by the WebUI skill fallback which builds sources with
+            # raw snippets).
+            snippet = sanitize_reference_snippet(
+                s.get("snippet") or "", max_len=60)
+            tag = f"(book: {rag_name})" if rag_name else "(book)"
+            parts = [tag, title]
+            if snippet:
+                parts.append("— " + snippet)
+            lines.append(" ".join(parts))
+    if not lines:
+        return ""
+    return "## Reference Info\n" + "\n".join(
+        f"[{i}] {lbl}" for i, lbl in enumerate(lines, 1))
+
+
 def _build_references_block(sources):
     """Return a plain `## Reference Info` block from a heterogeneous sources list."""
     norm = _normalise_sources(sources)

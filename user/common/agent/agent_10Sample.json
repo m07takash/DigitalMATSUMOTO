@@ -26,9 +26,6 @@
         "MAGIC_WORD_USE": true,
         "RAG_QUERY_GENE": true,
         "META_SEARCH": true,
-        "CITE_KNOWLEDGE": true,
-        "DIAGRAM_MODE": false,
-        "EMPHASIS_MODE": false,
         "MAX_PERSONAS": 3,
         "TIME_MODE": "Real Date"
     },
@@ -470,13 +467,17 @@
     "SKILL": {
         "TOOLS": {
             "WebSearch": {
-                "PHASE": "CONTEXT",
+                "PHASE": "BEFORE",
                 "ACTIVE": true,
+                "DEFAULT": false,
+                "MERGE": "CONTEXT",
                 "AS_REFERENCE": true
             },
             "recall_similar_experience": {
                 "PHASE": "BEFORE",
                 "ACTIVE": true,
+                "DEFAULT": false,
+                "MERGE": "CONTEXT",
                 "MAGIC_WORDS": [
                     "過去の似た経験を思い出してください。",
                     "似た経験を振り返ってください。"
@@ -485,6 +486,8 @@
             "analyze_attachment": {
                 "PHASE": "BEFORE",
                 "ACTIVE": true,
+                "DEFAULT": false,
+                "MERGE": "CONTEXT",
                 "MAGIC_WORDS": [
                     "添付データを分析してください。",
                     "添付ファイルの特徴を分析してください。"
@@ -493,6 +496,10 @@
             "mood_score": {
                 "PHASE": "AFTER",
                 "ACTIVE": true,
+                "DEFAULT": false,
+                "MERGE": "APPEND",
+                "HEADER": "## Mood Score",
+                "ORDER": 10,
                 "MAGIC_WORDS": [
                     "感情スコアを表示してください。",
                     "お互いの感情を分析してください。"
@@ -501,6 +508,10 @@
             "self_critique": {
                 "PHASE": "AFTER",
                 "ACTIVE": true,
+                "DEFAULT": false,
+                "MERGE": "APPEND",
+                "HEADER": "## Self Critique",
+                "ORDER": 20,
                 "MAGIC_WORDS": [
                     "自分の回答を批判的に検討してください。",
                     "セルフクリティークしてください。"
@@ -509,6 +520,10 @@
             "translate_response": {
                 "PHASE": "AFTER",
                 "ACTIVE": true,
+                "DEFAULT": false,
+                "MERGE": "APPEND",
+                "HEADER": "## Translation",
+                "ORDER": 40,
                 "AS_REFERENCE": false,
                 "ARGS_HINT": {
                     "target_lang": "English"
@@ -521,6 +536,10 @@
             "slide_deck_prompt": {
                 "PHASE": "AFTER",
                 "ACTIVE": true,
+                "DEFAULT": false,
+                "MERGE": "APPEND",
+                "HEADER": "## Slide Deck Prompt",
+                "ORDER": 50,
                 "AS_REFERENCE": false,
                 "ARGS_HINT": {
                     "slide_count": 6,
@@ -532,8 +551,102 @@
                     "スライド構成を作成してください。",
                     "プレゼン資料の構成を作成してください。"
                 ]
+            },
+            "diagram_mode": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "DEFAULT": false
+            },
+            "emphasis_mode": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "DEFAULT": false
+            },
+            "match_input_language": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "DEFAULT": true
+            },
+            "cite_knowledge": {
+                "PHASE": "AFTER",
+                "ACTIVE": true,
+                "DEFAULT": true
+            },
+            "WebSearch_PerplexityAI": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "DEFAULT": false,
+                "MERGE": "CONTEXT"
+            },
+            "WebSearch_OpenAI": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "DEFAULT": false,
+                "MERGE": "CONTEXT"
+            },
+            "WebSearch_AzureOpenAI": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "DEFAULT": false,
+                "MERGE": "CONTEXT"
+            },
+            "WebSearch_Bedrock": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "DEFAULT": false,
+                "MERGE": "CONTEXT"
+            },
+            "WebSearch_Google": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "DEFAULT": false,
+                "MERGE": "CONTEXT"
+            },
+            "WebSearch_Claude": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "DEFAULT": false,
+                "MERGE": "CONTEXT"
+            },
+            "current_time": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "DEFAULT": false,
+                "MERGE": "CONTEXT"
+            },
+            "fixed_message": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "DEFAULT": false,
+                "MERGE": "CONTEXT"
+            },
+            "forget_history": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "DEFAULT": false,
+                "MERGE": "RECORD"
+            },
+            "remember_history": {
+                "PHASE": "BEFORE",
+                "ACTIVE": true,
+                "DEFAULT": false,
+                "MERGE": "RECORD"
+            },
+            "refine_expression": {
+                "PHASE": "AFTER",
+                "ACTIVE": true,
+                "DEFAULT": false,
+                "MERGE": "REPLACE"
+            },
+            "management_analysis": {
+                "PHASE": "AFTER",
+                "ACTIVE": true,
+                "DEFAULT": false,
+                "MERGE": "APPEND",
+                "HEADER": "## Management Analysis",
+                "ORDER": 30
             }
-        }
+            }
     },
     "DEFINE_CODE": {
         "COMPANY_CODE": [],

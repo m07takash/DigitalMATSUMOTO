@@ -751,7 +751,12 @@ def generate_response_T_claude(query, system_prompt, model, memories=[], image_p
             system = system_prompt,
             messages = prompt
             )
-        response = completion.content[0].text
+        # A thinking-capable model puts a ThinkingBlock first, so content[0]
+        # is not necessarily the answer; join the text blocks instead.
+        response = "".join(
+            b.text for b in (completion.content or [])
+            if getattr(b, "type", "") == "text" and getattr(b, "text", None)
+        )
         yield str(prompt), response, completion
 
 # Run Grok

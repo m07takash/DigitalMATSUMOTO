@@ -1245,6 +1245,61 @@ class DigiMSession:
             self._refresh_history_cache(chat_history_dict)
             _logger.info(f"set_analytics_history: seq={seq}, sub_seq={sub_seq} written to {self.session_file_path}")
 
+    def set_response_text_history(self, seq, sub_seq, text, rewrite=None):
+        """Replace a saved answer in place, for an AFTER SKILL that rewrites it.
+
+        `rewrite` is appended to `response.rewrites` so the Detail tab can say
+        which skill changed the text and show what it started from — without it
+        a rewritten answer is indistinguishable from what the model produced.
+        """
+        import logging
+        _logger = logging.getLogger(__name__)
+        with _get_file_lock(self.session_file_path):
+            if not _dmss.history_exists(self.session_id, self.session_folder_path):
+                _logger.warning(f"set_response_text_history: file not found {self.session_file_path}")
+                return
+            chat_history_dict = _dmss.load_history(self.session_id, self.session_folder_path)
+            _entry = (chat_history_dict.get(str(seq)) or {}).get(str(sub_seq))
+            if not isinstance(_entry, dict) or not isinstance(_entry.get("response"), dict):
+                _logger.warning(f"set_response_text_history: no entry seq={seq}, sub_seq={sub_seq}")
+                return
+            _entry["response"]["text"] = text
+            if rewrite:
+                _entry["response"].setdefault("rewrites", []).append(rewrite)
+            _dmss.save_history(self.session_id, chat_history_dict, self.session_folder_path)
+            self._refresh_history_cache(chat_history_dict)
+            _logger.info(f"set_response_text_history: seq={seq}, sub_seq={sub_seq} "
+                         f"len={len(text or '')}")
+
+    def set_response_skills_history(self, seq, sub_seq, skills):
+        """Record AFTER-SKILL results beside the answer, not inside it.
+
+        APPEND results are displayed after the answer but kept out of
+        `response.text` on purpose: that text is the answer of record, and it
+        is what memory retrieval, the digest and the analytics read. A mood
+        score or a translation appended into it would come back as the agent's
+        own words on the next turn.
+        """
+        if not skills:
+            return
+        import logging
+        _logger = logging.getLogger(__name__)
+        with _get_file_lock(self.session_file_path):
+            if not _dmss.history_exists(self.session_id, self.session_folder_path):
+                _logger.warning(f"set_response_skills_history: file not found {self.session_file_path}")
+                return
+            chat_history_dict = _dmss.load_history(self.session_id, self.session_folder_path)
+            _entry = (chat_history_dict.get(str(seq)) or {}).get(str(sub_seq))
+            if not isinstance(_entry, dict) or not isinstance(_entry.get("response"), dict):
+                _logger.warning(f"set_response_skills_history: no entry seq={seq}, sub_seq={sub_seq}")
+                return
+            _cur = _entry["response"].get("skills")
+            _entry["response"]["skills"] = {**(_cur if isinstance(_cur, dict) else {}), **skills}
+            _dmss.save_history(self.session_id, chat_history_dict, self.session_folder_path)
+            self._refresh_history_cache(chat_history_dict)
+            _logger.info(f"set_response_skills_history: seq={seq}, sub_seq={sub_seq} "
+                         f"skills={sorted(skills)}")
+
     # Detail block for turns stored without an engine (SKILL / PUSH / TOOL):
     # they never ran the LLM chain, so the execution sections have nothing to
     # read and only the little the entry carries is shown.
@@ -1274,6 +1329,118 @@ class DigiMSession:
         return info
 
     # Get detailed info from chat history
+    # Which SKILLs ran this turn. Three places hold part of the answer: the
+    # per-phase selection recorded on the LLM entry (covers the flag skills,
+    # which are never invoked and so log nothing), the CONTEXT logs on the same
+    # entry, and the sibling sub_seq entries that BEFORE / AFTER skills write
+    # for themselves. Turns saved before the selection was recorded still show
+    @staticmethod
+    def _skill_token_totals(entry):
+        """(prompt, response) tokens the turn's SKILLs spent on their own LLM
+        calls. Zero for a turn saved before skills reported them."""
+        _p = _r = 0
+        for _bucket in ((entry.get("prompt") or {}).get("skills"),
+                        (entry.get("response") or {}).get("skills")):
+            if not isinstance(_bucket, dict):
+                continue
+            for _cfg in _bucket.values():
+                if isinstance(_cfg, dict):
+                    _p += dmu.to_int(_cfg.get("prompt_token"))
+                    _r += dmu.to_int(_cfg.get("response_token"))
+        return _p, _r
+
+    # whatever actually ran.
+    def _get_detail_skills_section(self, turn_dict, entry):
+        _prompt = entry.get("prompt") or {}
+        _selected = _prompt.get("skills_selected") or {}
+        _ctx_logs = _prompt.get("skills") or {}
+        _ran = {}
+        for _sub, _e in (turn_dict or {}).items():
+            if _sub == "SETTING" or not isinstance(_e, dict):
+                continue
+            _st = _e.get("setting") or {}
+            if _st.get("type") != "SKILL" or not _st.get("skill_name"):
+                continue
+            _ran[_st["skill_name"]] = {
+                "phase": _st.get("phase") or "",
+                "sub_seq": _sub,
+                "chars": len(((_e.get("response") or {}).get("text")) or ""),
+            }
+        try:
+            import DigiM_Agent as _dma_flags
+            _flags = _dma_flags.FLAG_SKILLS
+        except Exception:
+            _flags = {}
+
+        # AFTER skills leave no sub_seq, so their only trace is what they
+        # recorded on the response: `skills` for every run, `rewrites` for the
+        # REPLACE group that edited the answer.
+        _resp = entry.get("response") or {}
+        _resp_logs = _resp.get("skills") if isinstance(_resp.get("skills"), dict) else {}
+        _rewritten = {}
+        for _rw in (_resp.get("rewrites") or []):
+            if not isinstance(_rw, dict):
+                continue
+            for _n in (_rw.get("skills") or ([_rw["skill"]] if _rw.get("skill") else [])):
+                _rewritten[_n] = _rw
+
+        def _tokens(cfg):
+            _t = (cfg or {}).get("prompt_token", 0) + (cfg or {}).get("response_token", 0)
+            return f" {_t} tok" if _t else ""
+
+        def _line(name, phase):
+            if name in _flags:
+                # "FLAGS" is the selection bucket, not a phase — report the
+                # phase the flag actually belongs to.
+                _fp = _flags[name].get("PHASE") or phase
+                return f"- {name} ({_fp}, flag) -> {_flags[name].get('EXEC_KEY', 'on')}"
+            if name in _ctx_logs:
+                _c = _ctx_logs[name]
+                _ph = _c.get("phase") or phase
+                _mg = _c.get("merge") or ("CONTEXT" if _ph == "CONTEXT" else "")
+                return (f"- {name} ({'BEFORE' if _ph == 'CONTEXT' else _ph}"
+                        f"{'/' + _mg if _mg else ''}, as_reference={_c.get('as_reference')})"
+                        f" {len(_c.get('raw') or '')} chars{_tokens(_c)}")
+            if name in _resp_logs:
+                _c = _resp_logs[name]
+                _mg = _c.get("merge") or "APPEND"
+                if _mg == "REPLACE":
+                    _rw = _rewritten.get(name) or {}
+                    _was = _c.get("chars_in") or len(_rw.get("original") or "")
+                    _now = _c.get("chars_out") or _rw.get("chars") or 0
+                    _app = "" if _c.get("applied", True) else ", skipped"
+                    return (f"- {name} (AFTER/REPLACE{_app}) {_was} -> {_now}"
+                            f" chars{_tokens(_c)}")
+                return (f"- {name} (AFTER/{_mg}) {len(_c.get('text') or '')}"
+                        f" chars{_tokens(_c)}")
+            if name in _rewritten:
+                _rw = _rewritten[name]
+                return (f"- {name} (AFTER/REPLACE) {len(_rw.get('original') or '')}"
+                        f" -> {_rw.get('chars', 0)} chars")
+            if name in _ran:
+                # Turns saved while BEFORE / AFTER skills still wrote their own
+                # sub_seq. Kept so old sessions still explain themselves.
+                _r = _ran[name]
+                return (f"- {name} ({_r['phase'] or phase}, sub_seq {_r['sub_seq']})"
+                        f" {_r['chars']} chars")
+            return f"- {name} ({phase}) selected, no output recorded"
+
+        lines = []
+        seen = set()
+        for _phase in ("BEFORE", "CONTEXT", "AFTER", "FLAGS"):
+            for _name in (_selected.get(_phase) or []):
+                if _name in seen:
+                    continue
+                seen.add(_name)
+                lines.append(_line(_name, "BEFORE" if _phase == "CONTEXT" else _phase))
+        for _name in list(_ctx_logs) + list(_resp_logs) + list(_ran) + list(_rewritten):
+            if _name not in seen:
+                seen.add(_name)
+                lines.append(_line(_name, (_ran.get(_name) or {}).get("phase") or "BEFORE"))
+        if not lines:
+            return ""
+        return "\n[Skills]\n" + "\n".join(lines) + "\n"
+
     def get_detail_info(self, seq, sub_seq="1"):
         chat_detail_info = ""
         # The chat screen calls this for every visible turn on every rerun, so a
@@ -1303,6 +1470,17 @@ class DigiMSession:
             chat_detail_info += "Response time: "+dmu.get_time_diff(chat_history_dict_seq["prompt"]["timestamp"], chat_history_dict_seq["response"]["timestamp"], format_str="%Y-%m-%d %H:%M:%S.%f")+"\n"
             chat_detail_info += "Prompt tokens: "+str(chat_history_dict_seq["prompt"]["token"])+"\n"
             chat_detail_info += "Response tokens: "+str(chat_history_dict_seq["response"]["token"])+"\n"
+            # A SKILL calls its own support agent, so its tokens are spent on
+            # this turn without appearing in either count above. Reported as a
+            # separate line rather than folded in, because `response.token` is
+            # the memory budget for this entry's text.
+            _sk_p, _sk_r = self._skill_token_totals(chat_history_dict_seq)
+            if _sk_p or _sk_r:
+                chat_detail_info += (f"Skill tokens: {_sk_p} prompt / {_sk_r} response\n")
+                chat_detail_info += (
+                    "Turn total tokens: "
+                    f"{dmu.to_int(chat_history_dict_seq['prompt']['token']) + _sk_p} prompt / "
+                    f"{dmu.to_int(chat_history_dict_seq['response']['token']) + _sk_r} response\n")
 
             if "log" in chat_history_dict_seq:
                 chat_detail_info += "\n[Execution history]\n"
@@ -1339,6 +1517,11 @@ class DigiMSession:
                     chat_detail_info += "Reasoning: "+thinking["reasoning"]+"\n"
                 if "result" in thinking:
                     chat_detail_info += "Decision: "+str(thinking["result"])+"\n"
+
+            _skills_block = self._get_detail_skills_section(
+                chat_history_dict.get(seq) or {}, chat_history_dict_seq)
+            if _skills_block:
+                chat_detail_info += _skills_block
 
             chat_detail_info += "\n[RAG search query]\n"
             if chat_history_dict_seq["prompt"]["RAG_query_genetor"]:
@@ -1444,7 +1627,7 @@ class DigiMSession:
                 # Selector Picked lists only the entries that matched a manifest
                 # row — unmatched entries (selector hallucinated an ID) are
                 # dropped from the debug view AND from the visible
-                # ## Reference Knowledge section by _build_knowledge_section.
+                # ## Reference Knowledge section by cite_knowledge.build_knowledge_section.
                 _decl = [d for d in (_ck_dbg.get("llm_declared") or [])
                          if d.get("matched")]
                 if _decl:
@@ -1488,13 +1671,25 @@ class DigiMSession:
                         chat_detail_info += "Duration: "+str(web_dict["duration_sec"])+"s\n"
                     if "search_text" in web_dict:
                         chat_detail_info += "Search text: "+web_dict["search_text"]+"\n"
-                    chat_detail_info += web_dict["web_context"]+"\n"
-                    chat_detail_info += "Reference URLs:\n"
-                    for url in web_dict["urls"]:
-                        url_title = url.get("title") or ""
-                        url_date = url.get("date") or ""
-                        url_link = url.get("url") or ""
-                        chat_detail_info += f"{url_title}({url_date}){url_link}\n"
+                    # A turn where the built-in search stood down for a
+                    # WebSearch SKILL records only why, so neither the context
+                    # nor the URL list is there to read.
+                    if web_dict.get("skipped_reason"):
+                        chat_detail_info += "Skipped: "+str(web_dict["skipped_reason"])+"\n"
+                        _sk_by = web_dict.get("skipped_by") or []
+                        if _sk_by:
+                            chat_detail_info += "Skipped by: "+", ".join(
+                                str(x) for x in _sk_by)+"\n"
+                    if web_dict.get("web_context"):
+                        chat_detail_info += str(web_dict["web_context"])+"\n"
+                    _ws_urls = web_dict.get("urls") or []
+                    if _ws_urls:
+                        chat_detail_info += "Reference URLs:\n"
+                        for url in _ws_urls:
+                            url_title = url.get("title") or ""
+                            url_date = url.get("date") or ""
+                            url_link = url.get("url") or ""
+                            chat_detail_info += f"{url_title}({url_date}){url_link}\n"
 
             # Display user memory (injected context)
             _um_ctx = chat_history_dict_seq.get("prompt", {}).get("user_memory_context") or ""

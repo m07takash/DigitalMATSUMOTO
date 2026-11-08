@@ -116,6 +116,33 @@ _MERMAID_BLOCK_RE = re.compile(r"```mermaid\s.*?```", re.DOTALL)
 _KNOWLEDGE_USED_FENCE_RE = re.compile(
     r"```knowledge_used\s*\n.*?\n?```", re.DOTALL | re.IGNORECASE)
 
+def to_int(value, default=0):
+    """Token counts arrive from tools and from stored history, where a missing
+    field reads as None and an old entry can hold a string."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+def split_display_only_sections(text: str):
+    """(body, tail) around the earliest display-only header, both verbatim.
+
+    A rewriting SKILL must not be handed the citation list or the knowledge
+    dump: the editor would renumber or reword rows that other code parses.
+    Unlike `strip_display_only_sections` nothing else is removed, so the two
+    halves still concatenate back into the original response.
+    """
+    if not text or not isinstance(text, str):
+        return (text or ""), ""
+    cut_at = len(text)
+    for marker in _DISPLAY_ONLY_HEADERS:
+        for probe in ("\n" + marker, marker):
+            idx = text.find(probe)
+            if idx >= 0 and idx < cut_at:
+                cut_at = idx
+                break
+    return text[:cut_at], text[cut_at:]
+
 def strip_display_only_sections(text: str) -> str:
     if not text or not isinstance(text, str):
         return text or ""
