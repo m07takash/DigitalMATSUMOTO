@@ -43,6 +43,42 @@ COL_TEXT_DIM  = "#8a8f98"
 
 
 # ------------------------------------------------------------------ layout --
+# The layout is O(n²) per iteration in pure Python — 1.8s at 200 nodes, 4.3s at
+# 300 — and the Streamlit analytics panel asks for it twice per turn (SVG plus
+# the PNG behind the download button) on every single rerun. It depends on
+# nothing but the node ids and the edge endpoints, and it is deterministic, so
+# the result is memoized rather than recomputed.
+_LAYOUT_CACHE = {}
+_LAYOUT_CACHE_MAX = 64
+
+
+# Rasterizing the unified view through matplotlib costs ~1.6s a call and the
+# result only feeds a download button, so it is kept until the usage data it
+# was drawn from changes.
+_PNG_CACHE = {}
+_PNG_CACHE_MAX = 16
+
+
+def _png_cache_put(key, png):
+    if key is not None:
+        if len(_PNG_CACHE) >= _PNG_CACHE_MAX:
+            _PNG_CACHE.clear()
+        _PNG_CACHE[key] = png
+    return png
+
+
+def _usage_fingerprint(usage):
+    import json as _json
+    return hashlib.md5(
+        _json.dumps(usage, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+
+def _layout_cache_key(graph, iterations, width, height):
+    return (iterations, width, height,
+            tuple(graph["nodes"].keys()),
+            tuple((e["source"], e["target"]) for e in graph["edges"]))
+
+
 def spring_layout(graph, iterations=80, width=1.0, height=1.0):
     """Deterministic force-directed layout (Fruchterman–Reingold style).
     Initial positions derive from md5(node id), so the same graph always
@@ -51,6 +87,15 @@ def spring_layout(graph, iterations=80, width=1.0, height=1.0):
     n = len(nodes)
     if n == 0:
         return {}
+    try:
+        _ck = _layout_cache_key(graph, iterations, width, height)
+    except (KeyError, TypeError):
+        _ck = None
+    if _ck is not None:
+        _hit = _LAYOUT_CACHE.get(_ck)
+        if _hit is not None:
+            # Callers scale these in place, so hand out a copy.
+            return {_k: list(_v) for _k, _v in _hit.items()}
     pos = {}
     for nid in nodes:
         h = hashlib.md5(nid.encode()).hexdigest()
@@ -89,6 +134,10 @@ def spring_layout(graph, iterations=80, width=1.0, height=1.0):
             pos[nid][0] = min(1.0, max(0.0, pos[nid][0] + dx / d * step))
             pos[nid][1] = min(1.0, max(0.0, pos[nid][1] + dy / d * step))
         t *= 0.96
+    if _ck is not None:
+        if len(_LAYOUT_CACHE) >= _LAYOUT_CACHE_MAX:
+            _LAYOUT_CACHE.clear()
+        _LAYOUT_CACHE[_ck] = {_k: list(_v) for _k, _v in pos.items()}
     return pos
 
 
@@ -663,6 +712,12 @@ def render_unified_png(usage, width=880, height=560, dpi=150,
         label_mode = "all" if show_labels else "hover"
     if label_mode not in ("all", "colored", "hover"):
         label_mode = "all"
+    try:
+        _pk = (_usage_fingerprint(usage), width, height, dpi, label_mode)
+    except Exception:
+        _pk = None
+    if _pk is not None and _pk in _PNG_CACHE:
+        return _PNG_CACHE[_pk]
     import io
     import matplotlib
     matplotlib.use("Agg")
@@ -678,7 +733,7 @@ def render_unified_png(usage, width=880, height=560, dpi=150,
         # Empty graph — still return a valid PNG rather than raise
         fig = plt.figure(figsize=(width / dpi, height / dpi), dpi=dpi)
         buf = io.BytesIO(); fig.savefig(buf, format="png"); plt.close(fig)
-        return buf.getvalue()
+        return _png_cache_put(_pk, buf.getvalue())
 
     pad_frac = 0.06
     def sx(nid): return pad_frac + pos[nid][0] * (1 - 2 * pad_frac)
@@ -760,7 +815,7 @@ def render_unified_png(usage, width=880, height=560, dpi=150,
     fig.savefig(buf, format="png", bbox_inches=None, pad_inches=0,
                  facecolor="#ffffff")
     plt.close(fig)
-    return buf.getvalue()
+    return _png_cache_put(_pk, buf.getvalue())
 
 
 def usage_legend_html(view="retrieval"):

@@ -38,6 +38,7 @@ import DigiM_Agent as dma
 import DigiM_Context as dmc
 import DigiM_Execute as dme
 import DigiM_Util as dmu
+import DigiM_MstStore as dmms
 
 logger = logging.getLogger(__name__)
 
@@ -683,8 +684,7 @@ def analytics_knowledge(agent_file, ref_timestamp, title, reference, analytics_f
     scatter_plot_csv_files = []
     similarity_plot_files = []
 
-    category_map_file = "category_map.json"
-    category_map_json = dmu.read_json_file(category_map_file, mst_folder_path)
+    category_map_json = dmms.load("category_map")
     category_map = {}
     if "CategoryColor" in category_map_json:
         category_map = category_map_json["CategoryColor"]

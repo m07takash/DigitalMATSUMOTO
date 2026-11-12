@@ -197,17 +197,33 @@ CREATE TABLE digim_references (
 ### 4-4. インデックスの作成
 
 ```sql
+-- digim_sessions
+CREATE INDEX IF NOT EXISTS digim_sessions_user_updated_idx
+    ON digim_sessions (user_id, last_update_date DESC);
+
 -- digim_dialogs
-CREATE INDEX digim_dialogs_session_id_idx       ON digim_dialogs (session_id);
-CREATE INDEX digim_dialogs_model_name_idx       ON digim_dialogs (model_name);
-CREATE INDEX digim_dialogs_prompt_timestamp_idx ON digim_dialogs (prompt_timestamp);
+CREATE INDEX IF NOT EXISTS digim_dialogs_session_id_idx       ON digim_dialogs (session_id);
+CREATE INDEX IF NOT EXISTS digim_dialogs_model_name_idx       ON digim_dialogs (model_name);
+CREATE INDEX IF NOT EXISTS digim_dialogs_prompt_timestamp_idx ON digim_dialogs (prompt_timestamp);
+-- The Agent section of the Performance Explorer scans one agent over a period
+CREATE INDEX IF NOT EXISTS digim_dialogs_agent_resp_ts_idx
+    ON digim_dialogs (agent_file, response_timestamp);
+-- vectorize_dialogs() picks up the rows still waiting for an embedding
+CREATE INDEX IF NOT EXISTS digim_dialogs_unvectorized_idx
+    ON digim_dialogs (id) WHERE query_vec IS NULL;
 
 -- digim_references
-CREATE INDEX digim_references_dialog_id_idx        ON digim_references (dialog_id);
-CREATE INDEX digim_references_rag_name_db_name_idx ON digim_references (rag_name, db_name);
+CREATE INDEX IF NOT EXISTS digim_references_dialog_id_idx        ON digim_references (dialog_id);
+CREATE INDEX IF NOT EXISTS digim_references_rag_name_db_name_idx ON digim_references (rag_name, db_name);
+CREATE INDEX IF NOT EXISTS digim_references_session_turn_idx
+    ON digim_references (session_id, seq, sub_seq);
 ```
 
+> `digim_dialogs_unvectorized_idx` は `query_vec` 列（pgvector）がある前提です。`vector` 型を外した構成ではその1行を省いてください。`CREATE INDEX IF NOT EXISTS` なので既存 DB に再実行しても安全です。
+
 ### 4-5. digim_users（ログイン認証マスタ）
+
+> **`MST_STORE_METHOD`（`setting.yaml`）が `PostgreSQL` のときは、users も他のマスタと一緒に `digim_mst` に入ります**（下の 4-8 参照）。`LOGIN_AUTH_METHOD=RDB` で `digim_users` を使うのは `MST_STORE_METHOD` が `JSON` のときだけ効く旧方式です。両方指定すると `digim_mst` が優先され、警告ログが出ます。
 
 WebUIのログイン認証ソースとしてPostgreSQLを使う場合に作成します（`system.env` で `LOGIN_AUTH_METHOD=RDB` を指定）。アプリ初回起動時に `CREATE TABLE IF NOT EXISTS` で自動作成もされますが、明示的に作成しておくと運用が分かりやすいです。
 
@@ -218,7 +234,8 @@ CREATE TABLE IF NOT EXISTS digim_users (
     pw         TEXT,           -- bcryptハッシュ。平文初回ログイン時は自動でハッシュ化される
     group_cd   JSONB,          -- 所属グループの配列（複数指定可、["Admin"]/["Sales","Marketing"]等）
     agent      TEXT,           -- デフォルトエージェントファイル名（"DEFAULT" or "agent_*.json"）
-    allowed    JSONB           -- UI機能の表示/非表示マップ
+    allowed    JSONB,          -- UI機能の表示/非表示マップ
+    defaults   JSONB           -- Conversation Settings の既定値（users.json の Defaults）
 );
 ```
 
@@ -232,6 +249,8 @@ ON CONFLICT (user_id) DO UPDATE
 SET name=EXCLUDED.name, pw=EXCLUDED.pw, group_cd=EXCLUDED.group_cd,
     agent=EXCLUDED.agent, allowed=EXCLUDED.allowed;
 ```
+
+> `defaults` 列が無い既存テーブルは初回アクセス時に `ALTER TABLE ... ADD COLUMN IF NOT EXISTS defaults JSONB` で自動追加されます。以前のバージョンではこの列が無く、RDB モードでユーザーごとの既定値が失われていました。
 
 > 平文パスワードを入れた場合、初回ログイン後にbcryptハッシュへ自動変換されます。最初からハッシュ値（`$2b$...`）を入れることも可能。
 
@@ -305,6 +324,8 @@ CREATE TABLE IF NOT EXISTS digim_user_memory_history (
     source_seq      JSONB,
     active          CHAR(1) DEFAULT 'Y'
 );
+CREATE INDEX IF NOT EXISTS idx_digim_user_memory_history_user
+    ON digim_user_memory_history (service_id, user_id, create_date DESC);
 
 -- 中期メモリ（period=YYYY-MM 等のスナップショット）
 CREATE TABLE IF NOT EXISTS digim_user_memory_nowaday (
@@ -324,6 +345,8 @@ CREATE TABLE IF NOT EXISTS digim_user_memory_nowaday (
     token_count           INTEGER,
     active                CHAR(1) DEFAULT 'Y'
 );
+CREATE INDEX IF NOT EXISTS idx_digim_user_memory_nowaday_user
+    ON digim_user_memory_nowaday (service_id, user_id, generated_at DESC);
 
 -- 長期メモリ（ユーザー人物像。service_id + user_id でユニーク）
 CREATE TABLE IF NOT EXISTS digim_user_memory_persona (
@@ -347,6 +370,188 @@ CREATE TABLE IF NOT EXISTS digim_user_memory_persona (
 
 > 各バックエンドは独立に切替可能（例: Persona のみ RDB、HistoryはEXCEL等）。EXCEL/NOTION バックエンドを選んだ層についてはこれらのテーブルは作成されません。
 
+
+### 4-8. digim_mst（マスタデータ）
+
+`setting.yaml` の `MST_STORE_METHOD` を `"PostgreSQL"` にすると、`user/common/mst/` 配下の7マスタ
+（`users` / `rags` / `prompt_templates` / `notion_db` / `category_map` / `scheduled_jobs` / `session_summary_presets`）が
+**まとめて**このテーブルに移ります。1マスタ＝1行で、JSON ファイルの中身がそのまま JSONB に入ります。
+アプリ初回アクセス時に `CREATE TABLE IF NOT EXISTS` で自動作成されます。
+
+```sql
+-- Master data (users / rags / prompt_templates / notion_db / category_map /
+-- scheduled_jobs / session_summary_presets) when MST_STORE_METHOD=PostgreSQL.
+-- One row per master; the payload is the whole JSON document.
+CREATE TABLE IF NOT EXISTS digim_mst (
+    name        TEXT PRIMARY KEY,
+    data        JSONB NOT NULL,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+切り替えは設定だけでは移行されません。一度だけ取り込みます。
+
+```bash
+python3 DigiM_MstStore.py import          # JSON ファイル → digim_mst（7件）
+python3 DigiM_MstStore.py import users    # 1件だけ
+python3 DigiM_MstStore.py list            # 行とファイルの有無を一覧
+python3 DigiM_MstStore.py export          # digim_mst → JSON ファイル（JSON に戻す／バックアップ）
+```
+
+> 取り込み後は行が正になります。JSON ファイルを手で直しても反映されないので、直したら `import` し直してください。
+> 読み取りはプロセス内で `MST_STORE_CACHE_SEC`（既定 10 秒）キャッシュされます。保存したプロセスは即時、他プロセスは最大 10 秒で反映です。
+> `sample_*.json` はアプリ同梱のサンプルで、常にファイルから読みます（DB には入れません）。
+
+### 4-9. digim_chat_history_archive / digim_chat_history_archive_sessions（会話履歴の退避）
+
+`SESSION_STORE_METHOD=PostgreSQL` のとき、履歴の退避（WebUI の History Retention、`python3 DigiM_HistoryArchive.py`、スケジューラの `history_archive`）で使います。初回の退避で `CREATE TABLE IF NOT EXISTS` により自動作成されます。
+
+```sql
+-- History retention (DigiM_HistoryArchive). Same shape as digim_chat_history,
+-- plus when the copy was taken; updated_at is the live row's own timestamp.
+CREATE TABLE IF NOT EXISTS digim_chat_history_archive (
+    session_id  TEXT        NOT NULL,
+    seq         INTEGER     NOT NULL,
+    sub_seq     INTEGER     NOT NULL,
+    data        JSONB       NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL,
+    updated_at  TIMESTAMPTZ NOT NULL,
+    archived_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (session_id, seq, sub_seq)
+);
+-- One row per backed-up session: what was copied, and whether it was purged.
+CREATE TABLE IF NOT EXISTS digim_chat_history_archive_sessions (
+    session_id   TEXT PRIMARY KEY,
+    rows         INTEGER     NOT NULL,
+    content_md5  TEXT        NOT NULL,
+    backed_up_at TIMESTAMPTZ NOT NULL,
+    purged_at    TIMESTAMPTZ,
+    zip_name     TEXT,
+    restored_at  TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_digim_chat_history_archive_sessions_purged
+    ON digim_chat_history_archive_sessions (purged_at);
+```
+
+> 退避テーブルは `digim_chat_history` と同じ形で、セッションを丸ごと保持します。purge はここに複製して件数と内容ハッシュが一致したものだけをライブ側から削除します。
+> 分析用の `digim_sessions` / `digim_dialogs` / `digim_references` とは別物で、purge しても分析ミラーは消えません。
+> 分析ミラーの退避先は次の 4-10 です。
+
+### 4-10. digim_sessions_archive / digim_dialogs_archive / digim_references_archive（分析データの退避）
+
+分析ミラー（`digim_sessions` / `digim_dialogs` / `digim_references`）の退避先です。保存方式（`SESSION_STORE_METHOD`）に関係なく、`POSTGRES_*` が設定されていれば History Retention の backup と purge のたびに更新されます。ここからは削除しないので、ミラーの古い行を消しても、ユーザー・エージェント・入力・出力・参照・ベクトルを使った分析を続けられます。
+
+初回の backup で自動作成されます。列はミラーと同じで、ミラーの連番 `id` と `dialog_id` だけを持ちません。ミラーに列が増えると次回の backup で退避テーブルにも追加されるため、固定の DDL はありません。
+
+| テーブル | 主キー | インデックス |
+|---|---|---|
+| `digim_sessions_archive` | `session_id` | `(user_id, last_update_date DESC)` / `(agent_file)` |
+| `digim_dialogs_archive` | `(session_id, seq, sub_seq)` | `(agent_file, response_timestamp)` / `(prompt_timestamp)` / `(model_name)` |
+| `digim_references_archive` | `(session_id, seq, sub_seq, ref_no)` | `(rag_name, db_name)` / `(chunk_id)` |
+| `digim_steps_archive` | `(session_id, seq, sub_seq, step_no)` | `(step_kind, step_name)` / `(agent_file)` |
+
+- `ref_no` はターンの中での参照の順番です。対話との結合は `(session_id, seq, sub_seq)` で行います。
+- `digim_steps_archive` は `digim_steps`（4-12）の退避先です。ミラーに `digim_steps` がまだ無いときは作られません。
+- `digim_sessions_archive` には退避側だけの列 `user_groups TEXT[]` があります。そのセッションのユーザーが属するグループを、最初の退避のときにユーザーマスタから記録します。一度入った値は書き換えません（ユーザーがマスタから消えても、別のグループへ移っても、過去のセッションのグループが残ります）。マスタにグループの無いユーザーは NULL のままで、後からグループが付けば次の backup で入ります。
+- 各表の `archived_at` は、その行を最後に書いた時刻です。
+- ベクトル（`query_vec` / `response_vec`）は、ミラー側で空になっても本文（`user_input` / `response_text`）が同じなら保持します。本文が変わった行はベクトルを捨て、ミラーで作り直された後の backup で入ります。
+- ミラーの行を消すときは、セッションかターンの単位で消してください。参照だけをターンの途中で消すと `ref_no` がずれ、そのターンの退避が書き換わります。
+
+```sql
+-- ユーザー × エージェント別のターン数・参照数・ベクトル化済みのターン数
+SELECT s.user_id, d.agent_file,
+       COUNT(DISTINCT (d.session_id, d.seq, d.sub_seq)) AS turns,
+       COUNT(r.ref_no) AS refs,
+       COUNT(DISTINCT (d.session_id, d.seq, d.sub_seq)) FILTER (WHERE d.query_vec IS NOT NULL) AS vectorized
+FROM digim_dialogs_archive d
+JOIN digim_sessions_archive s USING (session_id)
+LEFT JOIN digim_references_archive r USING (session_id, seq, sub_seq)
+GROUP BY 1, 2;
+
+-- 入力が似ている過去のターン（pgvector のコサイン距離。$1 は比較したい入力の埋め込み）
+SELECT session_id, seq, sub_seq, user_input, query_vec <=> $1 AS distance
+FROM digim_dialogs_archive
+WHERE query_vec IS NOT NULL
+ORDER BY query_vec <=> $1
+LIMIT 10;
+```
+
+### 4-11. digim_pe_scores（Performance Explorer の達成度スコア）
+
+Performance Explorer（User セクション → Achievement）で **Score** を初めて押したときに自動で作られます。手で作る必要はありません。
+
+```sql
+CREATE TABLE IF NOT EXISTS digim_pe_scores (
+    theme_hash   TEXT NOT NULL,   -- 採点プロンプト＋お題の md5
+    unit_kind    TEXT NOT NULL,   -- 'Session' / 'Input'
+    unit_key     TEXT NOT NULL,   -- session_id、または session_id:seq
+    content_hash TEXT NOT NULL,   -- 採点した入力テキストの md5
+    model        TEXT NOT NULL,   -- エージェントファイル|エンジン名
+    score        INTEGER,
+    reason       TEXT,
+    theme_text   TEXT,
+    scored_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (theme_hash, unit_kind, unit_key, content_hash, model)
+);
+CREATE INDEX IF NOT EXISTS idx_digim_pe_scores_scored_at ON digim_pe_scores (scored_at);
+```
+
+LLM の採点結果のキャッシュです。同じお題・同じ入力・同じモデルの組は再実行しても LLM を呼びません。入力が変わる（セッションにターンが増える、期間を変える）と別の行として採点し直します。消しても分析データは失われず、次の採点で作り直されます。
+
+### 4-12. digim_steps（サポートエージェント・SKILL などのステップ）
+
+メインの LLM 呼び出しの前後で走ったものを、1ステップ1行で持つ分析ミラーの表です。ターン完了時のエクスポートと `resync` が最初に書くときに自動で作られます。手で作る必要はありません。
+
+```sql
+CREATE TABLE IF NOT EXISTS digim_steps (
+    session_id      VARCHAR(64)  NOT NULL,
+    seq             INTEGER      NOT NULL,
+    sub_seq         INTEGER      NOT NULL,
+    step_no         INTEGER      NOT NULL,   -- 回答の中での順番
+    step_kind       VARCHAR(32)  NOT NULL,   -- job / thinking / rag_query / meta_search / web_search / skill / digest / rewrite
+    step_name       VARCHAR(255),            -- SKILL 名、検索エンジン名、クエリ生成の番号など
+    phase           VARCHAR(16),             -- SKILL の BEFORE / AFTER
+    agent_file      VARCHAR(255),
+    model_name      VARCHAR(128),
+    duration_sec    DOUBLE PRECISION,
+    prompt_tokens   INTEGER,
+    response_tokens INTEGER,
+    status          VARCHAR(32),             -- ok / error / applied / skipped / used / none
+    detail          JSONB,                   -- 種類ごとの補足（Thinking が選んだ Habit・Book、SKILL の入出力文字数など）
+    PRIMARY KEY (session_id, seq, sub_seq, step_no)
+);
+CREATE INDEX IF NOT EXISTS idx_digim_steps_kind_name ON digim_steps (step_kind, step_name);
+CREATE INDEX IF NOT EXISTS idx_digim_steps_agent_file ON digim_steps (agent_file);
+```
+
+- 対話との結合は `(session_id, seq, sub_seq)` です。メインの LLM 呼び出し自体は `digim_dialogs` にあるので、ここには入りません。
+- Thinking はターンに1回だけ走るので、ターンの先頭の回答行にだけ入ります。
+- 履歴から作り直せる行なので、`resync` は履歴と違う行だけを書き換え、履歴より後ろの番号の行を消します。履歴が既に無いセッションの行は増えも減りもしません。
+- History Retention の backup / purge で `digim_steps_archive` に写されます（4-10 参照）。
+
+### 4-13. digim_chat_history（会話履歴のライブストア）
+
+`setting.yaml` の `SESSION_STORE_METHOD: "PostgreSQL"` のとき、チャットの履歴を 1 エントリ 1 行で読み書きする表です。最初の書き込みで自動作成されます。DBA が事前に作る場合は以下を流してください。
+
+```sql
+CREATE TABLE IF NOT EXISTS digim_chat_history (
+    session_id  TEXT        NOT NULL,
+    seq         INTEGER     NOT NULL,
+    sub_seq     INTEGER     NOT NULL,   -- 0 = ターンの SETTING 行、1 以上 = 対話のエントリ
+    data        JSONB       NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (session_id, seq, sub_seq)
+);
+CREATE INDEX IF NOT EXISTS idx_digim_chat_history_session
+    ON digim_chat_history (session_id);
+CREATE INDEX IF NOT EXISTS idx_digim_chat_history_session_seq
+    ON digim_chat_history (session_id, seq DESC);
+```
+
+- 書き込みは変わった行だけを UPSERT します。`updated_at` はその行が最後に変わった時刻です（履歴の退避の判定に使います）。
+- 分析ミラー（`digim_sessions` / `digim_dialogs` / `digim_references`）とは別の表です。分析はミラーと、その退避テーブル（4-10）を使います。
+
 ---
 
 ## 5. system.env の設定
@@ -360,6 +565,8 @@ POSTGRES_PORT=5432
 POSTGRES_DB=digim_analytics
 POSTGRES_USER=digimatsuadmin
 POSTGRES_PASSWORD=<your_password>
+# 手順 1 のローカルのコンテナは SSL を使わないので必須。指定しないと SSL を要求して接続できません
+POSTGRES_SSLMODE=disable
 
 # Azure OpenAI（ベクトル化に使用）
 AZURE_OPENAI_ENDPOINT=https://xxxx.openai.azure.com/
@@ -368,6 +575,7 @@ AZURE_OPENAI_EMBED_MODEL=text-embedding-3-large
 
 # ログイン認証ソースの切替（"JSON" or "RDB"）
 # RDBの場合、上記POSTGRES_*接続でdigim_usersテーブルを使用
+# 旧方式。setting.yaml の MST_STORE_METHOD=PostgreSQL が設定されていればそちらが優先され、この値は無視される
 LOGIN_AUTH_METHOD="RDB"
 
 # エージェントペルソナのソース（"EXCEL" or "RDB" or "BOTH"）
@@ -406,22 +614,25 @@ conn.close()
 
 ### 7-1. セッションデータのエクスポート
 
+ターンが保存されるたびに、そのセッションが自動でエクスポートされます（`system.env` の `DB_EXPORT_AUTO`、既定 `Y`）。PostgreSQL を入れる前から使っていたセッションは、一度まとめて書き出します。
+
 ```bash
-python3 DigiM_DB_Export.py
+python3 DigiM_DB_Export.py full              # すべてのセッションの不足分を書き出す
+python3 DigiM_DB_Export.py resync --archive  # 履歴と揃え、ターンが保存したベクトルを取り込み、分析データの退避テーブルへ写す
 ```
 
-または WebUI の **Sessions → Export to DB** ボタンから実行できます。
+書き出しに失敗したセッションだけを拾い直すときは、WebUI のサイドバー Sessions → **Retry Pending Exports**（`python3 DigiM_DB_Export.py` と同じ）を使います。
 
 ### 7-2. 既存データの一括ベクトル化
 
-エクスポート後、未ベクトル化レコードを一括処理します。
+ターンは実行時に入力と回答のベクトルを計算してセッションフォルダに保存しており、エクスポートと `resync` はそれを取り込みます（埋め込み API は呼びません）。保存されていない古いターン（入力は 2026-08-29 より前、回答はこの仕組みが入る前）だけが空のまま残るので、必要なら一括で埋めます（埋め込み API の料金がかかります）。
 
 ```bash
-python3 -c "import DigiM_DB_Export as dmdbe; dmdbe.vectorize_dialogs()"
+python3 DigiM_DB_Export.py vectorize
+python3 DigiM_HistoryArchive.py backup       # 埋めたベクトルを分析データの退避テーブルへ写す
 ```
 
-> Docker環境ではazure_ai拡張が使えないため、Pythonからベクトル化します。
-> 以降の新規データはWebUIの **Export to DB** ボタン実行時に自動でベクトル化されます。
+> Docker 環境では azure_ai 拡張が使えないため、Python からベクトル化します。
 
 ---
 
@@ -456,3 +667,12 @@ digim_sessions  (1)
 | `digim_sessions` | セッション単位のメタ情報（名前・ユーザー・エージェント等） |
 | `digim_dialogs` | 会話の各ターン（入力・応答・トークン数・RAG利用状況等） |
 | `digim_references` | 各ターンで参照されたRAGナレッジチャンクの詳細 |
+| `digim_chat_history` | 会話履歴のライブ R/W（`SESSION_STORE_METHOD=PostgreSQL`）。turn 1 行・JSONB |
+| `digim_mst` | マスタデータ7件（`MST_STORE_METHOD=PostgreSQL`）。1マスタ 1 行・JSONB |
+| `digim_chat_history_archive` / `_sessions` | 会話履歴の退避先とセッション単位の台帳（History Retention） |
+| `digim_steps` | 各ターンで走ったサポートエージェント・Web 検索・SKILL・書き換え（1ステップ 1 行。エクスポートで自動作成） |
+| `digim_sessions_archive` / `digim_dialogs_archive` / `digim_references_archive` / `digim_steps_archive` | 分析ミラーの退避先。削除しない（History Retention の backup / purge で更新） |
+| `digim_pe_scores` | Performance Explorer の達成度スコアのキャッシュ（Achievement の Score で自動作成） |
+| `digim_users` | ログイン認証マスタ（旧方式 `LOGIN_AUTH_METHOD=RDB`） |
+| `digim_agent_personas` | エージェントペルソナマスタ（`AGENT_PERSONA_SOURCE=RDB`） |
+| `digim_user_memory_history` / `_nowaday` / `_persona` | 階層的ユーザーメモリ（`USER_MEMORY_*_BACKEND=RDB`） |

@@ -44,7 +44,7 @@
   - [エクスポート・レポート](#エクスポートレポート)
   - [セッション管理](#セッション管理)
 - [User Memory Explorer](#user-memory-explorer)
-- [Agent Performance Explorer (APE)](#agent-performance-explorer-ape)
+- [Performance Explorer](#performance-explorer)
   - [データソース (PG → ライブ → アーカイブの優先順)](#データソース-pg--ライブ--アーカイブの優先順)
   - [Tab 1: Overview](#tab-1-overview)
   - [Tab 2: Knowledge / Book Utilization](#tab-2-knowledge--book-utilization)
@@ -149,6 +149,8 @@ RAG（ChromaDB）を組み合わせて動的に生成します。
 | `DigiM_Execute.py` | メイン実行エンジン |
 | `DigiM_Session.py` | セッション・チャット履歴管理（保存バックエンドを `DigiM_SessionStore` に委譲） |
 | `DigiM_SessionStore.py` | チャット履歴の保存バックエンド抽象化（`JSON` / `PostgreSQL` / `CosmosDB` を `setting.yaml` の `SESSION_STORE_METHOD` で切替） |
+| `DigiM_HistoryArchive.py` | 会話履歴の退避・削除・復元と、分析ミラーの退避テーブルへの複製（JSON / PostgreSQL / CosmosDB。WebUI・CLI・スケジューラ・API から共通に呼ぶ） |
+| `DigiM_MstStore.py` | マスタデータ（`user/common/mst/` の7ファイル）の保存バックエンド抽象化（`JSON` / `PostgreSQL` を `setting.yaml` の `MST_STORE_METHOD` で一括切替） |
 | `DigiM_Context.py` | コンテキスト生成・RAG処理 |
 | `DigiM_FoundationModel.py` | LLM抽象化（マルチLLM対応） |
 | `DigiM_Agent.py` | エージェント設定管理（テンプレート + persona上書き対応） |
@@ -173,6 +175,7 @@ RAG（ChromaDB）を組み合わせて動的に生成します。
 | `DigiM_ScheduledJobs.py` | スケジュールジョブのマスタCRUD（`user/common/mst/scheduled_jobs.json`の読み書き・実行結果記録） |
 | `DigiM_GeneUserMemory.py` | ユーザーメモリの生成・差分マージ・自動承認・検証ループ更新・既存レコードへの感情/Big5バックフィル（CLI付き） |
 | `DigiM_UserMemoryExplorer.py` | User Memory Explorer のバックエンド（コホート絞り込み・3層集計・関心トピック変遷・対話用コンテキスト合成） |
+| `DigiM_PerformanceExplorer.py` | Performance Explorer（User セクションと Agent セクションの Summary）のバックエンド（分析データ退避テーブルの読み込み・キーワード抽出・クラスター分析・知識活用度の集計・達成度の採点と保存・ステップ別の時間とトークンの集計） |
 | `DigiM_GeneUserDialog.py` | （Deprecated）旧ユーザー対話保存。`DigiM_GeneUserMemory.py` への後方互換シム |
 | `DigiM_SupportEval.py` | サポートエージェントのパフォーマンス評価 |
 | `DigiM_Benchmark.py` | サポートエージェントの速度・出力比較ベンチマーク（CLI） |
@@ -316,7 +319,9 @@ cp startup.sh_sample   startup.sh     # 起動スクリプト（実行権限付�
 |------|-----------|------|
 | `TIMEZONE` | `Asia/Tokyo` | タイムゾーン |
 | `LOGIN_ENABLE_FLG` | `N` | ログイン認証の有効化（`Y` で有効） |
-| `LOGIN_AUTH_METHOD` | `JSON` | ログイン認証方法。`JSON`: `USER_MST_FILE`を使用 / `RDB`: PostgreSQLの`digim_users`テーブルを使用（テーブルは初回アクセス時に自動作成） |
+| `LOGIN_AUTH_METHOD` | `JSON` | ログイン認証方法（旧方式）。`JSON`: `USER_MST_FILE`を使用 / `RDB`: PostgreSQLの`digim_users`テーブルを使用（初回アクセス時に自動作成）。`setting.yaml` の `MST_STORE_METHOD=PostgreSQL` が設定されていればそちらが優先され、この値は無視される |
+| `HISTORY_ARCHIVE_API_TOKEN` | （未設定） | API の `/admin/history/*`（履歴の退避・削除・復元）を有効にするトークン。未設定ならそれらは 403。WebUI / CLI / スケジューラには関係しない |
+| `COOKIE_SECRET` | （未設定） | ログイン状態を保つ Cookie の署名鍵。**必ず自分の長いランダム値を設定してください** — 未設定だとソースコードに書かれた共通の値で署名され、それを知っていれば誰でも任意のユーザーの Cookie を作れます。変えると全員がログアウトします |
 | `AGENT_PERSONA_SOURCE` | `EXCEL` | エージェントペルソナのソース。`EXCEL`: `user/common/agent/persona_data/`配下のxlsx / `RDB`: `digim_agent_personas`テーブル / `BOTH`: マージ |
 | `USER_MEMORY_HISTORY_BACKEND` / `NOWADAY_BACKEND` / `PERSONA_BACKEND` | `EXCEL` | ユーザーメモリ各層の保存先（EXCEL/NOTION/RDB）。詳細は「ユーザーメモリ（階層的ユーザー理解）」を参照 |
 | `USER_MEMORY_DEFAULT_LAYERS` | `persona,nowaday,history` | ユーザーメモリのシステムデフォルト有効層（空文字 `""` で全Off） |
@@ -568,6 +573,11 @@ pip / Git / apt が使えない閉域ネットワーク下の Azure 環境へ構
 | `sample_prompt_templates.json` | `prompt_templates.json` | プロンプトテンプレート |
 | `sample_category_map.json` | `category_map.json` | カテゴリ定義 |
 | `sample_notion_db.json` | `notion_db.json` | Notion DB定義 |
+| `sample_scheduled_jobs.json` | `scheduled_jobs.json` | スケジュールされたジョブ（Scheduler 画面で作成） |
+| `sample_session_summary_presets.json` | `session_summary_presets.json` | セッションサマリーのテンプレート |
+| `sample_web_search_guard.json` | `web_search_guard.json` | Web 検索のガードレール設定 |
+
+運用ファイルが無いマスタは、同名の `sample_` ファイルを読みます（最初に画面から保存したときに運用ファイルが作られます）。
 
 運用ファイルに切り替えるには `system.env` のマスターファイル設定を変更してください。
 
@@ -576,6 +586,20 @@ USER_MST_FILE=users.json
 RAG_MST_FILE=rags.json
 PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
 ```
+
+#### マスタデータの保存バックエンド
+
+`user/common/mst/` 配下の7マスタ（`users` / `rags` / `prompt_templates` / `notion_db` / `category_map` / `scheduled_jobs` / `session_summary_presets`）は、`setting.yaml` の **`MST_STORE_METHOD`** で**まとめて**保存先を切り替えられます。既定は **JSON**（従来通りファイル）。
+
+| モード | 保存先 | 特徴 |
+|---|---|---|
+| **JSON**（既定） | `user/common/mst/*.json` | 追加依存なし。手で編集でき、git で差分が追える |
+| **PostgreSQL** | `digim_mst` テーブル（1マスタ 1 行・JSONB） | 複数インスタンスで同じマスタを共有できる。読み取りは `MST_STORE_CACHE_SEC`（既定 10 秒）でプロセス内キャッシュ |
+
+- 切り替えても自動では移行されません。`python3 DigiM_MstStore.py import` で JSON → DB に一度だけ取り込み、`export` で DB → JSON に書き戻せます（`list` で行／ファイルの有無を確認）。
+- DB に接続できないときは、その呼び出しだけ JSON ファイルを読んでエラーログを出します（アプリは起動できる）。
+- `LOGIN_AUTH_METHOD=RDB`（`digim_users`）は旧方式で、`MST_STORE_METHOD` が `JSON` のときだけ効きます。`PostgreSQL` なら users も `digim_mst` に入り、旧フラグは警告つきで無視されます。
+- コードから読むときは `DigiM_MstStore.load("<論理名>")` を使います（ファイルパスを直接開かない）。
 
 ### 会話履歴の保存バックエンド
 
@@ -630,7 +654,60 @@ CREATE INDEX IF NOT EXISTS idx_digim_chat_history_session
     ON digim_chat_history (session_id);
 CREATE INDEX IF NOT EXISTS idx_digim_chat_history_session_seq
     ON digim_chat_history (session_id, seq DESC);
+
+-- Master data (users / rags / prompt_templates / notion_db / category_map /
+-- scheduled_jobs / session_summary_presets) when MST_STORE_METHOD=PostgreSQL.
+-- One row per master; the payload is the whole JSON document.
+CREATE TABLE IF NOT EXISTS digim_mst (
+    name        TEXT PRIMARY KEY,
+    data        JSONB NOT NULL,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- History retention (DigiM_HistoryArchive). Same shape as digim_chat_history,
+-- plus when the copy was taken; updated_at is the live row's own timestamp.
+CREATE TABLE IF NOT EXISTS digim_chat_history_archive (
+    session_id  TEXT        NOT NULL,
+    seq         INTEGER     NOT NULL,
+    sub_seq     INTEGER     NOT NULL,
+    data        JSONB       NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL,
+    updated_at  TIMESTAMPTZ NOT NULL,
+    archived_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (session_id, seq, sub_seq)
+);
+-- One row per backed-up session: what was copied, and whether it was purged.
+CREATE TABLE IF NOT EXISTS digim_chat_history_archive_sessions (
+    session_id   TEXT PRIMARY KEY,
+    rows         INTEGER     NOT NULL,
+    content_md5  TEXT        NOT NULL,
+    backed_up_at TIMESTAMPTZ NOT NULL,
+    purged_at    TIMESTAMPTZ,
+    zip_name     TEXT,
+    restored_at  TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_digim_chat_history_archive_sessions_purged
+    ON digim_chat_history_archive_sessions (purged_at);
 ```
+
+既存テーブル（`digim_sessions` / `digim_dialogs` / `digim_references` / `digim_user_memory_*`）に貼るインデックスの一覧は [docs/SETUP_POSTGRESQL.md](docs/SETUP_POSTGRESQL.md) の「インデックスの作成」にまとめてあります（すべて `IF NOT EXISTS` なので既存 DB に再実行して問題ありません）。分析ミラーの退避テーブル（`digim_sessions_archive` / `digim_dialogs_archive` / `digim_references_archive`）は列がミラーに追従するため DDL を載せていません。初回の backup で自動作成されます（キーと分析クエリの例は同じ docs の 4-10）。
+
+**PostgreSQL に作られるテーブルの一覧**（手順は [docs/SETUP_POSTGRESQL.md](docs/SETUP_POSTGRESQL.md)。Azure は [docs/SETUP_POSTGRESQL_AZURE.md](docs/SETUP_POSTGRESQL_AZURE.md)）
+
+| テーブル | 用途 | 作成 | 手順書の節（Azure 版は 4- を 6- に） |
+|---|---|---|---|
+| `digim_sessions` / `digim_dialogs` / `digim_references` | 分析ミラー（セッション・対話・参照） | **手順書の DDL を流す**（自動では作られません） | 4-1〜4-4 |
+| `digim_steps` | ターンごとのサポートエージェント・Web 検索・SKILL・書き換え・ジョブ | 最初のエクスポートで自動 | 4-12 |
+| `digim_chat_history` | 会話履歴のライブストア（`SESSION_STORE_METHOD=PostgreSQL`） | 最初の書き込みで自動 | 4-13 |
+| `digim_chat_history_archive` / `_sessions` | 会話履歴の退避と台帳 | 最初の backup で自動 | 4-9 |
+| `digim_sessions_archive` / `digim_dialogs_archive` / `digim_references_archive` / `digim_steps_archive` | 分析データの退避（削除しない。Performance Explorer が読む） | 最初の backup で自動（列はミラーに合わせる） | 4-10 |
+| `digim_pe_scores` | Performance Explorer の達成度スコア | 最初の採点で自動 | 4-11 |
+| `digim_mst` | マスタデータ（`MST_STORE_METHOD=PostgreSQL`） | 最初の読み書きで自動 | 4-8 |
+| `digim_users` | ログイン認証（旧方式 `LOGIN_AUTH_METHOD=RDB`） | 最初のアクセスで自動 | 4-5 |
+| `digim_agent_personas` | エージェントペルソナ（`AGENT_PERSONA_SOURCE=RDB`） | 最初のアクセスで自動 | 4-6 |
+| `digim_user_memory_history` / `_nowaday` / `_persona` | 階層的ユーザーメモリ（`USER_MEMORY_*_BACKEND=RDB`） | 最初のアクセスで自動 | 4-7 |
+
+手で作る必要があるのは分析ミラーの3表と `vector` 拡張だけです。分析ミラーが無いと、エクスポート・Performance Explorer・分析データの退避が動きません。
 
 **役割分担**：`digim_chat_history` は Chat 実行中のライブ R/W 用、`digim_sessions` / `digim_dialogs` / `digim_references` は**分析用の正規化ミラー**です。両者は別テーブルで、前者は turn 全体を JSONB で持つため高速ですが `SELECT` での分析には向きません。分析クエリは必ず後者を見てください。
 
@@ -652,8 +729,15 @@ digim_sessions / digim_dialogs / digim_references   ← 分析はこちらを SE
 | 差分管理 | `status.yaml` の `db_export: {status, last_seq}`。保存のたび `UNDO` になり、成功で `DONE` |
 | 失敗時 | ロールバックして `UNDO` のまま。次ターンで同じ範囲を再試行し、チャットはエラーになりません |
 | 冪等性 | 既に `DONE` かつ `last_seq >= 最新 seq` なら `skip` |
+| ステップ | サポートエージェント（Thinking・RAG クエリ生成・メタ検索・ダイジェスト）、Web 検索、SKILL、回答の書き換え、ターンを起動したジョブを、1ステップ1行で `digim_steps` に書きます（エージェント・モデル・所要時間・トークン・状態）。表は最初のエクスポートで自動作成されます |
+| ベクトル | ターンが実行時に保存した入力ベクトル（`vecs/<seq>-<sub>_queries.npy` の先頭行）と回答ベクトル（`_answer.npy`）を、`query_vec` / `response_vec` が空の行に取り込みます。埋め込み API は呼びません |
+| 入力の文面 | `user_input` からは、BEFORE の SKILL が差し込んだブロックを取り除きます（以前に保存されたターンには Web 検索結果がそのまま入っているため） |
+| 退避への反映 | エクスポートしたセッションを、続けて分析データの退避テーブル（`digim_*_archive`）へも写します。失敗してもエクスポートは成功のままで、次の backup が写します |
+| 読み直し | ミラーにある最後のターンから読み直します。画像生成やチェーンの次のペルソナは、書き出しの後に同じターンへ保存されることがあるためです。既にある対話の行は参照ごと飛ばすので重複しません |
 
-サイドバー Sessions → **Export DB** の手動一括実行は取りこぼし回収用として残しています。埋め込み生成（`vectorize_dialogs`）は API 課金が発生するため**自動化していません**（従来どおり手動）。
+取りこぼしの回収はサイドバー Sessions → **Retry Pending Exports**（状態が DONE でないセッションだけを読む。自動エクスポートは次のターンが来たセッションしか再試行しないため、使われなくなったセッションはここで拾う）。埋め込み生成（`vectorize_dialogs`）は API 課金が発生するため**自動化していません**。**Vectorize Dialogs** ボタンで明示的に実行します。
+
+差分エクスポートは追記だけなので、書き出したターンは書き出した時点の内容のままです（後から付けた削除フラグ・メモリ除外・ダイジェスト・回答の書き換えは反映されません）。履歴と揃えるときは `python3 DigiM_DB_Export.py resync` を使います（`--dry-run` で件数だけ確認、`--session <ID>` で個別指定、`--archive` で続けて分析データの退避テーブルへも写す）。対話の行は ID とベクトルを保ったまま更新し、ベクトルは元の本文が変わった行だけ空に戻して `vectorize_dialogs` の対象にします。参照は自分のターン（`session_id, seq, sub_seq`）の対話に `dialog_id` で紐付きます。履歴が残っていないセッションも含めて紐付けだけを直すのは `relink` です。
 
 単一セッションだけ処理したい場合:
 
@@ -661,6 +745,7 @@ digim_sessions / digim_dialogs / digim_references   ← 分析はこちらを SE
 import DigiM_DB_Export as dbex
 dbex.export_session("20260907_012345_0")       # 例外を投げる
 dbex.export_session_safe("20260907_012345_0")  # 例外を握って dict を返す（自動実行はこちら）
+dbex.resync_session("20260907_012345_0", dry_run=True)  # 履歴との差分を数えるだけ（False で書き込む）
 ```
 
 **依存パッケージ**：`psycopg2-binary`（`requirements.txt` に含まれています）
@@ -717,6 +802,39 @@ CosmosDB モードで起動しつつパッケージが未インストールの�
 - **既存 JSON セッションの動作**：`chat_memory.json` がディスクに残っている限り、JSON 経路でそのまま読めます。上書きも JSON ファイルに戻ります。
 - **既存セッションを PG/Cosmos に移行したい場合**：手動で JSON を読んで INSERT / upsert するスクリプトを用意する必要があります（今のところ自動移行 CLI は未提供）。
 - **元に戻したい場合**：`SESSION_STORE_METHOD: "JSON"` に戻すだけ。既に PG/Cosmos に書かれた新規セッションはそちらに残り、JSON モードでは読めなくなるので注意（バッチで JSON にエクスポートし直す運用が必要）。
+
+#### 会話履歴の退避と削除（History Retention）
+
+古くなった会話履歴を退避してから削除します。単位は常に**セッション**（ターン単位で消すと seq・ダイジェスト・メモリが壊れるため）。処理本体は `DigiM_HistoryArchive.py` で、WebUI・CLI・スケジューラ・API のどこから呼んでも同じ関数が動きます。
+
+| 保存先 | backup（何度流してもよい・スケジュール向き） | purge（指定日数以上更新の無いセッション） |
+|---|---|---|
+| **JSON** | 対象セッションのフォルダを ZIP 化（削除はしない） | ZIP 化 → 検証 → フォルダ削除 |
+| **PostgreSQL** | 変更のあったセッションの行を `digim_chat_history_archive` に複製 | 退避テーブルへ複製 → 照合 → ZIP 化 → ライブ行とフォルダを削除 |
+| **CosmosDB** | 変更のあったドキュメントを退避コンテナ（`COSMOS_ARCHIVE_CONTAINER`、既定 `chat_history_archive`）に複製 | 同上（ドキュメント単位） |
+
+- **保存先はセッションごとに判定**します。PostgreSQL/Cosmos モードでもフォルダに `chat_memory.json` がある旧セッションは JSON として扱います。
+- **期限は「会話の最終ターン」と「履歴の最終書込」の新しい方から数えます**。前者は `status.yaml` の `last_update_date`、後者は PostgreSQL なら行の `updated_at`、JSON なら `chat_memory.json` の更新時刻です。スケジューラのジョブが既存セッションへ push で書き込んだ場合は `last_update_date` が動かないので、書込時刻も見ています。`status.yaml` 自体の更新時刻（エクスポート状態・ロック・非表示・名前変更でも変わる）は使いません。
+- どの保存先でも**セッションフォルダ（`status.yaml` / `vecs` / `contents` / `analytics`）はディスクに残っている**ので、purge は履歴とフォルダの両方を消します（片方だけ消すと「一覧にあるのに空」か「誰も辿れない行」になる）。
+- ZIP は `ARCHIVE_FOLDER` に1回の実行につき1つ（`sessions_archive_YYYYMMDD_HHMMSS.zip`）。中身は `session<ID>/…`（フォルダそのもの）＋ `session<ID>/chat_memory.json`（DB のセッションも書き出す）＋ `manifest.json`。**ZIP 単体で復元でき**、Performance Explorer の Agent セクションは従来どおり ZIP 内の `chat_memory.json` を分析に含めます。
+- 削除の前に必ず：分析ミラー（`digim_dialogs` 等）を履歴全体と突き合わせて揃える（`resync_session`）→ 分析データの退避テーブルへ写す → 退避（PG は件数と内容ハッシュを照合）→ ZIP の CRC 検証。ZIP 作成後に履歴やフォルダが書き換わったセッションは削除せずスキップします。
+- 対象外：`LOCKED`（実行中）のセッション、WebUI で開いているセッション、指定日数以内に更新されたセッション。DB に接続できないときは、フォルダしか見えないセッションを空と見なさず対象外にします。
+- 分析ミラー（`digim_sessions` / `digim_dialogs` / `digim_references`）と `digim_user_memory_*` は purge では削除しません。
+- **分析データの退避**：`POSTGRES_*` が設定されていれば保存方式に関係なく、backup と purge のたびに分析ミラーを `digim_sessions_archive` / `digim_dialogs_archive` / `digim_references_archive` / `digim_steps_archive` へ写します。このとき、各セッションのユーザーが属するグループも `digim_sessions_archive.user_groups` に記録します（最初の退避時に一度だけ書き、以後は変えません。ユーザーをマスタから消したり、別のグループへ移したりしても、過去のセッションのグループが残ります）。退避テーブルからは削除しないので、ミラーの古い行を消しても、ユーザー・エージェント・入力・出力・参照・ベクトル（`query_vec` / `response_vec`）を使った分析を続けられます。対話と参照は `(session_id, seq, sub_seq)` で結合します。ミラーを削るときはセッションかターンの単位で消してください（参照はターン内の順番 `ref_no` で持つため）。詳細は [docs/SETUP_POSTGRESQL.md](docs/SETUP_POSTGRESQL.md) の 4-10。
+- 復元：フォルダは ZIP から、DB の行は退避テーブルから（無ければ ZIP の `chat_memory.json` から）戻します。まだ存在するセッションは上書き指定が無い限り拒否します。DB から退避したセッションを JSON モードで復元すると、ファイルのセッションとして戻ります。
+
+**呼び出し方**
+
+| 経路 | 方法 |
+|---|---|
+| WebUI | サイドバー Sessions → **History Retention**（Session Archive 権限）。Idle Days → **Preview**（対象と容量）→ **Backup Now** → 確認チェック → **Purge Old Sessions**。ZIP 選択 → **Prepare Download** / **List Sessions in ZIP** → **Restore Session** |
+| CLI | `python3 DigiM_HistoryArchive.py list --days 90` / `backup [--days N] [--dry-run]` / `purge --days 90 [--dry-run]` / `restore --session <ID> [--zip NAME] [--overwrite]` / `archives` |
+| スケジューラ | ジョブのステップ種別 `history_archive`（`action`: `backup` / `purge`、`days`）。例：退避を毎日（`backup`, `days=0`＝DB 複製のみ）、削除を月1（`purge`, `days=90`） |
+| API | `/admin/history/*`（下記 API リファレンス）。`system.env` の `HISTORY_ARCHIVE_API_TOKEN` を設定したときだけ有効 |
+
+日数の既定値は `setting.yaml` の `ARCHIVE_DAYS`、ZIP の置き場所は `ARCHIVE_FOLDER` です。
+
+> PostgreSQL / Cosmos の保存は**変更のあった行だけ**を書き込みます（以前は保存のたびにセッション全体を書き直しており、216 行 / 29.7 MB のセッションで 1 回 11.5 秒かかっていました）。
 
 #### ユーザーマスター
 
@@ -813,7 +931,7 @@ CosmosDB モードで起動しつつパッケージが未インストールの�
 - 配列のいずれかが `"Admin"` の場合、全ユーザーのチャット履歴を閲覧でき、全エージェントが選択可能になります
 - 個別のグループ名を設定すると、エージェント側で同じ `GROUP` が設定されたエージェントのみ選択可能になります（**OR一致**: 自分のグループのいずれかと一致するエージェントが対象）
 - ログイン認証を有効にするには `system.env` で `LOGIN_ENABLE_FLG=Y` を設定してください
-- 認証ソースをPostgreSQLに切り替える場合は `LOGIN_AUTH_METHOD=RDB` を設定。`digim_users` テーブルが自動作成されます（カラム: `user_id`/`name`/`pw`/`group_cd[JSONB]`/`agent`/`allowed[JSONB]`）
+- ユーザーマスタを PostgreSQL に置くには `setting.yaml` の `MST_STORE_METHOD: "PostgreSQL"`（他のマスタと一緒に `digim_mst` へ。[マスタデータの保存バックエンド](#マスタデータの保存バックエンド) 参照）。旧方式の `LOGIN_AUTH_METHOD=RDB`（`digim_users` テーブル、カラム: `user_id`/`name`/`pw`/`group_cd[JSONB]`/`agent`/`allowed[JSONB]`/`defaults[JSONB]`）は `MST_STORE_METHOD` が `JSON` のときだけ効きます
 
 #### プロンプトテンプレート
 
@@ -3242,17 +3360,65 @@ Knowledge Explorerは、RAGデータの分析画面です。サイドバーの�
 
 ---
 
-## Agent Performance Explorer (APE)
+## Performance Explorer
 
-User Memory Explorer のエージェント版。サイドバーの **Agent Performance Explorer** から、特定エージェントの累積パフォーマンスを横断分析します。バックエンドは `DigiM_AgentPerformanceExplorer.py`。`Allowed["Agent Performance Explorer"]` が `true` のユーザーのみ利用可。
+サイドバーの **Performance Explorer** から、蓄積した会話を横断分析します。画面上部で **User**（利用者側）と **Agent**（エージェント側）のセクションを切り替えます。`Allowed["Performance Explorer"]` が `true` のユーザーのみ利用可（改名前のキー `Allowed["Agent Performance Explorer"]` も読みます）。
+
+- **User** — 期間・グループ／ユーザー・エージェントを指定し、「ユーザー入力 → 対応するエージェントの回答 → 活用された知識」の順に分析します。バックエンドは `DigiM_PerformanceExplorer.py`。
+- **Agent** — **Summary**（期間とエージェントを指定し、出力傾向・Habit・知識・SKILL・サポートエージェント・フィードバックの兆候を比べる。下の「Agent セクションの Summary」）と、**Knowledge map**（エージェント1体の累積パフォーマンス。バックエンドは `DigiM_AgentPerformanceExplorer.py`）を切り替えます。この章の「データソース」「Tab 1」「Tab 2」は Knowledge map の説明です。
+
+#### User セクションの対象データ
+
+PostgreSQL の分析データ退避テーブル（`digim_sessions_archive` / `digim_dialogs_archive` / `digim_references_archive`）だけを読みます。JSON で保存しているセッションは、ミラーへエクスポートされ **History Retention → Backup Now** で退避テーブルに入るまで対象になりません。
+
+- **期間は時刻まで指定**でき、`TIMEZONE`（既定 `Asia/Tokyo`）で解釈します。履歴のタイムスタンプはサーバーのローカル時計で保存されているので、読み込み時に換算しています。
+- **1ターン＝ユーザー入力1回**。チェーンやペルソナ並列で1つの入力に複数の回答が付く場合、入力は先頭の回答行のもの、回答はそのターンの全行です。PUSH・SKILL・TOOL の行と、削除済み（`flg = 'N'`）の行は除きます。
+- **分析するのは利用者が入力した文面だけです**。スケジュールされたジョブが起動したターン（入力はジョブに登録された文面）と、システムのサービス（Scheduler / Benchmark / SupportEval）のセッションは外します。BEFORE の SKILL が入力に差し込んだブロック（Web 検索結果など）は取り除きます。外した件数は条件の下に表示されます。
+- **グループは、バックアップ時にセッションへ記録したもの（`digim_sessions_archive.user_groups`）を使います**。記録がまだ無いセッションは、分析時にユーザーマスタ（`users` の `Group`）から引きます。複数グループに属するユーザーのターンは、それぞれのグループに数えます。どちらにも無いユーザーは `(no group)` です。
+- **分析軸**（Group / User）と、グループ・ユーザー・エージェントの絞り込み（いずれも複数選択）を決めて **Run analysis** を押します。結果は次に Run analysis を押すまで保持されます。
+
+#### User セクションの4つのタブ
+
+| タブ | 内容 | LLM |
+|---|---|---|
+| **1. Usage** | 曜日×時間帯のヒートマップ、期間ごとのターン数の推移、グループ／ユーザー別の集計（ターン・セッション・利用日数・入力と回答の文字数・回答までの秒数・トークン・参照数） | 使わない |
+| **2. Interests / Topics** | ユーザー入力のキーワードランキング（表示数は既定30）。件数・割合・利用者数に加えて、**最も多かった時期**と期間ごとの推移を表示。その下に、キーワードごとに**エージェント回答のワードクラウドとキーワード Top N**、最近の入力と回答を順に並べます | **Explain Topics** を押したときだけ |
+| **3. Diversity / Homogeneity** | ユーザー入力のクラスター分析。散布図は**色＝グループ（またはユーザー）、形＝クラスター**。クラスターごとに回答のワードクラウド・キーワード Top N と、活用された知識の Top N（参照回数／散布図／知識活用度の累計）。エクスパンダにグループごとのクラスター分布と、クラスター×グループの代表的な入力・その回答・活用された知識 | **Explain Diversity** を押したときだけ |
+| **4. Achievement** | 設定したお題（複数可）に対する達成度を LLM が 0〜100 で採点。スコア帯の分布、グループ／ユーザーのランキング、スコア帯ごとの回答のキーワードと活用された知識 | **Score** を押したとき |
+
+- **キーワード**は MeCab で抜いた複合名詞です（LLM は使いません）。`Exclude words` で「作成」「文章」のような指示語を外せます。回答側のキーワードは、件数に「全回答の中での珍しさ」を掛けたスコアで並べるので、どの回答にも出る語は上に来ません。
+- **クラスター分析**は入力ベクトル（`query_vec`）の先頭256次元で K-means（2〜10個）を行います。ベクトルは、ターンの実行時に計算して保存したもの（入力は検索用、回答は Knowledge Utility 用）をエクスポートがミラーへ取り込むので、**新しいターンは追加の埋め込みなしで対象になります**。それ以前のターン（入力ベクトルを保存し始めた 2026-08-29 より前、回答ベクトルは今回の更新より前）は一度も埋め込まれていないため、必要なら画面の **Embed these N rows once** で一度だけ埋めます（埋め込み API を呼び、退避テーブルに保存します）。回答ベクトルの無い回答は `Answer spread` が空になるだけで、クラスター分析には影響しません。
+- **多様性の指標**: `Evenness`（クラスターへの散らばり。1＝均等、0＝1つに集中）、`Input spread`（入力同士の平均コサイン距離）、`Distance from all`（全体のクラスター構成との差）。件数の少ないグループは同質に見えやすいので、件数と併せて読みます。
+- **回答の一貫性**: `Answer / input`（回答のばらつき ÷ 入力のばらつき）。1 を超えるクラスターは、似た入力に対して回答がばらついています。
+- **知識活用度**は Chat の Analytics Results - Knowledge Utility（Norm(All)）と同じ値を回答ごとに計算して合計したものです。0 より上は回答がその知識に近づいたこと、下は「検索されたが回答は離れた」ことを示します。Graph の参照には活用度が無いので、参照回数だけを出します。
+- **達成度の採点単位**は Session（期間内のそのセッションのユーザー入力をまとめて採点。既定）か Input（入力1件ごと）です。対象が `Max scored per theme` を超えるときは、お題にベクトルが近い順に絞ります。採点結果は `digim_pe_scores` に保存され、**同じお題・同じ内容・同じモデルは二度採点しません**。お題の初期値は `setting.yaml` の `PERFORMANCE_EXPLORER_THEMES`（文字列のリスト。`{NAME, CRITERIA}` で達成の基準も書けます）です。
+- 解説と採点のプロンプトは `prompt_templates.json` の `Topic Analyst PE` / `Diversity Analyst PE` / `Achievement Scorer PE` です。使うエージェントとエンジンは画面で選べます。
+
+#### Agent セクションの Summary
+
+期間（時刻まで）とエージェント（複数選択）を指定して **Run analysis** を押します。User セクションと同じ退避テーブルを、回答したエージェントの側から集計します。LLM は使いません。
+
+| タブ | 内容 |
+|---|---|
+| **1. Output** | エージェント別の回答数・ターン・セッション・利用者、回答の長さ、回答までの秒数、メイン LLM の秒数、トークン、1回答あたりの参照数、使ったモデル。期間ごとの推移、モデル別の比較、回答のワードクラウドとキーワード Top N |
+| **2. Habit** | 起動したプラクティスの回数・割合と推移。Thinking エージェントが選んだ Habit の内訳（ここに出ないプラクティスは、コマンドや固定設定で起動したもの） |
+| **3. Knowledge** | 知識ベース別（Book を含む）の参照回数・知識の種類数・参照した回答の割合・知識活用度。続いて、**エージェントに設定されている Knowledge、Book の順に、それぞれ**よく使われた知識の Top N、質問との距離と回答との距離の棒グラフ、コレクション全体の散布図（Analytics Results - Knowledge Utility と同じ配置で、参照された知識を強調）。Thinking が選んだ Book |
+| **4. Skill** | SKILL ごとの起動回数、実行時間、SKILL 自身が消費したトークン、エラー、適用されなかった回数。後から書き換えられた回答 |
+| **5. Support agents** | サポートエージェントとモデルごとの起動回数・実行時間・トークン。1回答あたりの秒数の内訳（Thinking・RAG クエリ生成・メタ検索・Web 検索・ダイジェスト・メイン LLM） |
+| **6. Feedback signals** | 削除された回答、メモリから除外された回答、書き換えられた回答の数と割合。直前とほぼ同じ入力が続いた割合（Compute を押すと入力ベクトルを比べます） |
+
+- **SKILL・サポートエージェント・書き換えの記録は `digim_steps`（退避側は `digim_steps_archive`）から読みます**。履歴が残っているセッションの分しか無いので、画面上部の `Answers with step data` で対象の件数を確かめてください。SKILL の実行時間は今回の更新以降のターンから記録されます。
+- **退避テーブルがミラーより古いときは、画面の上部に不足している件数と「Copy to the archive now」ボタンが出ます**。押すと History Retention の Backup Now と同じ複製を行います（削除はしません）。ターン完了時のエクスポートは、そのセッションの分を退避テーブルにも写すので、通常はこの表示は出ません。
+- **フィードバックは書かれる件数が少なすぎるため、利用者が回答に対して取った行動で代用しています**。「ほぼ同じ入力が続いた割合」は、既定のしきい値（類似度 0.93）でも、同じ指示文を内容だけ変えて繰り返す使い方を拾います。割合を不満と読む前に、Show examples で実例を確かめてください。
+- 秒数の内訳は、クエリ生成とメタ検索が並列に走るため、合計が利用者の待ち時間を超えることがあります。ダイジェストは回答を表示した後に走ります。
 
 ### データソース (PG → ライブ → アーカイブの優先順)
 
 | # | ソース | 用途 |
 |---|------|------|
-| 1 | **PostgreSQL** (`digim_dialogs / digim_references / digim_sessions`) | サイドバー Sessions → **Export DB** で投入されたWarehouse。インデックス付きで高速 |
+| 1 | **PostgreSQL** (`digim_dialogs / digim_references / digim_sessions`) | ターン完了ごとの自動エクスポートで投入される Warehouse（取りこぼしは Retry Pending Exports）。インデックス付きで高速 |
 | 2 | **ライブ session フォルダ** (`user/session2*/chat_memory.json`) | まだ Export DB していないセッション |
-| 3 | **アーカイブ ZIP** (`user/archive/sessions_archive_*.zip`) | `ARCHIVE_DAYS` 経過で圧縮済 |
+| 3 | **アーカイブ ZIP** (`user/archive/sessions_archive_*.zip`) | History Retention の Purge / Backup が作成した ZIP（PostgreSQL のセッションも `chat_memory.json` として同梱） |
 
 session_id でユニオン de-dup (PG 優先)。これにより、すでに archive で圧縮済みのセッション・ライブのセッション・まだ Export していないセッション全部を横断集計できます。
 
@@ -3632,6 +3798,11 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
 | `POST` | `/sessions/{session_id}/summary` | セッションサマリーの `enabled` / `template` を変更（片方のみ更新も可） |
 | `GET` | `/session_summary_presets` | セッションサマリーのプリセット一覧を取得 |
 | `GET` | `/health` | ヘルスチェック |
+| `GET` | `/admin/history/sessions` | 履歴の退避状況（`?days=N` で purge 対象を判定）。以下 `/admin/history/*` は `HISTORY_ARCHIVE_API_TOKEN` を `X-Admin-Token` ヘッダで渡したときだけ有効（未設定なら 403） |
+| `GET` | `/admin/history/archives` | 退避 ZIP の一覧と、各 ZIP に入っているセッション |
+| `POST` | `/admin/history/backup` | 退避（`{"days": null, "session_ids": null, "dry_run": false}`） |
+| `POST` | `/admin/history/purge` | 退避してから削除（`days` 必須、`dry_run` で対象確認のみ） |
+| `POST` | `/admin/history/restore` | ZIP／退避テーブルから復元（`{"session_id": "...", "zip_name": null, "overwrite": false}`） |
 
 > API サーバのリッスンポートは `system.env` の `API_PORT` で指定します（デフォルト 8899）。値を変えれば WebUI の「Web API」メニューから起動する uvicorn も自動的にそのポートを使います。
 
@@ -3709,8 +3880,13 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
 | `web_search_engine` | `"OpenAI"` | Web検索エンジン（`Perplexity` / `OpenAI` / `Google`）。`web_search` が `false` の場合は使用されない |
 | `web_search_guardrail` | `true` | Web検索結果を「参考資料」ラップで囲み、LLMがトーン/文脈を保つよう指示。`false` にすると素の検索結果テキストがそのまま渡る |
 | `private_mode` | `false` | Private Mode。`true` にすると `private: true` のRAGデータが検索対象外になる |
-| `thinking_mode` | `false` | Thinking Mode。`true` にするとAIが質問を分析してHabit・Web検索・RAGクエリ生成・Book追加を動的に判定する |
-| `max_thinking_turns` | `1` | Thinking を何ターンまで走らせるか（1〜5に自動 clamp）。2以上にすると、sufficient=false のとき予備Web検索→次ターンThinkingを繰り返す。`thinking_mode=true` の時のみ意味を持つ |
+| `skills` | （未指定） | そのターンに走らせる SKILL 名の配列。**未指定ならエージェントの `SKILL.TOOLS.<name>.DEFAULT: true` がそのまま適用される**（WebUI の Skills ピッカーの初期選択と同じ）。指定するとそのターンの選択を置き換える（`[]` で全オフ）。存在しない名前は実行されず `skills_ignored` で返る |
+| `skill` | （未指定） | SKILL を1つ上乗せする（WebUI の `/<name>` 相当）。`skills` を置き換えず追加で発火する |
+| `thinking_mode` | エージェントの `THINKING.MODE` | Thinking Mode。`true` にするとAIが質問を分析してHabit・Web検索・RAGクエリ生成・Book追加・SKILL を動的に判定する |
+| `thinking_targets` | エージェントの `THINKING.TARGETS` | Thinking に任せる対象のラベル配列（`Habit` / `Web Search` / `RAG Query` / `Books` / `Skills` / `Personas`）。`Skills` を含めると、`DEFAULT` でONになっているだけの BEFORE スキルは Thinking が選んだときだけ走る |
+| `max_thinking_turns` | エージェントの `THINKING.MAX_TURNS` | Thinking を何ターンまで走らせるか（1〜5に自動 clamp）。2以上にすると、sufficient=false のとき予備Web検索→次ターンThinkingを繰り返す。`thinking_mode=true` の時のみ意味を持つ |
+| `max_personas` | （未指定） | PersonaSelector の上限（practice が `PERSONAS="THINKING"` のときだけ意味を持つ） |
+| `match_input_language` | （未指定） | ユーザーが書いた言語で返す（`PERSONALITY.LANGUAGE` を上書き）。同名のフラグ型 SKILL を `skills` で選んでも同じ効果 |
 | `insert_citations` | `true` | 応答本文に `[N]` 引用マーカーを挿入し、末尾に `## Reference Info` セクション（Web / Book のソース一覧）を付ける |
 | `cite_knowledge` | `false` | 応答生成後に判定エージェント（`agent_58KnowledgeUsageSelector.json`）が実際に参照したKNOWLEDGEチャンクを判定し、末尾に `## Reference Knowledge` セクションを付ける（Knowledge Utility スコア併記） |
 | `diagram_mode` | `false` | LLMにMarkdownの表と Mermaid 図（```mermaid）を用いた説明を指示 |
@@ -3731,6 +3907,13 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
   "session_id": "API_TEST_001",
   "session_name": "(User:TestUser)AIについての質問",
   "response": "エージェントの応答テキスト",
+  "response_display": "エージェントの応答テキスト\n\n## Mood Score\n\n...",
+  "skills": {
+    "refine_expression": {"phase": "AFTER", "merge": "REPLACE", "order": 20,
+                           "text": "...", "model": "...", "prompt_token": 820, "response_token": 310},
+    "mood_score": {"phase": "AFTER", "merge": "APPEND", "order": 10,
+                    "header": "## Mood Score", "text": "..."}
+  },
   "attachments_processed": [
     {"filename": "report.pdf", "size_bytes": 128432, "content_type": "application/pdf", "source": "base64"}
   ],
@@ -3752,6 +3935,15 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
   }
 }
 ```
+
+> `response` は**保存された「記録上の答え」**です。AFTER フェーズはストリームを流し終えた後に走るため、
+> `MERGE: "REPLACE"` の SKILL（`refine_expression` など）が書き換えた本文や引用マーカーの注入結果を含むために、
+> 実行後に保存済みのターンを読み戻して返しています。
+>
+> `MERGE: "APPEND"` の SKILL 出力は `response.text` には入れず、`skills` に入ります（メモリ・ダイジェスト・
+> アナリティクスが「エージェント自身の発言」と誤読しないため）。画面と同じ表示が欲しいときは `response_display` を使ってください。
+>
+> 存在しない SKILL 名を `skills` / `skill` に渡した場合は `skills_ignored` に配列で返ります（渡していなければキー自体が出ません）。
 
 > `attachments_processed` はリクエストに添付が無ければ空配列（`[]`）です。
 >

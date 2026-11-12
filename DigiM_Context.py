@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from concurrent.futures import ThreadPoolExecutor
 
 import DigiM_Util as dmu
+import DigiM_MstStore as dmms
 
 logger = logging.getLogger(__name__)
 import DigiM_Tool as dmt
@@ -133,8 +134,8 @@ def get_text_content(agent_data, content, seq, sub_seq, file_seq):
 # An empty/whitespace template body is treated as "template not present" so we
 # also surface that case rather than returning an empty prompt silently.
 def set_prompt_template(prompt_temp_cd):
-    prompt_temp_mst_path = str(Path(mst_folder_path) / prompt_template_mst_file)
-    prompt_temps_json = dmu.read_json_file(prompt_temp_mst_path)
+    prompt_temp_mst_path = dmms.path("prompt_templates")
+    prompt_temps_json = dmms.load("prompt_templates")
     section = prompt_temps_json.get("PROMPT_TEMPLATE") or {}
     if prompt_temp_cd not in section:
         available = sorted(section.keys())
@@ -153,7 +154,7 @@ def set_prompt_template(prompt_temp_cd):
 # Get the RAG data list (in rags.json order)
 def get_rag_list():
     # Use the rags.json bucket order as the basis
-    rag_mst = dmu.read_json_file(rag_mst_file, mst_folder_path)
+    rag_mst = dmms.load("rags")
     ordered = []
     for rag_id, setting in rag_mst.items():
         bucket = setting.get("bucket", rag_id)
@@ -246,7 +247,10 @@ def select_rag_vector(rag_data_list, rag={}):
         chunk_item_list = re.findall(r"\{(.*?)\}", rag["CHUNK_TEMPLATE"])
         chunk_items = {}
         for item in chunk_item_list:
-            chunk_items[item] = rag_data[item]
+            # A collection saved before record_date existed has no such key,
+            # and a NULL record_date is stored as "". Both render as blank
+            # rather than taking the turn down with a KeyError.
+            chunk_items[item] = rag_data.get(item, "")
         rag_data["chunk_context"] = rag["CHUNK_TEMPLATE"].format(**chunk_items)
         rag_data["log_format"] = rag["LOG_TEMPLATE"]
 
@@ -523,7 +527,10 @@ def get_knowledge_reference(response_vec, rag_selected, logic="Cosine"):
         chunk_item_list = re.findall(r"\{(.*?)\}", rag_data["log_format"])
         chunk_items = {}
         for item in chunk_item_list:
-            chunk_items[item] = rag_data[item]
+            # A collection saved before record_date existed has no such key,
+            # and a NULL record_date is stored as "". Both render as blank
+            # rather than taking the turn down with a KeyError.
+            chunk_items[item] = rag_data.get(item, "")
         rag_data["log"] = rag_data["log_format"].format(**chunk_items)
 
         # Dataset kept for the record
@@ -614,14 +621,15 @@ def get_chunk_csv(bucket, file_path, file_name, field_items, title_items, key_te
                 for field_item in field_items:
                     rag_chunk[field_item] = row[field_item]
 
-                create_date = datetime.now().strftime("%Y-%m-%d")
-                if "create_date" in row:
-                    try:
-                        parsed_date = datetime.strptime(row["create_date"], '%Y/%m/%d')
-                        create_date = parsed_date.strftime('%Y-%m-%d')
-                    except ValueError:
-                        create_date = datetime.now().strftime("%Y-%m-%d")
-                rag_chunk["create_date"] = create_date
+                # Left blank on purpose when the source has no usable date:
+                # save_rag_chunk_db resolves create_date to the system date,
+                # and record_date stays NULL. Deciding it here would stamp a
+                # fresh date on every import run.
+                rag_chunk["create_date"] = dmu.normalize_date(
+                    row.get("create_date"), "create_date")
+                if "record_date" in row:
+                    rag_chunk["record_date"] = dmu.normalize_date(
+                        row.get("record_date"), "record_date")
 
                 rag_data.append(rag_chunk)
     return rag_data
@@ -631,8 +639,7 @@ def get_chunk_notion(bucket, db_name, item_dict, chk_dict=None, date_dict=None, 
     rag_data = []
     
     # Resolve the Notion DB ID
-    notion_db_mst_file_path = str(Path(mst_folder_path) / notion_db_mst_file)
-    notion_db_mst = dmu.read_json_file(notion_db_mst_file_path)
+    notion_db_mst = dmms.load("notion_db")
     db_id = notion_db_mst[db_name]
 
     # Fetch RAG-target pages
@@ -677,8 +684,15 @@ def get_chunk_notion(bucket, db_name, item_dict, chk_dict=None, date_dict=None, 
             if skip_page:
                 continue
 
-            if "create_date" not in page_items:
-                page_items["create_date"] = datetime.now().strftime("%Y-%m-%d")
+            # An unset Notion date property arrives as "", which used to reach
+            # the save stage verbatim and abort the whole Update RAG run on
+            # strptime. Normalising here and resolving in save_rag_chunk_db
+            # keeps both date fields on the same rule as the CSV path.
+            page_items["create_date"] = dmu.normalize_date(
+                page_items.get("create_date"), "create_date")
+            if "record_date" in page_items:
+                page_items["record_date"] = dmu.normalize_date(
+                    page_items.get("record_date"), "record_date")
 
             rag_data.append(page_items)
     return rag_data
@@ -688,8 +702,7 @@ def get_chunk_notion_pageindex(bucket, db_name, item_dict, chk_dict=None, date_d
     rag_data = []
 
     # Resolve the Notion DB ID
-    notion_db_mst_file_path = str(Path(mst_folder_path) / notion_db_mst_file)
-    notion_db_mst = dmu.read_json_file(notion_db_mst_file_path)
+    notion_db_mst = dmms.load("notion_db")
     db_id = notion_db_mst[db_name]
 
     # Fetch RAG-target pages
@@ -952,6 +965,36 @@ def export_pageindex_as_excel_bundle(bucket):
 
 
 # Edit RAG chunk data (ChromaDB)
+# create_date is the system-managed date and is never NULL: the mapped source
+# field wins, otherwise a chunk already in the store keeps the date it was
+# first saved with, and only a genuinely new chunk gets today. Re-stamping
+# today every run would mark every chunk as changed and would say nothing
+# beyond "when the last import ran".
+#
+# record_date is the content date and may be NULL. NULL is stored as "" with
+# no record_date_ts at all, so a range filter cannot match it.
+def _resolve_chunk_dates(rag_chunk, existing_map, today):
+    existing = existing_map.get(str(rag_chunk.get("id", ""))) or {}
+    create_date = str(rag_chunk.get("create_date") or "")
+    if not create_date:
+        create_date = str(existing.get("create_date") or "") or today
+    try:
+        rag_chunk["create_date_ts"] = datetime.strptime(create_date, "%Y-%m-%d").timestamp()
+    except (ValueError, TypeError):
+        create_date = today
+        rag_chunk["create_date_ts"] = datetime.strptime(today, "%Y-%m-%d").timestamp()
+    rag_chunk["create_date"] = create_date
+
+    if "record_date" in rag_chunk:
+        record_date = str(rag_chunk.get("record_date") or "")
+        try:
+            rag_chunk["record_date_ts"] = datetime.strptime(record_date, "%Y-%m-%d").timestamp()
+        except (ValueError, TypeError):
+            record_date = ""
+            rag_chunk.pop("record_date_ts", None)
+        rag_chunk["record_date"] = record_date
+
+
 def save_rag_chunk_db(rag_id, rag_data):
     db_client = get_chroma_client()
     collection = db_client.get_or_create_collection(name=rag_id, metadata={"hnsw:space": "cosine"})
@@ -970,16 +1013,23 @@ def save_rag_chunk_db(rag_id, rag_data):
 
     # Sort RAG data by create_date descending
     if rag_data and "create_date" in rag_data[0]:
-        rag_data = sorted(rag_data, key=lambda x: x["create_date"], reverse=True)
+        rag_data = sorted(rag_data, key=lambda x: x.get("create_date") or "", reverse=True)
 
     # Bucket chunks by what changed
     chunks_need_embed = []  # New, or title/key_text/value_text changed -> needs embedding
     chunks_meta_only  = []  # Only other fields changed -> metadata-only overwrite
 
-    skip_keys_for_compare = {"id", "title", "key_text", "value_text", "vector_data_value_text"}
+    # create_date is system-managed (see _resolve_chunk_dates), so it is not a
+    # reason to rewrite a chunk. create_date_ts is derived from it and has to
+    # be skipped with it, or the pair still reports a change and the skip does
+    # nothing. The content date is record_date, which is compared as usual.
+    skip_keys_for_compare = {"id", "title", "key_text", "value_text",
+                              "vector_data_value_text",
+                              "create_date", "create_date_ts"}
 
+    _today = datetime.now().strftime("%Y-%m-%d")
     for rag_chunk in rag_data:
-        rag_chunk["create_date_ts"] = datetime.strptime(rag_chunk["create_date"], "%Y-%m-%d").timestamp()
+        _resolve_chunk_dates(rag_chunk, existing_map, _today)
         if "private" not in rag_chunk:
             rag_chunk["private"] = False
         if not rag_chunk.get("value_text"):
@@ -1038,6 +1088,30 @@ def save_rag_chunk_db(rag_id, rag_data):
         chunk_id = str(rag_chunk["id"])
         del rag_chunk["id"]
         rag_chunk["vector_data_value_text"] = existing_map[chunk_id].get("vector_data_value_text", "")
+        # `update` MERGES metadata, so a key the chunk no longer has keeps its
+        # old value — a record_date cleared at the source would leave
+        # record_date_ts behind and go on matching date filters. Replacing the
+        # row outright is the only way to drop a key, and re-adding it with the
+        # embedding read back costs no embedding call.
+        _dropped = [k for k in existing_map[chunk_id] if k not in rag_chunk]
+        if _dropped:
+            _prev = collection.get(ids=[chunk_id], include=["embeddings", "documents"])
+            # ChromaDB hands embeddings back as a numpy array, whose truth
+            # value raises, so length is the only safe emptiness test here.
+            _embs = _prev.get("embeddings")
+            _emb = _embs[0] if _embs is not None and len(_embs) > 0 else None
+            if _emb is not None:
+                _docs = _prev.get("documents")
+                collection.delete(ids=[chunk_id])
+                collection.add(ids=[chunk_id], embeddings=[list(_emb)],
+                               documents=(list(_docs) if _docs else None),
+                               metadatas=[rag_chunk])
+                logger.info(f"Replaced metadata for {rag_chunk['title']} "
+                            f"(dropped {', '.join(_dropped)}).")
+                cnt_add += 1
+                continue
+            logger.warning(f"{rag_chunk['title']}: embedding unavailable; "
+                           f"keeping stale {', '.join(_dropped)}")
         collection.update(ids=[chunk_id], metadatas=rag_chunk)
         logger.info(f"Updated metadata for {rag_chunk['title']} in the knowledge DB (no re-embedding).")
         cnt_add += 1
@@ -1675,7 +1749,7 @@ def select_rag_page_index(query, rag, exec_info):
 # Generate RAG data
 def generate_rag():
     # Load the RAG master
-    rag_mst_dict = dmu.read_json_file(rag_mst_file, mst_folder_path)
+    rag_mst_dict = dmms.load("rags")
 
     # Generate each RAG data
     cnt_add = 0

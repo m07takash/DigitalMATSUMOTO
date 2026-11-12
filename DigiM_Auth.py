@@ -12,6 +12,7 @@ import logging
 import os
 
 import DigiM_Util as dmu
+import DigiM_MstStore as dmms
 
 logger = logging.getLogger(__name__)
 
@@ -23,27 +24,16 @@ def get_method():
     return (os.getenv("LOGIN_AUTH_METHOD") or "JSON").upper()
 
 
-# ---------- JSON backend ----------
-def _json_path():
-    return mst_folder_path + (os.getenv("USER_MST_FILE") or "")
-
-
-def _load_users_json():
-    path = _json_path()
+# ---------- master store (JSON file, or digim_mst under MST_STORE_METHOD) ----------
+def _load_users_store():
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return {}
-    except json.JSONDecodeError:
+        return dmms.load("users") or {}
+    except Exception:
         return {}
 
 
-def _save_users_json(users):
-    path = _json_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(users, f, ensure_ascii=False, indent=2)
+def _save_users_store(users):
+    dmms.save("users", users, indent=2)
 
 
 # ---------- RDB backend ----------
@@ -54,9 +44,13 @@ CREATE TABLE IF NOT EXISTS digim_users (
     pw         TEXT,
     group_cd   JSONB,
     agent      TEXT,
-    allowed    JSONB
+    allowed    JSONB,
+    defaults   JSONB
 )
 """
+# A table created before `defaults` existed loses every per-user Default on
+# the RDB path, which the WebUI then replaces with its hard-coded values.
+_RDB_MIGRATE = "ALTER TABLE digim_users ADD COLUMN IF NOT EXISTS defaults JSONB"
 
 
 def _safe_int(value, default):
@@ -67,14 +61,10 @@ def _safe_int(value, default):
 
 
 def _rdb_config():
-    return {
-        "host":     os.getenv("POSTGRES_HOST"),
-        "port":     _safe_int(os.getenv("POSTGRES_PORT"), 5432),
-        "dbname":   os.getenv("POSTGRES_DB"),
-        "user":     os.getenv("POSTGRES_USER"),
-        "password": os.getenv("POSTGRES_PASSWORD"),
-        "sslmode":  "require",
-    }
+    # One definition of the connection, so POSTGRES_SSLMODE reaches every
+    # store: a local container without SSL could not be used otherwise.
+    import DigiM_SessionStore as _dmss
+    return _dmss.pg_connect_kwargs()
 
 
 def _rdb_connect():
@@ -85,6 +75,7 @@ def _rdb_connect():
 def _ensure_user_table(conn):
     with conn.cursor() as cur:
         cur.execute(_RDB_DDL)
+        cur.execute(_RDB_MIGRATE)
     conn.commit()
 
 
@@ -93,10 +84,10 @@ def _load_users_rdb():
     try:
         _ensure_user_table(conn)
         with conn.cursor() as cur:
-            cur.execute("SELECT user_id, name, pw, group_cd, agent, allowed FROM digim_users")
+            cur.execute("SELECT user_id, name, pw, group_cd, agent, allowed, defaults FROM digim_users")
             rows = cur.fetchall()
         users = {}
-        for user_id, name, pw, group_cd, agent, allowed in rows:
+        for user_id, name, pw, group_cd, agent, allowed, defaults in rows:
             # group_cd is JSONB (array). Also tolerate the legacy string form.
             if isinstance(group_cd, list):
                 groups = group_cd
@@ -110,6 +101,7 @@ def _load_users_rdb():
                 "Group": groups,
                 "Agent": agent or "",
                 "Allowed": allowed or {},
+                "Defaults": defaults or {},
             }
         return users
     finally:
@@ -134,12 +126,12 @@ def _save_users_rdb(users):
                     groups = []
                 cur.execute(
                     """
-                    INSERT INTO digim_users (user_id, name, pw, group_cd, agent, allowed)
-                    VALUES (%s, %s, %s, %s::jsonb, %s, %s::jsonb)
+                    INSERT INTO digim_users (user_id, name, pw, group_cd, agent, allowed, defaults)
+                    VALUES (%s, %s, %s, %s::jsonb, %s, %s::jsonb, %s::jsonb)
                     ON CONFLICT (user_id) DO UPDATE
                     SET name=EXCLUDED.name, pw=EXCLUDED.pw,
                         group_cd=EXCLUDED.group_cd, agent=EXCLUDED.agent,
-                        allowed=EXCLUDED.allowed
+                        allowed=EXCLUDED.allowed, defaults=EXCLUDED.defaults
                     """,
                     (
                         user_id,
@@ -148,6 +140,7 @@ def _save_users_rdb(users):
                         json.dumps(groups, ensure_ascii=False),
                         info.get("Agent", ""),
                         json.dumps(info.get("Allowed", {}), ensure_ascii=False),
+                        json.dumps(info.get("Defaults", {}), ensure_ascii=False),
                     ),
                 )
         conn.commit()
@@ -156,14 +149,30 @@ def _save_users_rdb(users):
 
 
 # ---------- public API ----------
+# MST_STORE_METHOD (setting.yaml) is the one switch for every master, users
+# included. LOGIN_AUTH_METHOD=RDB predates it and still selects the
+# normalized `digim_users` table, but only while the master store is on JSON;
+# once the store is PostgreSQL the users master lives in `digim_mst` with the
+# rest, and the old flag is reported rather than obeyed.
+def _legacy_rdb() -> bool:
+    if get_method() != "RDB":
+        return False
+    if dmms.method() == "PostgreSQL":
+        logger.warning("LOGIN_AUTH_METHOD=RDB is ignored: MST_STORE_METHOD=PostgreSQL "
+                       "keeps users in digim_mst. Run `python3 DigiM_MstStore.py import users` "
+                       "once if they still live in digim_users.")
+        return False
+    return True
+
+
 def load_user_master():
-    if get_method() == "RDB":
+    if _legacy_rdb():
         return _load_users_rdb()
-    return _load_users_json()
+    return _load_users_store()
 
 
 def save_user_master(users):
-    if get_method() == "RDB":
+    if _legacy_rdb():
         _save_users_rdb(users)
         return
-    _save_users_json(users)
+    _save_users_store(users)

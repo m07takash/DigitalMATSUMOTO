@@ -21,7 +21,7 @@
       "RAG Management": true,
       "Knowledge Explorer": true,
       "User Memory Explorer": true,
-      "Agent Performance Explorer": true,
+      "Performance Explorer": true,
       "Evaluation": true,
       "Support Eval": true,
       "Scheduler": true,

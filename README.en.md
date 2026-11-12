@@ -43,7 +43,7 @@
   - [Export / Report](#export--report)
   - [Session management](#session-management)
 - [User Memory Explorer](#user-memory-explorer)
-- [Agent Performance Explorer (APE)](#agent-performance-explorer-ape)
+- [Performance Explorer](#performance-explorer)
   - [Data sources (precedence: PG → live folders → archives)](#data-sources-precedence-pg--live-folders--archives)
   - [Tab 1: Overview](#tab-1-overview)
   - [Tab 2: Knowledge / Book Utilization](#tab-2-knowledge--book-utilization)
@@ -146,6 +146,9 @@ and RAG (ChromaDB).
 |-----------|------|
 | `DigiM_Execute.py` | Main execution engine |
 | `DigiM_Session.py` | Session / chat history management |
+| `DigiM_SessionStore.py` | Chat-history storage backend (`JSON` / `PostgreSQL` / `CosmosDB`, chosen by `SESSION_STORE_METHOD` in `setting.yaml`) |
+| `DigiM_HistoryArchive.py` | Chat-history backup / purge / restore, and the copy of the analytics mirror to its backup tables (JSON / PostgreSQL / CosmosDB; one implementation behind the WebUI, CLI, scheduler and API) |
+| `DigiM_MstStore.py` | Master-data storage backend for the seven files under `user/common/mst/` (`JSON` / `PostgreSQL`, one switch: `MST_STORE_METHOD` in `setting.yaml`) |
 | `DigiM_Context.py` | Context generation / RAG processing |
 | `DigiM_FoundationModel.py` | LLM abstraction (multi-LLM support) |
 | `DigiM_Agent.py` | Agent settings management (template + persona override support) |
@@ -170,6 +173,7 @@ and RAG (ChromaDB).
 | `DigiM_ScheduledJobs.py` | Scheduled jobs master CRUD (read/write `user/common/mst/scheduled_jobs.json` and record execution results) |
 | `DigiM_GeneUserMemory.py` | User Memory generation / diff merge / auto-approval / verification loop update / emotion/Big5 backfill for existing records (with CLI) |
 | `DigiM_UserMemoryExplorer.py` | Backend of User Memory Explorer (cohort filtering / 3-layer aggregation / interest topic transitions / context synthesis for dialogue) |
+| `DigiM_PerformanceExplorer.py` | Backend of the Performance Explorer User section and Agent summary (loads the analytics backup tables; keyword extraction, clustering, knowledge-utility aggregation, achievement scoring and its store, time and tokens per step) |
 | `DigiM_GeneUserDialog.py` | (Deprecated) Legacy user dialog storage. Backward-compat shim to `DigiM_GeneUserMemory.py` |
 | `DigiM_SupportEval.py` | Support Agent performance evaluation |
 | `DigiM_Benchmark.py` | Support Agent speed / output comparison benchmark (CLI) |
@@ -313,7 +317,9 @@ Then edit `system.env`.
 |------|-----------|------|
 | `TIMEZONE` | `Asia/Tokyo` | Timezone |
 | `LOGIN_ENABLE_FLG` | `N` | Enable login authentication (`Y` to enable) |
-| `LOGIN_AUTH_METHOD` | `JSON` | Login authentication method. `JSON`: uses `USER_MST_FILE` / `RDB`: uses the PostgreSQL `digim_users` table (the table is auto-created on first access) |
+| `LOGIN_AUTH_METHOD` | `JSON` | Login authentication method (older path). `JSON`: uses `USER_MST_FILE` / `RDB`: uses the PostgreSQL `digim_users` table (auto-created on first access). When `setting.yaml` sets `MST_STORE_METHOD=PostgreSQL` that takes precedence and this value is ignored |
+| `HISTORY_ARCHIVE_API_TOKEN` | (unset) | Token that enables the API's `/admin/history/*` endpoints (history backup / purge / restore). Unset means they return 403. Has no effect on the WebUI / CLI / scheduler |
+| `COOKIE_SECRET` | (unset) | Key that signs the login cookie. **Always set a long random value of your own**: unset, a fallback written in the source code signs the cookie, and anyone who knows it can make one for any user. Changing it logs everybody out |
 | `AGENT_PERSONA_SOURCE` | `EXCEL` | Source of Agent Personas. `EXCEL`: xlsx under `user/common/agent/persona_data/` / `RDB`: `digim_agent_personas` table / `BOTH`: merged |
 | `USER_MEMORY_HISTORY_BACKEND` / `NOWADAY_BACKEND` / `PERSONA_BACKEND` | `EXCEL` | Storage backend for each User Memory layer (EXCEL/NOTION/RDB). See "User Memory (Hierarchical User Understanding)" for details |
 | `USER_MEMORY_DEFAULT_LAYERS` | `persona,nowaday,history` | System default enabled layers for User Memory (empty string `""` turns all off) |
@@ -564,6 +570,11 @@ Place the master data under `user/common/mst/`. Files prefixed with `sample_` ar
 | `sample_prompt_templates.json` | `prompt_templates.json` | Prompt templates |
 | `sample_category_map.json` | `category_map.json` | Category definitions |
 | `sample_notion_db.json` | `notion_db.json` | Notion DB definitions |
+| `sample_scheduled_jobs.json` | `scheduled_jobs.json` | Scheduled jobs (created on the Scheduler screen) |
+| `sample_session_summary_presets.json` | `session_summary_presets.json` | Session summary templates |
+| `sample_web_search_guard.json` | `web_search_guard.json` | Web search guardrail settings |
+
+A master whose working file does not exist is read from its `sample_` file (the working file is written the first time it is saved from the screen).
 
 To switch to operational files, change the master file settings in `system.env`.
 
@@ -572,6 +583,20 @@ USER_MST_FILE=users.json
 RAG_MST_FILE=rags.json
 PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
 ```
+
+#### Master-data storage backend
+
+The seven masters under `user/common/mst/` (`users` / `rags` / `prompt_templates` / `notion_db` / `category_map` / `scheduled_jobs` / `session_summary_presets`) switch backend **together** through **`MST_STORE_METHOD`** in `setting.yaml`. Default is **JSON** (files, as before).
+
+| Mode | Storage | Notes |
+|---|---|---|
+| **JSON** (default) | `user/common/mst/*.json` | Zero extra deps. Hand-editable, diffable in git |
+| **PostgreSQL** | `digim_mst` table (one row per master, JSONB) | Lets several instances share one set of masters. Reads are cached per process for `MST_STORE_CACHE_SEC` (default 10 s) |
+
+- Flipping the setting migrates nothing by itself: `python3 DigiM_MstStore.py import` copies JSON → DB once, `export` writes DB → JSON back (`list` shows which masters have a row / a file).
+- When the database is unreachable, that one call reads the JSON file and logs an error, so the app still boots.
+- `LOGIN_AUTH_METHOD=RDB` (`digim_users`) is the older path and only applies while `MST_STORE_METHOD` is `JSON`; under `PostgreSQL` users live in `digim_mst` too and the old flag is ignored with a warning.
+- Code reads a master through `DigiM_MstStore.load("<logical name>")`, never by opening the file path.
 
 ### Chat-history storage backend
 
@@ -626,7 +651,60 @@ CREATE INDEX IF NOT EXISTS idx_digim_chat_history_session
     ON digim_chat_history (session_id);
 CREATE INDEX IF NOT EXISTS idx_digim_chat_history_session_seq
     ON digim_chat_history (session_id, seq DESC);
+
+-- Master data (users / rags / prompt_templates / notion_db / category_map /
+-- scheduled_jobs / session_summary_presets) when MST_STORE_METHOD=PostgreSQL.
+-- One row per master; the payload is the whole JSON document.
+CREATE TABLE IF NOT EXISTS digim_mst (
+    name        TEXT PRIMARY KEY,
+    data        JSONB NOT NULL,
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- History retention (DigiM_HistoryArchive). Same shape as digim_chat_history,
+-- plus when the copy was taken; updated_at is the live row's own timestamp.
+CREATE TABLE IF NOT EXISTS digim_chat_history_archive (
+    session_id  TEXT        NOT NULL,
+    seq         INTEGER     NOT NULL,
+    sub_seq     INTEGER     NOT NULL,
+    data        JSONB       NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL,
+    updated_at  TIMESTAMPTZ NOT NULL,
+    archived_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (session_id, seq, sub_seq)
+);
+-- One row per backed-up session: what was copied, and whether it was purged.
+CREATE TABLE IF NOT EXISTS digim_chat_history_archive_sessions (
+    session_id   TEXT PRIMARY KEY,
+    rows         INTEGER     NOT NULL,
+    content_md5  TEXT        NOT NULL,
+    backed_up_at TIMESTAMPTZ NOT NULL,
+    purged_at    TIMESTAMPTZ,
+    zip_name     TEXT,
+    restored_at  TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_digim_chat_history_archive_sessions_purged
+    ON digim_chat_history_archive_sessions (purged_at);
 ```
+
+The indexes for the existing tables (`digim_sessions` / `digim_dialogs` / `digim_references` / `digim_user_memory_*`) are collected under "Create Indexes" in [docs/SETUP_POSTGRESQL.en.md](docs/SETUP_POSTGRESQL.en.md); all are `IF NOT EXISTS`, so re-running them on an existing database is safe. The analytics backup tables (`digim_sessions_archive` / `digim_dialogs_archive` / `digim_references_archive`) follow the mirror's columns, so they have no DDL here; the first backup creates them (keys and example queries in 4-10 of the same doc).
+
+**Every table the PostgreSQL setup ends up with** (steps in [docs/SETUP_POSTGRESQL.en.md](docs/SETUP_POSTGRESQL.en.md); Azure in [docs/SETUP_POSTGRESQL_AZURE.en.md](docs/SETUP_POSTGRESQL_AZURE.en.md))
+
+| Table | Purpose | Created | Guide section (Azure: 6- instead of 4-) |
+|---|---|---|---|
+| `digim_sessions` / `digim_dialogs` / `digim_references` | Analytics mirror (sessions, dialogs, references) | **Run the guide's DDL** (not created automatically) | 4-1 to 4-4 |
+| `digim_steps` | Per turn: support agents, web search, skills, rewrites, jobs | Automatically, by the first export | 4-12 |
+| `digim_chat_history` | Live chat-history store (`SESSION_STORE_METHOD=PostgreSQL`) | Automatically, by the first write | 4-13 |
+| `digim_chat_history_archive` / `_sessions` | Chat-history backup and its ledger | Automatically, by the first backup | 4-9 |
+| `digim_sessions_archive` / `digim_dialogs_archive` / `digim_references_archive` / `digim_steps_archive` | Analytics backup (never pruned; the Performance Explorer reads it) | Automatically, by the first backup (columns follow the mirror) | 4-10 |
+| `digim_pe_scores` | Performance Explorer achievement scores | Automatically, by the first scoring | 4-11 |
+| `digim_mst` | Master data (`MST_STORE_METHOD=PostgreSQL`) | Automatically, on first use | 4-8 |
+| `digim_users` | Login authentication (older `LOGIN_AUTH_METHOD=RDB`) | Automatically, on first use | 4-5 |
+| `digim_agent_personas` | Agent personas (`AGENT_PERSONA_SOURCE=RDB`) | Automatically, on first use | 4-6 |
+| `digim_user_memory_history` / `_nowaday` / `_persona` | Hierarchical user memory (`USER_MEMORY_*_BACKEND=RDB`) | Automatically, on first use | 4-7 |
+
+Only the three mirror tables and the `vector` extension have to be created by hand. Without the mirror, the export, the Performance Explorer and the analytics backup do not run.
 
 **Division of labour**: `digim_chat_history` is the live R/W table for Chat; `digim_sessions` / `digim_dialogs` / `digim_references` are the **normalized analytics mirror**. The former keeps a whole turn as one JSONB blob — fast to write, useless to `SELECT` against. Point analytics queries at the latter.
 
@@ -648,8 +726,15 @@ digim_sessions / digim_dialogs / digim_references   <- query these for analytics
 | Delta tracking | `db_export: {status, last_seq}` in `status.yaml` — set to `UNDO` on every save, `DONE` on success |
 | On failure | Rolls back and stays `UNDO`; the next turn retries the same range. Chat never surfaces an error |
 | Idempotency | Returns `skip` when already `DONE` and `last_seq >= max seq` |
+| Steps | Support agents (Thinking, RAG query generation, meta search, digest), web search, skills, answer rewrites and the job that started the turn are written to `digim_steps`, one row per step (agent, model, duration, tokens, status). The table is created by the first export |
+| Vectors | The input vector a turn saved while it ran (first row of `vecs/<seq>-<sub>_queries.npy`) and its answer vector (`_answer.npy`) fill `query_vec` / `response_vec` where they are empty. No embedding API call is made |
+| Input text | The block a BEFORE skill injected is removed from `user_input` (turns saved earlier still carry a web search result there) |
+| Archive | The exported session is then copied to the analytics backup tables (`digim_*_archive`). A failure there leaves the export successful; the next backup copies it |
+| Re-read | Starts again from the last turn the mirror holds: an image generation or the next persona of a chain can be saved into that turn after it was exported. Dialog rows already there are skipped together with their references, so nothing is duplicated |
 
-The manual sidebar Sessions → **Export DB** sweep is kept for catch-up. Embedding generation (`vectorize_dialogs`) is **not** automated because it incurs API cost — run it manually as before.
+Catch-up is the sidebar Sessions → **Retry Pending Exports** button: it reads only the sessions whose status is not DONE (the auto-export retries a session only when it gets its next turn, so an idle session that failed once is picked up here). Embedding generation (`vectorize_dialogs`) is **not** automated because it incurs API cost; run it explicitly with **Vectorize Dialogs**.
+
+The delta export only appends, so an exported turn stays as it was when exported (a later delete flag, memory exclusion, digest or rewritten answer does not reach it). To bring the mirror in line with the history, run `python3 DigiM_DB_Export.py resync` (`--dry-run` only counts, `--session <ID>` limits it, `--archive` then copies the mirror to the analytics backup tables). Dialog rows keep their id and vectors; only rows whose source text changed get their vectors cleared for `vectorize_dialogs`. A reference is attached through `dialog_id` to the dialog of its own turn (`session_id, seq, sub_seq`); `relink` repairs just those links across the whole mirror, including sessions whose history is gone.
 
 To export a single session:
 
@@ -657,6 +742,7 @@ To export a single session:
 import DigiM_DB_Export as dbex
 dbex.export_session("20260907_012345_0")       # raises on failure
 dbex.export_session_safe("20260907_012345_0")  # swallows and returns a dict (used by auto-export)
+dbex.resync_session("20260907_012345_0", dry_run=True)  # count the differences from the history (False writes)
 ```
 
 **Dependency**: `psycopg2-binary` (already in `requirements.txt`).
@@ -712,6 +798,39 @@ If the package is missing when CosmosDB mode is selected, the store falls back t
 - **Existing JSON sessions**: as long as `chat_memory.json` exists on disk, it is read/written via the JSON path. Overwrites go back to the same file.
 - **Migrating existing sessions to PG/Cosmos**: currently manual — no automatic migration CLI is provided.
 - **Rolling back**: set `SESSION_STORE_METHOD: "JSON"`. Sessions already stored in PG/Cosmos remain there and won't be visible in JSON mode, so plan an export first if you need to move back.
+
+#### Chat-history retention (backup / purge / restore)
+
+Old history is backed up and then deleted, always a **whole session** at a time (removing single turns would leave seq numbers, digests and user memory pointing at turns that no longer exist). The work lives in `DigiM_HistoryArchive.py`; the WebUI, CLI, scheduler and API all call the same functions.
+
+| Store | backup (idempotent, schedulable) | purge (sessions idle for N days) |
+|---|---|---|
+| **JSON** | Zip the qualifying session folders (nothing deleted) | Zip → verify → delete the folder |
+| **PostgreSQL** | Copy the rows of every changed session into `digim_chat_history_archive` | Copy to the archive table → compare → zip → delete live rows and the folder |
+| **CosmosDB** | Copy changed documents into the archive container (`COSMOS_ARCHIVE_CONTAINER`, default `chat_history_archive`) | Same, per document |
+
+- **The store is decided per session.** In PostgreSQL / Cosmos mode a legacy session whose folder still has `chat_memory.json` is handled as a JSON session.
+- **Idle time counts from the newer of the last turn and the last write to the history.** The last turn is `last_update_date` in `status.yaml`; the last write is the rows' `updated_at` in PostgreSQL, or the mtime of `chat_memory.json` in JSON. A scheduler job that pushes into an existing session does not move `last_update_date`, which is why the write time counts too. The mtime of `status.yaml` itself is not used: export bookkeeping, locks, hiding and renames all rewrite it.
+- Every store keeps the **session folder (`status.yaml` / `vecs` / `contents` / `analytics`) on disk**, so a purge removes the history *and* the folder. Removing only one leaves a session that is listed but empty, or rows nobody can reach.
+- One ZIP per run in `ARCHIVE_FOLDER` (`sessions_archive_YYYYMMDD_HHMMSS.zip`): `session<ID>/…` (the folder as it was), `session<ID>/chat_memory.json` (written out for DB sessions too) and `manifest.json`. **A ZIP alone is enough to restore**, and the Agent section of the Performance Explorer keeps reading the `chat_memory.json` inside it.
+- Before anything is deleted: bring the analytics mirror (`digim_dialogs` etc.) in line with the whole history (`resync_session`) → copy it to the analytics backup tables → back up (PostgreSQL compares row count and content hash) → CRC-check the ZIP. A session whose history or folder changed after it was zipped is skipped, not deleted.
+- Never taken: `LOCKED` sessions (a run in progress), the session open in the WebUI window, sessions changed within the period. With the database unreachable, a folder without `chat_memory.json` is not assumed to be empty and is left alone.
+- A purge never deletes the analytics mirror (`digim_sessions` / `digim_dialogs` / `digim_references`) or `digim_user_memory_*`.
+- **Analytics backup**: whenever `POSTGRES_*` is set, whatever the session store, every backup and purge copies the analytics mirror to `digim_sessions_archive` / `digim_dialogs_archive` / `digim_references_archive` / `digim_steps_archive`. It also records the groups of each session's user in `digim_sessions_archive.user_groups` (written once, at the first backup, and kept: removing a user from the master or moving them to another group does not change their past sessions). Nothing is deleted from those, so the mirror's old rows can be removed while users, agents, inputs, outputs, references and vectors (`query_vec` / `response_vec`) stay available for analysis. Join dialogs and references on `(session_id, seq, sub_seq)`. Remove mirror rows by whole sessions or turns (references are kept by their position `ref_no` within the turn). Details in 4-10 of [docs/SETUP_POSTGRESQL.en.md](docs/SETUP_POSTGRESQL.en.md).
+- Restore: the folder comes back from the ZIP, DB rows from the archive table (or from the ZIP's `chat_memory.json` when the table has none). A session that still exists is refused unless overwrite is asked for. A DB-archived session restored in JSON mode comes back as a file session.
+
+**How to run it**
+
+| Entry point | How |
+|---|---|
+| WebUI | Sidebar Sessions → **History Retention** (Session Archive permission). Idle Days → **Preview** (what qualifies, and its size) → **Backup Now** → tick the confirmation → **Purge Old Sessions**. Pick a ZIP → **Prepare Download** / **List Sessions in ZIP** → **Restore Session** |
+| CLI | `python3 DigiM_HistoryArchive.py list --days 90` / `backup [--days N] [--dry-run]` / `purge --days 90 [--dry-run]` / `restore --session <ID> [--zip NAME] [--overwrite]` / `archives` |
+| Scheduler | Step kind `history_archive` (`action`: `backup` / `purge`, `days`). E.g. back up daily (`backup`, `days=0` = DB copy only) and purge monthly (`purge`, `days=90`) |
+| API | `/admin/history/*` (see the API reference). Enabled only when `HISTORY_ARCHIVE_API_TOKEN` is set in `system.env` |
+
+The default period is `ARCHIVE_DAYS` and the ZIP location `ARCHIVE_FOLDER`, both in `setting.yaml`.
+
+> The PostgreSQL / Cosmos stores now write **only the rows that changed**. They used to rewrite the whole session on every save — 11.5 s per save for a 216-row / 29.7 MB session.
 
 #### User master
 
@@ -808,7 +927,7 @@ Common keys: `Streaming Mode` / `Memory Use` / `Save Digest` / `Private Mode` / 
 - If any element of the array is `"Admin"`, the user can view all users' chat history and select all agents
 - If individual group names are set, only agents whose `GROUP` matches one of those names are selectable (**OR match**: agents matching any of your groups are eligible)
 - To enable login authentication, set `LOGIN_ENABLE_FLG=Y` in `system.env`
-- To switch the authentication source to PostgreSQL, set `LOGIN_AUTH_METHOD=RDB`. The `digim_users` table will be auto-created (columns: `user_id`/`name`/`pw`/`group_cd[JSONB]`/`agent`/`allowed[JSONB]`)
+- To keep the user master in PostgreSQL, set `MST_STORE_METHOD: "PostgreSQL"` in `setting.yaml` (users go into `digim_mst` with the other masters; see [Master-data storage backend](#master-data-storage-backend)). The older `LOGIN_AUTH_METHOD=RDB` path (`digim_users` table, columns `user_id`/`name`/`pw`/`group_cd[JSONB]`/`agent`/`allowed[JSONB]`/`defaults[JSONB]`) only applies while `MST_STORE_METHOD` is `JSON`
 
 #### Prompt templates
 
@@ -3182,17 +3301,65 @@ A 3-tab layout from the left: **"My Memory" / "User Understanding (Individual)" 
 
 ---
 
-## Agent Performance Explorer (APE)
+## Performance Explorer
 
-The agent-side counterpart of User Memory Explorer. Pick a target agent from the **Agent Performance Explorer** sidebar option and explore its cross-session performance. Backend: `DigiM_AgentPerformanceExplorer.py`. Requires `Allowed["Agent Performance Explorer"] = true`.
+The **Performance Explorer** sidebar option analyses the accumulated conversations. A switch at the top selects the **User** section or the **Agent** section. Requires `Allowed["Performance Explorer"] = true` (the pre-rename key `Allowed["Agent Performance Explorer"]` is still read).
+
+- **User** — pick a period, groups / users and agents, and follow "user input → the agent's answers to it → the knowledge those answers used". Backend: `DigiM_PerformanceExplorer.py`.
+- **Agent** — switches between **Summary** (pick a period and agents, and compare output, habits, knowledge, skills, support agents and feedback signals; see "Summary of the Agent section" below) and **Knowledge map** (the cross-session performance of one agent; backend `DigiM_AgentPerformanceExplorer.py`). "Data sources", "Tab 1" and "Tab 2" in this chapter describe the Knowledge map.
+
+#### What the User section reads
+
+Only the PostgreSQL analytics backup tables (`digim_sessions_archive` / `digim_dialogs_archive` / `digim_references_archive`). A session stored as JSON is out of scope until it has been exported to the mirror and copied by **History Retention → Backup Now**.
+
+- **The period goes down to the minute** and is read in `TIMEZONE` (default `Asia/Tokyo`). History timestamps are stored in the server's local clock, so they are converted when loaded.
+- **One turn = one user input.** When a chain or a parallel persona run answers one input several times, the input is the one on the first answer row and the answers are every row of the turn. PUSH / SKILL / TOOL rows and deleted rows (`flg = 'N'`) are left out.
+- **Only what a user typed is analysed.** Turns a scheduled job started (their input is the job's registered prompt) and sessions of the system services (Scheduler / Benchmark / SupportEval) are left out, and the block a BEFORE skill injected into an input (web search results, for instance) is removed. The counts are shown under the conditions.
+- **Groups are the ones recorded on the session at backup time (`digim_sessions_archive.user_groups`).** A session without a record yet is looked up in the user master (`Group` in `users`) at analysis time. A turn of a user in several groups counts in each of them. A user found in neither is `(no group)`.
+- Choose the **axis** (Group / User) and the group, user and agent filters (all multi-select), then press **Run analysis**. The result is kept until the next Run analysis.
+
+#### The four tabs of the User section
+
+| Tab | Content | LLM |
+|---|---|---|
+| **1. Usage** | Weekday × hour heatmap, turns per period, and a per group / user table (turns, sessions, active days, input and answer length, seconds to answer, tokens, references) | Not used |
+| **2. Interests / Topics** | Ranking of the keywords in user inputs (30 shown by default) with turns, share, users, the **period where it peaked** and the trend. Below it, one after another for every keyword: the **word cloud and Top N keywords of the agent's answers**, and the latest inputs with their answers | Only on **Explain Topics** |
+| **3. Diversity / Homogeneity** | Cluster analysis of the user inputs. In the scatter plot **colour = group (or user), shape = cluster**. Per cluster: word cloud and Top N keywords of the answers, and the Top N knowledge used (reference count / scatter plot / cumulative knowledge utility). An expander holds the cluster mix per group and, per cluster × group, representative inputs with their answers and the knowledge used | Only on **Explain Diversity** |
+| **4. Achievement** | An LLM scores, 0-100, how far the user inputs achieve each theme you set (several allowed). Score bands, a ranking by group / user, and per band the answer keywords and the knowledge used | On **Score** |
+
+- **Keywords** are compound nouns extracted with MeCab (no LLM). `Exclude words` removes instruction words such as "作成" or "文章". Answer keywords are ordered by count weighted by how rare the term is across all answers, so words every answer uses do not come first.
+- **Clustering** is K-means (2-10 clusters) on the first 256 dimensions of the input vectors (`query_vec`). The vectors are the ones a turn computes and saves while it runs (the input for retrieval, the answer for Knowledge Utility); the export brings them to the mirror, so **new turns are covered with no extra embedding**. Earlier turns (before inputs were kept on 2026-08-29, and before this update for answers) were never embedded; **Embed these N rows once** fills them in one go (it calls the embedding API and stores the vectors in the backup table). An answer without a vector only leaves `Answer spread` empty; it does not affect the clustering.
+- **Diversity figures**: `Evenness` (spread over the clusters; 1 = even, 0 = all in one), `Input spread` (mean cosine distance between inputs), `Distance from all` (difference from the overall cluster mix). A group with few turns looks more homogeneous than it is, so read them with the turn count.
+- **Answer consistency**: `Answer / input` (answer spread ÷ input spread). Above 1, the answers vary more than the inputs they answer.
+- **Knowledge utility** is the figure Chat's Analytics Results - Knowledge Utility shows (Norm(All)), computed per answer and summed. Above 0 the answer moved toward the knowledge; below 0 it was retrieved but the answer moved away. Graph references have no utility, so only their count is shown.
+- **The scoring unit** is Session (the user's inputs of one session in the period, scored together; default) or Input (each input on its own). When there are more units than `Max scored per theme`, the ones whose vectors are closest to the theme are scored. Scores are stored in `digim_pe_scores`, so **the same theme, text and model is never scored twice**. The themes offered at first come from `PERFORMANCE_EXPLORER_THEMES` in `setting.yaml` (a list of strings; `{NAME, CRITERIA}` also states what counts as achieving it).
+- The explanation and scoring prompts are `Topic Analyst PE` / `Diversity Analyst PE` / `Achievement Scorer PE` in `prompt_templates.json`. The agent and the engine are chosen on the screen.
+
+#### Summary of the Agent section
+
+Pick a period (down to the minute) and agents (multi-select), then press **Run analysis**. It reads the same backup tables as the User section, from the side of the agents that answered. No LLM is used.
+
+| Tab | Content |
+|---|---|
+| **1. Output** | Per agent: answers, turns, sessions, users, answer length, seconds to answer, seconds of the main LLM call, tokens, references per answer, models used. Trend per period, a per-model comparison, and the word cloud and Top N keywords of the answers |
+| **2. Habit** | Practices that ran, with counts, share and trend. The habits the Thinking agent chose (a practice missing there was started by a command or a fixed setting) |
+| **3. Knowledge** | Per knowledge base (Books included): references, distinct knowledge, share of answers that used it, knowledge utility. Then, **for each Knowledge and then each Book in the order the agent lists them**: the Top N knowledge, a bar chart of the distance to the question and to the answer, and a scatter plot of the whole collection (placed as in Analytics Results - Knowledge Utility, with the referenced knowledge highlighted). Books the Thinking agent chose |
+| **4. Skill** | Per skill: runs, run time, tokens the skill itself consumed, errors, runs that were not applied. Answers rewritten afterwards |
+| **5. Support agents** | Per support agent and model: runs, run time, tokens. Seconds per answer by step (Thinking, RAG query generation, meta search, web search, digest, main LLM) |
+| **6. Feedback signals** | Deleted answers, answers kept out of memory, rewritten answers, with rates. The share of inputs that nearly repeat the one before (Compute compares the input vectors) |
+
+- **Skill, support-agent and rewrite records come from `digim_steps` (`digim_steps_archive` on the backup side).** They exist only for sessions whose history was still there, so check `Answers with step data` at the top. A skill's run time is recorded for turns run after this update.
+- **When the backup tables are behind the mirror, the top of the screen says what is missing and offers "Copy to the archive now".** It makes the same copy as History Retention > Backup Now (nothing is deleted). The per-turn export also copies its session to the backup tables, so normally the notice does not appear.
+- **Written feedback is too rare to analyse, so what users did to the answers stands in for it.** Even at the default threshold (similarity 0.93), "nearly the same input again" also catches a reused instruction with different content. Look at Show examples before reading the rate as dissatisfaction.
+- The seconds by step can add up to more than the user waited, because query generation and the meta search run in parallel. The digest runs after the answer is shown.
 
 ### Data sources (precedence: PG → live folders → archives)
 
 | # | Source | Purpose |
 |---|------|------|
-| 1 | **PostgreSQL** (`digim_dialogs / digim_references / digim_sessions`) | Warehouse populated by the sidebar Sessions → **Export DB** button. Indexed and fast |
+| 1 | **PostgreSQL** (`digim_dialogs / digim_references / digim_sessions`) | Warehouse populated by the per-turn auto-export (catch-up: Retry Pending Exports). Indexed and fast |
 | 2 | **Live session folders** (`user/session2*/chat_memory.json`) | Sessions not yet Export-DB'd |
-| 3 | **Archived ZIPs** (`user/archive/sessions_archive_*.zip`) | Compressed after `ARCHIVE_DAYS` |
+| 3 | **Archived ZIPs** (`user/archive/sessions_archive_*.zip`) | ZIPs written by History Retention's Purge / Backup (PostgreSQL sessions are included as `chat_memory.json`) |
 
 De-duplicated by session_id with PG winning. The union gives the full history including archived sessions and not-yet-exported sessions.
 
@@ -3572,6 +3739,11 @@ When FastAPI is launched, you can execute the agent via REST API. It also suppor
 | `POST` | `/sessions/{session_id}/summary` | Update the session summary `enabled` / `template` (either field is optional) |
 | `GET` | `/session_summary_presets` | List preset templates for session summaries |
 | `GET` | `/health` | Health check |
+| `GET` | `/admin/history/sessions` | Retention state of every session (`?days=N` marks what a purge would take). All `/admin/history/*` endpoints answer only when `HISTORY_ARCHIVE_API_TOKEN` is set and sent as the `X-Admin-Token` header (403 otherwise) |
+| `GET` | `/admin/history/archives` | Archive ZIPs and the sessions each holds |
+| `POST` | `/admin/history/backup` | Back up (`{"days": null, "session_ids": null, "dry_run": false}`) |
+| `POST` | `/admin/history/purge` | Back up, then delete (`days` required; `dry_run` only reports) |
+| `POST` | `/admin/history/restore` | Restore from the ZIP / archive table (`{"session_id": "...", "zip_name": null, "overwrite": false}`) |
 
 > The API server's listen port is read from `system.env`'s `API_PORT` (default 8899). Changing it makes the "Web API" menu in the WebUI start uvicorn on that port automatically.
 
@@ -3649,8 +3821,13 @@ API default values are used for omitted parameters. These correspond to the WebU
 | `web_search_engine` | `"OpenAI"` | Web search engine (`Perplexity` / `OpenAI` / `Google`). Not used when `web_search` is `false` |
 | `web_search_guardrail` | `true` | Wrap web-search results in a "reference material" instruction that keeps the LLM's persona and conversation context in charge. Set `false` to pass the raw snippet through unwrapped |
 | `private_mode` | `false` | Private Mode. When `true`, RAG data with `private: true` is excluded from search |
-| `thinking_mode` | `false` | Thinking Mode. When `true`, the AI analyzes the question and dynamically decides Habit / Web search / RAG query generation / Book addition |
-| `max_thinking_turns` | `1` | Upper bound on Thinking iterations (auto-clamped to 1–5). With 2+ turns, if Thinking returns `sufficient=false` a reserve web search runs and feeds the next Thinking turn. Only meaningful when `thinking_mode=true` |
+| `skills` | (unset) | SKILL names to run this turn. **Left unset, the agent's own `SKILL.TOOLS.<name>.DEFAULT: true` entries apply** — the same set the WebUI's Skills picker opens with. Passing it replaces that selection for the turn (`[]` runs none). Unknown names do not run and come back in `skills_ignored` |
+| `skill` | (unset) | One extra SKILL to run on top, the API form of the WebUI's `/<name>`. It adds to `skills` rather than replacing it |
+| `thinking_mode` | the agent's `THINKING.MODE` | Thinking Mode. When `true`, the AI analyzes the question and dynamically decides Habit / Web search / RAG query generation / Book addition / SKILLs |
+| `thinking_targets` | the agent's `THINKING.TARGETS` | Labels for what Thinking may decide (`Habit` / `Web Search` / `RAG Query` / `Books` / `Skills` / `Personas`). With `Skills` included, a BEFORE skill that is on only because of its `DEFAULT` runs only when Thinking keeps it |
+| `max_thinking_turns` | the agent's `THINKING.MAX_TURNS` | Upper bound on Thinking iterations (auto-clamped to 1–5). With 2+ turns, if Thinking returns `sufficient=false` a reserve web search runs and feeds the next Thinking turn. Only meaningful when `thinking_mode=true` |
+| `max_personas` | (unset) | Cap for PersonaSelector (only meaningful when the practice uses `PERSONAS="THINKING"`) |
+| `match_input_language` | (unset) | Reply in the language the user wrote in, overriding `PERSONALITY.LANGUAGE`. Selecting the same-named flag skill through `skills` has the same effect |
 | `insert_citations` | `true` | Insert `[N]` citation markers into the response body and append a `## Reference Info` section listing Web / Book sources |
 | `cite_knowledge` | `false` | After the response, a dedicated selector agent (`agent_58KnowledgeUsageSelector.json`) decides which KNOWLEDGE chunks were actually referenced and appends a `## Reference Knowledge` section (Knowledge Utility scores included) |
 | `diagram_mode` | `false` | Ask the LLM to use Markdown tables and Mermaid diagrams (```mermaid) inside the explanation |
@@ -3671,6 +3848,13 @@ API default values are used for omitted parameters. These correspond to the WebU
   "session_id": "API_TEST_001",
   "session_name": "(User:TestUser) Question about AI",
   "response": "Agent response text",
+  "response_display": "Agent response text\n\n## Mood Score\n\n...",
+  "skills": {
+    "refine_expression": {"phase": "AFTER", "merge": "REPLACE", "order": 20,
+                           "text": "...", "model": "...", "prompt_token": 820, "response_token": 310},
+    "mood_score": {"phase": "AFTER", "merge": "APPEND", "order": 10,
+                    "header": "## Mood Score", "text": "..."}
+  },
   "attachments_processed": [
     {"filename": "report.pdf", "size_bytes": 128432, "content_type": "application/pdf", "source": "base64"}
   ],
@@ -3692,6 +3876,16 @@ API default values are used for omitted parameters. These correspond to the WebU
   }
 }
 ```
+
+> `response` is the **saved answer of record**. The AFTER phase runs once the stream has already been
+> drained, so the reply is read back from the stored turn: that is what carries the body a
+> `MERGE: "REPLACE"` skill (`refine_expression` and friends) rewrote, and the injected citation markers.
+>
+> `MERGE: "APPEND"` output never enters `response.text` — it arrives under `skills`, so memory, digests
+> and analytics do not mistake it for the agent's own words. Use `response_display` for the same text the
+> WebUI shows.
+>
+> An unknown name passed in `skills` / `skill` comes back in `skills_ignored` (the key is absent when none were).
 
 > `attachments_processed` is an empty array (`[]`) when the request has no attachments.
 >

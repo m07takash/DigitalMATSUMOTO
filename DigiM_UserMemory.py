@@ -25,6 +25,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 import DigiM_Util as dmu
+import DigiM_MstStore as dmms
 
 logger = logging.getLogger(__name__)
 
@@ -290,7 +291,9 @@ _RDB_DDL = {
             confidence      DOUBLE PRECISION,
             source_seq      JSONB,
             active          CHAR(1) DEFAULT 'Y'
-        )
+        );
+        CREATE INDEX IF NOT EXISTS idx_digim_user_memory_history_user
+            ON digim_user_memory_history (service_id, user_id, create_date DESC);
     """,
     "nowaday": """
         CREATE TABLE IF NOT EXISTS digim_user_memory_nowaday (
@@ -309,7 +312,9 @@ _RDB_DDL = {
             summary_text          TEXT,
             token_count           INTEGER,
             active                CHAR(1) DEFAULT 'Y'
-        )
+        );
+        CREATE INDEX IF NOT EXISTS idx_digim_user_memory_nowaday_user
+            ON digim_user_memory_nowaday (service_id, user_id, generated_at DESC);
     """,
     "persona": """
         CREATE TABLE IF NOT EXISTS digim_user_memory_persona (
@@ -341,14 +346,10 @@ def _safe_int(value, default):
 
 
 def _rdb_config():
-    return {
-        "host":     os.getenv("POSTGRES_HOST"),
-        "port":     _safe_int(os.getenv("POSTGRES_PORT"), 5432),
-        "dbname":   os.getenv("POSTGRES_DB"),
-        "user":     os.getenv("POSTGRES_USER"),
-        "password": os.getenv("POSTGRES_PASSWORD"),
-        "sslmode":  "require",
-    }
+    # One definition of the connection, so POSTGRES_SSLMODE reaches every
+    # store: a local container without SSL could not be used otherwise.
+    import DigiM_SessionStore as _dmss
+    return _dmss.pg_connect_kwargs()
 
 
 def _rdb_connect():
@@ -463,8 +464,7 @@ def _to_notion_date(value) -> str:
 def _notion_db_id(layer: str):
     if not _NOTION_MST_FILE:
         return None
-    notion_db_mst_path = str(Path(_mst_folder_path) / _NOTION_MST_FILE)
-    notion_db_mst = dmu.read_json_file(notion_db_mst_path)
+    notion_db_mst = dmms.load("notion_db")
     key = f"DigiM_UserMemory_{layer.capitalize()}"
     return notion_db_mst.get(key)
 

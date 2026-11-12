@@ -2,12 +2,12 @@ import os
 import csv
 import logging
 from datetime import datetime
-from pathlib import Path
 from dotenv import load_dotenv
 
 import DigiM_Agent as dma
 import DigiM_Session as dms
 import DigiM_Util as dmu
+import DigiM_MstStore as dmms
 import DigiM_Notion as dmn
 
 logger = logging.getLogger(__name__)
@@ -108,8 +108,7 @@ def save_feedback_csv(fb_data, save_db, field_map):
 
 # Save to a Notion database
 def save_feedback_notion(fb_data, save_db, field_map):
-    notion_db_mst_file_path = str(Path(mst_folder_path) / notion_db_mst_file)
-    notion_db_mst = dmu.read_json_file(notion_db_mst_file_path)
+    notion_db_mst = dmms.load("notion_db")
     if save_db not in notion_db_mst:
         logger.error(f"'{save_db}' not found in the Notion master. Registered keys: {list(notion_db_mst.keys())}")
         return

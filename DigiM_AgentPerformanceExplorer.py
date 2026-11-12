@@ -1,4 +1,4 @@
-"""Backend for Agent Performance Explorer (APE).
+"""Backend for the Agent section of the Performance Explorer (formerly APE).
 
 Scope today:
   - Tab 1 "Overview"  → activity scale aggregates
@@ -59,14 +59,8 @@ def _pg_connect():
     if not host:
         return None
     try:
-        return psycopg2.connect(
-            host=host,
-            port=int(os.getenv("POSTGRES_PORT") or 5432),
-            dbname=os.getenv("POSTGRES_DB"),
-            user=os.getenv("POSTGRES_USER"),
-            password=os.getenv("POSTGRES_PASSWORD"),
-            sslmode="require",
-        )
+        import DigiM_SessionStore as _dmss
+        return psycopg2.connect(**_dmss.pg_connect_kwargs())
     except Exception as e:
         logger.info(f"[APE] PG unavailable, falling back to file scan: {e}")
         return None

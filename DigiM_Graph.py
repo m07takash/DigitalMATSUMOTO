@@ -33,6 +33,7 @@ from pathlib import Path
 from collections import deque
 
 import DigiM_Util as dmu
+import DigiM_MstStore as dmms
 
 # Lane priority for prop conflicts: higher wins; ties -> newer as_of wins.
 LANE_PRIORITY = {"STRUCTURED": 3, "SEED": 2, "TEXT": 1}
@@ -51,8 +52,7 @@ def resolve_graph_dir(data_name):
     """DATA_NAME -> graph folder. Prefer the rags master (data_type='graph'),
     fall back to RAG_FOLDER_GRAPH/<data_name>/."""
     try:
-        rags_file = os.getenv("RAG_MST_FILE") or _setting.get("RAG_MST_FILE", "sample_rags.json")
-        rags = dmu.read_json_file(rags_file, mst_folder_path) or {}
+        rags = dmms.load("rags") or {}
         entry = rags.get(data_name) or {}
         if entry.get("data_type") == "graph" and entry.get("file_path"):
             return entry["file_path"]
@@ -72,8 +72,7 @@ def get_graph_list(built_only=False):
     scan drops it, but the master entry never does."""
     names, covered = [], set()
     try:
-        rags_file = os.getenv("RAG_MST_FILE") or _setting.get("RAG_MST_FILE", "sample_rags.json")
-        rags = dmu.read_json_file(rags_file, mst_folder_path) or {}
+        rags = dmms.load("rags") or {}
         for k, v in rags.items():
             if v.get("data_type") == "graph" and v.get("active", "Y") == "Y":
                 _fp = v.get("file_path", "")

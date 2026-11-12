@@ -12,6 +12,42 @@ import time as _time
 import logging as _logging
 
 _perf_logger = _logging.getLogger("digim.perf")
+# Temporary instrumentation. The app is usually launched with stdout and stderr
+# to /dev/null, so a perf line on the root handler reaches nobody — own the
+# file instead of relying on how the process was started.
+if not _perf_logger.handlers:
+    import os as _perf_os
+    _perf_os.makedirs("logs", exist_ok=True)
+    _perf_h = _logging.FileHandler("logs/perf.log")
+    _perf_h.setFormatter(_logging.Formatter("%(asctime)s %(message)s"))
+    _perf_logger.addHandler(_perf_h)
+    _perf_logger.setLevel(_logging.INFO)
+    _perf_logger.propagate = False
+
+_perf_marks = []
+
+def _perf_mark(label):
+    """Record a checkpoint for the rerun currently being rendered."""
+    _perf_marks.append((label, _time.perf_counter()))
+
+_perf_acc = {}
+
+def _perf_add(label, t0):
+    _perf_acc[label] = _perf_acc.get(label, 0.0) + (_time.perf_counter() - t0)
+
+def _perf_flush(note=""):
+    if len(_perf_marks) < 2:
+        _perf_marks.clear()
+        return
+    _t0 = _perf_marks[0][1]
+    _segs = " ".join(
+        f"{_perf_marks[_i][0]}=%.2fs" % (_perf_marks[_i][1] - _perf_marks[_i - 1][1])
+        for _i in range(1, len(_perf_marks)))
+    _acc = " ".join("%s=%.2fs" % (_k, _v) for _k, _v in sorted(_perf_acc.items()))
+    _perf_logger.info("[perf] rerun total=%.2fs %s | %s | %s",
+                       _perf_marks[-1][1] - _t0, _segs, _acc, note)
+    _perf_marks.clear()
+    _perf_acc.clear()
 
 # A hung app has no stacks to show otherwise (a deadlock leaves every thread
 # idle and the port unanswered), so allow `kill -USR1 <pid>` to dump every
@@ -46,12 +82,14 @@ import DigiM_Session as dms
 import DigiM_Agent as dma
 import DigiM_Context as dmc
 import DigiM_Util as dmu
+import DigiM_MstStore as dmms
 import DigiM_Tool as dmt
 import DigiM_ToolRegistry as dmtr
 import DigiM_GeneFeedback as dmgf
 import DigiM_GeneUserDialog as dmgu
 import DigiM_VAnalytics as dmva
 import DigiM_DB_Export as dmdbe
+import DigiM_HistoryArchive as dmha
 import DigiM_AgentPersona as dap
 import DigiM_Scheduler as dmsch
 
@@ -608,7 +646,9 @@ def user_allowed_parameter(allowded_dict):
     st.session_state.allowed_rag_management = allowded_dict.get("RAG Management", True)
     st.session_state.allowed_knowledge_explorer = allowded_dict.get("Knowledge Explorer", True)
     st.session_state.allowed_user_memory_explorer = allowded_dict.get("User Memory Explorer", False)
-    st.session_state.allowed_agent_performance_explorer = allowded_dict.get("Agent Performance Explorer", False)
+    # User masters written before the screen was renamed still carry the old key.
+    st.session_state.allowed_agent_performance_explorer = allowded_dict.get(
+        "Performance Explorer", allowded_dict.get("Agent Performance Explorer", False))
     st.session_state.allowed_evaluation = allowded_dict.get("Evaluation", False)
     # Exec Setting / RAG Setting are legacy — they used to gate the top-of-page
     # per-toggle blocks that no longer exist. Everything now lives under the
@@ -1152,28 +1192,8 @@ def _run_knowledge_utility_turn(session, target, ak_mode, dim_mode, exec_info):
 
 def _append_skill_text(entry):
     """Text that MERGE=APPEND skills contribute below the answer.
-
-    Their output is stored in `response.skills`, never in `response.text`, so
-    the answer stays the answer — for memory, the digest and analytics alike.
-    Display is where the two are put back together, in SKILL.ORDER.
-    """
-    _skills = ((entry or {}).get("response") or {}).get("skills")
-    if not isinstance(_skills, dict):
-        return ""
-    _rows = []
-    for _name, _cfg in _skills.items():
-        if not isinstance(_cfg, dict) or _cfg.get("merge") != "APPEND":
-            continue
-        _text = (_cfg.get("text") or "").strip()
-        if not _text or _cfg.get("error"):
-            continue
-        _rows.append((dmu.to_int(_cfg.get("order"), 100), _name,
-                      (_cfg.get("header") or "").strip(), _text))
-    if not _rows:
-        return ""
-    _rows.sort(key=lambda r: (r[0], r[1]))
-    return "".join(f"\n\n{_h}\n\n{_t}" if _h else f"\n\n{_t}"
-                    for _o, _n, _h, _t in _rows)
+    The rule itself lives in DigiM_Tool so the API renders it identically."""
+    return dmt.render_appended_skills(entry)
 
 
 def _read_bg_task_status():
@@ -1605,7 +1625,7 @@ def _load_session_summary_presets():
     {name: {description, template}}. Missing file → empty dict (UI still
     renders with a `Custom` fallback so the operator can hand-write one)."""
     try:
-        return dmu.read_json_file("session_summary_presets.json", mst_folder_path) or {}
+        return dmms.load("session_summary_presets") or {}
     except Exception:
         return {}
 
@@ -2265,6 +2285,78 @@ def show_uploaded_files_widget(uploaded_files):
             st.audio(uploaded_file)
 
 # Configure file formats for download
+# Streamlit resizes and re-encodes any image wider than its content column on
+# every single rerun — 230ms for one 2131px analytics plot, and the Analytics
+# panel shows two dozen of them. Doing that resize once, to the same width with
+# the same filter Streamlit would have used, leaves it nothing to redo.
+try:
+    from streamlit.elements.lib.image_utils import (
+        MAXIMUM_CONTENT_WIDTH as _ST_MAX_IMG_W)
+except Exception:
+    _ST_MAX_IMG_W = 1460
+
+
+@st.cache_data(show_spinner=False, max_entries=256)
+def _display_image_bytes(path, _mtime):
+    with open(path, "rb") as _f:
+        _raw = _f.read()
+    try:
+        import io as _img_io
+        from PIL import Image as _PILImage
+        _im = _PILImage.open(_img_io.BytesIO(_raw))
+        if _im.width <= _ST_MAX_IMG_W:
+            return _raw
+        _fmt = _im.format or "PNG"
+        _h = int(1.0 * _im.height * _ST_MAX_IMG_W / _im.width)
+        _im = _im.resize((_ST_MAX_IMG_W, _h), resample=_PILImage.BILINEAR)
+        _buf = _img_io.BytesIO()
+        _im.save(_buf, format=_fmt)
+        return _buf.getvalue()
+    except Exception:
+        # Anything unreadable falls back to the bytes on disk, which is what
+        # st.image would have been handed anyway.
+        return _raw
+
+
+def _show_image(target, path, **kw):
+    """`st.image` / `<column>.image` for a file on disk, pre-sized.
+
+    Anything that is not a readable path on disk (raw bytes, an upload, an
+    array) is handed straight to Streamlit, so this is safe to use wherever
+    `.image()` was called before.
+    """
+    try:
+        _mt = os.path.getmtime(path)
+    except (OSError, TypeError, ValueError):
+        target.image(path, **kw)
+        return
+    target.image(_display_image_bytes(path, _mt), **kw)
+
+
+def _dl_signature(download_data, dl_type, file_id, title):
+    """Cheap fingerprint of what the two exports would be built from.
+
+    Image entries are keyed by path + mtime, so an Analytics image regenerated
+    under the same file name still invalidates the cached payload.
+    """
+    parts = [file_id, dl_type, title, len(download_data)]
+    for _m in download_data:
+        _role = _m.get("role", "")
+        if "content" in _m:
+            parts.append((_role, "c", hash(_m["content"])))
+        elif "image" in _m:
+            _p = _m["image"]
+            try:
+                parts.append((_role, "i", _p, os.path.getmtime(_p)))
+            except OSError:
+                parts.append((_role, "i", _p, 0))
+        elif "png_bytes" in _m:
+            parts.append((_role, "p", hash(bytes(_m["png_bytes"] or b""))))
+        elif "html" in _m:
+            parts.append((_role, "h", hash(_m["html"] or "")))
+    return tuple(parts)
+
+
 def set_dl_file(chat_history, dl_type="Chats Only", file_id="Chat_History"):
     markdown_lines = []
     for msg in chat_history:
@@ -2640,6 +2732,16 @@ def _agent_engine_selectors(label, kp):
                 _persona = next((p for p in _plist if str(p.get("persona_id")) == _pid), None)
     return _af, _ag, _eng, _persona
 
+def _agent_with_engine(agent_file, engine, persona=None):
+    _agent = dma.DigiM_Agent(agent_file, persona=persona) if persona else dma.DigiM_Agent(agent_file)
+    # The constructor has already flattened ENGINE.LLM to the default engine,
+    # so a named engine has to be taken from the configs it set aside.
+    _named = getattr(_agent, "_engine_named_configs", {}).get("LLM", {})
+    if engine and engine in _named:
+        _agent.agent["ENGINE"]["LLM"] = dict(_named[engine])
+    return _agent
+
+
 def _explanation_block(state_base, template_name, fallback_agent, ctx_builder, label, kp, postprocess=None):
     """Explanation: pick agent + engine, run multiple times, show one via a dropdown. Returns the currently displayed text."""
     _hk = f"{state_base}_history"
@@ -2654,9 +2756,7 @@ def _explanation_block(state_base, template_name, fallback_agent, ctx_builder, l
             _use_af = _af or fallback_agent
             with st.spinner(f"Explaining {label}..."):
                 try:
-                    _agent = dma.DigiM_Agent(_use_af, persona=_persona) if _persona else dma.DigiM_Agent(_use_af)
-                    if _eng and _eng in _agent.agent.get("ENGINE", {}).get("LLM", {}):
-                        _agent.agent["ENGINE"]["LLM"]["DEFAULT"] = _eng
+                    _agent = _agent_with_engine(_use_af, _eng, _persona)
                     try:
                         _tmpl = _agent.set_prompt_template(template_name)
                     except Exception:
@@ -4265,7 +4365,7 @@ def _knowledge_explorer():
     _priority_cols = ["id", "db", "rag_name", "title", "create_date", "category", "Cluster", "X1", "X2", "key_text", "value_text"]
     _cat_color_map = {}
     try:
-        _cmj = dmu.read_json_file("category_map.json", mst_folder_path) or dmu.read_json_file("sample_category_map.json", mst_folder_path)
+        _cmj = dmms.load("category_map") or dmu.read_json_file("sample_category_map.json", mst_folder_path)
         _cat_color_map = (_cmj or {}).get("CategoryColor", {})
     except Exception:
         _cat_color_map = {}
@@ -5115,6 +5215,22 @@ def _scheduler_view():
                 st.session_state.sidebar_message = f"Deleted: {_j.get('job_id')}"
                 st.rerun()
 
+    def _sch_history_archive_params(_params, kp):
+        """history_archive step: backup refreshes the DB archive copy (and
+        zips sessions idle for N days when N is given); purge backs up and
+        then deletes sessions idle for N days."""
+        _acts = ["backup", "purge"]
+        _a = _params.get("action") if _params.get("action") in _acts else "backup"
+        _c1, _c2 = st.columns(2)
+        _params["action"] = _c1.selectbox("Action", _acts, index=_acts.index(_a), key=kp + "ha_action")
+        _d_default = int(_params.get("days") or (dmha.cfg.default_days if _params["action"] == "purge" else 0))
+        _params["days"] = int(_c2.number_input(
+            "Idle Days" + (" (0 = DB copy only)" if _params["action"] == "backup" else ""),
+            min_value=0 if _params["action"] == "backup" else 1,
+            value=max(_d_default, 0 if _params["action"] == "backup" else 1),
+            step=1, key=kp + "ha_days"))
+        return _params
+
     def _sch_agent_run_params(_params, kp):
         """agent_run step editor. Keys are namespaced by `kp` so several
         agent_run steps can sit in one workflow."""
@@ -5388,6 +5504,7 @@ def _scheduler_view():
         _step_notes = {
             "rag_update": "Re-vectorize every active RAG (same as Update RAG Data).",
             "user_memory_nowaday": "Update this month's Nowaday for all users, then merge into Persona.",
+            "history_archive": "Back up chat history, or back up and then delete sessions idle for N days.",
         }
         st.markdown("**Workflow** — steps run top to bottom; if one fails, the job stops there.")
         for _ni, _node in enumerate(_nodes):
@@ -5409,6 +5526,9 @@ def _scheduler_view():
                     st.rerun()
                 if _node["kind"] == "agent_run":
                     _node["params"] = _sch_agent_run_params(dict(_node.get("params") or {}), _kp)
+                elif _node["kind"] == "history_archive":
+                    _node["params"] = _sch_history_archive_params(dict(_node.get("params") or {}), _kp)
+                    st.caption(_step_notes.get(_node["kind"], ""))
                 else:
                     _node["params"] = {}
                     st.caption(_step_notes.get(_node["kind"], ""))
@@ -6535,7 +6655,7 @@ def _user_memory_explorer():
                     import numpy as _np_k
                     _cat_color_map_kn = {}
                     try:
-                        _cmj = dmu.read_json_file("category_map.json", mst_folder_path) or dmu.read_json_file("sample_category_map.json", mst_folder_path)
+                        _cmj = dmms.load("category_map") or dmu.read_json_file("sample_category_map.json", mst_folder_path)
                         _cat_color_map_kn = (_cmj or {}).get("CategoryColor", {})
                     except Exception:
                         _cat_color_map_kn = {}
@@ -7527,7 +7647,1131 @@ def _user_memory_explorer():
                            file_name=f"{_rname}.md", mime="text/markdown", key="ume_dl_md")
 
 
-### Agent Performance Explorer screen ###
+### Performance Explorer screen ###
+# Categorical order, sequential ramp and the dark steps are one validated
+# set: the order is what keeps neighbouring series apart for colour-blind
+# readers, so add to the end and do not reorder.
+_PE_SERIES_LIGHT = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"]
+_PE_SERIES_DARK = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"]
+_PE_SEQ = ["#cde2fb", "#86b6ef", "#3987e5", "#1c5cab", "#0d366b"]
+_PE_SHAPES = ["circle", "square", "triangle-up", "diamond", "cross",
+              "triangle-down", "triangle-right", "triangle-left", "wedge", "arrow"]
+_PE_STATE_KEYS = ("_pe_memo", "_pe_cluster", "_pe_scores", "_pe_topic_expl_history", "_pe_topic_expl_sel",
+                  "_pe_div_expl_history", "_pe_div_expl_sel")
+
+
+def _pe_dark():
+    return st.get_option("theme.base") == "dark"
+
+
+def _pe_surface():
+    return st.get_option("theme.backgroundColor") or ("#0e1117" if _pe_dark() else "#ffffff")
+
+
+def _pe_gray():
+    return "#6b6b68" if _pe_dark() else "#b9b8b2"
+
+
+def _pe_series_color(dmpe, values, present, title):
+    """Colour encoding with one fixed colour per value, in the order given, and gray for the folded rest."""
+    pal = _PE_SERIES_DARK if _pe_dark() else _PE_SERIES_LIGHT
+    values = list(values)[:len(pal)]
+    dom, rng = values, pal[:len(values)]
+    if dmpe.OTHER in present:
+        dom, rng = dom + [dmpe.OTHER], rng + [_pe_gray()]
+    import altair as alt
+    return alt.Color("series:N", title=title, scale=alt.Scale(domain=dom, range=rng))
+
+
+def _pe_memo(key, fn, store="_pe_memo"):
+    # Every tab body runs on every rerun, so anything derived from the scope
+    # is computed once and kept until the next "Run analysis".
+    _m = st.session_state.setdefault(store, {})
+    if key not in _m:
+        _m[key] = fn()
+    return _m[key]
+
+
+def _pe_answer_panel(dmpe, sc, turn_ids, tag, top_n, stop, akeys=None, store="_pe_memo"):
+    def _build():
+        _terms, _freq = dmpe.response_terms(sc, turn_ids, top_n, stop, akeys=akeys)
+        return _terms, dmpe.wordcloud_png(_freq)
+    _terms, _png = _pe_memo(("answers", tag, top_n, stop), _build, store)
+    if _terms.empty or _png is None:
+        st.caption("No text answers for this selection.")
+        return
+    _c1, _c2 = st.columns([1, 1])
+    _c1.image(_png, width="stretch")
+    _c2.dataframe(
+        _terms, hide_index=True,
+        column_config={
+            "keyword": st.column_config.TextColumn("Answer keyword"),
+            "answers": st.column_config.NumberColumn("Answers", help="Answers that contain the keyword."),
+            "share": st.column_config.NumberColumn("Share %", help="Share of the answers in this selection."),
+            "lift": st.column_config.NumberColumn("Lift", help="Share here divided by the share across all answers in scope. Above 1 = more typical of this selection."),
+            "score": st.column_config.NumberColumn("Score", help="Answers weighted by how rare the keyword is across all answers. The ranking and the word cloud use this."),
+        })
+
+
+def _pe_knowledge_panel(dmpe, sc, turn_ids, tag, top_n, kp, akeys=None, store="_pe_memo"):
+    import altair as alt
+    _by_label = st.radio("Rank knowledge by:", ["Reference count", "Cumulative utility"], horizontal=True, key=f"{kp}_kby")
+    _by = "ref_count" if _by_label == "Reference count" else "utility_sum"
+    _kr = _pe_memo(("knowledge", tag, top_n, _by), lambda: dmpe.knowledge_ranking(sc, turn_ids, top_n, _by, akeys=akeys), store)
+    if _kr.empty:
+        st.caption("No knowledge was referenced in this selection.")
+        return
+    _top = _kr[_kr["top"]]
+    st.dataframe(
+        _top[["rank", "title", "rag_name", "db_name", "ref_count", "answers", "utility_sum", "utility_avg"]],
+        hide_index=True,
+        column_config={
+            "rank": st.column_config.NumberColumn("#", width="small"),
+            "title": st.column_config.TextColumn("Knowledge", width="large"),
+            "rag_name": st.column_config.TextColumn("RAG"),
+            "db_name": st.column_config.TextColumn("DB"),
+            "ref_count": st.column_config.NumberColumn("References"),
+            "answers": st.column_config.NumberColumn("Answers", help="Answers that referenced it."),
+            "utility_sum": st.column_config.NumberColumn("Cumulative utility", format="%.3f", help="Sum of the knowledge utility over every reference. Empty for graph references, which have no utility."),
+            "utility_avg": st.column_config.NumberColumn("Avg utility", format="%.3f"),
+        })
+    _plot = _kr.dropna(subset=["utility_sum"])
+    if _plot.empty:
+        st.caption("Only graph references here; they have no utility to plot.")
+        return
+    _cut = 2000
+    _shown = pd.concat([_plot[_plot["top"]], _plot[~_plot["top"]].head(_cut)])
+    _shown = _shown[["rank", "title", "rag_name", "ref_count", "utility_sum", "utility_avg", "top"]].copy()
+    _shown["title"] = _shown["title"].str.slice(0, 60)
+    _tip = [alt.Tooltip("title:N", title="Knowledge"), alt.Tooltip("rag_name:N", title="RAG"),
+            alt.Tooltip("ref_count:Q", title="References"),
+            alt.Tooltip("utility_sum:Q", title="Cumulative utility", format=".3f"),
+            alt.Tooltip("utility_avg:Q", title="Avg utility", format=".3f")]
+    _x = alt.X("ref_count:Q", title="References (log scale)", scale=alt.Scale(type="log", nice=True),
+               axis=alt.Axis(grid=False, tickCount=6))
+    _y = alt.Y("utility_sum:Q", title="Cumulative utility")
+    _base = alt.Chart(_shown)
+    _rest = _base.transform_filter("!datum.top").mark_circle(size=45, color=_pe_gray(), opacity=0.55).encode(x=_x, y=_y, tooltip=_tip)
+    _hi = _base.transform_filter("datum.top").mark_circle(
+        size=130, color=(_PE_SERIES_DARK if _pe_dark() else _PE_SERIES_LIGHT)[0],
+        stroke=_pe_surface(), strokeWidth=2, opacity=1).encode(x=_x, y=_y, tooltip=_tip)
+    _lab = _base.transform_filter("datum.top").mark_text(dx=10, dy=-10, fontSize=11).encode(x=_x, y=_y, text="rank:Q")
+    _zero = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color=_pe_gray(), strokeWidth=1).encode(y="y:Q")
+    st.altair_chart((_zero + _rest + _hi + _lab).properties(height=320), use_container_width=True)
+    _note = (f"Blue = top {int(top_n)} by {_by_label.lower()} (numbered by rank), gray = the other referenced knowledge. "
+             "Utility is the same figure as Analytics Results - Knowledge Utility (Norm(All)): above 0 the answer moved toward the knowledge, below 0 it was retrieved but the answer moved away.")
+    _left_out = int(_kr["utility_sum"].isna().sum())
+    if _left_out:
+        _note += f" {_left_out} graph references have no utility and are not plotted."
+    if len(_plot[~_plot["top"]]) > _cut:
+        _note += f" Gray points are limited to the {_cut} most referenced."
+    st.caption(_note)
+
+
+def _pe_busy_slot():
+    """A fixed place for spinners and progress bars.
+
+    They exist only on the run that follows a click. Left loose, they shift
+    every element after them by a few places for that one run, and the browser
+    rebuilds anything whose place changed: a tab strip goes back to its first
+    tab, an expander closes. Inside a container the places below never move.
+    """
+    return st.container()
+
+
+def _pe_archive_notice(dmpe, kp):
+    """Say when the archive is behind the mirror, and offer to copy it now.
+
+    Rows a backup has not copied yet are simply absent from every figure,
+    which looks like missing data rather than a pending copy.
+    """
+    _slot = st.container()
+    if "_pe_lag" not in st.session_state:
+        st.session_state._pe_lag = dmpe.archive_lag()
+    _lag = st.session_state._pe_lag
+    if not _lag:
+        return
+    _parts = []
+    for _k, _txt in (("answers", "{:,} answers"), ("steps", "{:,} support-agent and skill records"),
+                     ("vectors", "the vectors of {:,} answers"), ("changed", "corrected inputs of {:,} answers")):
+        if _lag.get(_k):
+            _parts.append(_txt.format(_lag[_k]))
+    with _slot:
+        _c1, _c2 = st.columns([4, 1])
+        _c1.warning("The analytics archive is behind: " + ", ".join(_parts) + " are not copied yet, so they are missing below.")
+        if _c2.button("Copy to the archive now", key=f"{kp}_archive",
+                      help="Copies the analytics tables to their archive, as History Retention > Backup Now does. Nothing is deleted."):
+            with st.spinner("Copying to the archive..."):
+                try:
+                    _msg = dmpe.refresh_archive()
+                    st.success(f"Archive updated: {_msg}. Press \"Run analysis\" again.")
+                    for _k in ("_pe_lag", "_pe_options", "_pe_ready"):
+                        st.session_state.pop(_k, None)
+                except Exception as e:
+                    st.error(f"Archive copy error: {e}")
+
+
+def _pe_prepare_answers(dmpe, sc, items, top_n, stop, slot, store="_pe_memo"):
+    """Build the answer keywords and word clouds `_pe_answer_panel` will ask
+    for, with a progress bar when there is more than a moment of work."""
+    _m = st.session_state.setdefault(store, {})
+    _todo = [(_tag, _turns) for _tag, _turns in items if ("answers", _tag, top_n, stop) not in _m]
+    if not _todo:
+        return
+    with slot:
+        _bar = st.progress(0.0, text="Preparing answer keywords...") if len(_todo) > 3 else None
+        for _i, (_tag, _turns) in enumerate(_todo, 1):
+            _terms, _freq = dmpe.response_terms(sc, _turns, top_n, stop)
+            _m[("answers", _tag, top_n, stop)] = (_terms, dmpe.wordcloud_png(_freq))
+            if _bar:
+                _bar.progress(_i / len(_todo), text=f"Preparing answer keywords... {_i}/{len(_todo)}")
+        if _bar:
+            _bar.empty()
+
+
+def _pe_examples(reps, n_chars=600):
+    for _r in reps:
+        st.markdown(f"**{_r['user_id']}** · {_r['ts']:%Y-%m-%d %H:%M}")
+        # Shown as code so that markup in an input or an answer is not rendered.
+        st.code(_r["input"][:n_chars] + ("…" if len(_r["input"]) > n_chars else ""), language=None, wrap_lines=True)
+        for _a in _r["answers"]:
+            _txt = _a["text"] or "(no text)"
+            st.caption(f"→ {_a['agent']} / {_a['model']}")
+            st.code(_txt[:n_chars] + ("…" if len(_txt) > n_chars else ""), language=None, wrap_lines=True)
+        st.divider()
+
+
+def _performance_explorer():
+    st.subheader("Performance Explorer")
+    _sec = st.radio("Section:", ["User", "Agent"], horizontal=True, key="pe_section", label_visibility="collapsed")
+    if _sec == "User":
+        _pe_user_section()
+    elif st.radio("Agent view:", ["Summary", "Knowledge map"], horizontal=True, key="pe_agent_view",
+                  label_visibility="collapsed") == "Summary":
+        _pe_agent_section()
+    else:
+        _agent_performance_explorer()
+
+
+def _pe_user_section():
+    import altair as alt
+    import DigiM_PerformanceExplorer as dmpe
+    alt.data_transformers.disable_max_rows()
+
+    if "_pe_ready" not in st.session_state:
+        st.session_state._pe_ready = dmpe.available()
+    _ok, _why = st.session_state._pe_ready
+    if not _ok:
+        st.info(f"{_why} The User section reads the PostgreSQL analytics archive (digim_*_archive) only.")
+        if st.button("Retry", key="pe_retry"):
+            del st.session_state["_pe_ready"]
+            st.rerun()
+        return
+    _pe_archive_notice(dmpe, "pe")
+    if "_pe_options" not in st.session_state:
+        st.session_state._pe_options = dmpe.filter_options()
+    _opt = st.session_state._pe_options
+    _tz = str(dmpe.display_tz())
+
+    # --- Conditions ------------------------------------------------------
+    _last = _opt["last"] or datetime.now()
+    _c = st.columns(4)
+    _d_from = _c[0].date_input("From:", value=(_last - timedelta(days=30)).date(), key="pe_from_d")
+    _t_from = _c[1].time_input("From (time):", value=dt_time(0, 0), step=60, key="pe_from_t")
+    _d_to = _c[2].date_input("To:", value=_last.date(), key="pe_to_d")
+    _t_to = _c[3].time_input("To (time):", value=dt_time(23, 59), step=60, key="pe_to_t")
+    _a = st.columns([1, 2, 2, 2])
+    _axis = _a[0].radio("Analyze by:", ["Group", "User"], horizontal=True, key="pe_axis")
+    _groups = _a[1].multiselect("Groups:", _opt["groups"], key="pe_groups", placeholder="All groups")
+    _users = _a[2].multiselect("Users:", _opt["users"], key="pe_users", placeholder="All users")
+    _agents = _a[3].multiselect("Agents:", _opt["agents"], key="pe_agents", placeholder="All agents")
+    _span = (f" Backed-up history covers {_opt['first']:%Y-%m-%d %H:%M} – {_opt['last']:%Y-%m-%d %H:%M}."
+             if _opt["first"] and _opt["last"] else "")
+    st.caption(f"Times are in {_tz}.{_span} A user who belongs to several groups counts in each of them.")
+
+    _clicked = st.button("Run analysis", key="pe_run", type="primary")
+    _busy = _pe_busy_slot()
+    if _clicked:
+        _p_from = datetime.combine(_d_from, _t_from)
+        _p_to = datetime.combine(_d_to, _t_to) + timedelta(minutes=1)
+        if _p_to <= _p_from:
+            _busy.warning("\"To\" must be later than \"From\".")
+        else:
+            with _busy:
+                with st.spinner("Loading turns..."):
+                    _new = dmpe.load_scope(_p_from, _p_to, _axis, _users, _groups, _agents)
+                if len(_new["turns"]):
+                    _bar = st.progress(0.0, text="Extracting keywords...")
+                    dmpe.tokenize_scope(_new, on_progress=lambda i, n: _bar.progress(
+                        min(i / max(n, 1), 1.0), text=f"Extracting keywords... {i}/{n}"))
+                    _bar.empty()
+                    with st.spinner("Loading references..."):
+                        dmpe.load_refs(_new)
+            st.session_state._pe_scope = _new
+            for _k in _PE_STATE_KEYS:
+                st.session_state.pop(_k, None)
+
+    _sc = st.session_state.get("_pe_scope")
+    if _sc is None:
+        st.caption("Set the period and filters, then press \"Run analysis\".")
+        return
+    if not len(_sc["turns"]):
+        st.info("No turns match these conditions.")
+        return
+
+    _pf, _pt = _sc["period"]
+    _flt = _sc["filters"]
+    _axis_name = _sc["axis"]
+    _desc = [f"{_pf:%Y-%m-%d %H:%M} – {(_pt - timedelta(minutes=1)):%Y-%m-%d %H:%M}", f"by {_axis_name.lower()}"]
+    for _lbl, _vals in (("groups", _flt["groups"]), ("users", _flt["users"]), ("agents", _flt["agents"])):
+        if _vals:
+            _desc.append(f"{_lbl}: {', '.join(_vals)}")
+    _lo = _sc.get("left_out") or {}
+    _left = []
+    if _lo.get("job_turns"):
+        _left.append(f"{_lo['job_turns']:,} turns started by scheduled jobs")
+    if _lo.get("system_turns"):
+        _left.append(f"{_lo['system_turns']:,} turns of system services")
+    _note = f" Left out as not typed by a user: {' and '.join(_left)}." if _left else ""
+    if _lo.get("skill_blocks"):
+        _note += f" Text a skill injected (web search results) was removed from {_lo['skill_blocks']:,} inputs."
+    st.caption("Showing: " + " / ".join(_desc) + "." + _note)
+
+    _sm = _pe_memo(("summary",), lambda: dmpe.usage_summary(_sc))
+    _kc = st.columns(5)
+    _kc[0].metric("Turns", f"{_sm['turns']:,}")
+    _kc[1].metric("Sessions", f"{_sm['sessions']:,}")
+    _kc[2].metric("Users", f"{_sm['users']:,}")
+    _kc[3].metric("Answers", f"{_sm['answers']:,}")
+    _kc[4].metric("References", f"{_sm['references']:,}")
+
+    _s = st.columns([1, 3])
+    _top_n = int(_s[0].number_input("Top N (answer keywords / knowledge):", min_value=3, max_value=50, value=10, key="pe_top_n"))
+    _stop = dmpe.parse_stop_words(_s[1].text_input(
+        "Exclude words (comma separated):", key="pe_stop",
+        help="Words to leave out of every keyword ranking and word cloud, on top of the built-in list of filler words."))
+
+    _keep = _pe_memo(("axis_values",), lambda: dmpe.axis_values(_sc))
+
+    _tab_use, _tab_topic, _tab_div, _tab_ach = st.tabs(
+        ["1. Usage", "2. Interests / Topics", "3. Diversity / Homogeneity", "4. Achievement"])
+
+    # =================================================================
+    # 1. Usage
+    # =================================================================
+    with _tab_use:
+        st.markdown("#### When people use it")
+        _hm = _pe_memo(("heatmap",), lambda: dmpe.usage_heatmap(_sc))
+        _seq = list(reversed(_PE_SEQ)) if _pe_dark() else _PE_SEQ
+        st.altair_chart(
+            alt.Chart(_hm).mark_rect(stroke=_pe_surface(), strokeWidth=2).encode(
+                x=alt.X("hour:O", title=f"Hour of day ({_tz})", scale=alt.Scale(domain=list(range(24))),
+                        axis=alt.Axis(labelAngle=0)),
+                y=alt.Y("day:O", title=None, sort=["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+                        scale=alt.Scale(domain=["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])),
+                color=alt.Color("turns:Q", title="Turns", scale=alt.Scale(range=_seq)),
+                tooltip=[alt.Tooltip("day:N", title="Day"), alt.Tooltip("hour:O", title="Hour"),
+                         alt.Tooltip("turns:Q", title="Turns")],
+            ).properties(height=250), use_container_width=True)
+
+        st.markdown(f"#### Turns per {_sc['bucket']}")
+        _tl = _pe_memo(("timeline",), lambda: dmpe.usage_timeline(_sc, _keep))
+        st.altair_chart(
+            alt.Chart(_tl).mark_line(strokeWidth=2, point=alt.OverlayMarkDef(size=60, filled=True)).encode(
+                x=alt.X("bucket:T", title=None), y=alt.Y("turns:Q", title="Turns"),
+                color=_pe_series_color(dmpe, _keep, set(_tl["series"]), _axis_name),
+                tooltip=[alt.Tooltip("series:N", title=_axis_name), alt.Tooltip("bucket:T", title="Period"),
+                         alt.Tooltip("turns:Q", title="Turns")],
+            ).properties(height=280), use_container_width=True)
+
+        st.markdown(f"#### By {_axis_name.lower()}")
+        st.dataframe(
+            _pe_memo(("by_axis",), lambda: dmpe.usage_by_axis(_sc)), hide_index=True,
+            column_config={
+                "axis_value": st.column_config.TextColumn(_axis_name),
+                "turns": st.column_config.NumberColumn("Turns"),
+                "sessions": st.column_config.NumberColumn("Sessions"),
+                "users": st.column_config.NumberColumn("Users"),
+                "active_days": st.column_config.NumberColumn("Active days"),
+                "avg_input_chars": st.column_config.NumberColumn("Avg input chars", format="%d"),
+                "answers": st.column_config.NumberColumn("Answers", format="%d"),
+                "avg_answer_chars": st.column_config.NumberColumn("Avg answer chars", format="%d"),
+                "avg_answer_sec": st.column_config.NumberColumn("Avg sec to answer", format="%.1f", help="From the input being sent to the answer being finished, retrieval included."),
+                "response_tokens": st.column_config.NumberColumn("Response tokens", format="%d"),
+                "references": st.column_config.NumberColumn("References", format="%d",
+                                                            help="As counted when the turn ran."),
+            })
+
+    # =================================================================
+    # 2. Interests / Topics
+    # =================================================================
+    with _tab_topic:
+        _n_kw = int(st.number_input("Keywords shown:", min_value=5, max_value=200, value=30, key="pe_kw_n"))
+        _rk = _pe_memo(("ranking", _n_kw, _stop), lambda: dmpe.keyword_ranking(_sc, _n_kw, _stop))
+        if _rk.empty:
+            st.info("No keywords were found in the user inputs.")
+        else:
+            st.markdown("#### What users ask about")
+            st.dataframe(
+                _rk, hide_index=True,
+                column_config={
+                    "rank": st.column_config.NumberColumn("#", width="small"),
+                    "keyword": st.column_config.TextColumn("Keyword"),
+                    "turns": st.column_config.NumberColumn("Turns", help="User inputs that contain the keyword."),
+                    "share": st.column_config.NumberColumn("Share %", help="Share of all turns in scope."),
+                    "users": st.column_config.NumberColumn("Users"),
+                    "peak": st.column_config.TextColumn(f"Peak {_sc['bucket']}", help="The period with the most turns, and how many."),
+                    "first": st.column_config.TextColumn("First"),
+                    "last": st.column_config.TextColumn("Last"),
+                    "trend": st.column_config.BarChartColumn(f"Turns per {_sc['bucket']}", y_min=0),
+                })
+            st.markdown("#### How the agent answered each keyword")
+            _kw_busy = _pe_busy_slot()
+            _kw_sets = [(_k, _pe_memo(("kw_turns", _k), lambda _k=_k: dmpe.turns_with_keyword(_sc, _k)))
+                        for _k in _rk["keyword"]]
+            _pe_prepare_answers(dmpe, _sc, [(f"kw:{_k}", _t) for _k, _t in _kw_sets], _top_n, _stop, _kw_busy)
+
+            def _kw_examples(turn_ids):
+                _t = _sc["turns"][_sc["turns"]["turn"].isin(turn_ids)].sort_values("ts", ascending=False).head(3)
+                _an = _sc["answers"]
+                _out = []
+                for _, _r in _t.iterrows():
+                    _out.append(f"[{_r['user_id']} · {_r['ts']:%Y-%m-%d %H:%M}]\n{_r['user_input'][:300]}")
+                    for _, _x in _an[_an["turn"] == _r["turn"]].iterrows():
+                        _out.append(f"  → {_x['agent_name'] or _x['agent_file']} / {_x['model_name']}\n"
+                                    f"  {(_x['response_text'] or '(no text)')[:300]}")
+                return "\n\n".join(_out)
+
+            for (_kw, _kw_turns), (_, _row) in zip(_kw_sets, _rk.iterrows()):
+                st.markdown(f"**{_row['rank']}. {_kw}** — {_row['turns']:,} turns ({_row['share']}%), "
+                            f"peak {_row['peak']}")
+                _pe_answer_panel(dmpe, _sc, _kw_turns, f"kw:{_kw}", _top_n, _stop)
+                with st.expander("Latest inputs and answers"):
+                    # Shown as code so that markup in an input or an answer is not rendered.
+                    st.code(_pe_memo(("kw_examples", _kw), lambda: _kw_examples(_kw_turns)),
+                            language=None, wrap_lines=True)
+            st.markdown("---")
+            _explanation_block("_pe_topic_expl", "Topic Analyst PE", "agent_23DataAnalyst.json",
+                               lambda: dmpe.topic_context(_sc, _rk, _stop, 10, _top_n), "Topics", "pe_tp")
+
+    # =================================================================
+    # 3. Diversity / Homogeneity
+    # =================================================================
+    with _tab_div:
+        _miss = _pe_memo(("missing_vectors",), lambda: dmpe.missing_vectors(_sc))
+        _no_in = _pe_memo(("missing_inputs",), lambda: int((~_sc["turns"]["has_qvec"]).sum()))
+        _dc = st.columns([1, 1, 3])
+        _k = int(_dc[0].number_input("Clusters:", min_value=2, max_value=dmpe.MAX_CLUSTERS, value=6, key="pe_k"))
+        _dc[1].markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
+        _cl_clicked = _dc[1].button("Run clustering", key="pe_cl_run")
+        _div_busy = _pe_busy_slot()
+        if _cl_clicked:
+            with _div_busy, st.spinner("Clustering user inputs..."):
+                if "qvec" not in _sc:
+                    dmpe.load_vectors(_sc)
+                _cl = dmpe.cluster_inputs(_sc, _k)
+                if _cl is None:
+                    st.session_state._pe_cluster = None
+                else:
+                    _smry = dmpe.cluster_summary(_sc, _cl, _stop)
+                    st.session_state._pe_cluster = {
+                        "cl": _cl, "summary": _smry, "diversity": dmpe.diversity_by_axis(_sc, _cl),
+                        "matrix": dmpe.cluster_axis_matrix(_sc, _cl), "run": datetime.now().strftime("%H%M%S")}
+                st.session_state.pop("_pe_div_expl_history", None)
+                st.session_state.pop("_pe_div_expl_sel", None)
+        # A turn keeps the vectors it computed while it ran, and the backup
+        # carries them here. What is still missing was never embedded: turns
+        # from before those vectors were kept.
+        if _no_in:
+            _dc[2].caption(f"{_no_in:,} of {len(_sc['turns']):,} inputs were never embedded (they ran before the turn kept its "
+                           "vectors), so they are left out of the clustering.")
+        elif len(_miss):
+            _dc[2].caption(f"All inputs have vectors. {len(_miss):,} answers were never embedded, so \"Answer spread\" is empty where they are.")
+        if len(_miss):
+            if _dc[2].button(f"Embed these {len(_miss):,} rows once (embedding API)", key="pe_vec_run",
+                             help="Embeds the inputs and answers that have no vector and stores them in digim_dialogs_archive. Needed once for old turns only: new turns bring their vectors with them."):
+                with _div_busy:
+                    _vbar = st.progress(0.0, text="Embedding...")
+                    try:
+                        _vr = dmpe.vectorize_missing(
+                            list(_miss.itertuples(index=False, name=None)),
+                            on_progress=lambda i, n: _vbar.progress(min(i / max(n, 1), 1.0), text=f"Embedding... {i}/{n}"))
+                        _vbar.empty()
+                        st.success(f"Embedded {_vr['done']:,} rows ({_vr['failed']:,} failed). Press \"Run analysis\" to pick them up.")
+                    except Exception as e:
+                        _vbar.empty()
+                        st.error(f"Embedding error: {e}")
+
+        _cs = st.session_state.get("_pe_cluster")
+        if "_pe_cluster" not in st.session_state:
+            st.caption("Choose the number of clusters and press \"Run clustering\".")
+        elif _cs is None:
+            st.info("Not enough vectorized inputs to cluster.")
+        else:
+            _cl, _smry, _run = _cs["cl"], _cs["summary"], _cs["run"]
+            _names = [f"C{i}" for i in range(1, _cl["k"] + 1)]
+
+            def _scatter_data():
+                # One point per input. A user in several groups would otherwise
+                # be drawn once per group on the same spot, the last hiding the rest.
+                _x = _sc["turns"].merge(_cl["frame"], on="turn")
+                _x["series"] = _x["axis"].map(" + ".join)
+                _lab = list(_keep) + sorted(set(_x["series"]) - set(_keep))
+                _lab = _lab[:len(_PE_SERIES_LIGHT)]
+                _x["series"] = _x["series"].where(_x["series"].isin(_lab), dmpe.OTHER)
+                _x["cluster"] = "C" + _x["cluster"].astype(str)
+                _x["when"] = _x["ts"].dt.strftime("%Y-%m-%d %H:%M")
+                _x["input"] = _x["user_input"].str.replace(r"\s+", " ", regex=True).str.slice(0, 140)
+                return _x[["x", "y", "series", "cluster", "user_id", "when", "input"]], [l for l in _lab if l in set(_x["series"])]
+            _sd, _sd_labels = _pe_memo(("scatter", _run), _scatter_data)
+            st.markdown(f"#### User inputs: colour = {_axis_name.lower()}, shape = cluster")
+            _pick = alt.selection_point(fields=["series"], bind="legend")
+            st.altair_chart(
+                alt.Chart(_sd).mark_point(filled=True, size=60, stroke=_pe_surface(), strokeWidth=0.5).encode(
+                    x=alt.X("x:Q", axis=None), y=alt.Y("y:Q", axis=None),
+                    color=_pe_series_color(dmpe, _sd_labels, set(_sd["series"]), _axis_name),
+                    shape=alt.Shape("cluster:N", title="Cluster",
+                                    scale=alt.Scale(domain=_names, range=_PE_SHAPES[:len(_names)])),
+                    opacity=alt.condition(_pick, alt.value(0.75), alt.value(0.08)),
+                    tooltip=[alt.Tooltip("cluster:N", title="Cluster"), alt.Tooltip("series:N", title=_axis_name),
+                             alt.Tooltip("user_id:N", title="User"), alt.Tooltip("when:N", title="When"),
+                             alt.Tooltip("input:N", title="Input")],
+                ).add_params(_pick).properties(height=480).interactive(), use_container_width=True)
+            st.caption(f"{len(_cl['frame']):,} inputs, placed by the first two principal components of their vectors. "
+                       f"An input from a user in several groups is one point, named after all of them. "
+                       f"Click a {_axis_name.lower()} in the legend to isolate it; scroll to zoom.")
+
+            st.markdown("#### Clusters")
+            st.dataframe(
+                _smry, hide_index=True,
+                column_config={
+                    "cluster": st.column_config.TextColumn("Cluster", width="small"),
+                    "turns": st.column_config.NumberColumn("Turns"),
+                    "share": st.column_config.NumberColumn("Share %"),
+                    "keywords": st.column_config.TextColumn("Characteristic input keywords", width="large"),
+                    "answers": st.column_config.NumberColumn("Answers"),
+                    "input_spread": st.column_config.NumberColumn("Input spread", format="%.3f", help="Mean cosine distance between the inputs of the cluster. Near 0 = almost the same input."),
+                    "answer_spread": st.column_config.NumberColumn("Answer spread", format="%.3f", help="Mean cosine distance between the answers to those inputs. Smaller = more consistent answers."),
+                    "answer_vs_input": st.column_config.NumberColumn("Answer / input", format="%.2f", help="Answer spread divided by input spread. Above 1 = the answers vary more than the inputs they answer."),
+                })
+
+            _csel = st.selectbox("Cluster:", _names, key="pe_cl_sel",
+                                 format_func=lambda c: f"{c}: {_smry.loc[_smry['cluster'] == c, 'keywords'].iloc[0]}")
+            _cno = int(_csel[1:])
+            _c_turns = _pe_memo(("cl_turns", _run, _cno),
+                                lambda: set(_cl["frame"].loc[_cl["frame"]["cluster"] == _cno, "turn"]))
+            st.markdown(f"#### {_csel}: how the agent answered")
+            _pe_answer_panel(dmpe, _sc, _c_turns, f"cl:{_run}:{_cno}", _top_n, _stop)
+            st.markdown(f"#### {_csel}: knowledge the agent used")
+            _pe_knowledge_panel(dmpe, _sc, _c_turns, f"cl:{_run}:{_cno}", _top_n, "pe_cl")
+
+            with st.expander(f"By {_axis_name.lower()}"):
+                st.dataframe(
+                    _cs["diversity"], hide_index=True,
+                    column_config={
+                        "axis_value": st.column_config.TextColumn(_axis_name),
+                        "turns": st.column_config.NumberColumn("Turns"),
+                        "clusters_used": st.column_config.NumberColumn("Clusters used"),
+                        "evenness": st.column_config.NumberColumn("Evenness", format="%.3f", help="How evenly the inputs spread over the clusters. 1 = evenly over all clusters (diverse), 0 = all in one cluster (homogeneous)."),
+                        "top_cluster": st.column_config.TextColumn("Largest cluster"),
+                        "spread": st.column_config.NumberColumn("Input spread", format="%.3f", help="Mean cosine distance between the inputs. Larger = more varied inputs."),
+                        "distance_from_all": st.column_config.NumberColumn("Distance from all", format="%.3f", help="How far the cluster mix is from the overall mix (Jensen-Shannon divergence, 0 to 1)."),
+                    })
+                st.caption("A small number of turns makes a group look more homogeneous than it is; read evenness and spread together with Turns.")
+                _mx = _cs["matrix"].copy()
+                _mx["share"] = (100.0 * _mx["turns"] / _mx.groupby("axis_value")["turns"].transform("sum")).round(1)
+                st.altair_chart(
+                    alt.Chart(_mx).mark_rect(stroke=_pe_surface(), strokeWidth=2).encode(
+                        x=alt.X("cluster:O", title="Cluster", scale=alt.Scale(domain=_names), axis=alt.Axis(labelAngle=0)),
+                        y=alt.Y("axis_value:O", title=None),
+                        color=alt.Color("share:Q", title="Share %", scale=alt.Scale(range=list(reversed(_PE_SEQ)) if _pe_dark() else _PE_SEQ, domain=[0, 100])),
+                        tooltip=[alt.Tooltip("axis_value:N", title=_axis_name), alt.Tooltip("cluster:N", title="Cluster"),
+                                 alt.Tooltip("turns:Q", title="Turns"), alt.Tooltip("share:Q", title="Share %")],
+                    ).properties(height=max(120, 34 * _mx["axis_value"].nunique() + 50)), use_container_width=True)
+
+                _avals = list(_cs["diversity"]["axis_value"].iloc[1:])
+                _asel = st.selectbox(f"{_axis_name}:", _avals, key="pe_cl_axis") if _avals else None
+                if _asel is not None:
+                    def _ca_turns():
+                        _x = dmpe.axis_frame(_sc)
+                        return _c_turns & set(_x.loc[_x["axis_value"] == _asel, "turn"])
+                    _ca = _pe_memo(("cl_axis_turns", _run, _cno, _asel), _ca_turns)
+                    st.markdown(f"**{_csel} × {_asel}: {len(_ca):,} turns**")
+                    if _ca:
+                        st.markdown("Representative inputs and the answers they got:")
+                        _pe_examples(_pe_memo(("cl_reps", _run, _cno, _asel),
+                                              lambda: dmpe.representative_inputs(_sc, _cl, _cno, _asel, 3)))
+                        st.markdown("Answer keywords:")
+                        _pe_answer_panel(dmpe, _sc, _ca, f"cl:{_run}:{_cno}:{_asel}", _top_n, _stop)
+                        st.markdown("Knowledge used:")
+                        _pe_knowledge_panel(dmpe, _sc, _ca, f"cl:{_run}:{_cno}:{_asel}", _top_n, "pe_cla")
+                    else:
+                        st.caption("No inputs from this selection fall in the cluster.")
+
+            st.markdown("---")
+            _explanation_block("_pe_div_expl", "Diversity Analyst PE", "agent_23DataAnalyst.json",
+                               lambda: dmpe.diversity_context(_sc, _cl, _smry, _cs["diversity"], _stop, 5),
+                               "Diversity", "pe_dv")
+
+    # =================================================================
+    # 4. Achievement
+    # =================================================================
+    with _tab_ach:
+        st.markdown("#### Themes")
+        if "_pe_theme_seed" not in st.session_state:
+            _dt = dmpe.default_themes() or [("", "")]
+            st.session_state._pe_theme_seed = pd.DataFrame(
+                [{"Theme": _n, "What counts as achieving it": _c} for _n, _c in _dt])
+        _themes_df = st.data_editor(
+            st.session_state._pe_theme_seed, num_rows="dynamic", hide_index=True, key="pe_themes",
+            column_config={
+                "Theme": st.column_config.TextColumn("Theme", width="medium", help="A short name, used as the label."),
+                "What counts as achieving it": st.column_config.TextColumn("What counts as achieving it", width="large", help="The task and the criteria the user inputs are scored against."),
+            })
+        _themes = []
+        for _i, _row in enumerate(_themes_df.to_dict("records"), 1):
+            _n, _t = (("" if pd.isna(_v) else str(_v).strip()) for _v in
+                      (_row.get("Theme"), _row.get("What counts as achieving it")))
+            if _n or _t:
+                _themes.append((_n or f"Theme {_i}", _t or _n))
+
+        _ac = st.columns([1, 1, 2])
+        _unit = _ac[0].radio("Score per:", ["Session", "Input"], horizontal=True, key="pe_unit",
+                             help="Session: the user's inputs of one session in the period, taken together. Input: every input on its own (more LLM calls).")
+        _max_units = int(_ac[1].number_input("Max scored per theme:", min_value=1, max_value=5000, value=50, key="pe_max_units",
+                                             help="When there are more, the ones closest to the theme (by vector) are scored and the rest are left unscored."))
+        _units = _pe_memo(("units", _unit), lambda: dmpe.achievement_units(_sc, _unit))
+        _ac[2].caption(f"{len(_units):,} {_unit.lower()}s in scope. Each theme scores up to {min(len(_units), _max_units):,} of them, "
+                       "5 per LLM call. Scores are stored, so the same theme, text and model is never scored twice.")
+        _saf, _sag, _seng, _spers = _agent_engine_selectors("Scoring", "pe_sc")
+
+        _score_clicked = st.button("Score", key="pe_score_run", type="primary", disabled=not (_themes and len(_units)))
+        _ach_busy = _pe_busy_slot()
+        if _score_clicked:
+            _use_af = _saf or "agent_23DataAnalyst.json"
+            try:
+                _agent = _agent_with_engine(_use_af, _seng, _spers)
+                _instr = _agent.set_prompt_template("Achievement Scorer PE")
+
+                def _call(prompt):
+                    _out = ""
+                    for _, _ch, _ in _agent.generate_response("LLM", prompt, [], stream_mode=False):
+                        if _ch:
+                            _out += _ch
+                    return _out
+                _model_tag = f"{_use_af}|{_seng or 'default'}"
+                _res = dict(st.session_state.get("_pe_scores") or {})
+                for _name, _text in _themes:
+                    _cand = _units
+                    if len(_units) > _max_units:
+                        if "qvec" not in _sc:
+                            with _ach_busy, st.spinner("Loading vectors..."):
+                                dmpe.load_vectors(_sc)
+                        _tv = None
+                        try:
+                            _tv = dmpe.embed_query(_text)
+                        except Exception as e:
+                            st.warning(f"The theme could not be embedded ({e}); scoring the first {_max_units} instead of the closest.")
+                        _cand = dmpe.rank_units_for_theme(_sc, _units, _tv).head(_max_units)
+                    _sbar = _ach_busy.progress(0.0, text=f"Scoring \"{_name}\"...")
+                    _scored = dmpe.score_units(
+                        _text, _cand, _call, _model_tag, _instr, unit_kind=_unit,
+                        on_progress=lambda i, n: _sbar.progress(min(i / max(n, 1), 1.0), text=f"Scoring \"{_name}\"... {i}/{n}"))
+                    _sbar.empty()
+                    _res[_name] = {"scored": _scored, "text": _text, "unit": _unit, "candidates": len(_cand),
+                                   "total": len(_units), "model": _model_tag, "run": datetime.now().strftime("%H%M%S")}
+                st.session_state._pe_scores = _res
+            except Exception as e:
+                st.error(f"Scoring error: {e}")
+
+        _scores = st.session_state.get("_pe_scores") or {}
+        if _scores:
+            st.markdown("---")
+            _tsel = st.selectbox("Theme:", list(_scores.keys()), key="pe_theme_sel")
+            _r = _scores[_tsel]
+            _scd = _r["scored"]
+            st.caption(f"{_r['text'][:200]} — scored {len(_scd):,} of {_r['total']:,} {_r['unit'].lower()}s "
+                       f"({int(_scd['cached'].sum()) if len(_scd) else 0:,} from stored scores) with {_r['model']}.")
+            if _scd.empty:
+                st.info("Nothing was scored. The model's reply could not be read as scores; try another engine.")
+            else:
+                _tag = f"{_tsel}:{_r['run']}"
+                _bc = _pe_memo(("bands", _tag), lambda: dmpe.band_counts(_scd))
+                _b1, _b2 = st.columns([1, 1])
+                _b1.markdown("**Score bands**")
+                _bars = alt.Chart(_bc).mark_bar(size=22, cornerRadiusEnd=4, color=(_PE_SERIES_DARK if _pe_dark() else _PE_SERIES_LIGHT)[0]).encode(
+                    y=alt.Y("band:O", title="Score", sort=list(_bc["band"])), x=alt.X("units:Q", title=f"{_r['unit']}s"),
+                    tooltip=[alt.Tooltip("band:N", title="Score"), alt.Tooltip("units:Q", title=f"{_r['unit']}s")])
+                _b1.altair_chart((_bars + _bars.mark_text(align="left", dx=4).encode(text="units:Q")).properties(height=200),
+                                 use_container_width=True)
+                _b2.markdown(f"**Ranking by {_axis_name.lower()}**")
+                _b2.dataframe(
+                    _pe_memo(("ach_rank", _tag), lambda: dmpe.achievement_ranking(_scd)), hide_index=True,
+                    column_config={
+                        "rank": st.column_config.NumberColumn("#", width="small"),
+                        "axis_value": st.column_config.TextColumn(_axis_name),
+                        "units": st.column_config.NumberColumn(f"{_r['unit']}s scored"),
+                        "best": st.column_config.ProgressColumn("Best", min_value=0, max_value=100, format="%d"),
+                        "average": st.column_config.NumberColumn("Average", format="%.1f"),
+                        "users": st.column_config.NumberColumn("Users"),
+                    })
+                st.markdown(f"**{_r['unit']}s by score**")
+                st.dataframe(
+                    _scd[["score", "band", "user_id", "label", "ts", "reason"]], hide_index=True,
+                    column_config={
+                        "score": st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%d"),
+                        "band": st.column_config.TextColumn("Band", width="small"),
+                        "user_id": st.column_config.TextColumn("User"),
+                        "label": st.column_config.TextColumn("Session"),
+                        "ts": st.column_config.DatetimeColumn("Started", format="YYYY-MM-DD HH:mm"),
+                        "reason": st.column_config.TextColumn("Why", width="large"),
+                    })
+                _bands = [b for b in _bc["band"] if int(_bc.loc[_bc["band"] == b, "units"].iloc[0]) > 0]
+                _bsel = st.selectbox("Score band:", _bands, key="pe_band_sel")
+                _b_turns = _pe_memo(("band_turns", _tag, _bsel),
+                                    lambda: {t for ts in _scd.loc[_scd["band"] == _bsel, "turns"] for t in ts})
+                st.markdown(f"#### Score {_bsel}: how the agent answered ({len(_b_turns):,} turns)")
+                _pe_answer_panel(dmpe, _sc, _b_turns, f"band:{_tag}:{_bsel}", _top_n, _stop)
+                st.markdown(f"#### Score {_bsel}: knowledge the agent used")
+                _pe_knowledge_panel(dmpe, _sc, _b_turns, f"band:{_tag}:{_bsel}", _top_n, "pe_band")
+
+
+def _pe_agent_section():
+    import altair as alt
+    import DigiM_PerformanceExplorer as dmpe
+    alt.data_transformers.disable_max_rows()
+    _M = "_pea_memo"
+
+    if "_pe_ready" not in st.session_state:
+        st.session_state._pe_ready = dmpe.available()
+    _ok, _why = st.session_state._pe_ready
+    if not _ok:
+        st.info(f"{_why} This view reads the PostgreSQL analytics archive (digim_*_archive) only.")
+        if st.button("Retry", key="pea_retry"):
+            del st.session_state["_pe_ready"]
+            st.rerun()
+        return
+    _pe_archive_notice(dmpe, "pea")
+    if "_pe_options" not in st.session_state:
+        st.session_state._pe_options = dmpe.filter_options()
+    _opt = st.session_state._pe_options
+    _tz = str(dmpe.display_tz())
+
+    # --- Conditions ------------------------------------------------------
+    _last = _opt["last"] or datetime.now()
+    _c = st.columns(4)
+    _d_from = _c[0].date_input("From:", value=(_last - timedelta(days=30)).date(), key="pea_from_d")
+    _t_from = _c[1].time_input("From (time):", value=dt_time(0, 0), step=60, key="pea_from_t")
+    _d_to = _c[2].date_input("To:", value=_last.date(), key="pea_to_d")
+    _t_to = _c[3].time_input("To (time):", value=dt_time(23, 59), step=60, key="pea_to_t")
+    _agents = st.multiselect("Agents:", _opt["agents"], key="pea_agents", placeholder="All agents")
+    st.caption(f"Times are in {_tz}. A turn answered by several agents counts for each of them.")
+
+    _clicked = st.button("Run analysis", key="pea_run", type="primary")
+    _busy = _pe_busy_slot()
+    if _clicked:
+        _p_from = datetime.combine(_d_from, _t_from)
+        _p_to = datetime.combine(_d_to, _t_to) + timedelta(minutes=1)
+        if _p_to <= _p_from:
+            _busy.warning("\"To\" must be later than \"From\".")
+        else:
+            with _busy:
+                with st.spinner("Loading answers..."):
+                    _new = dmpe.load_agent_scope(_p_from, _p_to, _agents)
+                if len(_new["answers"]):
+                    _bar = st.progress(0.0, text="Extracting keywords...")
+                    dmpe.tokenize_scope(_new, on_progress=lambda i, n: _bar.progress(
+                        min(i / max(n, 1), 1.0), text=f"Extracting keywords... {i}/{n}"), inputs=False)
+                    _bar.empty()
+                    with st.spinner("Loading references and steps..."):
+                        dmpe.load_refs(_new)
+                        dmpe.load_steps(_new)
+            st.session_state._pea_scope = _new
+            for _k in (_M, "_pea_reask"):
+                st.session_state.pop(_k, None)
+
+    _sc = st.session_state.get("_pea_scope")
+    if _sc is None:
+        st.caption("Set the period and the agents, then press \"Run analysis\".")
+        return
+    if not len(_sc["answers"]):
+        st.info("No answers match these conditions.")
+        return
+
+    _pf, _pt = _sc["period"]
+    _desc = [f"{_pf:%Y-%m-%d %H:%M} – {(_pt - timedelta(minutes=1)):%Y-%m-%d %H:%M}"]
+    if _sc["filters"]["agents"]:
+        _desc.append("agents: " + ", ".join(dmpe.agent_label(a) for a in _sc["filters"]["agents"]))
+    st.caption("Showing: " + " / ".join(_desc))
+
+    _an = _sc["answers"]
+    _steps = _sc.get("steps")
+    _cov = _pe_memo(("coverage",), lambda: dmpe.steps_coverage(_sc), _M)
+    _kc = st.columns(5)
+    _kc[0].metric("Agents", f"{_an['agent'].nunique():,}")
+    _kc[1].metric("Answers", f"{len(_an):,}")
+    _kc[2].metric("Turns", f"{len(_sc['turns']):,}")
+    _kc[3].metric("References", f"{len(_sc['refs']):,}")
+    _kc[4].metric("Answers with step data", f"{_cov[0]:,}")
+
+    _s = st.columns([1, 3])
+    _top_n = int(_s[0].number_input("Top N (keywords / knowledge):", min_value=3, max_value=50, value=10, key="pea_top_n"))
+    _stop = dmpe.parse_stop_words(_s[1].text_input(
+        "Exclude words (comma separated):", key="pea_stop",
+        help="Words to leave out of every keyword ranking and word cloud, on top of the built-in list of filler words."))
+
+    _names = _pe_memo(("agents",), lambda: list(_an["agent"].value_counts().index), _M)
+    _keep = _pe_memo(("axis_values",), lambda: dmpe.axis_values(_sc), _M)
+    _no_steps = ("Support-agent, skill and rewrite records are not in the archive yet. "
+                 "Run History Retention > Backup Now once; after that every turn brings its own records.")
+
+    def _agent_pick(label, key, with_all=True):
+        _o = (["(all agents)"] if with_all else []) + _names
+        _v = st.selectbox(label, _o, key=key)
+        return None if _v == "(all agents)" else _v
+
+    def _akeys(agent):
+        return _pe_memo(("akeys", agent), lambda: set(_an["akey"] if agent is None else _an.loc[_an["agent"] == agent, "akey"]), _M)
+
+    _tabs = st.tabs(["1. Output", "2. Habit", "3. Knowledge", "4. Skill", "5. Support agents", "6. Feedback signals"])
+
+    # =================================================================
+    # 1. Output
+    # =================================================================
+    with _tabs[0]:
+        st.markdown("#### By agent")
+        st.dataframe(
+            _pe_memo(("summary",), lambda: dmpe.agent_summary(_sc), _M), hide_index=True,
+            column_config={
+                "agent": st.column_config.TextColumn("Agent"),
+                "answers": st.column_config.NumberColumn("Answers"),
+                "turns": st.column_config.NumberColumn("Turns"),
+                "sessions": st.column_config.NumberColumn("Sessions"),
+                "users": st.column_config.NumberColumn("Users"),
+                "avg_answer_chars": st.column_config.NumberColumn("Avg answer chars", format="%d"),
+                "avg_answer_sec": st.column_config.NumberColumn("Avg sec to answer", format="%.1f", help="From the input being sent to the answer being finished, retrieval included."),
+                "avg_llm_sec": st.column_config.NumberColumn("Avg LLM sec", format="%.1f", help="The main LLM call alone. Empty for answers mirrored between March 2026 and the fix of the response-time export whose history is gone."),
+                "avg_prompt_tokens": st.column_config.NumberColumn("Avg prompt tokens", format="%d"),
+                "avg_response_tokens": st.column_config.NumberColumn("Avg response tokens", format="%d"),
+                "response_tokens": st.column_config.NumberColumn("Response tokens", format="%d"),
+                "refs_per_answer": st.column_config.NumberColumn("Refs / answer", format="%.1f"),
+                "models": st.column_config.TextColumn("Models", width="large"),
+            })
+        st.markdown(f"#### Turns per {_sc['bucket']}")
+        _tl = _pe_memo(("timeline",), lambda: dmpe.usage_timeline(_sc, _keep), _M)
+        st.altair_chart(
+            alt.Chart(_tl).mark_line(strokeWidth=2, point=alt.OverlayMarkDef(size=60, filled=True)).encode(
+                x=alt.X("bucket:T", title=None), y=alt.Y("turns:Q", title="Turns"),
+                color=_pe_series_color(dmpe, _keep, set(_tl["series"]), "Agent"),
+                tooltip=[alt.Tooltip("series:N", title="Agent"), alt.Tooltip("bucket:T", title="Period"),
+                         alt.Tooltip("turns:Q", title="Turns")],
+            ).properties(height=280), use_container_width=True)
+        st.markdown("#### By model")
+        st.dataframe(
+            _pe_memo(("models",), lambda: dmpe.agent_models(_sc), _M), hide_index=True,
+            column_config={
+                "agent": st.column_config.TextColumn("Agent"),
+                "model_name": st.column_config.TextColumn("Model"),
+                "answers": st.column_config.NumberColumn("Answers"),
+                "avg_answer_chars": st.column_config.NumberColumn("Avg answer chars", format="%d"),
+                "avg_answer_sec": st.column_config.NumberColumn("Avg sec to answer", format="%.1f"),
+                "avg_llm_sec": st.column_config.NumberColumn("Avg LLM sec", format="%.1f"),
+                "avg_response_tokens": st.column_config.NumberColumn("Avg response tokens", format="%d"),
+            })
+        _oa = _agent_pick("Answer keywords of:", "pea_out_agent")
+        st.markdown(f"#### What {_oa or 'the agents'} wrote about")
+        _pe_answer_panel(dmpe, _sc, None, f"agent:{_oa}", _top_n, _stop, akeys=None if _oa is None else _akeys(_oa), store=_M)
+
+    # =================================================================
+    # 2. Habit
+    # =================================================================
+    with _tabs[1]:
+        st.markdown("#### Practices that ran")
+        st.dataframe(
+            _pe_memo(("habit",), lambda: dmpe.habit_summary(_sc), _M), hide_index=True,
+            column_config={
+                "agent": st.column_config.TextColumn("Agent"),
+                "practice": st.column_config.TextColumn("Practice"),
+                "answers": st.column_config.NumberColumn("Answers"),
+                "turns": st.column_config.NumberColumn("Turns"),
+                "share": st.column_config.NumberColumn("Share %", help="Share of the agent's answers."),
+            })
+        _ht, _hk = _pe_memo(("habit_timeline",), lambda: dmpe.habit_timeline(_sc), _M)
+        st.markdown(f"#### Answers per {_sc['bucket']} by practice")
+        st.altair_chart(
+            alt.Chart(_ht).mark_line(strokeWidth=2, point=alt.OverlayMarkDef(size=60, filled=True)).encode(
+                x=alt.X("bucket:T", title=None), y=alt.Y("answers:Q", title="Answers"),
+                color=_pe_series_color(dmpe, _hk, set(_ht["series"]), "Practice"),
+                tooltip=[alt.Tooltip("series:N", title="Practice"), alt.Tooltip("bucket:T", title="Period"),
+                         alt.Tooltip("answers:Q", title="Answers")],
+            ).properties(height=280), use_container_width=True)
+        st.markdown("#### Habit chosen by the Thinking agent")
+        if _steps is None:
+            st.info(_no_steps)
+        else:
+            _hb, _bk = _pe_memo(("thinking",), lambda: dmpe.thinking_choices(_sc), _M)
+            if _hb.empty:
+                st.caption("The Thinking agent did not run in this selection.")
+            else:
+                st.dataframe(
+                    _hb, hide_index=True,
+                    column_config={
+                        "agent": st.column_config.TextColumn("Agent"),
+                        "habit": st.column_config.TextColumn("Habit chosen"),
+                        "turns": st.column_config.NumberColumn("Turns"),
+                        "share": st.column_config.NumberColumn("Share %", help="Share of the agent's turns where Thinking ran."),
+                        "avg_sec": st.column_config.NumberColumn("Avg thinking sec", format="%.1f"),
+                    })
+                st.caption("A practice with no row here was started by a command or a fixed setting, not chosen by Thinking.")
+
+    # =================================================================
+    # 3. Knowledge
+    # =================================================================
+    with _tabs[2]:
+        _ka = _agent_pick("Knowledge and Books of:", "pea_kn_agent", with_all=False)
+        _kk = _akeys(_ka)
+        _kn_busy = _pe_busy_slot()
+        st.markdown("#### By knowledge base")
+        _rs = _pe_memo(("rag", _ka), lambda: dmpe.rag_summary(_sc, _kk), _M)
+        if _rs.empty:
+            st.caption("No knowledge was referenced in this selection.")
+        else:
+            st.dataframe(
+                _rs, hide_index=True,
+                column_config={
+                    "rag_name": st.column_config.TextColumn("RAG"),
+                    "db_name": st.column_config.TextColumn("DB"),
+                    "references": st.column_config.NumberColumn("References"),
+                    "chunks": st.column_config.NumberColumn("Distinct knowledge"),
+                    "answers": st.column_config.NumberColumn("Answers"),
+                    "answer_share": st.column_config.NumberColumn("Answer share %", help="Share of the answers in this selection that referenced it."),
+                    "utility_sum": st.column_config.NumberColumn("Cumulative utility", format="%.2f"),
+                    "utility_avg": st.column_config.NumberColumn("Avg utility", format="%.3f"),
+                })
+
+        _secs, _has_cfg = _pe_memo(("kn_sections", _ka, _top_n), lambda: dmpe.knowledge_sections(_sc, _ka, _top_n), _M)
+        st.markdown("#### Most used knowledge, per Knowledge and Book")
+        st.caption("In the order the agent lists its Knowledge, then its Books." if _has_cfg else
+                   "This agent's file is no longer there, so its knowledge bases are listed by references.")
+
+        def _maps():
+            return {_x["rag_name"]: dmpe.knowledge_map(_x["collections"]) for _x in _secs
+                    if _x["collections"] and len(_x["ranking"])}
+        if ("kn_maps", _ka) not in st.session_state.get(_M, {}):
+            with _kn_busy, st.spinner("Placing the knowledge on a map..."):
+                _kmaps = _pe_memo(("kn_maps", _ka), _maps, _M)
+        else:
+            _kmaps = _pe_memo(("kn_maps", _ka), _maps, _M)
+
+        _pal = _PE_SERIES_DARK if _pe_dark() else _PE_SERIES_LIGHT
+        for _x in _secs:
+            _r = _x["ranking"]
+            _kind = " · ".join(v for v in (_x["origin"], _x["retriever"], "" if _x["active"] or not _x["retriever"] else "inactive") if v)
+            st.markdown(f"**{_x['rag_name']}** — {_kind}")
+            if _r.empty:
+                st.caption("Not referenced in this selection.")
+                continue
+            st.caption(f"{_x['references']:,} references to {_x['distinct']:,} knowledge.")
+            _top = _r[_r["top"]]
+            st.dataframe(
+                _top[["rank", "title", "db_name", "ref_count", "answers", "dist_q", "dist_a", "utility_sum"]], hide_index=True,
+                column_config={
+                    "rank": st.column_config.NumberColumn("#", width="small"),
+                    "title": st.column_config.TextColumn("Knowledge", width="large"),
+                    "db_name": st.column_config.TextColumn("DB"),
+                    "ref_count": st.column_config.NumberColumn("References"),
+                    "answers": st.column_config.NumberColumn("Answers"),
+                    "dist_q": st.column_config.NumberColumn("To question", format="%.3f", help="Average distance between the knowledge and the question. Smaller = closer."),
+                    "dist_a": st.column_config.NumberColumn("To answer", format="%.3f", help="Average distance between the knowledge and the answer. Smaller = closer."),
+                    "utility_sum": st.column_config.NumberColumn("Cumulative utility", format="%.3f"),
+                })
+            _g1, _g2 = st.columns([1, 1])
+            _bd = _top.dropna(subset=["dist_q", "dist_a"])
+            if _bd.empty:
+                _g1.caption("No distances are recorded for this knowledge base, so there is no bar chart.")
+            else:
+                _bd = _bd.assign(label=_bd["rank"].astype(str) + ". " + _bd["title"].str.slice(0, 26))
+                _long = pd.concat([
+                    _bd[["label", "rank", "title"]].assign(measure="To question", distance=_bd["dist_q"]),
+                    _bd[["label", "rank", "title"]].assign(measure="To answer", distance=_bd["dist_a"])])
+                _g1.altair_chart(
+                    alt.Chart(_long).mark_bar(cornerRadiusEnd=3).encode(
+                        y=alt.Y("label:N", title=None, sort=list(_bd["label"]), axis=alt.Axis(labelLimit=220)),
+                        yOffset=alt.YOffset("measure:N", sort=["To question", "To answer"]),
+                        x=alt.X("distance:Q", title="Distance (smaller = closer)"),
+                        color=alt.Color("measure:N", title=None, sort=["To question", "To answer"],
+                                        scale=alt.Scale(domain=["To question", "To answer"], range=_pal[:2]),
+                                        legend=alt.Legend(orient="top")),
+                        tooltip=[alt.Tooltip("title:N", title="Knowledge"), alt.Tooltip("measure:N", title="Measure"),
+                                 alt.Tooltip("distance:Q", title="Distance", format=".3f")],
+                    ).properties(height=max(160, 34 * len(_bd) + 60)), use_container_width=True)
+            _mp = _kmaps.get(_x["rag_name"])
+            if _mp is None:
+                _g2.caption("No map for this knowledge base: only vector collections can be placed on one.")
+            else:
+                _md = _mp.merge(_r[["db_name", "chunk_id", "ref_count", "rank", "top"]], on=["db_name", "chunk_id"], how="left")
+                _md["state"] = np.where(_md["top"].fillna(False).astype(bool), f"Top {int(_top_n)}",
+                                        np.where(_md["ref_count"].notna(), "Referenced", "Not referenced"))
+                _md["ref_count"] = _md["ref_count"].fillna(0)
+                _md["title"] = _md["title"].str.slice(0, 60)
+                _dom = [f"Top {int(_top_n)}", "Referenced", "Not referenced"]
+                _pts = alt.Chart(_md).mark_circle(stroke=_pe_surface(), strokeWidth=1).encode(
+                    x=alt.X("x:Q", axis=None), y=alt.Y("y:Q", axis=None),
+                    color=alt.Color("state:N", title=None, sort=_dom, legend=alt.Legend(orient="top"),
+                                    scale=alt.Scale(domain=_dom, range=[_pal[0], "#86b6ef", _pe_gray()])),
+                    size=alt.Size("ref_count:Q", legend=None, scale=alt.Scale(range=[45, 420])),
+                    order=alt.Order("ref_count:Q"),
+                    tooltip=[alt.Tooltip("title:N", title="Knowledge"), alt.Tooltip("db_name:N", title="DB"),
+                             alt.Tooltip("state:N", title="State"), alt.Tooltip("ref_count:Q", title="References")])
+                _lbl = alt.Chart(_md[_md["state"] == _dom[0]]).mark_text(dx=10, dy=-10, fontSize=11).encode(
+                    x="x:Q", y="y:Q", text="rank:Q")
+                _g2.altair_chart((_pts + _lbl).properties(height=max(260, 34 * len(_bd) + 60)), use_container_width=True)
+        st.caption("Bars: the average distance of each top knowledge to the questions and to the answers that referenced it. "
+                   "Map: every knowledge of the collection placed by the first two principal components of its vector, "
+                   "as in Analytics Results - Knowledge Utility; size follows the number of references.")
+        if _steps is not None:
+            _hb, _bk = _pe_memo(("thinking",), lambda: dmpe.thinking_choices(_sc), _M)
+            _bk = _bk if _bk.empty else _bk[_bk["agent"] == _ka]
+            if len(_bk):
+                st.markdown("#### Books the Thinking agent chose")
+                st.dataframe(_bk, hide_index=True, column_config={
+                    "agent": st.column_config.TextColumn("Agent"), "book": st.column_config.TextColumn("Book"),
+                    "turns": st.column_config.NumberColumn("Turns")})
+
+    # =================================================================
+    # 4. Skill
+    # =================================================================
+    with _tabs[3]:
+        if _steps is None:
+            st.info(_no_steps)
+        else:
+            _sk, _rw = _pe_memo(("skills",), lambda: dmpe.skill_summary(_sc), _M)
+            st.markdown("#### Skills that ran")
+            if _sk.empty:
+                st.caption("No skill ran in this selection.")
+            else:
+                st.dataframe(
+                    _sk, hide_index=True,
+                    column_config={
+                        "step_name": st.column_config.TextColumn("Skill"),
+                        "phase": st.column_config.TextColumn("Phase", width="small"),
+                        "runs": st.column_config.NumberColumn("Runs"),
+                        "avg_sec": st.column_config.NumberColumn("Avg sec", format="%.1f", help="Recorded for turns run after this version was installed; empty for earlier ones."),
+                        "total_sec": st.column_config.NumberColumn("Total sec", format="%d"),
+                        "prompt_tokens": st.column_config.NumberColumn("Prompt tokens", format="%d", help="Tokens the skill's own LLM calls consumed, on top of the main answer. 0 for skills that call no LLM."),
+                        "response_tokens": st.column_config.NumberColumn("Response tokens", format="%d"),
+                        "errors": st.column_config.NumberColumn("Errors"),
+                        "skipped": st.column_config.NumberColumn("Not applied", help="AFTER skills whose output was not applied to the answer."),
+                        "merge": st.column_config.TextColumn("Merge"),
+                        "models": st.column_config.TextColumn("Models"),
+                    })
+            st.markdown("#### Answers rewritten afterwards")
+            if _rw.empty:
+                st.caption("No answer was rewritten in this selection.")
+            else:
+                st.dataframe(
+                    _rw, hide_index=True,
+                    column_config={
+                        "agent": st.column_config.TextColumn("Agent"),
+                        "step_name": st.column_config.TextColumn("Skill"),
+                        "rewrites": st.column_config.NumberColumn("Rewrites"),
+                        "answers": st.column_config.NumberColumn("Answers"),
+                        "avg_chars_before": st.column_config.NumberColumn("Avg chars before", format="%d"),
+                        "avg_chars_after": st.column_config.NumberColumn("Avg chars after", format="%d"),
+                    })
+
+    # =================================================================
+    # 5. Support agents
+    # =================================================================
+    with _tabs[4]:
+        if _steps is None:
+            st.info(_no_steps)
+        else:
+            _sa = _agent_pick("Support agents of:", "pea_sup_agent")
+            _sup = _pe_memo(("support", _sa), lambda: dmpe.support_summary(_sc, _sa), _M)
+            if _sup.empty:
+                st.caption("No support agent ran in this selection.")
+            else:
+                st.markdown("#### Runs, time and tokens")
+                st.dataframe(
+                    _sup, hide_index=True,
+                    column_config={
+                        "step": st.column_config.TextColumn("Step"),
+                        "who": st.column_config.TextColumn("Agent / engine"),
+                        "step_model": st.column_config.TextColumn("Model"),
+                        "runs": st.column_config.NumberColumn("Runs"),
+                        "avg_sec": st.column_config.NumberColumn("Avg sec", format="%.1f"),
+                        "total_sec": st.column_config.NumberColumn("Total sec", format="%d"),
+                        "prompt_tokens": st.column_config.NumberColumn("Prompt tokens", format="%d"),
+                        "response_tokens": st.column_config.NumberColumn("Response tokens", format="%d"),
+                    })
+                _tb, _tb_n, _tb_wait = _pe_memo(("time", _sa), lambda: dmpe.time_breakdown(_sc, _sa), _M)
+                if len(_tb):
+                    st.markdown("#### Where the time goes (seconds per answer)")
+                    _bars = alt.Chart(_tb).mark_bar(size=22, cornerRadiusEnd=4, color=(_PE_SERIES_DARK if _pe_dark() else _PE_SERIES_LIGHT)[0]).encode(
+                        y=alt.Y("step:N", title=None, sort="-x"), x=alt.X("sec_per_answer:Q", title="Seconds per answer"),
+                        tooltip=[alt.Tooltip("step:N", title="Step"), alt.Tooltip("sec_per_answer:Q", title="Sec per answer")])
+                    st.altair_chart((_bars + _bars.mark_text(align="left", dx=4).encode(text=alt.Text("sec_per_answer:Q", format=".1f"))
+                                     ).properties(height=max(120, 34 * len(_tb) + 40)), use_container_width=True)
+                    st.caption(f"Over the {_tb_n:,} answers that have step data; the user waited {_tb_wait:.1f} s on average. "
+                               "Query generators and the meta search run in parallel, so the bars can add up to more than that. "
+                               "The dialog digest runs after the answer is shown.")
+
+    # =================================================================
+    # 6. Feedback signals
+    # =================================================================
+    with _tabs[5]:
+        st.caption("Written feedback is too rare to analyse, so this tab shows what users did to the answers instead.")
+        st.dataframe(
+            _pe_memo(("signals",), lambda: dmpe.feedback_signals(_sc), _M), hide_index=True,
+            column_config={
+                "agent": st.column_config.TextColumn("Agent"),
+                "answers": st.column_config.NumberColumn("Answers", help="Answers still in the session."),
+                "deleted": st.column_config.NumberColumn("Deleted", help="Answers the user removed from the session."),
+                "deleted_rate": st.column_config.NumberColumn("Deleted %", format="%.1f"),
+                "memory_excluded": st.column_config.NumberColumn("Kept out of memory", help="Answers the user excluded from the conversation memory."),
+                "memory_excluded_rate": st.column_config.NumberColumn("Kept out %", format="%.1f"),
+                "rewritten": st.column_config.NumberColumn("Rewritten", help="Answers rewritten afterwards with a skill. Empty until the step records reach the archive."),
+            })
+        st.markdown("#### Asked again right away")
+        _rc = st.columns([2, 1, 2])
+        _thr = _rc[0].slider("Counts as the same question from similarity:", min_value=0.80, max_value=1.00, value=0.93, step=0.01, key="pea_reask_thr")
+        _rc[1].markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
+        _ra_clicked = _rc[1].button("Compute", key="pea_reask_run", help="Loads the input vectors and compares each input with the next one in the same session.")
+        _ra_busy = _pe_busy_slot()
+        if _ra_clicked:
+            with _ra_busy, st.spinner("Comparing consecutive inputs..."):
+                if "qvec" not in _sc:
+                    dmpe.load_vectors(_sc)
+                st.session_state._pea_reask = dmpe.reask_pairs(_sc)
+        _pairs = st.session_state.get("_pea_reask")
+        if _pairs is None:
+            st.caption("Press \"Compute\" to compare each input with the next one in the same session.")
+        elif _pairs.empty:
+            st.info("No consecutive turns with vectors in this selection.")
+        else:
+            st.dataframe(
+                _pe_memo(("reask", _thr), lambda: dmpe.reask_summary(_pairs, _thr), _M), hide_index=True,
+                column_config={
+                    "agent": st.column_config.TextColumn("Agent"),
+                    "followed_turns": st.column_config.NumberColumn("Turns followed by another", help="Turns with a vectorized next turn in the same session."),
+                    "reasked": st.column_config.NumberColumn("Asked again"),
+                    "reask_rate": st.column_config.NumberColumn("Asked again %", format="%.1f"),
+                })
+            _hit = _pairs[_pairs["similarity"] >= _thr].sort_values("similarity", ascending=False)
+            st.caption(f"{len(_hit):,} of {len(_pairs):,} follow-up inputs are at least {_thr:.2f} similar to the input before them. "
+                       "A reused instruction with different content also scores high (around 0.85-0.92 here), "
+                       "so check the examples before reading the rate as dissatisfaction. Inputs without a vector are not compared.")
+            if len(_hit) and st.checkbox("Show examples", key="pea_reask_show"):
+                for _r in _hit.head(5).itertuples(index=False):
+                    st.markdown(f"**{', '.join(_r.agent)}** · {_r.ts:%Y-%m-%d %H:%M} · similarity {_r.similarity:.2f}")
+                    st.code(_r.input[:400] + ("…" if len(_r.input) > 400 else ""), language=None, wrap_lines=True)
+                    st.caption("→ asked next")
+                    st.code(_r.next_input[:400] + ("…" if len(_r.next_input) > 400 else ""), language=None, wrap_lines=True)
+                    st.divider()
+
+
+### Performance Explorer: Agent section, knowledge map of one agent ###
 def _agent_performance_explorer():
     """Agent-side analytics — cross-session aggregates per agent. Mirrors UME
     in shape: pick an agent, optional period, then two tabs:
@@ -7539,8 +8783,6 @@ def _agent_performance_explorer():
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
     import io as _io_ape
-
-    st.subheader("Agent Performance Explorer")
 
     # --- Agent + period picker -------------------------------------------
     _all_agents = ape.list_agents_with_history()
@@ -8427,8 +9669,11 @@ def _support_agent_test():
 
 ### Streamlit screens ###
 def main():
+    _perf_marks.clear()
+    _perf_mark("start")
     # Initialize the session state
     initialize_session_states()
+    _perf_mark("init_state")
 
     # Run the login flow
     if login_enable_flg == "Y":
@@ -8463,7 +9708,7 @@ def main():
         if st.session_state.allowed_user_memory_explorer:
             _view_options.append("User Memory Explorer")
         if st.session_state.allowed_agent_performance_explorer:
-            _view_options.append("Agent Performance Explorer")
+            _view_options.append("Performance Explorer")
         if st.session_state.allowed_evaluation:
             _view_options.append("Evaluation")
         if st.session_state.allowed_support_eval:
@@ -8545,6 +9790,7 @@ def main():
                 st.caption("No matching personas")
                 st.session_state.selected_persona_ids = []
 
+        _perf_mark("sb_head")
         side_col1, side_col2 = st.columns(2)
 
         # Issue a new session (specify the ID, refresh the session anew)
@@ -8581,6 +9827,7 @@ def main():
             st.session_state.sidebar_message = ""
             refresh_session_list(st.session_state.service_id, st.session_state.user_id, st.session_state.user_admin_flg)
 
+        _perf_mark("sb_newchat")
         # Select the agent's engines
         engines_expander = st.expander("Engines")
         with engines_expander:
@@ -8596,6 +9843,7 @@ def main():
                 _imagegen_index = _imagegen_engine_list.index(st.session_state.imagegen_engine_name) if st.session_state.imagegen_engine_name in _imagegen_engine_list else 0
                 st.session_state.imagegen_engine_name = st.selectbox("Select Engine(IMAGEGEN):", _imagegen_engine_list, index=_imagegen_index)
 
+        _perf_mark("sb_engines")
         # Session management
         sessions_expander = st.expander("Sessions")
         with sessions_expander:
@@ -8703,40 +9951,125 @@ def main():
                                 st.session_state.sidebar_message = f"DB connection failed: {_e}"
                         st.rerun()
 
-                    if st.button("Export to DB", key="db_export"):
-                        with st.spinner("Exporting to DB..."):
+                    # The per-turn auto-export (DB_EXPORT_AUTO) keeps the analytics
+                    # mirror current. What is left for a button is retrying the
+                    # sessions it gave up on, and the embedding step, which is
+                    # billed and so never runs as a side effect of another button.
+                    _ex1, _ex2 = st.columns(2)
+                    if _ex1.button("Retry Pending Exports", key="db_export",
+                                   help="Export the sessions whose analytics mirror is behind "
+                                        "(status not DONE). Only those sessions are read."):
+                        with st.spinner("Exporting pending sessions..."):
                             try:
-                                dmdbe.main()
-                                st.session_state.sidebar_message = "DB export completed"
+                                _r = dmdbe.retry_pending()
+                                st.session_state.sidebar_message = (
+                                    f"Export: {_r['exported']} exported, {_r['empty']} empty, "
+                                    f"{len(_r['errors'])} failed (of {_r['pending']} pending)")
+                                if _r["errors"]:
+                                    st.session_state.sidebar_message += " — " + "; ".join(
+                                        f"{e['id']}: {e['error']}" for e in _r["errors"][:3])
                             except Exception as e:
                                 st.session_state.sidebar_message = f"DB export error: {e}"
+                        st.rerun()
+                    if _ex2.button("Vectorize Dialogs", key="db_vectorize",
+                                   help="Embed the exported turns that have no vector yet "
+                                        "(calls the embedding API)."):
                         with st.spinner("Vectorizing..."):
                             try:
+                                _n0 = dmdbe.count_unvectorized()
                                 dmdbe.vectorize_dialogs()
+                                _n1 = dmdbe.count_unvectorized()
+                                st.session_state.sidebar_message = f"Vectorized {_n0 - _n1} turns ({_n1} left)"
                             except Exception as e:
-                                st.session_state.sidebar_message += f" / Vectorization error: {e}"
+                                st.session_state.sidebar_message = f"Vectorization error: {e}"
                         st.rerun()
 
-                # Archive button
-                _archive_days = st.number_input(
-                    "Archive Older Than (days)", min_value=1, value=30, step=1,
+                # --- History retention ----------------------------------------
+                # Everything below reads the session tree or the database, so it
+                # runs on a button press and keeps its result in session_state:
+                # the sidebar is rendered on every rerun.
+                st.markdown("**History Retention**")
+                _ha_store = dmha._store_method()
+                st.caption(
+                    f"Store: {_ha_store}. Sessions idle for the period below are zipped into "
+                    f"`{dmha.cfg.archive_folder}` before they are deleted"
+                    + ("; their rows are also kept in `digim_chat_history_archive`."
+                       if _ha_store == "PostgreSQL" else
+                       "; their documents are also kept in the archive container."
+                       if _ha_store == "CosmosDB" else ".")
+                    + (" Analytics rows are copied to `digim_*_archive` and never deleted."
+                       if dmha._mirror_configured() else ""))
+                _ha_days = st.number_input(
+                    "Idle Days", min_value=1, value=int(dmha.cfg.default_days), step=1,
                     key="archive_days_input",
-                    help="Compress sessions older than this many days (by last update date) into a ZIP",
-                )
-                if st.button("Archive Old Sessions", key="archive_sessions"):
-                    with st.spinner("Archiving..."):
+                    help="A session qualifies when both its last turn and the last write to its history "
+                         "are at least this many days old.")
+                # The session open in this window is never taken: its in-memory
+                # copy would write it straight back on the next action.
+                _ha_exclude = {getattr(st.session_state.get("session"), "session_id", "")}
+                _hb1, _hb2 = st.columns(2)
+                if _hb1.button("Preview", key="hist_preview"):
+                    try:
+                        st.session_state._hist_preview = dmha.scan(days=_ha_days, exclude=_ha_exclude)
+                    except Exception as e:
+                        st.session_state.sidebar_message = f"Preview error: {e}"
+                    st.rerun()
+                if _hb2.button("Backup Now", key="hist_backup",
+                               help="Copy the DB sessions that changed to the archive store, and the "
+                                    "analytics tables (sessions / dialogs / references with vectors) to "
+                                    "their *_archive tables; nothing is deleted. In JSON mode, also zip "
+                                    "the sessions that qualify."):
+                    with st.spinner("Backing up..."):
                         try:
-                            result = dms.archive_old_sessions(days=int(_archive_days))
-                            archived_count = len(result["archived"])
-                            st.session_state.sidebar_message = f"Archive complete: compressed {archived_count} sessions"
-                            st.session_state.last_archive_zip = result["zip_path"]
+                            _r = dmha.backup(
+                                days=None if _ha_store in ("PostgreSQL", "CosmosDB") else _ha_days,
+                                exclude=_ha_exclude)
+                            st.session_state.sidebar_message = (
+                                f"Backup: {len(_r['synced'])} DB sessions copied, {len(_r['zipped'])} zipped"
+                                + (f" into {_r['zip']}" if _r["zip"] else "")
+                                + (f"; analytics archive: {dmha._mirror_summary(_r['mirror'])}"
+                                   if (_r.get("mirror") or {}).get("status") == "ok" else "")
+                                + (f", {len(_r['errors'])} failed" if _r["errors"] else ""))
                         except Exception as e:
-                            st.session_state.sidebar_message = f"Archive error: {e}"
-                            st.session_state.last_archive_zip = None
+                            st.session_state.sidebar_message = f"Backup error: {e}"
+                    st.rerun()
+                _prev = st.session_state.get("_hist_preview")
+                if _prev is not None:
+                    _elig = [r for r in _prev if r["eligible"]]
+                    st.caption(f"{len(_elig)} of {len(_prev)} sessions qualify "
+                               f"({sum(r['size'] for r in _elig) / 1e6:.1f} MB)")
+                    if _elig:
+                        st.dataframe(
+                            pd.DataFrame([{"id": r["id"], "name": r["name"], "backend": r["backend"],
+                                           "idle days": r["age_days"],
+                                           "last turn": (r["last_conversation"] or "")[:10],
+                                           "backup": r["backup"]}
+                                          for r in _elig]),
+                            hide_index=True, height=min(35 * len(_elig) + 38, 240))
+                # A fresh key after each purge brings the confirmation back unticked.
+                _ha_ok = st.checkbox("Delete the qualifying sessions after backing them up",
+                                     key=f"hist_purge_ok_{st.session_state.get('_hist_purge_n', 0)}")
+                if st.button("Purge Old Sessions", key="archive_sessions", disabled=not _ha_ok):
+                    with st.spinner("Backing up and deleting..."):
+                        try:
+                            _r = dmha.purge(_ha_days, exclude=_ha_exclude)
+                            st.session_state.sidebar_message = (
+                                f"Purge: {len(_r['purged'])} sessions deleted"
+                                + (f" (backup: {_r['zip']})" if _r["zip"] else "")
+                                + (f", {len(_r['skipped'])} skipped" if _r["skipped"] else "")
+                                + (f", {len(_r['errors'])} failed" if _r["errors"] else ""))
+                            st.session_state.last_archive_zip = (
+                                os.path.join(dmha.cfg.archive_folder, _r["zip"]) if _r["zip"] else None)
+                            refresh_session_list(st.session_state.service_id, st.session_state.user_id,
+                                                 st.session_state.user_admin_flg)
+                        except Exception as e:
+                            st.session_state.sidebar_message = f"Purge error: {e}"
+                    st.session_state._hist_preview = None
+                    st.session_state._hist_purge_n = st.session_state.get("_hist_purge_n", 0) + 1
                     st.rerun()
 
-                # Archive ZIP download (always shown)
-                _archive_dir = dms.archive_folder
+                # Archive ZIPs: download and restore
+                _archive_dir = dmha.cfg.archive_folder
                 _zip_files = sorted(
                     [f for f in os.listdir(_archive_dir) if f.endswith(".zip")],
                     reverse=True,
@@ -8744,17 +10077,49 @@ def main():
                 if _zip_files:
                     _selected_zip = st.selectbox("Archive ZIP", _zip_files, key="selected_archive_zip")
                     _selected_zip_path = os.path.join(_archive_dir, _selected_zip)
-                    with open(_selected_zip_path, "rb") as f:
-                        st.download_button(
-                            label="Download ZIP",
-                            data=f,
-                            file_name=_selected_zip,
-                            mime="application/zip",
-                            key="download_archive_zip",
-                        )
+                    # download_button reads the whole file on every rerun, and a
+                    # ZIP carrying DB history runs to hundreds of MB; only pay
+                    # that once someone asks for the file.
+                    if st.checkbox(f"Prepare Download ({os.path.getsize(_selected_zip_path) / 1e6:.1f} MB)",
+                                   key="hist_dl_ready"):
+                        with open(_selected_zip_path, "rb") as f:
+                            st.download_button(
+                                label="Download ZIP",
+                                data=f,
+                                file_name=_selected_zip,
+                                mime="application/zip",
+                                key="download_archive_zip",
+                            )
+                    if st.button("List Sessions in ZIP", key="hist_zip_list"):
+                        try:
+                            st.session_state._hist_zip_sessions = (
+                                _selected_zip, sorted(dmha.zip_sessions(_selected_zip).items()))
+                        except Exception as e:
+                            st.session_state.sidebar_message = f"ZIP read error: {e}"
+                        st.rerun()
+                    _zs = st.session_state.get("_hist_zip_sessions")
+                    if _zs and _zs[0] == _selected_zip and _zs[1]:
+                        _zs_label = {sid: f"{sid}  {m.get('name', '')}".strip() for sid, m in _zs[1]}
+                        _rsid = st.selectbox("Session to Restore", list(_zs_label),
+                                             format_func=lambda s: _zs_label.get(s, s),
+                                             key="hist_restore_sid")
+                        _rover = st.checkbox("Replace it if it still exists", key="hist_restore_overwrite")
+                        if st.button("Restore Session", key="hist_restore"):
+                            try:
+                                _r = dmha.restore(_rsid, zip_name=_selected_zip, overwrite=_rover)
+                                st.session_state.sidebar_message = (
+                                    f"Restored {_r['id']} as a {_r['restored_as']} session "
+                                    f"({_r['files']} files"
+                                    + (f", {_r['rows']} rows" if _r.get("rows") is not None else "") + ")")
+                                refresh_session_list(st.session_state.service_id, st.session_state.user_id,
+                                                     st.session_state.user_admin_flg)
+                            except Exception as e:
+                                st.session_state.sidebar_message = f"Restore error: {e}"
+                            st.rerun()
                 else:
                     st.caption("No archive ZIPs available")
 
+        _perf_mark("sb_sessions")
         # Knowledge update flow
         if st.session_state.allowed_rag_management:
             rag_expander = st.expander("RAG Management")
@@ -8914,6 +10279,7 @@ def main():
 
         # User Memory expander moved to the main area (below BOOK).
 
+        _perf_mark("sb_rag")
         # Web API management
         if st.session_state.allowed_web_api:
             api_expander = st.expander("Web API")
@@ -8984,6 +10350,7 @@ def main():
 
         # Support-agent evaluation has moved to the "Support Agent Test" main view
 
+        _perf_mark("sb_api")
         # Background-task monitor
         if st.session_state._bg_task:
             _task_status = _read_bg_task_status()
@@ -9007,6 +10374,7 @@ def main():
 
         st.write(st.session_state.sidebar_message)
 
+        _perf_mark("sb_bg")
         # Session list is shown only on the Chat screen
         if st.session_state.get("main_view", "Chat") == "Chat":
             st.markdown("----")
@@ -9074,9 +10442,13 @@ def main():
                     if num_session_visible > num_sessions:
                         session_id_list = session_dict["id"]
                         session_key_list = session_folder_prefix + session_id_list
-                        session_list = dms.DigiMSession(session_id_list)
-                        session_name_list = session_list.session_name
-                        session_active_flg = session_list.get_active_session()
+                        # The status row already carries the name and the
+                        # active flag. Building a DigiMSession here loaded the
+                        # entire history of every listed session on every
+                        # rerun (0.1-0.8s each), which is the reload the render
+                        # path is not allowed to do.
+                        session_name_list = session_dict.get("name") or ""
+                        session_active_flg = session_dict.get("active") or "Y"
                         if session_active_flg != "N":
                             # Two-stage filter:
                             #   1) Name match (cheap) — fnmatch wildcard
@@ -9088,7 +10460,8 @@ def main():
                                 _pat_lower = _pattern.lower()
                                 _name_hit = fnmatch.fnmatch(session_name_list.lower(), _pat_lower)
                                 if not _name_hit:
-                                    _sf = session_list.session_file_path
+                                    _sf = str(Path(dms.user_folder_path) / session_key_list
+                                               / dms.session_file_name)
                                     try:
                                         _mtime = Path(_sf).stat().st_mtime if Path(_sf).exists() else 0.0
                                     except Exception:
@@ -9109,15 +10482,18 @@ def main():
                             # as "session name missing".
                             if not session_name_btn.strip():
                                 session_name_btn = session_id_list[:15]
-                            situation = dms.get_situation(session_id_list)
-                            if not situation:
-                                # No stored situation: leave TIME empty so
-                                # refresh_session() resolves the mode from the
-                                # agent's EXECUTION_DEFAULTS rather than pinning
-                                # now_time as a fixed situation timestamp.
-                                situation["TIME"] = ""
-                                situation["SITUATION"] = ""
                             if st.button(session_name_btn, key=session_key_list):
+                                # Reading the situation means loading the whole
+                                # history, so it waits for the click instead of
+                                # happening once per listed row per rerun.
+                                situation = dms.get_situation(session_id_list)
+                                if not situation:
+                                    # No stored situation: leave TIME empty so
+                                    # refresh_session() resolves the mode from the
+                                    # agent's EXECUTION_DEFAULTS rather than pinning
+                                    # now_time as a fixed situation timestamp.
+                                    situation["TIME"] = ""
+                                    situation["SITUATION"] = ""
                                 st.session_state.main_view = "Chat"
                                 refresh_session_states()
                                 refresh_session(session_id_list, session_name_list, situation)
@@ -9204,6 +10580,8 @@ def main():
                             )
                         st.rerun()
 
+    _perf_mark("sb_list")
+
     # Switch main-area screens
     if st.session_state.get("main_view") == "Knowledge Explorer":
         _knowledge_explorer()
@@ -9211,8 +10589,8 @@ def main():
     if st.session_state.get("main_view") == "User Memory Explorer":
         _user_memory_explorer()
         return
-    if st.session_state.get("main_view") == "Agent Performance Explorer":
-        _agent_performance_explorer()
+    if st.session_state.get("main_view") == "Performance Explorer":
+        _performance_explorer()
         return
     if st.session_state.get("main_view") == "Evaluation":
         _evaluation_screen()
@@ -9347,6 +10725,8 @@ def main():
     time_setting = st.session_state.time_setting
     situation_setting = st.session_state.situation_setting
 
+    _perf_mark("header")
+
     # Configure Chat history row count
     max_seq = dms.max_seq_dict(st.session_state.chat_history_visible_dict)
     seq_visible_key = 0
@@ -9359,12 +10739,16 @@ def main():
     # Temporary instrumentation: one line per rerun in logs/streamlit.log, so the
     # "the UI feels slow" report can be read as numbers instead of guessed at.
     _perf_t0 = _time.perf_counter()
+    _t_baton = None
     download_data = []
     for k, v in st.session_state.chat_history_visible_dict.items():
         if int(k) >= seq_visible_key:
             st.markdown("----")
             for k2, v2 in v.items():
                 if k2 != "SETTING":
+                    if _t_baton is not None:
+                        _perf_add("t_analytics", _t_baton)
+                    _t_baton = _time.perf_counter()
                     seq_key = f"key_{k}_{k2}"
                     prompt_role = v2["prompt"]["role"]
                     if v.get("SETTING", {}).get("user_info", {}).get("USER_ID") is not None:
@@ -9405,13 +10789,14 @@ def main():
                                             f"copy_{k}_{k2}")
 
                     if v2["setting"]["type"] in ["LLM","IMAGEGEN"]:
+                        _perf_add("t_msg", _t_baton); _t_baton = _time.perf_counter()
                         if st.session_state.allowed_feedback:
                             if "feedback" in v2["setting"]:
                                 agent_feedback = v2["setting"]["feedback"]
 
                                 if "ACTIVE" in agent_feedback and agent_feedback["ACTIVE"] == "Y":
                                     # Fetch category choices
-                                    _cat_map = dmu.read_json_file("category_map.json", mst_folder_path)
+                                    _cat_map = dmms.load("category_map")
                                     _cat_options = list(_cat_map.get("Category", {}).keys()) if _cat_map else ["Unset"]
                                     _default_cat = agent_feedback.get("DEFAULT_CATEGORY") or _cat_options[0]
 
@@ -9461,6 +10846,7 @@ def main():
                                             else:
                                                 st.session_state.sidebar_message = f"No changes to feedback ({k}_{_fb_sub})"
 
+                        _perf_add("t_feedback", _t_baton); _t_baton = _time.perf_counter()
                         # Detail
                         if st.session_state.allowed_details:
                             with st.chat_message("detail"):
@@ -9492,6 +10878,7 @@ def main():
                                     with _dt_t4:
                                         _render_session_summary_tab(k, k2)
 
+                        _perf_add("t_detail", _t_baton); _t_baton = _time.perf_counter()
                         # Analytics
                         if st.session_state.allowed_analytics_knowledge or st.session_state.allowed_analytics_compare:
                             with st.chat_message("analytics"):
@@ -9823,9 +11210,9 @@ def main():
                                                                 else:
                                                                     st_scatter01, st_scatter02 = st.columns(2)
                                                                     if files.get("scatter_plot_file_ref"):
-                                                                        st_scatter01.image(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_ref"])
+                                                                        _show_image(st_scatter01, st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_ref"])
                                                                     if files.get("scatter_plot_file_category"):
-                                                                        st_scatter02.image(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_category"])
+                                                                        _show_image(st_scatter02, st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_category"])
                                                                     with st.expander(f"Coordinate - {rag_category}"):
                                                                         rag_rank_df = pd.read_csv(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_csv"])
                                                                         if 'category_color' in rag_rank_df.columns:
@@ -9838,7 +11225,7 @@ def main():
                                                                 # Per-chunk similarity_Q vs similarity_A bar —
                                                                 # shared by ChromaDB and PageIndex branches.
                                                                 if files.get("similarity_plot_file"):
-                                                                    st.image(st.session_state.session.session_analytics_folder_path + files["similarity_plot_file"])
+                                                                    _show_image(st, st.session_state.session.session_analytics_folder_path + files["similarity_plot_file"])
                                                                 for ak_dict in compare_agent_info["knowledge_utility"]["similarity_rank"][rag_category]:
                                                                     st.markdown(ak_line(ak_dict))
 
@@ -10123,10 +11510,10 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                                                         else:
                                                             st_scatter01, st_scatter02 = st.columns(2)
                                                             if files.get("scatter_plot_file_ref"):
-                                                                st_scatter01.image(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_ref"])
+                                                                _show_image(st_scatter01, st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_ref"])
                                                                 download_data.append({"role": "analytics", "image": st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_ref"]})
                                                             if files.get("scatter_plot_file_category"):
-                                                                st_scatter02.image(st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_category"])
+                                                                _show_image(st_scatter02, st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_category"])
                                                                 download_data.append({"role": "analytics", "image": st.session_state.session.session_analytics_folder_path + files["scatter_plot_file_category"]})
                                                             if files.get("scatter_plot_file_csv"):
                                                                 with st.expander(f"Coordinate - {rag_category}"):
@@ -10143,7 +11530,7 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                                                         # every group in analytics_knowledge), so render it after
                                                         # whichever scatter/tree branch ran above.
                                                         if files.get("similarity_plot_file"):
-                                                            st.image(st.session_state.session.session_analytics_folder_path + files["similarity_plot_file"])
+                                                            _show_image(st, st.session_state.session.session_analytics_folder_path + files["similarity_plot_file"])
                                                             download_data.append({"role": "analytics", "image": st.session_state.session.session_analytics_folder_path + files["similarity_plot_file"]})
                                                         _ak_lines = []
                                                         for ak_dict in analytics_dict["knowledge_utility"]["similarity_rank"][rag_category]:
@@ -10178,6 +11565,9 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                 st.session_state.session.chg_seq_memory_flg(k, "N" if _mem_off_new else "Y")
                 st.rerun()
 
+    if _t_baton is not None:
+        _perf_add("t_analytics", _t_baton)
+    _perf_mark("history")
     if st.session_state.session_user_id == st.session_state.user_id:
         # File uploader (after run completion, increment the key to re-instantiate the widget -> clear attachments)
         uploaded_files = st.file_uploader(
@@ -10465,8 +11855,7 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                     _lang_options = [_cur_lang] + _lang_options
                 _lidx = _lang_options.index(_cur_lang) if _cur_lang in _lang_options else 0
                 try:
-                    _speaking_options = list(dmu.read_json_file(
-                        "prompt_templates.json", mst_folder_path).get("SPEAKING_STYLE", {}).keys())
+                    _speaking_options = list(dmms.load("prompt_templates").get("SPEAKING_STYLE", {}).keys())
                 except Exception:
                     _speaking_options = []
                 _cur_style = str(_cur_pers.get("SPEAKING_STYLE", "") or "")
@@ -10607,6 +11996,7 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                 situation_setting = st.text_input("Situation Setting:",
                                                      value=st.session_state.situation_setting)
 
+    _perf_mark("settings")
     _perf_history = _time.perf_counter() - _perf_t0
 
     # File downloader
@@ -10614,7 +12004,21 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
         footer_col1, footer_col2, footer_col3 = st.columns(3)
         st.session_state.dl_type = footer_col1.radio("Download Mode:", ("Chats Only", "ALL"))
         dl_file_id = st.session_state.session.session_id +"_"+ st.session_state.session.session_name[:20]
-        dl_data, dl_file_name, dl_mime = set_dl_file(download_data, st.session_state.dl_type, file_id=dl_file_id)
+        # Both exports were rebuilt from scratch on every rerun even though
+        # the transcript rarely moves — the HTML one alone costs ~1s on a long
+        # session and far more once Analytics images are embedded. Keep the
+        # built payloads and rebuild only when their content changes.
+        _dl_sig = _dl_signature(download_data, st.session_state.dl_type,
+                                 dl_file_id, st.session_state.session.session_name)
+        if st.session_state.get("_dl_payload_sig") != _dl_sig:
+            st.session_state._dl_payload = (
+                set_dl_file(download_data, st.session_state.dl_type, file_id=dl_file_id),
+                set_dl_html(download_data, "Full", file_id=dl_file_id,
+                             title=st.session_state.session.session_name))
+            st.session_state._dl_payload_sig = _dl_sig
+        (dl_data, dl_file_name, dl_mime), (html_data, html_file_name) = \
+            st.session_state._dl_payload
+        _perf_mark("dl_build")
         footer_col2.download_button(label="Download(.md)", data=dl_data, file_name=dl_file_name, mime=dl_mime)
         # PDF export is hidden in favour of the HTML one, which keeps diagrams,
         # wide tables and Analytics images readable (the PDF flattened and
@@ -10622,9 +12026,6 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
         # Always the full page. The HTML export exists to snapshot what is on
         # screen, so it ignores the Chats Only / ALL radio (which stays in
         # effect for the Markdown export) and keeps Detail / Analytics.
-        html_data, html_file_name = set_dl_html(
-            download_data, "Full", file_id=dl_file_id,
-            title=st.session_state.session.session_name)
         footer_col3.download_button(
             label="Download(.html)", data=html_data, file_name=html_file_name,
             mime="text/html",
@@ -10632,13 +12033,11 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                  "Analytics Results, with scrollable tables and live diagrams. "
                  "Always full, regardless of Download Mode.")
 
-    _perf_logger.info(
-        "[perf] rerun: history_render=%.2fs download_payload=%.2fs total=%.2fs "
-        "turns=%d dl_md=%dKB dl_html=%dKB",
-        _perf_history, _time.perf_counter() - _perf_t0 - _perf_history,
-        _time.perf_counter() - _perf_t0, len(download_data),
+    _perf_mark("dl_widgets")
+    _perf_flush("turns=%d dl_md=%dKB dl_html=%dKB" % (
+        len(download_data),
         len(locals().get("dl_data") or "") // 1024,
-        len(locals().get("html_data") or "") // 1024)
+        len(locals().get("html_data") or "") // 1024))
 
     # User query input
     if st.session_state.session_user_id == st.session_state.user_id:
@@ -12138,17 +13537,7 @@ f"Target sheet (sheets with Question: {len(_q_sheets)})"
             if "user_memory_layers_now" in st.session_state:
                 execution["USER_MEMORY_LAYERS"] = list(st.session_state.user_memory_layers_now or [])
             _targets = st.session_state.thinking_targets if st.session_state.thinking_mode else []
-            execution["THINKING_TARGETS"] = {
-                "habit": "Habit" in _targets,
-                "web_search": "Web Search" in _targets,
-                "rag_query_gene": "RAG Query" in _targets,
-                "books": "Books" in _targets,
-                # UI label is "Skills"; "Tools" is accepted for agent JSONs /
-                # saved sessions written before the rename. The execution key
-                # and the Thinking JSON field both stay `tools`.
-                "tools": ("Skills" in _targets) or ("Tools" in _targets),
-                "personas": "Personas" in _targets,
-            }
+            execution["THINKING_TARGETS"] = dma.thinking_targets_to_flags(_targets)
 
             # Start execution in the background (pre-locked)
             import threading

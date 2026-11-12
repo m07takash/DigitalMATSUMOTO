@@ -466,8 +466,17 @@ def _collect_skill_selections(agent, thinking_result, slash_pick=None,
     return out
 
 
-def _invoke_skill(service_info, user_info, session_id, session_name,
-                   agent_file, skill_name, skill_input, add_info=None):
+def _invoke_skill(*args, **kwargs):
+    """`_call_skill` with how long it took in `meta["duration_sec"]`, so the
+    time a skill adds to a turn can be analysed like a support agent's."""
+    _t0 = time.perf_counter()
+    _out, _exp, _meta = _call_skill(*args, **kwargs)
+    _meta["duration_sec"] = round(time.perf_counter() - _t0, 3)
+    return _out, _exp, _meta
+
+
+def _call_skill(service_info, user_info, session_id, session_name,
+                agent_file, skill_name, skill_input, add_info=None):
     """Call a registered tool by name.
 
     Returns `(text, export_contents, meta)`. `meta` carries the model and the
@@ -568,6 +577,7 @@ def _run_replace_skills(service_info, user_info, session_id, session_name,
             "model": _meta.get("model", ""),
             "prompt_token": _meta.get("prompt_token", 0),
             "response_token": _meta.get("response_token", 0),
+            "duration_sec": _meta.get("duration_sec"),
             "error": bool(_meta.get("error")),
         }
         if not _failed:
@@ -1305,6 +1315,17 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             import logging as _lg_qv
             _lg_qv.getLogger(__name__).warning("query vector/label save failed: %s", _qv_e)
 
+        # The answer is embedded above for the knowledge references and the
+        # vector was then thrown away. Kept under its own name, the analytics
+        # mirror gets it without a second embedding call. It is not written to
+        # `vec_file`: that one switches memory similarity on for the turn.
+        answer_vec_file = ""
+        try:
+            answer_vec_file = session.save_vec_file(str(seq), str(sub_seq), "answer", response_vec)
+        except Exception as _av_e:
+            import logging as _lg_av
+            _lg_av.getLogger(__name__).warning("answer vector save failed: %s", _av_e)
+
         setting_chat_dict = {
             "session_id": session.session_id,
             "session_name": session.session_name,
@@ -1358,6 +1379,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             "token": response_tokens,
             "text": response,
             "vec_file": response_vec_file,
+            "answer_vec_file": answer_vec_file,
             "reference": {"memory": memory_ref, "knowledge_rag": knowledge_ref,
                           "user_memory": user_memory_used,
                           # Graph seed provenance keyed by RAG_NAME — the
@@ -2219,6 +2241,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 "model": _skill_meta.get("model", ""),
                 "prompt_token": _skill_meta.get("prompt_token", 0),
                 "response_token": _skill_meta.get("response_token", 0),
+                "duration_sec": _skill_meta.get("duration_sec"),
                 "error": bool(_skill_meta.get("error")),
             }
         # Stash BEFORE logs on the practice-execution so downstream can
@@ -2666,6 +2689,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 "model": _skill_meta.get("model", ""),
                 "prompt_token": _skill_meta.get("prompt_token", 0),
                 "response_token": _skill_meta.get("response_token", 0),
+                "duration_sec": _skill_meta.get("duration_sec"),
                 "error": bool(_skill_meta.get("error")),
             }
         if _skill_resp_logs and _answer_sub_seq is not None:

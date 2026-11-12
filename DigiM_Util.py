@@ -274,6 +274,35 @@ def extract_list_pattern(text, pattern=r"(\[\s*{.*?}\s*\])"):
             return []
     return []
 
+# Source date formats the ingestion paths actually produce. Deliberately an
+# explicit list rather than a fuzzy parser: dateutil fills a partial value in
+# from today ("2024" became today's month and day), which invents a precision
+# the source never had and changes with the day the import ran.
+_DATE_INPUT_FORMATS = ("%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d", "%Y%m%d")
+
+
+def normalize_date(value, field_name=""):
+    """Source date -> "YYYY-MM-DD". Blank, or unreadable, -> "".
+
+    Blank is a legitimate answer (an optional date column), so it is quiet.
+    A non-blank value that cannot be read is bad source data, so it is logged:
+    it used to be silently replaced with today, which is indistinguishable
+    from a row that really happened today.
+    """
+    s = ("" if value is None else str(value)).strip()
+    if not s:
+        return ""
+    for candidate in (s, s[:10]):
+        for fmt in _DATE_INPUT_FORMATS:
+            try:
+                return datetime.strptime(candidate, fmt).strftime("%Y-%m-%d")
+            except ValueError:
+                continue
+    logging.getLogger(__name__).warning(
+        "unreadable date%s: %r", f" in {field_name}" if field_name else "", s)
+    return ""
+
+
 # Trim a list of date ranges
 def merge_periods(periods):
     # The upstream extract_date LLM occasionally returns items that lack one

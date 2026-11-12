@@ -5,7 +5,7 @@ import uuid
 import traceback
 from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, File, UploadFile, Form
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
@@ -14,6 +14,7 @@ import DigiM_Session as dms
 import DigiM_Execute as dme
 import DigiM_Tool as dmt
 import DigiM_Util as dmu
+import DigiM_MstStore as dmms
 import DigiM_Agent as dma
 import DigiM_GeneFeedback as dmgf
 
@@ -106,6 +107,28 @@ class InputData(BaseModel):
     cite_knowledge: Optional[bool] = None
     diagram_mode: Optional[bool] = None
     emphasis_mode: Optional[bool] = None
+    # SKILL selection. Omit `skills` and the turn starts with whatever the
+    # agent declares `SKILL.TOOLS.<name>.DEFAULT: true` for — the same set the
+    # WebUI picker opens with. Pass it to replace that set for this turn
+    # (`[]` runs none); unknown names come back in `skills_ignored`.
+    #   skills : names to run, replacing the agent defaults
+    #   skill  : one name to run on top, the API form of the WebUI's `/<name>`
+    # A default-only BEFORE skill stays a candidate Thinking may decline; a
+    # name passed here always runs. Unlike the four flag skills below, a
+    # function skill (refine_expression, mood_score, …) has no execution flag
+    # and can only be reached this way.
+    skills: Optional[List[str]] = None
+    skill: Optional[str] = None
+    # Thinking Mode. All three fall back to the agent JSON's top-level
+    # `THINKING` block (MODE / TARGETS / MAX_TURNS) when unset, so an agent
+    # that asks for Thinking gets it without the caller restating it.
+    #   thinking_targets takes the UI labels: Habit, Web Search, RAG Query,
+    #   Books, Skills, Personas.
+    thinking_targets: Optional[List[str]] = None
+    # Cap for PersonaSelector when the practice uses PERSONAS="THINKING".
+    max_personas: Optional[int] = None
+    # Reply in the language the user wrote in, overriding PERSONALITY.LANGUAGE.
+    match_input_language: Optional[bool] = None
     # User memory (information about the dialogue partner)
     #   user_memory_layers takes top priority when set (subset of ["persona","nowaday","history"] / [] turns all off)
     #   If unset and user_memory=True, all layers are ON; False turns all off
@@ -419,10 +442,39 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
         session_name = f"(User:{user_info['USER_ID']}){new_session_name}"
         session.chg_session_name(session_name)
 
+    # The AFTER phase runs after the stream is already drained and writes only
+    # to the store: a MERGE="REPLACE" skill rewrote the answer and
+    # MERGE="APPEND" output never passed through here at all. Reading the saved
+    # turn back is what makes `response` the answer of record rather than the
+    # draft that happened to be streamed.
+    skills_out = {}
+    response_display = response
+    try:
+        _sess = dms.DigiMSession(session_id, session_name)
+        _seq = _sess.get_seq_history()
+        _sub, _stored = dme._saved_answer(_sess, _seq)
+        if _stored:
+            response = _stored
+        _entry = ((_sess.get_history() or {}).get(str(_seq)) or {}).get(_sub) or {}
+        _resp = _entry.get("response") or {}
+        if isinstance(_resp.get("skills"), dict):
+            skills_out = _resp["skills"]
+        response_display = response + dmt.render_appended_skills(_entry)
+    except Exception:
+        # MEMORY_SAVE=False saves no turn to read back; the streamed text is
+        # then all there is.
+        response_display = response
+
     return {
         "session_id": session_id,
         "session_name": session_name,
         "response": response,
+        # The answer with MERGE="APPEND" skill output concatenated underneath,
+        # in SKILL.ORDER — what the WebUI shows in the chat bubble.
+        "response_display": response_display,
+        # {name: {phase, merge, header, order, text, model, tokens, error}} for
+        # every SKILL that ran after the answer. Empty when none did.
+        "skills": skills_out,
         # Structured references so the client can render a per-turn reference
         # panel without re-fetching /sessions/{id}. Empty when the agent didn't
         # touch any RAG / web / user-memory sources for this turn.
@@ -431,9 +483,32 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
 
 # ---------- Endpoints ----------
 
-def _build_execution_dict(data: InputData) -> dict:
-    """Assemble the `execution` dict from API defaults + data.execution +
-    explicit flag fields (each layer overrides the previous)."""
+def _agent_thinking_block(agent_file: str) -> dict:
+    try:
+        data = dmu.read_json_file(agent_file, dma.agent_folder_path)
+    except Exception:
+        return {}
+    t = data.get("THINKING")
+    return t if isinstance(t, dict) else {}
+
+
+def _agent_skill_tools(agent_file: str) -> dict:
+    try:
+        data = dmu.read_json_file(agent_file, dma.agent_folder_path)
+    except Exception:
+        return {}
+    try:
+        return dma.normalize_skill_tools(data.get("SKILL") or {})
+    except Exception:
+        return {}
+
+
+def _build_execution_dict(data: InputData, agent_file: str = "") -> tuple:
+    """Assemble the `execution` dict from API defaults + the agent JSON +
+    data.execution + explicit flag fields (each layer overrides the previous).
+
+    Returns `(execution, skills_ignored)`.
+    """
     execution = {
         "STREAM_MODE": True,
         "SAVE_DIGEST": True,
@@ -447,6 +522,20 @@ def _build_execution_dict(data: InputData) -> dict:
         "WEB_SEARCH_ENGINE": "OpenAI",
         "PRIVATE_MODE": False,
     }
+    # The agent's own THINKING block sits under data.execution and the
+    # explicit fields, matching the WebUI precedence
+    # (agent.THINKING > user default > hardcoded).
+    _thinking = _agent_thinking_block(agent_file)
+    if "MODE" in _thinking:
+        execution["THINKING_MODE"] = bool(_thinking["MODE"])
+    if isinstance(_thinking.get("TARGETS"), list):
+        execution["_THINKING_TARGET_LABELS"] = list(_thinking["TARGETS"])
+    if "MAX_TURNS" in _thinking:
+        try:
+            execution["MAX_THINKING_TURNS"] = max(1, min(int(_thinking["MAX_TURNS"]), 5))
+        except (TypeError, ValueError):
+            pass
+
     execution.update(data.execution or {})
     _flag_map = {
         "STREAM_MODE": data.stream_mode,
@@ -464,6 +553,8 @@ def _build_execution_dict(data: InputData) -> dict:
         "CITE_KNOWLEDGE": data.cite_knowledge,
         "DIAGRAM_MODE": data.diagram_mode,
         "EMPHASIS_MODE": data.emphasis_mode,
+        "MATCH_INPUT_LANGUAGE": data.match_input_language,
+        "MAX_PERSONAS": data.max_personas,
     }
     for key, val in _flag_map.items():
         if val is not None:
@@ -490,7 +581,38 @@ def _build_execution_dict(data: InputData) -> dict:
     elif data.user_memory is False:
         execution["USER_MEMORY_LAYERS"] = []
 
-    return execution
+    # Thinking targets: request labels win, else the agent's, else every
+    # target on (the executor's own fallback). Mirrors the WebUI in zeroing
+    # them out when Thinking is off.
+    _labels = (data.thinking_targets
+               if data.thinking_targets is not None
+               else execution.pop("_THINKING_TARGET_LABELS", None))
+    execution.pop("_THINKING_TARGET_LABELS", None)
+    if _labels is not None and "THINKING_TARGETS" not in execution:
+        execution["THINKING_TARGETS"] = dma.thinking_targets_to_flags(
+            _labels if execution.get("THINKING_MODE") else [])
+
+    # SKILL selection. Agent defaults are candidates, exactly as the WebUI
+    # picker leaves them after login; names the caller passed are orders.
+    skills_ignored = []
+    skill_tools = _agent_skill_tools(agent_file)
+    if "_MANUAL_SKILL_PICKS" not in execution:
+        if data.skills is None:
+            _defaults = dma.default_skill_names(skill_tools)
+            execution["_MANUAL_SKILL_PICKS"] = _defaults
+            execution["_CANDIDATE_SKILL_PICKS"] = list(_defaults)
+        else:
+            execution["_MANUAL_SKILL_PICKS"] = [
+                n for n in data.skills if n in skill_tools]
+            execution["_CANDIDATE_SKILL_PICKS"] = []
+            skills_ignored = [n for n in data.skills if n not in skill_tools]
+    if data.skill:
+        if data.skill in skill_tools:
+            execution["_SLASH_SKILL_PICK"] = data.skill
+        else:
+            skills_ignored.append(data.skill)
+
+    return execution, skills_ignored
 
 
 async def _execute_shared(
@@ -509,7 +631,7 @@ async def _execute_shared(
     agent_file = data.agent_file or api_agent_file
     service_info = data.service_info.model_dump()
     user_info = data.user_info.model_dump()
-    execution = _build_execution_dict(data)
+    execution, skills_ignored = _build_execution_dict(data, agent_file)
 
     if tmp_dir is None:
         tmp_dir = _api_temp_folder()
@@ -544,6 +666,10 @@ async def _execute_shared(
             session_summary_template=data.session_summary_template,
         )
         result["attachments_processed"] = processed
+        if skills_ignored:
+            # Silently dropping an unknown name is how a typo turns into
+            # "the skill just never ran", so it is reported back.
+            result["skills_ignored"] = skills_ignored
         return result
     except Exception as e:
         # Full traceback + the raw request payload go to stderr (captured in
@@ -623,6 +749,86 @@ async def run_function(data: InputData):
     return await _execute_shared(data)
 
 # Session list
+# ---------- History retention (DigiM_HistoryArchive) ----------
+# The API has no authentication of its own, and these endpoints delete
+# history. They answer only when HISTORY_ARCHIVE_API_TOKEN is set in
+# system.env and the request carries it as X-Admin-Token.
+class HistoryArchiveRequest(BaseModel):
+    days: Optional[float] = None
+    session_ids: Optional[List[str]] = None
+    dry_run: bool = False
+
+
+class HistoryRestoreRequest(BaseModel):
+    session_id: str
+    zip_name: Optional[str] = None
+    overwrite: bool = False
+
+
+def _require_history_token(token: Optional[str]):
+    import hmac
+    expect = os.getenv("HISTORY_ARCHIVE_API_TOKEN") or ""
+    if not expect:
+        raise HTTPException(status_code=403,
+                            detail="History archive endpoints are disabled: set HISTORY_ARCHIVE_API_TOKEN")
+    if not token or not hmac.compare_digest(token, expect):
+        raise HTTPException(status_code=401, detail="Invalid X-Admin-Token")
+
+
+@app.get("/admin/history/sessions")
+async def history_sessions(days: Optional[float] = None,
+                           x_admin_token: Optional[str] = Header(default=None)):
+    _require_history_token(x_admin_token)
+    import DigiM_HistoryArchive as ha
+    return {"sessions": ha.scan(days=days)}
+
+
+@app.get("/admin/history/archives")
+async def history_archives(x_admin_token: Optional[str] = Header(default=None)):
+    _require_history_token(x_admin_token)
+    import DigiM_HistoryArchive as ha
+    return {"archives": ha.list_archives()}
+
+
+@app.post("/admin/history/backup")
+async def history_backup(data: HistoryArchiveRequest,
+                         x_admin_token: Optional[str] = Header(default=None)):
+    _require_history_token(x_admin_token)
+    import DigiM_HistoryArchive as ha
+    try:
+        return ha.backup(days=data.days, session_ids=data.session_ids, dry_run=data.dry_run)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.post("/admin/history/purge")
+async def history_purge(data: HistoryArchiveRequest,
+                        x_admin_token: Optional[str] = Header(default=None)):
+    _require_history_token(x_admin_token)
+    if data.days is None:
+        raise HTTPException(status_code=400, detail="days is required (how long a session must be idle)")
+    import DigiM_HistoryArchive as ha
+    try:
+        return ha.purge(days=data.days, session_ids=data.session_ids, dry_run=data.dry_run)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.post("/admin/history/restore")
+async def history_restore(data: HistoryRestoreRequest,
+                          x_admin_token: Optional[str] = Header(default=None)):
+    _require_history_token(x_admin_token)
+    import DigiM_HistoryArchive as ha
+    try:
+        return ha.restore(data.session_id, zip_name=data.zip_name, overwrite=data.overwrite)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except FileExistsError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
 @app.get("/sessions")
 async def get_sessions(user_id: Optional[str] = None, service_id: Optional[str] = None):
     sessions = dms.get_session_list()
@@ -704,10 +910,8 @@ async def get_session_summary_presets():
     pick up changes on the next call.
     """
     try:
-        _presets = dmu.read_json_file(
-            "session_summary_presets.json",
-            dmu.read_yaml_file("setting.yaml").get("MST_FOLDER", "user/common/mst/"),
-        ) or {}
+        import DigiM_MstStore as dmms
+        _presets = dmms.load("session_summary_presets") or {}
     except Exception:
         _presets = {}
     return {
@@ -781,8 +985,7 @@ async def get_feedback_config(agent_file: str):
     if comm.get("ACTIVE") != "Y":
         return {"active": False, "message": "Feedback is disabled for this agent"}
     # Fetch category choices
-    mst_folder = dmu.read_yaml_file("setting.yaml").get("MST_FOLDER", "")
-    cat_map = dmu.read_json_file("category_map.json", mst_folder)
+    cat_map = dmms.load("category_map")
     categories = list(cat_map.get("Category", {}).keys()) if cat_map else []
     return {
         "active": True,

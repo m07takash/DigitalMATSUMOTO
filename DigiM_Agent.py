@@ -3,6 +3,7 @@ import copy
 from pathlib import Path
 from dotenv import load_dotenv
 import DigiM_Util as dmu
+import DigiM_MstStore as dmms
 import DigiM_FoundationModel as dmfm
 import DigiM_Context as dmc
 
@@ -476,6 +477,35 @@ def sort_skill_names(names, skill_tools):
         _idx.get(n, 1 << 30)))
 
 
+def thinking_targets_to_flags(labels):
+    """`THINKING.TARGETS` labels -> the `THINKING_TARGETS` flag dict the
+    executor reads. Kept here because the labels come from the agent JSON and
+    the WebUI multiselect alike, and both have to map them the same way."""
+    _l = set(labels or [])
+    return {
+        "habit":          "Habit" in _l,
+        "web_search":     "Web Search" in _l,
+        "rag_query_gene": "RAG Query" in _l,
+        "books":          "Books" in _l,
+        # UI label is "Skills"; "Tools" is accepted for agent JSONs / saved
+        # sessions written before the rename. The execution key and the
+        # Thinking JSON field both stay `tools`.
+        "tools":          ("Skills" in _l) or ("Tools" in _l),
+        "personas":       "Personas" in _l,
+    }
+
+
+def default_skill_names(skill_tools):
+    """Names a turn starts with: the SKILL.TOOLS entries declaring DEFAULT.
+
+    An omitted DEFAULT counts as off here. The WebUI falls back to the user's
+    `Defaults` for a flag skill, which only exists as Streamlit session state,
+    so a caller without one (the API) has nothing to inherit.
+    """
+    return [n for n, c in (skill_tools or {}).items()
+            if isinstance(c, dict) and c.get("DEFAULT")]
+
+
 def skill_tool_list_from_normalized(skill_tools):
     """Flat list of active tool names for callers that still expect
     `SKILL.TOOL_LIST` (Thinking prompt renderer, slash-command validator,
@@ -722,7 +752,7 @@ class DigiM_Agent:
                     )
             if 'SPEAKING_STYLE' in self.personality:
                 if self.personality['SPEAKING_STYLE']:
-                    prompt_temps_json = dmu.read_json_file(prompt_temp_mst_path)
+                    prompt_temps_json = dmms.load("prompt_templates")
                     speaking_style = prompt_temps_json['SPEAKING_STYLE'][self.personality['SPEAKING_STYLE']]
                     system_prompt += f"\n口調:{speaking_style}"
 

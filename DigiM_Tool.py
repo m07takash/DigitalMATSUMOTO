@@ -25,6 +25,33 @@ tool_folder_path = system_setting_dict.get("TOOL_FOLDER", "user/common/tool/")
 # The wording and the sentinels are a property of the SKILL contract, not of
 # any one tool, so they live next to the dispatcher rather than in the
 # executor: both the orchestrator and the WebUI need to read them back.
+def render_appended_skills(entry):
+    """Text that `MERGE: "APPEND"` skills contribute below the answer.
+
+    Their output lives in `response.skills`, never in `response.text`, so the
+    answer stays the answer for memory, digests and analytics. Display is
+    where the two are put back together, in SKILL.ORDER — and both the WebUI
+    and the API read it from here so the two cannot drift apart.
+    """
+    _skills = ((entry or {}).get("response") or {}).get("skills")
+    if not isinstance(_skills, dict):
+        return ""
+    _rows = []
+    for _name, _cfg in _skills.items():
+        if not isinstance(_cfg, dict) or _cfg.get("merge") != "APPEND":
+            continue
+        _text = (_cfg.get("text") or "").strip()
+        if not _text or _cfg.get("error"):
+            continue
+        _rows.append((dmu.to_int(_cfg.get("order"), 100), _name,
+                      (_cfg.get("header") or "").strip(), _text))
+    if not _rows:
+        return ""
+    _rows.sort(key=lambda r: (r[0], r[1]))
+    return "".join(f"\n\n{_h}\n\n{_t}" if _h else f"\n\n{_t}"
+                    for _o, _n, _h, _t in _rows)
+
+
 def render_skill_header(template, name, default=""):
     """A skill's HEADER with `{name}` filled in, or `default` when unset.
 

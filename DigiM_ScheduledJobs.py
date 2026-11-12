@@ -16,7 +16,6 @@ Fields per job:
   last_session_id : agent_run only; the most recently issued session ID
   created_at, updated_at
 """
-import json
 import os
 import threading
 import uuid
@@ -25,21 +24,13 @@ from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 
-import DigiM_Util as dmu
+import DigiM_MstStore as dmms
 
 if os.path.exists("system.env"):
     load_dotenv("system.env")
 
 _LOCK = threading.Lock()
-_FILE_NAME = "scheduled_jobs.json"
-
-VALID_KINDS = ("rag_update", "user_memory_nowaday", "agent_run", "agent_push")
-
-
-def _mst_path() -> str:
-    setting = dmu.read_yaml_file("setting.yaml") or {}
-    mst_folder = setting.get("MST_FOLDER", "user/common/mst/")
-    return os.path.join(mst_folder, _FILE_NAME)
+VALID_KINDS = ("rag_update", "user_memory_nowaday", "agent_run", "agent_push", "history_archive")
 
 
 def _now_str() -> str:
@@ -101,12 +92,8 @@ def job_steps(job: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 
 def load_all() -> List[Dict[str, Any]]:
-    path = _mst_path()
-    if not os.path.exists(path):
-        return []
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+        data = dmms.load("scheduled_jobs", default=[])
     except Exception:
         return []
     if not isinstance(data, list):
@@ -123,12 +110,7 @@ def load_all() -> List[Dict[str, Any]]:
 
 
 def save_all(jobs: List[Dict[str, Any]]):
-    path = _mst_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(jobs, f, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+    dmms.save("scheduled_jobs", jobs, indent=2)
 
 
 def get(job_id: str) -> Optional[Dict[str, Any]]:

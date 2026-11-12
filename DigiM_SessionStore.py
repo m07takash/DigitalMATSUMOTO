@@ -108,6 +108,47 @@ class FileSessionStore(SessionStore):
         dmu.save_json_file(chat_history_dict, p, indent=4)
 
 
+# --------------------------------------------------------- row helpers --
+def iter_rows(chat_history_dict: dict):
+    """(seq, sub_seq, value) for every storable entry; SETTING is sub_seq 0."""
+    for seq_str, seq_bucket in (chat_history_dict or {}).items():
+        try:
+            seq_i = int(seq_str)
+        except (TypeError, ValueError):
+            continue
+        for sub_key, sub_val in (seq_bucket or {}).items():
+            if sub_key == "SETTING":
+                sub_i = 0
+            else:
+                try:
+                    sub_i = int(sub_key)
+                except (TypeError, ValueError):
+                    continue
+            yield seq_i, sub_i, sub_val
+
+
+def rows_to_history(rows) -> dict:
+    result: dict = {}
+    for seq, sub_seq, data in rows:
+        bucket = result.setdefault(str(seq), {})
+        if int(sub_seq) == 0:
+            bucket["SETTING"] = data
+        else:
+            bucket[str(sub_seq)] = data
+    return result
+
+
+def row_json(value) -> str:
+    # Sorted and compact so the same content always serialises the same way;
+    # the hash below compares rows by this text. JSONB ignores key order.
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def row_hash(text: str) -> str:
+    import hashlib
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()
+
+
 # ------------------------------------------------------- PostgreSQL store --
 _PG_DDL = """
 -- Runtime chat-history storage. Kept separate from digim_dialogs / digim_sessions
@@ -130,6 +171,28 @@ CREATE INDEX IF NOT EXISTS idx_digim_chat_history_session_seq
 """
 
 
+def pg_connect_kwargs() -> dict:
+    """psycopg2.connect() arguments from POSTGRES_* in the environment.
+
+    Shared with the master-data store so the two stores cannot drift on
+    SSL handling: POSTGRES_SSLMODE wins, else SSL is required unless
+    POSTGRES_REQUIRE_SSL turns it off.
+    """
+    cfg = {
+        "host":     os.getenv("POSTGRES_HOST"),
+        "port":     int(os.getenv("POSTGRES_PORT") or 5432),
+        "dbname":   os.getenv("POSTGRES_DB"),
+        "user":     os.getenv("POSTGRES_USER"),
+        "password": os.getenv("POSTGRES_PASSWORD"),
+    }
+    _ssl = os.getenv("POSTGRES_SSLMODE")
+    if _ssl:
+        cfg["sslmode"] = _ssl
+    elif os.getenv("POSTGRES_REQUIRE_SSL", "1") not in ("0", "false", "False"):
+        cfg["sslmode"] = "require"
+    return cfg
+
+
 class PgSessionStore(SessionStore):
     """PostgreSQL backend. One row per (session_id, seq, sub_seq), payload
     in a JSONB column so the outward-facing dict shape remains identical to
@@ -139,6 +202,7 @@ class PgSessionStore(SessionStore):
     from."""
 
     method_name = "PostgreSQL"
+    table = "digim_chat_history"
 
     def __init__(self):
         try:
@@ -154,6 +218,15 @@ class PgSessionStore(SessionStore):
         self._conn_lock = threading.Lock()
         self._ddl_done = False
         self._fallback = FileSessionStore()
+        # session_id -> {(seq, sub_seq): sha1 of the row as last written}.
+        # Lets save() send only the rows that changed; see save().
+        self._row_hashes: dict = {}
+
+    def forget(self, session_id: str) -> None:
+        """Drop the remembered row hashes, for a caller that wrote the table
+        directly (archive restore / purge)."""
+        with self._conn_lock:
+            self._row_hashes.pop(session_id, None)
 
     def _connect(self):
         # `closed` flips only when psycopg2 itself noticed the drop; _cursor()
@@ -162,19 +235,7 @@ class PgSessionStore(SessionStore):
             return self._conn
         self._conn = None
         import psycopg2
-        cfg = {
-            "host":     os.getenv("POSTGRES_HOST"),
-            "port":     int(os.getenv("POSTGRES_PORT") or 5432),
-            "dbname":   os.getenv("POSTGRES_DB"),
-            "user":     os.getenv("POSTGRES_USER"),
-            "password": os.getenv("POSTGRES_PASSWORD"),
-        }
-        _ssl = os.getenv("POSTGRES_SSLMODE")
-        if _ssl:
-            cfg["sslmode"] = _ssl
-        elif os.getenv("POSTGRES_REQUIRE_SSL", "1") not in ("0", "false", "False"):
-            cfg["sslmode"] = "require"
-        self._conn = psycopg2.connect(**cfg)
+        self._conn = psycopg2.connect(**pg_connect_kwargs())
         self._conn.autocommit = True
         return self._conn
 
@@ -228,7 +289,7 @@ class PgSessionStore(SessionStore):
         try:
             with self._conn_lock:
                 cur.execute(
-                    "SELECT 1 FROM digim_chat_history WHERE session_id=%s LIMIT 1",
+                    f"SELECT 1 FROM {self.table} WHERE session_id=%s LIMIT 1",
                     (session_id,))
                 return cur.fetchone() is not None
         finally:
@@ -241,8 +302,8 @@ class PgSessionStore(SessionStore):
             return fb.load(session_id, folder_path)
         try:
             with self._conn_lock:
-                cur.execute("""
-                    SELECT seq, sub_seq, data FROM digim_chat_history
+                cur.execute(f"""
+                    SELECT seq, sub_seq, data FROM {self.table}
                     WHERE session_id=%s
                     ORDER BY seq, sub_seq
                 """, (session_id,))
@@ -250,62 +311,61 @@ class PgSessionStore(SessionStore):
         finally:
             try: cur.close()
             except Exception: pass
-        result: dict = {}
-        for seq, sub_seq, data in rows:
-            seq_k = str(seq)
-            bucket = result.setdefault(seq_k, {})
-            if sub_seq == 0:
-                bucket["SETTING"] = data
-            else:
-                bucket[str(sub_seq)] = data
-        return result
+        return rows_to_history(rows)
 
     def save(self, session_id: str, chat_history_dict: dict,
              folder_path: Optional[str] = None) -> None:
         cur, fb = self._fresh()
         if fb:
             fb.save(session_id, chat_history_dict, folder_path); return
-        # Fetch current keyset, diff against desired, UPSERT changed / INSERT new,
-        # DELETE removed. Fast when only 1-2 rows changed on this turn.
+        # The caller always hands over the whole session, and writing all of
+        # it back cost 11.5 s for a 216-row / 29.7 MB session (0.06 s for the
+        # one row that had changed) — on every turn, feedback, memory flag and
+        # analytics save. Rows are compared by hash against what this process
+        # last wrote, and only the ones that differ are sent.
+        desired: dict = {}
+        texts: dict = {}
+        for seq_i, sub_i, sub_val in iter_rows(chat_history_dict):
+            t = row_json(sub_val)
+            texts[(seq_i, sub_i)] = t
+            desired[(seq_i, sub_i)] = row_hash(t)
         try:
             with self._conn_lock:
-                cur.execute("""
-                    SELECT seq, sub_seq FROM digim_chat_history
-                    WHERE session_id=%s
-                """, (session_id,))
-                existing = {(r[0], r[1]) for r in cur.fetchall()}
-                desired = set()
-                upserts = []
-                for seq_str, seq_bucket in (chat_history_dict or {}).items():
-                    try:
-                        seq_i = int(seq_str)
-                    except (TypeError, ValueError):
-                        continue
-                    for sub_key, sub_val in (seq_bucket or {}).items():
-                        if sub_key == "SETTING":
-                            sub_i = 0
-                        else:
-                            try:
-                                sub_i = int(sub_key)
-                            except (TypeError, ValueError):
-                                continue
-                        desired.add((seq_i, sub_i))
-                        upserts.append((seq_i, sub_i, json.dumps(sub_val, ensure_ascii=False)))
-                # Rows the caller no longer wants — logical `Delete Chat History`
-                # from the WebUI never removes rows entirely (it sets FLG='N'),
-                # but this also cleans up any that were popped from the dict.
-                to_delete = existing - desired
+                known = self._row_hashes.get(session_id)
+                if known is None:
+                    # First save of this session in this process: compare
+                    # against the stored rows once (a read, far cheaper than
+                    # rewriting them), then remember the hashes.
+                    cur.execute(f"SELECT seq, sub_seq, data FROM {self.table} WHERE session_id=%s",
+                                (session_id,))
+                    known = {(r[0], r[1]): row_hash(row_json(r[2])) for r in cur.fetchall()}
+                    existing = set(known)
+                else:
+                    # The keyset is still read from the table so rows that
+                    # are gone from the dict are removed, as before.
+                    cur.execute(f"SELECT seq, sub_seq FROM {self.table} WHERE session_id=%s",
+                                (session_id,))
+                    existing = {(r[0], r[1]) for r in cur.fetchall()}
+                changed = [k for k, h in desired.items()
+                           if k not in existing or known.get(k) != h]
+                to_delete = existing - set(desired)
                 if to_delete:
                     cur.executemany(
-                        "DELETE FROM digim_chat_history WHERE session_id=%s AND seq=%s AND sub_seq=%s",
+                        f"DELETE FROM {self.table} WHERE session_id=%s AND seq=%s AND sub_seq=%s",
                         [(session_id, s, ss) for s, ss in to_delete])
-                if upserts:
-                    cur.executemany("""
-                        INSERT INTO digim_chat_history (session_id, seq, sub_seq, data, updated_at)
+                if changed:
+                    cur.executemany(f"""
+                        INSERT INTO {self.table} (session_id, seq, sub_seq, data, updated_at)
                         VALUES (%s, %s, %s, %s::jsonb, NOW())
                         ON CONFLICT (session_id, seq, sub_seq)
                         DO UPDATE SET data = EXCLUDED.data, updated_at = NOW()
-                    """, [(session_id, s, ss, d) for s, ss, d in upserts])
+                    """, [(session_id, s, ss, texts[(s, ss)]) for s, ss in changed])
+                self._row_hashes[session_id] = desired
+        except Exception:
+            # Unknown how far the write got, so the next save re-reads.
+            with self._conn_lock:
+                self._row_hashes.pop(session_id, None)
+            raise
         finally:
             try: cur.close()
             except Exception: pass
@@ -335,6 +395,11 @@ class CosmosSessionStore(SessionStore):
         _s = _setting or {}
         self._db_name = os.getenv("COSMOS_DATABASE") or _s.get("COSMOS_DATABASE", "digimatsu")
         self._container_name = os.getenv("COSMOS_CONTAINER") or _s.get("COSMOS_CONTAINER", "chat_history")
+        self._row_hashes: dict = {}
+
+    def forget(self, session_id: str) -> None:
+        with self._conn_lock:
+            self._row_hashes.pop(session_id, None)
 
     def _client(self):
         if self._container is not None:
@@ -399,39 +464,51 @@ class CosmosSessionStore(SessionStore):
              folder_path: Optional[str] = None) -> None:
         c, fb = self._fresh()
         if fb: fb.save(session_id, chat_history_dict, folder_path); return
+        # Same reasoning as PgSessionStore.save: every upsert is billed in RU,
+        # so only rows whose content changed are written.
+        desired: dict = {}
+        for seq_i, sub_i, sub_val in iter_rows(chat_history_dict):
+            desired[(seq_i, sub_i)] = (row_hash(row_json(sub_val)), sub_val)
         try:
-            # Existing ids (partition-key-scoped for cheap read)
-            existing = set()
-            for it in c.query_items(
-                    query="SELECT VALUE c.id FROM c WHERE c.session_id=@s",
-                    parameters=[{"name": "@s", "value": session_id}],
-                    partition_key=session_id):
-                existing.add(it)
-            desired = set()
-            for seq_str, seq_bucket in (chat_history_dict or {}).items():
-                try: seq_i = int(seq_str)
-                except (TypeError, ValueError): continue
-                for sub_key, sub_val in (seq_bucket or {}).items():
-                    if sub_key == "SETTING":
-                        sub_i = 0
-                    else:
-                        try: sub_i = int(sub_key)
-                        except (TypeError, ValueError): continue
-                    doc_id = f"{seq_i}-{sub_i}"
-                    desired.add(doc_id)
-                    c.upsert_item({
-                        "id": doc_id,
-                        "session_id": session_id,
-                        "seq": seq_i,
-                        "sub_seq": sub_i,
-                        "data": sub_val,
-                    })
-            for stale in (existing - desired):
+            with self._conn_lock:
+                known = self._row_hashes.get(session_id)
+            if known is None:
+                known = {}
+                existing = set()
+                for it in c.query_items(
+                        query="SELECT c.seq, c.sub_seq, c.data FROM c WHERE c.session_id=@s",
+                        parameters=[{"name": "@s", "value": session_id}],
+                        partition_key=session_id):
+                    k = (int(it["seq"]), int(it["sub_seq"]))
+                    existing.add(k)
+                    known[k] = row_hash(row_json(it.get("data", {})))
+            else:
+                existing = set()
+                for it in c.query_items(
+                        query="SELECT c.seq, c.sub_seq FROM c WHERE c.session_id=@s",
+                        parameters=[{"name": "@s", "value": session_id}],
+                        partition_key=session_id):
+                    existing.add((int(it["seq"]), int(it["sub_seq"])))
+            for (seq_i, sub_i), (h, sub_val) in desired.items():
+                if (seq_i, sub_i) in existing and known.get((seq_i, sub_i)) == h:
+                    continue
+                c.upsert_item({
+                    "id": f"{seq_i}-{sub_i}",
+                    "session_id": session_id,
+                    "seq": seq_i,
+                    "sub_seq": sub_i,
+                    "data": sub_val,
+                })
+            for seq_i, sub_i in (existing - set(desired)):
                 try:
-                    c.delete_item(item=stale, partition_key=session_id)
+                    c.delete_item(item=f"{seq_i}-{sub_i}", partition_key=session_id)
                 except Exception:
                     pass
+            with self._conn_lock:
+                self._row_hashes[session_id] = {k: v[0] for k, v in desired.items()}
         except Exception as _e:
+            with self._conn_lock:
+                self._row_hashes.pop(session_id, None)
             logger.warning("Cosmos save() failed: %s; falling through to JSON",
                            _e)
             self._fallback.save(session_id, chat_history_dict, folder_path)

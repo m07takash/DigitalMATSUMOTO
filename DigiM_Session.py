@@ -3,10 +3,7 @@ import json
 import logging
 import threading
 from datetime import datetime
-from datetime import timezone
 from pathlib import Path
-import zipfile
-import shutil
 
 # Per-session-file write lock (prevents race conditions)
 _session_file_locks: dict = {}
@@ -310,84 +307,17 @@ def save_db_export_undo(session_id, last_seq: int):
 
 # ZIP-compress session folders that haven't been updated for 30+ days, then delete them
 def archive_old_sessions(days: int = None) -> dict:
-    """
-    Bundle session folders whose last update is >= `days` ago into a single ZIP
-    and then delete the original folders.
+    """Kept for callers of the old API; the work is now
+    DigiM_HistoryArchive.purge, which also handles sessions whose history is
+    in PostgreSQL / Cosmos (this function used to delete their folders and
+    leave the rows behind, un-backed-up)."""
+    import DigiM_HistoryArchive as _ha
+    rep = _ha.purge(days if days is not None else archive_days)
+    return {"zip_path": os.path.join(_ha.cfg.archive_folder, rep["zip"]) if rep["zip"] else None,
+            "archived": [f"{session_folder_prefix}{s}" for s in rep["purged"]],
+            "skipped": [f"{session_folder_prefix}{s['id']}" for s in rep["skipped"]],
+            "errors": rep["errors"]}
 
-    ZIP path: archive_folder / sessions_archive_YYYYMMDD_HHMMSS.zip
-    Returns: {"zip_path": str, "archived": [folder_name,...], "skipped": [folder_name,...]}
-
-    Age is measured from the newest of `chat_memory.json` / `status.yaml`
-    INSIDE the session folder — not the folder's own mtime — because bulk
-    filesystem operations (git checkout, chmod, rsync) touch the folder
-    mtime while leaving the session's real activity timestamp intact. If
-    neither key file exists (broken/empty session), falls back to folder
-    mtime as a safe last resort.
-    """
-    now = datetime.now(tz=timezone.utc)
-    threshold_days = days if days is not None else archive_days
-    archived = []
-    skipped = []
-
-    def _session_activity_mtime(folder_path):
-        """Best-effort 'last active' timestamp for a session folder."""
-        for _leaf in ("chat_memory.json", "status.yaml"):
-            _p = os.path.join(folder_path, _leaf)
-            try:
-                if os.path.isfile(_p):
-                    return os.path.getmtime(_p)
-            except OSError:
-                continue
-        return os.path.getmtime(folder_path)  # fallback
-
-    # Collect folders to compress
-    target_folders = []
-    for entry in os.scandir(user_folder_path):
-        if not entry.is_dir():
-            continue
-        if not entry.name.startswith(session_folder_prefix):
-            continue
-        try:
-            _mt = datetime.fromtimestamp(
-                _session_activity_mtime(entry.path), tz=timezone.utc)
-            elapsed_days = (now - _mt).days
-            if elapsed_days >= threshold_days:
-                target_folders.append((entry.name, entry.path))
-            else:
-                skipped.append(entry.name)
-        except Exception as e:
-            logger.warning(f"[archive] Failed to read mtime for {entry.name}: {e}")
-            skipped.append(entry.name)
-
-    if not target_folders:
-        logger.info(f"[archive] No sessions older than {threshold_days} days.")
-        return {"zip_path": None, "archived": [], "skipped": skipped}
-
-    # Resolve the ZIP file path
-    archive_dir = Path(archive_folder)
-    archive_dir.mkdir(parents=True, exist_ok=True)
-    zip_name = "sessions_archive_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".zip"
-    zip_path = str(archive_dir / zip_name)
-
-    # Compress
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for folder_name, folder_path in target_folders:
-            for file_path in Path(folder_path).rglob("*"):
-                if file_path.is_file():
-                    arcname = Path(folder_name) / file_path.relative_to(folder_path)
-                    zf.write(file_path, arcname)
-
-    # Delete folders
-    for folder_name, folder_path in target_folders:
-        try:
-            shutil.rmtree(folder_path)
-            archived.append(folder_name)
-            logger.info(f"[archive] Deleted {folder_name}.")
-        except Exception as e:
-            logger.error(f"[archive] Failed to delete {folder_name}: {e}")
-
-    logger.info(f"[archive] Done -- ZIP: {zip_path} / archived={len(archived)} / skipped={len(skipped)}")
-    return {"zip_path": zip_path, "archived": archived, "skipped": skipped}
 
 # Issue a new session ID (numeric sequence only)
 def set_new_session_id():
@@ -815,7 +745,7 @@ class DigiMSession:
     # Query vectors exist only to place markers on the Analytics scatter, so
     # they are stored at half precision — the 2D projection is identical and
     # the files are half the size. Similarity-ranking vectors keep float32.
-    VEC_DTYPE_BY_MODE = {"queries": "float16"}
+    VEC_DTYPE_BY_MODE = {"queries": "float16", "answer": "float16"}
 
     def save_vec_file(self, seq, sub_seq="1", mode="query", vec_text=[]):
         # Create the session folder if missing

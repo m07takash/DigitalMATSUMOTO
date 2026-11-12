@@ -42,7 +42,7 @@ _PRESETS = {
 PUSH_MAX_GENERATED_SESSIONS = 20
 
 # Step kinds offered by the workflow editor, in menu order.
-STEP_KINDS = ("agent_run", "rag_update", "user_memory_nowaday")
+STEP_KINDS = ("agent_run", "rag_update", "user_memory_nowaday", "history_archive")
 
 _scheduler = None
 _scheduler_lock = threading.Lock()
@@ -226,9 +226,39 @@ def _run_step(job: dict, kind: str) -> str:
         return _exec_agent_run(job)
     elif kind == "agent_push":
         return _exec_agent_push(job)
+    elif kind == "history_archive":
+        _exec_history_archive(job)
     else:
         raise ValueError(f"unknown kind: {kind}")
     return ""
+
+
+def _exec_history_archive(job: dict):
+    """params: action = "backup" | "purge", days = idle days.
+    backup without days only refreshes the DB archive copy; purge without
+    days uses ARCHIVE_DAYS. Per-session failures fail the step, so the job
+    history shows them instead of a silent success."""
+    import DigiM_HistoryArchive as ha
+    p = job.get("params") or {}
+    action = str(p.get("action") or "backup")
+    try:
+        days = float(p.get("days")) if p.get("days") not in (None, "", 0, "0") else None
+    except (TypeError, ValueError):
+        days = None
+    if action == "purge":
+        rep = ha.purge(days if days is not None else ha.cfg.default_days)
+        done = len(rep["purged"])
+    elif action == "backup":
+        rep = ha.backup(days=days)
+        done = len(rep["synced"]) + len(rep["zipped"])
+    else:
+        raise ValueError(f"history_archive: unknown action {action!r}")
+    logger.info(f"[scheduler] history_archive {action}: done={done} "
+                f"skipped={len(rep['skipped'])} errors={len(rep['errors'])} zip={rep.get('zip')} "
+                f"analytics={ha._mirror_summary(rep.get('mirror'))}")
+    if rep["errors"]:
+        raise RuntimeError(f"{len(rep['errors'])} session(s) failed: "
+                           + "; ".join(f"{e['id']}: {e['error']}" for e in rep["errors"][:3]))
 
 
 def _exec_rag_update(job: dict):

@@ -22,8 +22,25 @@ SESSION_STORE_METHOD: "JSON"
 # CosmosDB defaults (only used when SESSION_STORE_METHOD=CosmosDB)
 COSMOS_DATABASE: "digimatsu"
 COSMOS_CONTAINER: "chat_history"
+# Master data (users / rags / prompt_templates / notion_db / category_map /
+# scheduled_jobs / session_summary_presets) backend, one switch for all of them.
+#   JSON       : the files under MST_FOLDER (default)
+#   PostgreSQL : one row per master in digim_mst (POSTGRES_* in system.env)
+# Switching to PostgreSQL does not move anything by itself: run
+#   python3 DigiM_MstStore.py import      (files -> rows, once)
+#   python3 DigiM_MstStore.py export      (rows -> files, to go back or to back up)
+# LOGIN_AUTH_METHOD=RDB (digim_users) is only honoured while this is JSON.
+MST_STORE_METHOD: "JSON"
+# PostgreSQL reads are cached this many seconds per process; a save drops the
+# cache locally, other processes see it after the TTL. 0 disables the cache.
+MST_STORE_CACHE_SEC: 10
+# History retention (DigiM_HistoryArchive): where the backup ZIPs go, and the
+# default idle period for purge. PostgreSQL also keeps a copy in
+# digim_chat_history_archive; Cosmos in COSMOS_ARCHIVE_CONTAINER (must exist,
+# partition key /session_id).
 ARCHIVE_FOLDER: "user/archive/"
 ARCHIVE_DAYS: 30
+COSMOS_ARCHIVE_CONTAINER: "chat_history_archive"
 AGENT_FOLDER: "user/common/agent/"
 CHARACTER_FOLDER: "user/common/agent/character/"
 PRACTICE_FOLDER: "user/common/practice/"
@@ -126,3 +143,13 @@ URL_FETCH:
     - ".jar"
     - ".apk"
     - ".dmg"
+
+# Performance Explorer > User > Achievement: the themes offered when the tab
+# opens. A plain string is used as both the name and the criteria; write
+# {NAME: "...", CRITERIA: "..."} to describe what counts as achieving it.
+PERFORMANCE_EXPLORER_THEMES:
+  - "視座が高い"
+  - "戦略的に物事を実行する"
+  - "周囲へ良い影響を与える"
+  - "独創的な考えである"
+  - "ユニークな表現である"

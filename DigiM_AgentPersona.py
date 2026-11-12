@@ -173,14 +173,10 @@ def _safe_int(value, default):
 
 
 def _rdb_config():
-    return {
-        "host":     os.getenv("POSTGRES_HOST"),
-        "port":     _safe_int(os.getenv("POSTGRES_PORT"), 5432),
-        "dbname":   os.getenv("POSTGRES_DB"),
-        "user":     os.getenv("POSTGRES_USER"),
-        "password": os.getenv("POSTGRES_PASSWORD"),
-        "sslmode":  "require",
-    }
+    # One definition of the connection, so POSTGRES_SSLMODE reaches every
+    # store: a local container without SSL could not be used otherwise.
+    import DigiM_SessionStore as _dmss
+    return _dmss.pg_connect_kwargs()
 
 
 def _rdb_connect():
