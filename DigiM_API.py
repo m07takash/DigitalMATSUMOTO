@@ -757,6 +757,7 @@ class HistoryArchiveRequest(BaseModel):
     days: Optional[float] = None
     session_ids: Optional[List[str]] = None
     dry_run: bool = False
+    keep_turns: Optional[int] = None
 
 
 class HistoryRestoreRequest(BaseModel):
@@ -781,6 +782,14 @@ async def history_sessions(days: Optional[float] = None,
     _require_history_token(x_admin_token)
     import DigiM_HistoryArchive as ha
     return {"sessions": ha.scan(days=days)}
+
+
+@app.get("/admin/history/turns")
+async def history_turns(days: Optional[float] = None, keep_turns: Optional[int] = None,
+                        x_admin_token: Optional[str] = Header(default=None)):
+    _require_history_token(x_admin_token)
+    import DigiM_HistoryArchive as ha
+    return {"sessions": ha.scan_turns(days=days, keep=keep_turns)}
 
 
 @app.get("/admin/history/archives")
@@ -810,6 +819,20 @@ async def history_purge(data: HistoryArchiveRequest,
     import DigiM_HistoryArchive as ha
     try:
         return ha.purge(days=data.days, session_ids=data.session_ids, dry_run=data.dry_run)
+    except RuntimeError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+
+@app.post("/admin/history/prune")
+async def history_prune(data: HistoryArchiveRequest,
+                        x_admin_token: Optional[str] = Header(default=None)):
+    """Delete turns older than `days` (default ARCHIVE_TURN_DAYS) inside
+    sessions, keeping each session's newest `keep_turns` (ARCHIVE_KEEP_TURNS)."""
+    _require_history_token(x_admin_token)
+    import DigiM_HistoryArchive as ha
+    try:
+        return ha.prune_turns(days=data.days, keep=data.keep_turns, session_ids=data.session_ids,
+                              dry_run=data.dry_run)
     except RuntimeError as e:
         raise HTTPException(status_code=409, detail=str(e))
 

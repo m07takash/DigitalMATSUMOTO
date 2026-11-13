@@ -674,6 +674,9 @@ CREATE TABLE IF NOT EXISTS digim_chat_history_archive (
     created_at  TIMESTAMPTZ NOT NULL,
     updated_at  TIMESTAMPTZ NOT NULL,
     archived_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Set when the turn was pruned out of live (kept here; restorable).
+    pruned_at   TIMESTAMPTZ,
+    pruned_zip  TEXT,
     PRIMARY KEY (session_id, seq, sub_seq)
 );
 -- One row per backed-up session: what was copied, and whether it was purged.
@@ -805,7 +808,7 @@ CosmosDB モードで起動しつつパッケージが未インストールの�
 
 #### 会話履歴の退避と削除（History Retention）
 
-古くなった会話履歴を退避してから削除します。単位は常に**セッション**（ターン単位で消すと seq・ダイジェスト・メモリが壊れるため）。処理本体は `DigiM_HistoryArchive.py` で、WebUI・CLI・スケジューラ・API のどこから呼んでも同じ関数が動きます。
+古くなった会話履歴を退避してから削除します。削除の単位は**セッション丸ごと**（purge）か、セッションの中の**古いターン丸ごと**（prune）のどちらかです（チェーンの途中の回答だけを消すと、残った回答の入力が消えた回答を指したままになるため、ターンより細かくは消しません）。処理本体は `DigiM_HistoryArchive.py` で、WebUI・CLI・スケジューラ・API のどこから呼んでも同じ関数が動きます。
 
 | 保存先 | backup（何度流してもよい・スケジュール向き） | purge（指定日数以上更新の無いセッション） |
 |---|---|---|
@@ -823,16 +826,30 @@ CosmosDB モードで起動しつつパッケージが未インストールの�
 - **分析データの退避**：`POSTGRES_*` が設定されていれば保存方式に関係なく、backup と purge のたびに分析ミラーを `digim_sessions_archive` / `digim_dialogs_archive` / `digim_references_archive` / `digim_steps_archive` へ写します。このとき、各セッションのユーザーが属するグループも `digim_sessions_archive.user_groups` に記録します（最初の退避時に一度だけ書き、以後は変えません。ユーザーをマスタから消したり、別のグループへ移したりしても、過去のセッションのグループが残ります）。退避テーブルからは削除しないので、ミラーの古い行を消しても、ユーザー・エージェント・入力・出力・参照・ベクトル（`query_vec` / `response_vec`）を使った分析を続けられます。対話と参照は `(session_id, seq, sub_seq)` で結合します。ミラーを削るときはセッションかターンの単位で消してください（参照はターン内の順番 `ref_no` で持つため）。詳細は [docs/SETUP_POSTGRESQL.md](docs/SETUP_POSTGRESQL.md) の 4-10。
 - 復元：フォルダは ZIP から、DB の行は退避テーブルから（無ければ ZIP の `chat_memory.json` から）戻します。まだ存在するセッションは上書き指定が無い限り拒否します。DB から退避したセッションを JSON モードで復元すると、ファイルのセッションとして戻ります。
 
+**古いターンの削除（prune）**
+
+使い続けているセッションでも、指定日数より前のターンだけを退避してから消します。条件は purge と同じ順番で確認します（分析ミラーを揃える → 分析データの退避テーブルへ写す → 退避して照合 → ZIP の CRC 検証 → 消す）。
+
+- **ターン（seq）丸ごと**消します。SETTING 行も含みます。番号は振り直しません。新しいターンは最大の番号 + 1 になり、その最大の番号のターンは必ず残るので、番号が重なることはありません。
+- **各セッションの最新 N ターンは日付に関係なく残します**（`ARCHIVE_KEEP_TURNS`、既定 10、最低 1）。最新の有効なターン（FLG=Y）も必ず残します。次のターンは最新のダイジェストを引き継ぐので、古い会話の要約は残ります。会話メモリで思い出せるのは残ったターンだけになります。
+- ターンの日付は、そのターンのプロンプトと回答の時刻のうち新しい方です。日付の無いターンは消しません。
+- フォルダからは、そのターンのファイル（`vecs/<seq>-<sub>_*.npy`、`analytics/<seq>-<sub>-*`、`contents/[IN]` / `[OUT]seq<seq>-<sub>_*`）だけを消します。`status.yaml` などセッション全体のファイルは残します。
+- ZIP は purge と同じ置き場所・同じ形で、`chat_memory.json` には消したターンだけが入ります。`manifest.json` の各セッションに `"scope": "turns"` と `"seqs"` が付きます。この ZIP はセッションのバックアップとしては数えません（引数なしの restore はセッション全体の ZIP だけから選びます）。
+- PostgreSQL / Cosmos では、退避テーブルの行に `pruned_at` / `pruned_zip` が付きます。以後の backup はこの行を消さず、照合にも含めません。セッションごと purge した後にそのセッションを復元すると、purge した時点の状態（prune 後）に戻ります。消したターンは、続けてそのターンの ZIP から戻します。
+- 復元は、ターンの ZIP を選んで **Restore Session** を押すと、元のセッションにターンが戻ります（同じ番号のターンがあれば上書き指定が必要です）。セッションが無いときは、先にセッションを復元します。
+- 分析ミラーと退避テーブルの行は消しません。Performance Explorer の Agent セクションは、ライブのセッションに無いターンを ZIP から読みます。
+- 画面では、残っている最初のターンより前に「Turns 1-N of this session were moved to the history archive.」と表示します。
+
 **呼び出し方**
 
 | 経路 | 方法 |
 |---|---|
-| WebUI | サイドバー Sessions → **History Retention**（Session Archive 権限）。Idle Days → **Preview**（対象と容量）→ **Backup Now** → 確認チェック → **Purge Old Sessions**。ZIP 選択 → **Prepare Download** / **List Sessions in ZIP** → **Restore Session** |
-| CLI | `python3 DigiM_HistoryArchive.py list --days 90` / `backup [--days N] [--dry-run]` / `purge --days 90 [--dry-run]` / `restore --session <ID> [--zip NAME] [--overwrite]` / `archives` |
-| スケジューラ | ジョブのステップ種別 `history_archive`（`action`: `backup` / `purge`、`days`）。例：退避を毎日（`backup`, `days=0`＝DB 複製のみ）、削除を月1（`purge`, `days=90`） |
+| WebUI | サイドバー Sessions → **History Retention**（Session Archive 権限）。Idle Days → **Preview**（対象と容量）→ **Backup Now** → 確認チェック → **Purge Old Sessions**。古いターンは **Old Turns** の Turn Age Days / Keep Newest → **Preview Turns** → 確認チェック → **Prune Old Turns**。ZIP 選択 → **Prepare Download** / **List Sessions in ZIP** → **Restore Session** |
+| CLI | `python3 DigiM_HistoryArchive.py list --days 90` / `backup [--days N] [--dry-run]` / `purge --days 90 [--dry-run]` / `prune [--days N] [--keep K] [--session ID] [--dry-run]` / `restore --session <ID> [--zip NAME] [--overwrite]` / `archives` |
+| スケジューラ | ジョブのステップ種別 `history_archive`（`action`: `backup` / `purge` / `prune`、`days`、prune は `keep_turns` も）。例：退避を毎日（`backup`, `days=0`＝DB 複製のみ）、削除を月1（`purge`, `days=90`）、古いターンの削除を週1（`prune`, `days=30`, `keep_turns=10`） |
 | API | `/admin/history/*`（下記 API リファレンス）。`system.env` の `HISTORY_ARCHIVE_API_TOKEN` を設定したときだけ有効 |
 
-日数の既定値は `setting.yaml` の `ARCHIVE_DAYS`、ZIP の置き場所は `ARCHIVE_FOLDER` です。
+日数の既定値は `setting.yaml` の `ARCHIVE_DAYS`（prune は `ARCHIVE_TURN_DAYS`）、prune で残すターン数は `ARCHIVE_KEEP_TURNS`、ZIP の置き場所は `ARCHIVE_FOLDER` です。画面・CLI・スケジューラ・API で指定すると、そちらが優先されます。
 
 > PostgreSQL / Cosmos の保存は**変更のあった行だけ**を書き込みます（以前は保存のたびにセッション全体を書き直しており、216 行 / 29.7 MB のセッションで 1 回 11.5 秒かかっていました）。
 
@@ -3418,9 +3435,9 @@ PostgreSQL の分析データ退避テーブル（`digim_sessions_archive` / `di
 |---|------|------|
 | 1 | **PostgreSQL** (`digim_dialogs / digim_references / digim_sessions`) | ターン完了ごとの自動エクスポートで投入される Warehouse（取りこぼしは Retry Pending Exports）。インデックス付きで高速 |
 | 2 | **ライブ session フォルダ** (`user/session2*/chat_memory.json`) | まだ Export DB していないセッション |
-| 3 | **アーカイブ ZIP** (`user/archive/sessions_archive_*.zip`) | History Retention の Purge / Backup が作成した ZIP（PostgreSQL のセッションも `chat_memory.json` として同梱） |
+| 3 | **アーカイブ ZIP** (`user/archive/sessions_archive_*.zip`) | History Retention の Purge / Backup / Prune が作成した ZIP（PostgreSQL のセッションも `chat_memory.json` として同梱。Prune の ZIP は消したターンだけ） |
 
-session_id でユニオン de-dup (PG 優先)。これにより、すでに archive で圧縮済みのセッション・ライブのセッション・まだ Export していないセッション全部を横断集計できます。
+session_id でユニオン de-dup (PG 優先)。ライブと ZIP の間はターン単位で重複を除くので、Prune でライブから消えたターンは ZIP から読みます。これにより、すでに archive で圧縮済みのセッション・ライブのセッション・まだ Export していないセッション全部を横断集計できます。
 
 ### Tab 1: Overview
 
@@ -3802,6 +3819,8 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
 | `GET` | `/admin/history/archives` | 退避 ZIP の一覧と、各 ZIP に入っているセッション |
 | `POST` | `/admin/history/backup` | 退避（`{"days": null, "session_ids": null, "dry_run": false}`） |
 | `POST` | `/admin/history/purge` | 退避してから削除（`days` 必須、`dry_run` で対象確認のみ） |
+| `GET` | `/admin/history/turns` | prune で消えるターン（`?days=N&keep_turns=K`、省略時は `ARCHIVE_TURN_DAYS` / `ARCHIVE_KEEP_TURNS`） |
+| `POST` | `/admin/history/prune` | 古いターンを退避してから削除（`{"days": null, "keep_turns": null, "session_ids": null, "dry_run": false}`） |
 | `POST` | `/admin/history/restore` | ZIP／退避テーブルから復元（`{"session_id": "...", "zip_name": null, "overwrite": false}`） |
 
 > API サーバのリッスンポートは `system.env` の `API_PORT` で指定します（デフォルト 8899）。値を変えれば WebUI の「Web API」メニューから起動する uvicorn も自動的にそのポートを使います。

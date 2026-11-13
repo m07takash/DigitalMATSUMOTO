@@ -234,10 +234,12 @@ def _run_step(job: dict, kind: str) -> str:
 
 
 def _exec_history_archive(job: dict):
-    """params: action = "backup" | "purge", days = idle days.
+    """params: action = "backup" | "purge" | "prune", days, keep_turns.
     backup without days only refreshes the DB archive copy; purge without
-    days uses ARCHIVE_DAYS. Per-session failures fail the step, so the job
-    history shows them instead of a silent success."""
+    days uses ARCHIVE_DAYS; prune deletes turns older than days (default
+    ARCHIVE_TURN_DAYS) and keeps the newest keep_turns (ARCHIVE_KEEP_TURNS).
+    Per-session failures fail the step, so the job history shows them
+    instead of a silent success."""
     import DigiM_HistoryArchive as ha
     p = job.get("params") or {}
     action = str(p.get("action") or "backup")
@@ -251,6 +253,13 @@ def _exec_history_archive(job: dict):
     elif action == "backup":
         rep = ha.backup(days=days)
         done = len(rep["synced"]) + len(rep["zipped"])
+    elif action == "prune":
+        try:
+            keep = int(p.get("keep_turns")) if p.get("keep_turns") not in (None, "", 0, "0") else None
+        except (TypeError, ValueError):
+            keep = None
+        rep = ha.prune_turns(days=days, keep=keep)
+        done = rep["turns"]
     else:
         raise ValueError(f"history_archive: unknown action {action!r}")
     logger.info(f"[scheduler] history_archive {action}: done={done} "

@@ -671,6 +671,9 @@ CREATE TABLE IF NOT EXISTS digim_chat_history_archive (
     created_at  TIMESTAMPTZ NOT NULL,
     updated_at  TIMESTAMPTZ NOT NULL,
     archived_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Set when the turn was pruned out of live (kept here; restorable).
+    pruned_at   TIMESTAMPTZ,
+    pruned_zip  TEXT,
     PRIMARY KEY (session_id, seq, sub_seq)
 );
 -- One row per backed-up session: what was copied, and whether it was purged.
@@ -801,7 +804,7 @@ If the package is missing when CosmosDB mode is selected, the store falls back t
 
 #### Chat-history retention (backup / purge / restore)
 
-Old history is backed up and then deleted, always a **whole session** at a time (removing single turns would leave seq numbers, digests and user memory pointing at turns that no longer exist). The work lives in `DigiM_HistoryArchive.py`; the WebUI, CLI, scheduler and API all call the same functions.
+Old history is backed up and then deleted, either a **whole session** (purge) or **whole old turns** inside a session (prune). Nothing smaller than a turn is removed: deleting one answer of a chain would leave the later answers reading an input that is gone. The work lives in `DigiM_HistoryArchive.py`; the WebUI, CLI, scheduler and API all call the same functions.
 
 | Store | backup (idempotent, schedulable) | purge (sessions idle for N days) |
 |---|---|---|
@@ -819,16 +822,30 @@ Old history is backed up and then deleted, always a **whole session** at a time 
 - **Analytics backup**: whenever `POSTGRES_*` is set, whatever the session store, every backup and purge copies the analytics mirror to `digim_sessions_archive` / `digim_dialogs_archive` / `digim_references_archive` / `digim_steps_archive`. It also records the groups of each session's user in `digim_sessions_archive.user_groups` (written once, at the first backup, and kept: removing a user from the master or moving them to another group does not change their past sessions). Nothing is deleted from those, so the mirror's old rows can be removed while users, agents, inputs, outputs, references and vectors (`query_vec` / `response_vec`) stay available for analysis. Join dialogs and references on `(session_id, seq, sub_seq)`. Remove mirror rows by whole sessions or turns (references are kept by their position `ref_no` within the turn). Details in 4-10 of [docs/SETUP_POSTGRESQL.en.md](docs/SETUP_POSTGRESQL.en.md).
 - Restore: the folder comes back from the ZIP, DB rows from the archive table (or from the ZIP's `chat_memory.json` when the table has none). A session that still exists is refused unless overwrite is asked for. A DB-archived session restored in JSON mode comes back as a file session.
 
+**Deleting old turns (prune)**
+
+Backs up and then removes only the turns older than N days, also from sessions still in use. It passes the same gate as a purge, in the same order: align the analytics mirror → copy it to the analytics backup tables → back up and compare → CRC-check the ZIP → delete.
+
+- **Whole turns (seqs)** are removed, SETTING row included. Numbers are never reused: a new turn takes the highest number + 1, and the turn with that number is always kept.
+- **Each session keeps its newest N turns whatever their age** (`ARCHIVE_KEEP_TURNS`, default 10, minimum 1), and always its newest active (FLG=Y) turn. The next turn builds on the newest digest, so the summary of the old conversation survives. Conversation memory can only recall the turns that are left.
+- A turn's date is the newer of its prompt and response times. A turn without one is kept.
+- From the folder only that turn's files go (`vecs/<seq>-<sub>_*.npy`, `analytics/<seq>-<sub>-*`, `contents/[IN]` / `[OUT]seq<seq>-<sub>_*`). Session-wide files such as `status.yaml` stay.
+- The ZIP has the same place and shape as a purge ZIP; its `chat_memory.json` holds only the removed turns, and each session in `manifest.json` carries `"scope": "turns"` and `"seqs"`. Such a ZIP does not count as a backup of the session (restore without a ZIP name picks only whole-session ZIPs).
+- In PostgreSQL / Cosmos the archive rows of removed turns get `pruned_at` / `pruned_zip`. Later backups neither delete nor compare them. Restoring a session that was purged afterwards brings it back as it was when purged (already pruned); restore its turns from the turns ZIP next.
+- To restore, pick the turns ZIP and press **Restore Session**: the turns go back into their session (overwrite is needed if a turn with the same number exists). If the session itself is gone, restore it first.
+- Analytics mirror and archive rows are not deleted. The Agent section of the Performance Explorer reads from the ZIP the turns a live session no longer has.
+- The chat screen shows "Turns 1-N of this session were moved to the history archive." above the first remaining turn.
+
 **How to run it**
 
 | Entry point | How |
 |---|---|
-| WebUI | Sidebar Sessions → **History Retention** (Session Archive permission). Idle Days → **Preview** (what qualifies, and its size) → **Backup Now** → tick the confirmation → **Purge Old Sessions**. Pick a ZIP → **Prepare Download** / **List Sessions in ZIP** → **Restore Session** |
-| CLI | `python3 DigiM_HistoryArchive.py list --days 90` / `backup [--days N] [--dry-run]` / `purge --days 90 [--dry-run]` / `restore --session <ID> [--zip NAME] [--overwrite]` / `archives` |
-| Scheduler | Step kind `history_archive` (`action`: `backup` / `purge`, `days`). E.g. back up daily (`backup`, `days=0` = DB copy only) and purge monthly (`purge`, `days=90`) |
+| WebUI | Sidebar Sessions → **History Retention** (Session Archive permission). Idle Days → **Preview** (what qualifies, and its size) → **Backup Now** → tick the confirmation → **Purge Old Sessions**. For old turns: **Old Turns** Turn Age Days / Keep Newest → **Preview Turns** → tick the confirmation → **Prune Old Turns**. Pick a ZIP → **Prepare Download** / **List Sessions in ZIP** → **Restore Session** |
+| CLI | `python3 DigiM_HistoryArchive.py list --days 90` / `backup [--days N] [--dry-run]` / `purge --days 90 [--dry-run]` / `prune [--days N] [--keep K] [--session ID] [--dry-run]` / `restore --session <ID> [--zip NAME] [--overwrite]` / `archives` |
+| Scheduler | Step kind `history_archive` (`action`: `backup` / `purge` / `prune`, `days`, plus `keep_turns` for prune). E.g. back up daily (`backup`, `days=0` = DB copy only), purge monthly (`purge`, `days=90`) and prune weekly (`prune`, `days=30`, `keep_turns=10`) |
 | API | `/admin/history/*` (see the API reference). Enabled only when `HISTORY_ARCHIVE_API_TOKEN` is set in `system.env` |
 
-The default period is `ARCHIVE_DAYS` and the ZIP location `ARCHIVE_FOLDER`, both in `setting.yaml`.
+The default period is `ARCHIVE_DAYS` (`ARCHIVE_TURN_DAYS` for prune), the turns a prune keeps `ARCHIVE_KEEP_TURNS`, and the ZIP location `ARCHIVE_FOLDER`, all in `setting.yaml`. Values given in the WebUI, CLI, scheduler or API take precedence.
 
 > The PostgreSQL / Cosmos stores now write **only the rows that changed**. They used to rewrite the whole session on every save — 11.5 s per save for a 216-row / 29.7 MB session.
 
@@ -3359,9 +3376,9 @@ Pick a period (down to the minute) and agents (multi-select), then press **Run a
 |---|------|------|
 | 1 | **PostgreSQL** (`digim_dialogs / digim_references / digim_sessions`) | Warehouse populated by the per-turn auto-export (catch-up: Retry Pending Exports). Indexed and fast |
 | 2 | **Live session folders** (`user/session2*/chat_memory.json`) | Sessions not yet Export-DB'd |
-| 3 | **Archived ZIPs** (`user/archive/sessions_archive_*.zip`) | ZIPs written by History Retention's Purge / Backup (PostgreSQL sessions are included as `chat_memory.json`) |
+| 3 | **Archived ZIPs** (`user/archive/sessions_archive_*.zip`) | ZIPs written by History Retention's Purge / Backup / Prune (PostgreSQL sessions are included as `chat_memory.json`; a Prune ZIP holds only the removed turns) |
 
-De-duplicated by session_id with PG winning. The union gives the full history including archived sessions and not-yet-exported sessions.
+De-duplicated by session_id with PG winning. Between live folders and ZIPs it is per turn, so turns a Prune removed from a live session are read from the ZIP. The union gives the full history including archived sessions and not-yet-exported sessions.
 
 ### Tab 1: Overview
 
@@ -3743,6 +3760,8 @@ When FastAPI is launched, you can execute the agent via REST API. It also suppor
 | `GET` | `/admin/history/archives` | Archive ZIPs and the sessions each holds |
 | `POST` | `/admin/history/backup` | Back up (`{"days": null, "session_ids": null, "dry_run": false}`) |
 | `POST` | `/admin/history/purge` | Back up, then delete (`days` required; `dry_run` only reports) |
+| `GET` | `/admin/history/turns` | Turns a prune would take (`?days=N&keep_turns=K`; defaults `ARCHIVE_TURN_DAYS` / `ARCHIVE_KEEP_TURNS`) |
+| `POST` | `/admin/history/prune` | Back up, then delete old turns (`{"days": null, "keep_turns": null, "session_ids": null, "dry_run": false}`) |
 | `POST` | `/admin/history/restore` | Restore from the ZIP / archive table (`{"session_id": "...", "zip_name": null, "overwrite": false}`) |
 
 > The API server's listen port is read from `system.env`'s `API_PORT` (default 8899). Changing it makes the "Web API" menu in the WebUI start uvicorn on that port automatically.

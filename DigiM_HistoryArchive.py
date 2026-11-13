@@ -1,7 +1,13 @@
 """Chat-history retention: back sessions up, purge the old ones, restore.
 
-The unit of work is always a whole session. Removing single turns would leave
-seq numbering, digests and user memory pointing at turns that no longer exist.
+Two units of deletion, never anything smaller:
+  session  purge: the whole session, history and folder.
+  turn     prune: whole seqs (every sub_seq and the SETTING row) older than N
+           days, always keeping the newest turns. Seq numbers are never
+           reused or renumbered — new turns take max+1, which is kept — and
+           the digest a new turn builds on is the newest one, which is kept.
+           Deleting part of a seq would leave a chain's later answers reading
+           an input that is gone.
 
 Where a session's history lives is decided per session, not per deployment,
 because PostgreSQL / Cosmos mode still reads legacy JSON sessions from disk:
@@ -24,8 +30,14 @@ Operations
   purge    For sessions idle for `days` or more: export to the analytics
            mirror, back up, write a ZIP, verify both, then delete the live
            history and the folder. Nothing is deleted that was not verified.
+  prune    The same gate per turn: the turns go to the archive store and a
+           ZIP holding only those turns (manifest scope "turns") and their
+           per-turn files (vecs/, contents/, analytics/), then leave the live
+           history. Archive rows of pruned turns are flagged (pruned_at) so a
+           later backup does not drop them for being absent from live.
   restore  Put a purged session back from its ZIP (folder) and the archive
-           store (rows), or from the ZIP alone.
+           store (rows), or from the ZIP alone. A "turns" ZIP puts the turns
+           back into the existing session.
 
 ZIP layout (one per run, under ARCHIVE_FOLDER, same as before so the WebUI
 download and the Agent section of the Performance Explorer keep reading it):
@@ -33,7 +45,7 @@ download and the Agent section of the Performance Explorer keep reading it):
   session<ID>/chat_memory.json  the history; written out for DB sessions too
   manifest.json                 what is in the ZIP and how to verify it
 
-CLI:  python3 DigiM_HistoryArchive.py list|backup|purge|restore|archives ...
+CLI:  python3 DigiM_HistoryArchive.py list|backup|purge|prune|restore|archives ...
 """
 from __future__ import annotations
 
@@ -41,12 +53,13 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 import threading
 import time
 import zipfile
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -71,6 +84,11 @@ class _Config:
         self.status_file = _setting.get("SESSION_STATUS_FILE_NAME", "status.yaml")
         self.archive_folder = _setting.get("ARCHIVE_FOLDER", "user/archive/")
         self.default_days = int(_setting.get("ARCHIVE_DAYS", 30) or 30)
+        self.turn_days = int(_setting.get("ARCHIVE_TURN_DAYS", self.default_days) or self.default_days)
+        # At least one: the newest turn carries the digest the next turn builds on.
+        self.keep_turns = max(1, int(_setting.get("ARCHIVE_KEEP_TURNS", 10) or 10))
+        self.contents_folder = _setting.get("SESSION_CONTENTS_FOLDER", "contents/")
+        self.analytics_folder = _setting.get("SESSION_ANALYTICS_FOLDER", "analytics/")
         self.live_table = dmss.PgSessionStore.table
         self.archive_table = "digim_chat_history_archive"
         self.ledger_table = "digim_chat_history_archive_sessions"
@@ -149,6 +167,8 @@ class _PgBackend:
                     archived_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                     PRIMARY KEY (session_id, seq, sub_seq)
                 );
+                ALTER TABLE {cfg.archive_table} ADD COLUMN IF NOT EXISTS pruned_at TIMESTAMPTZ;
+                ALTER TABLE {cfg.archive_table} ADD COLUMN IF NOT EXISTS pruned_zip TEXT;
                 CREATE TABLE IF NOT EXISTS {cfg.ledger_table} (
                     session_id   TEXT PRIMARY KEY,
                     rows         INTEGER     NOT NULL,
@@ -177,7 +197,7 @@ class _PgBackend:
         self.ensure()
         with self._conn.cursor() as cur:
             cur.execute(f"""SELECT session_id, COUNT(*), MAX(updated_at)
-                            FROM {cfg.archive_table} GROUP BY session_id""")
+                            FROM {cfg.archive_table} WHERE pruned_at IS NULL GROUP BY session_id""")
             out = {r[0]: (int(r[1]), r[2]) for r in cur.fetchall()}
         self._conn.commit()
         return out
@@ -193,14 +213,109 @@ class _PgBackend:
         self._conn.commit()
         return out
 
-    def _fingerprint(self, cur, table: str, sid: str) -> tuple:
+    def _fingerprint(self, cur, table: str, sid: str, seqs=None, pruned: bool = False) -> tuple:
         # JSONB prints canonically, so identical content gives identical text
         # in both tables — a hash over it compares the two without pulling
-        # the payload into Python.
+        # the payload into Python. Pruned turns are no longer live, so on the
+        # archive side they are compared only when asked for.
+        where, args = "session_id=%s", [sid]
+        if table == cfg.archive_table:
+            where += " AND pruned_at IS NOT NULL" if pruned else " AND pruned_at IS NULL"
+        if seqs is not None:
+            where += " AND seq = ANY(%s)"
+            args.append(sorted(int(s) for s in seqs))
         cur.execute(f"""SELECT COUNT(*), COALESCE(md5(string_agg(md5(data::text), '' ORDER BY seq, sub_seq)), '')
-                        FROM {table} WHERE session_id=%s""", (sid,))
+                        FROM {table} WHERE {where}""", args)
         n, h = cur.fetchone()
         return int(n), h
+
+    def turn_index(self, session_ids=None) -> dict:
+        """{sid: {seq: (newest prompt/response timestamp text, FLG)}} without
+        pulling the payloads. The timestamps sort as text."""
+        self.ensure()
+        where, args = "", []
+        if session_ids is not None:
+            where, args = "WHERE session_id = ANY(%s)", [sorted(session_ids)]
+        with self._conn.cursor() as cur:
+            cur.execute(f"""SELECT session_id, seq,
+                                   MAX(GREATEST(COALESCE(data->'response'->>'timestamp', ''),
+                                                COALESCE(data->'prompt'->>'timestamp', '')))
+                                       FILTER (WHERE sub_seq > 0),
+                                   MAX(data->>'FLG') FILTER (WHERE sub_seq = 0)
+                            FROM {cfg.live_table} {where} GROUP BY session_id, seq""", args)
+            out: dict = {}
+            for sid, seq, ts, flg in cur.fetchall():
+                out.setdefault(sid, {})[int(seq)] = (ts or "", flg or "Y")
+        self._conn.commit()
+        return out
+
+    def live_fp(self, sid: str, seqs=None) -> tuple:
+        self.ensure()
+        with self._conn.cursor() as cur:
+            r = self._fingerprint(cur, cfg.live_table, sid, seqs)
+        self._conn.commit()
+        return r
+
+    def delete_turns(self, sid: str, seqs: list, expect: tuple, zip_name: str):
+        """Delete these seqs from live only if they still match what was
+        backed up, and flag their archive rows as pruned."""
+        self.ensure()
+        conn = self._conn
+        seqs = sorted(int(s) for s in seqs)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT 1 FROM {cfg.live_table} WHERE session_id=%s AND seq = ANY(%s) FOR UPDATE",
+                            (sid, seqs))
+                now = self._fingerprint(cur, cfg.live_table, sid, seqs)
+                if now != expect:
+                    raise _Changed(f"turns changed after the backup ({expect} -> {now})")
+                arc = self._fingerprint(cur, cfg.archive_table, sid, seqs)
+                if arc != expect:
+                    raise RuntimeError(f"archive copy of the turns does not match ({expect} vs {arc})")
+                cur.execute(f"DELETE FROM {cfg.live_table} WHERE session_id=%s AND seq = ANY(%s)", (sid, seqs))
+                cur.execute(f"""UPDATE {cfg.archive_table} SET pruned_at=NOW(), pruned_zip=%s
+                                WHERE session_id=%s AND seq = ANY(%s) AND pruned_at IS NULL""",
+                            (zip_name, sid, seqs))
+                left = self._fingerprint(cur, cfg.live_table, sid)
+                cur.execute(f"UPDATE {cfg.ledger_table} SET rows=%s, content_md5=%s WHERE session_id=%s",
+                            (left[0], left[1], sid))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+
+    def restore_turns(self, sid: str, seqs: list, history: Optional[dict], overwrite: bool = False) -> int:
+        """Pruned turns back into live: from their archive rows (exact,
+        timestamps kept), else from the ZIP's history."""
+        self.ensure()
+        conn = self._conn
+        seqs = sorted(int(s) for s in seqs)
+        try:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT DISTINCT seq FROM {cfg.live_table} WHERE session_id=%s AND seq = ANY(%s)",
+                            (sid, seqs))
+                clash = sorted(r[0] for r in cur.fetchall())
+                if clash and not overwrite:
+                    raise FileExistsError(f"session {sid} still has turns {clash}; pass overwrite to replace them")
+                cur.execute(f"DELETE FROM {cfg.live_table} WHERE session_id=%s AND seq = ANY(%s)", (sid, seqs))
+                cur.execute(f"""INSERT INTO {cfg.live_table} (session_id, seq, sub_seq, data, created_at, updated_at)
+                                SELECT session_id, seq, sub_seq, data, created_at, updated_at
+                                FROM {cfg.archive_table}
+                                WHERE session_id=%s AND seq = ANY(%s) AND pruned_at IS NOT NULL""", (sid, seqs))
+                n = cur.rowcount
+                if n <= 0 and history:
+                    rows = [(sid, s, ss, dmss.row_json(v)) for s, ss, v in dmss.iter_rows(history)
+                            if s in seqs]
+                    cur.executemany(f"""INSERT INTO {cfg.live_table} (session_id, seq, sub_seq, data)
+                                        VALUES (%s, %s, %s, %s::jsonb)""", rows)
+                    n = len(rows)
+                cur.execute(f"""UPDATE {cfg.archive_table} SET pruned_at=NULL, pruned_zip=NULL
+                                WHERE session_id=%s AND seq = ANY(%s)""", (sid, seqs))
+            conn.commit()
+            return n
+        except Exception:
+            conn.rollback()
+            raise
 
     def history(self, sid: str) -> dict:
         self.ensure()
@@ -218,7 +333,9 @@ class _PgBackend:
         conn = self._conn
         try:
             with conn.cursor() as cur:
-                cur.execute(f"""DELETE FROM {cfg.archive_table} a WHERE a.session_id=%s AND NOT EXISTS (
+                # Pruned turns are absent from live by design; they stay.
+                cur.execute(f"""DELETE FROM {cfg.archive_table} a WHERE a.session_id=%s AND a.pruned_at IS NULL
+                                AND NOT EXISTS (
                                   SELECT 1 FROM {cfg.live_table} l
                                   WHERE l.session_id=a.session_id AND l.seq=a.seq AND l.sub_seq=a.sub_seq)""",
                             (sid,))
@@ -228,9 +345,11 @@ class _PgBackend:
                                 FROM {cfg.live_table} WHERE session_id=%s
                                 ON CONFLICT (session_id, seq, sub_seq) DO UPDATE
                                 SET data=EXCLUDED.data, created_at=EXCLUDED.created_at,
-                                    updated_at=EXCLUDED.updated_at, archived_at=NOW()
+                                    updated_at=EXCLUDED.updated_at, archived_at=NOW(),
+                                    pruned_at=NULL, pruned_zip=NULL
                                 WHERE {cfg.archive_table}.updated_at IS DISTINCT FROM EXCLUDED.updated_at
-                                   OR {cfg.archive_table}.data IS DISTINCT FROM EXCLUDED.data""",
+                                   OR {cfg.archive_table}.data IS DISTINCT FROM EXCLUDED.data
+                                   OR {cfg.archive_table}.pruned_at IS NOT NULL""",
                             (sid,))
                 live = self._fingerprint(cur, cfg.live_table, sid)
                 arc = self._fingerprint(cur, cfg.archive_table, sid)
@@ -281,9 +400,11 @@ class _PgBackend:
         try:
             with conn.cursor() as cur:
                 cur.execute(f"DELETE FROM {cfg.live_table} WHERE session_id=%s", (sid,))
+                # As the session was when it was purged: turns pruned before
+                # that come back from their own ZIP.
                 cur.execute(f"""INSERT INTO {cfg.live_table} (session_id, seq, sub_seq, data, created_at, updated_at)
                                 SELECT session_id, seq, sub_seq, data, created_at, updated_at
-                                FROM {cfg.archive_table} WHERE session_id=%s""", (sid,))
+                                FROM {cfg.archive_table} WHERE session_id=%s AND pruned_at IS NULL""", (sid,))
                 n = cur.rowcount
                 if n <= 0 and history:
                     rows = [(sid, s, ss, dmss.row_json(v)) for s, ss, v in dmss.iter_rows(history)]
@@ -330,10 +451,13 @@ class _CosmosBackend:
     def _ts(epoch) -> Optional[datetime]:
         return datetime.fromtimestamp(int(epoch), tz=timezone.utc) if epoch else None
 
-    def _stats(self, container) -> dict:
+    _UNPRUNED = "(NOT IS_DEFINED(c.pruned_at) OR IS_NULL(c.pruned_at))"
+
+    def _stats(self, container, unpruned: bool = False) -> dict:
         out = {}
+        where = f" WHERE {self._UNPRUNED}" if unpruned else ""
         for it in container.query_items(
-                query="SELECT c.session_id, COUNT(1) AS n, MAX(c._ts) AS m FROM c GROUP BY c.session_id",
+                query=f"SELECT c.session_id, COUNT(1) AS n, MAX(c._ts) AS m FROM c{where} GROUP BY c.session_id",
                 enable_cross_partition_query=True):
             out[it["session_id"]] = (int(it["n"]), self._ts(it.get("m")))
         return out
@@ -344,16 +468,87 @@ class _CosmosBackend:
 
     def archive_stats(self) -> dict:
         self.ensure()
-        return self._stats(self._arc)
+        return self._stats(self._arc, unpruned=True)
 
     def ledger(self) -> dict:
         return {}
 
-    def _docs(self, container, sid: str) -> dict:
-        return {(int(it["seq"]), int(it["sub_seq"])): it.get("data", {})
-                for it in container.query_items(
-                    query="SELECT c.seq, c.sub_seq, c.data FROM c WHERE c.session_id=@s",
-                    parameters=[{"name": "@s", "value": sid}], partition_key=sid)}
+    def _items(self, container, sid: str) -> list:
+        return list(container.query_items(
+            query="SELECT * FROM c WHERE c.session_id=@s",
+            parameters=[{"name": "@s", "value": sid}], partition_key=sid))
+
+    def _docs(self, container, sid: str, pruned: Optional[bool] = False) -> dict:
+        """{(seq, sub_seq): data}. On the archive container `pruned` picks
+        the live-shaped copy (False), the pruned turns (True) or both (None)."""
+        out = {}
+        for it in self._items(container, sid):
+            if pruned is not None and bool(it.get("pruned_at")) != pruned:
+                continue
+            out[(int(it["seq"]), int(it["sub_seq"]))] = it.get("data", {})
+        return out
+
+    def turn_index(self, session_ids=None) -> dict:
+        self.ensure()
+        out: dict = {}
+        for it in self._live.query_items(
+                query="SELECT c.session_id, c.seq, c.sub_seq, c.data.FLG AS flg, "
+                      "c.data.prompt.timestamp AS pt, c.data.response.timestamp AS rt FROM c",
+                enable_cross_partition_query=True):
+            sid = it["session_id"]
+            if session_ids is not None and sid not in session_ids:
+                continue
+            seq = int(it["seq"])
+            ts, flg = out.setdefault(sid, {}).get(seq, ("", "Y"))
+            if int(it["sub_seq"]) == 0:
+                flg = it.get("flg") or "Y"
+            else:
+                ts = max(ts, str(it.get("pt") or ""), str(it.get("rt") or ""))
+            out[sid][seq] = (ts, flg)
+        return out
+
+    def live_fp(self, sid: str, seqs=None) -> tuple:
+        self.ensure()
+        docs = self._docs(self._live, sid, pruned=None)
+        if seqs is not None:
+            docs = {k: v for k, v in docs.items() if k[0] in set(int(s) for s in seqs)}
+        return self._fp(docs)
+
+    def delete_turns(self, sid: str, seqs: list, expect: tuple, zip_name: str):
+        self.ensure()
+        want = set(int(s) for s in seqs)
+        live = {k: v for k, v in self._docs(self._live, sid, pruned=None).items() if k[0] in want}
+        if self._fp(live) != expect:
+            raise _Changed("turns changed after the backup")
+        arc = {k: v for k, v in self._docs(self._arc, sid).items() if k[0] in want}
+        if self._fp(arc) != expect:
+            raise RuntimeError("archive copy of the turns does not match")
+        stamp = _iso(_now())
+        for it in self._items(self._arc, sid):
+            if int(it["seq"]) in want and not it.get("pruned_at"):
+                it["pruned_at"], it["pruned_zip"] = stamp, zip_name
+                self._arc.upsert_item(it)
+        for (s, ss) in live:
+            self._live.delete_item(item=f"{s}-{ss}", partition_key=sid)
+
+    def restore_turns(self, sid: str, seqs: list, history: Optional[dict], overwrite: bool = False) -> int:
+        self.ensure()
+        want = set(int(s) for s in seqs)
+        clash = sorted({s for (s, _ss) in self._docs(self._live, sid, pruned=None) if s in want})
+        if clash and not overwrite:
+            raise FileExistsError(f"session {sid} still has turns {clash}; pass overwrite to replace them")
+        docs = {k: v for k, v in self._docs(self._arc, sid, pruned=True).items() if k[0] in want}
+        if not docs and history:
+            docs = {(s, ss): v for s, ss, v in dmss.iter_rows(history) if s in want}
+        for (s, ss), d in docs.items():
+            self._live.upsert_item({"id": f"{s}-{ss}", "session_id": sid, "seq": s,
+                                    "sub_seq": ss, "data": d})
+        for it in self._items(self._arc, sid):
+            if int(it["seq"]) in want and it.get("pruned_at"):
+                it.pop("pruned_at", None)
+                it.pop("pruned_zip", None)
+                self._arc.upsert_item(it)
+        return len(docs)
 
     @staticmethod
     def _fp(docs: dict) -> tuple:
@@ -364,11 +559,13 @@ class _CosmosBackend:
 
     def history(self, sid: str) -> dict:
         self.ensure()
-        return dmss.rows_to_history((s, ss, d) for (s, ss), d in self._docs(self._live, sid).items())
+        return dmss.rows_to_history((s, ss, d) for (s, ss), d in self._docs(self._live, sid, pruned=None).items())
 
     def sync(self, sid: str) -> tuple:
         self.ensure()
-        live = self._docs(self._live, sid)
+        live = self._docs(self._live, sid, pruned=None)
+        # Only the live-shaped copy: pruned turns are absent from live by
+        # design, and a live doc at a pruned key (a restore) replaces it.
         arc = self._docs(self._arc, sid)
         for (s, ss), d in live.items():
             if arc.get((s, ss)) != d:
@@ -383,7 +580,7 @@ class _CosmosBackend:
 
     def delete_live(self, sid: str, expect: tuple, zip_name: str):
         self.ensure()
-        live = self._docs(self._live, sid)
+        live = self._docs(self._live, sid, pruned=None)
         if self._fp(live) != expect:
             raise _Changed("live docs changed after the backup")
         for (s, ss) in live:
@@ -445,7 +642,11 @@ def _mtime(path: str) -> Optional[datetime]:
 def _last_conversation(status: dict) -> Optional[datetime]:
     """status.yaml `last_update_date`: when the session's last turn finished.
     Written as naive local time by the container clock."""
-    v = status.get("last_update_date")
+    return _parse_local(status.get("last_update_date"))
+
+
+def _parse_local(v) -> Optional[datetime]:
+    """History and status timestamps: naive, in the container's local time."""
     if not v:
         return None
     for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
@@ -630,10 +831,13 @@ def zip_sessions(zip_name: str) -> dict:
 
 
 def _zip_index() -> dict:
+    """Session -> ZIPs that hold all of it; a turns ZIP is not a backup of
+    the session."""
     idx: dict = {}
     for a in list_archives():
-        for sid in a.get("sessions", {}):
-            idx.setdefault(sid, []).append(a["zip"])
+        for sid, m in a.get("sessions", {}).items():
+            if (m or {}).get("scope") != "turns":
+                idx.setdefault(sid, []).append(a["zip"])
     return idx
 
 
@@ -671,9 +875,14 @@ def _write_zip(items: list, action: str) -> tuple:
                 folder = cfg.folder(sid)
                 arc_root = f"{cfg.prefix}{sid}"
                 files, snap = {}, {}
+                # A turns item carries only those turns' files; status.yaml
+                # and the rest of the folder stay with the live session.
+                seqs = set(it["seqs"]) if it.get("seqs") is not None else None
                 if os.path.isdir(folder):
                     for p in _folder_files(folder):
                         rel = p.relative_to(folder).as_posix()
+                        if seqs is not None and _turn_of_file(rel) not in seqs:
+                            continue
                         st = p.stat()
                         zf.write(p, f"{arc_root}/{rel}")
                         files[rel] = {"size": st.st_size, "crc": _crc32(p)}
@@ -689,6 +898,8 @@ def _write_zip(items: list, action: str) -> tuple:
                     "user_id": info.get("user_id", ""), "last_activity": info.get("last_activity", ""),
                     "rows": info.get("rows"), "files": files, "history_sha256": hist_sha,
                 }
+                if seqs is not None:
+                    manifest["sessions"][sid].update(scope="turns", seqs=sorted(seqs))
                 snapshots[sid] = snap
             zf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
         _verify_zip(tmp, manifest)
@@ -720,15 +931,36 @@ def _verify_zip(path: str, manifest: dict):
                     raise RuntimeError(f"ZIP history for {sid} does not match what was written")
 
 
-def _folder_unchanged(sid: str, snap: dict) -> bool:
+def _folder_unchanged(sid: str, snap: dict, seqs=None) -> bool:
     folder = cfg.folder(sid)
     if not os.path.isdir(folder):
         return not snap
     now = {}
     for p in _folder_files(folder):
+        rel = p.relative_to(folder).as_posix()
+        if seqs is not None and _turn_of_file(rel) not in seqs:
+            continue
         st = p.stat()
-        now[p.relative_to(folder).as_posix()] = (st.st_size, st.st_mtime_ns)
+        now[rel] = (st.st_size, st.st_mtime_ns)
     return now == snap
+
+
+def _turn_file_patterns() -> list:
+    def _dir(d):
+        return re.escape(d.strip("/") + "/")
+    return [re.compile(r"^vecs/(\d+)-\d+_"),
+            re.compile("^" + _dir(cfg.analytics_folder) + r"(\d+)-\d+-"),
+            re.compile("^" + _dir(cfg.contents_folder) + r"\[(?:IN|OUT)\]seq(\d+)-\d+_")]
+
+
+def _turn_of_file(rel: str) -> Optional[int]:
+    """The seq a session-folder file belongs to, or None for session-wide
+    files (status.yaml, chat_memory.json, logs, batch results)."""
+    for pat in _turn_file_patterns():
+        m = pat.match(rel)
+        if m:
+            return int(m.group(1))
+    return None
 
 
 # ======================================================== cross-process lock
@@ -1171,16 +1403,259 @@ def purge(days: float, session_ids: Optional[Iterable[str]] = None,
     return report
 
 
+# ================================================================= prune ===
+_DB_BACKENDS = ("postgres", "cosmos")
+
+
+def _history_path(sid: str) -> str:
+    return os.path.join(cfg.folder(sid), cfg.history_file)
+
+
+def _turn_index_of(history: dict) -> dict:
+    """Same shape as the backends' turn_index() for one session's history."""
+    out = {}
+    for k, block in (history or {}).items():
+        try:
+            seq = int(k)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(block, dict):
+            continue
+        ts = ""
+        for sk, e in block.items():
+            if sk == "SETTING" or not isinstance(e, dict):
+                continue
+            for part in ("prompt", "response"):
+                v = e.get(part)
+                if isinstance(v, dict) and v.get("timestamp"):
+                    ts = max(ts, str(v["timestamp"]))
+        out[seq] = (ts, (block.get("SETTING") or {}).get("FLG", "Y"))
+    return out
+
+
+def _pick_turns(index: dict, cutoff: datetime, keep: int) -> list:
+    """Seqs to prune: last written before `cutoff` and outside the newest
+    `keep`. The newest active turn is kept as well — its digest is the one
+    the next turn builds on, and with deleted (FLG=N) turns at the end the
+    newest `keep` could all be inactive. A turn with no timestamp is kept."""
+    seqs = sorted(index)
+    hold = set(seqs[-keep:]) if keep > 0 else set()
+    active = [s for s in seqs if index[s][1] == "Y"]
+    if active:
+        hold.add(active[-1])
+    out = []
+    for s in seqs:
+        if s in hold:
+            continue
+        t = _parse_local(index[s][0])
+        if t is not None and t < cutoff:
+            out.append(s)
+    return out
+
+
+def _turn_args(days, keep) -> tuple:
+    days = float(cfg.turn_days if days is None else days)
+    keep = cfg.keep_turns if keep in (None, "") else max(1, int(keep))
+    return days, keep, _now() - timedelta(days=days)
+
+
+def scan_turns(days: Optional[float] = None, keep: Optional[int] = None,
+               exclude: Iterable[str] = (), session_ids: Optional[Iterable[str]] = None) -> list:
+    """Per session: how many turns it has and which a prune would take.
+    Sessions that are locked, open in the caller's window or unreachable
+    are listed with a reason and nothing to take."""
+    days, keep, cutoff = _turn_args(days, keep)
+    rows = scan(days=None, exclude=exclude, session_ids=session_ids)
+    db_ids = {r["id"] for r in rows if r["backend"] in _DB_BACKENDS}
+    index, db_error = {}, ""
+    if db_ids:
+        be = _db_backend()
+        try:
+            index = be.turn_index(db_ids)
+        except Exception as e:
+            db_error = "database unavailable"
+            logger.error("history prune: %s backend unavailable (%s)", be.name, e)
+        finally:
+            be.close()
+    out = []
+    for r in rows:
+        if r["backend"] == "file":
+            try:
+                idx = _turn_index_of(dmu.read_json_file(_history_path(r["id"])) or {})
+            except Exception:
+                idx = {}
+        elif r["backend"] in _DB_BACKENDS:
+            idx = index.get(r["id"], {})
+        else:
+            continue
+        reason = r["reason"] or (db_error if r["backend"] in _DB_BACKENDS else "")
+        take = [] if reason else _pick_turns(idx, cutoff, keep)
+        oldest = min((v[0] for v in idx.values() if v[0]), default="")
+        out.append({"id": r["id"], "name": r["name"], "user_id": r["user_id"], "backend": r["backend"],
+                    "last_activity": r["last_activity"], "turns": len(idx), "prune": take,
+                    "oldest_turn": oldest[:19], "eligible": bool(take), "reason": reason})
+    return out
+
+
+def prune_turns(days: Optional[float] = None, keep: Optional[int] = None,
+                session_ids: Optional[Iterable[str]] = None, exclude: Iterable[str] = (),
+                dry_run: bool = False) -> dict:
+    """Back up, ZIP, verify and then delete the turns older than `days`
+    (default ARCHIVE_TURN_DAYS), keeping each session's newest `keep`
+    (default ARCHIVE_KEEP_TURNS, at least 1). Sessions stay."""
+    days, keep, cutoff = _turn_args(days, keep)
+    report = {"action": "prune", "dry_run": dry_run, "days": days, "keep": keep, "zip": None,
+              "pruned": {}, "turns": 0, "skipped": [], "mirror": None, "errors": []}
+    plan = scan_turns(days=days, keep=keep, exclude=exclude, session_ids=session_ids)
+    report["skipped"] = [{"id": p["id"], "reason": p["reason"]} for p in plan
+                         if p["reason"] and (session_ids or not p["reason"].startswith("excluded"))]
+    cands = [p for p in plan if p["prune"]]
+    if dry_run or not cands:
+        if dry_run:
+            report["pruned"] = {p["id"]: p["prune"] for p in cands}
+            report["turns"] = sum(len(p["prune"]) for p in cands)
+        return report
+
+    with _RunLock():
+        be = _db_backend()
+        try:
+            ready = []
+            for p in cands:
+                sid = p["id"]
+                why = _export_first(sid)
+                if why:
+                    report["skipped"].append({"id": sid, "reason": why})
+                    continue
+                item = {"id": sid, "backend": p["backend"], "info": p}
+                try:
+                    if p["backend"] in _DB_BACKENDS:
+                        fp = be.sync(sid)
+                        hist = be.history(sid)
+                        if be.live_fp(sid) != fp:
+                            raise _Changed("history changed while it was backed up")
+                    else:
+                        st = os.stat(_history_path(sid))
+                        item["file_stat"] = (st.st_size, st.st_mtime_ns)
+                        hist = dmu.read_json_file(_history_path(sid)) or {}
+                    # Picked again from what was just backed up: the plan
+                    # is from before the lock.
+                    seqs = _pick_turns(_turn_index_of(hist), cutoff, keep)
+                    if not seqs:
+                        continue
+                    take = {str(s) for s in seqs}
+                    item["seqs"] = seqs
+                    item["history"] = {k: v for k, v in hist.items() if k in take}
+                    item["rest"] = {k: v for k, v in hist.items() if k not in take}
+                    if p["backend"] in _DB_BACKENDS:
+                        item["fingerprint"] = be.live_fp(sid, seqs)
+                except _Changed as e:
+                    report["skipped"].append({"id": sid, "reason": str(e)})
+                    continue
+                except Exception as e:
+                    report["errors"].append({"id": sid, "error": f"backup failed: {e}"})
+                    continue
+                ready.append(item)
+            if not ready:
+                return report
+            if not _archive_mirror_into(report, [i["id"] for i in ready]):
+                return report
+            report["zip"], snaps = _write_zip(ready, "prune")
+
+            for item in ready:
+                sid, seqs = item["id"], item["seqs"]
+                snap = snaps.get(sid, {})
+                try:
+                    if not _folder_unchanged(sid, snap, set(seqs)):
+                        raise _Changed("turn files changed after they were zipped")
+                    if item["backend"] in _DB_BACKENDS:
+                        be.delete_turns(sid, seqs, item["fingerprint"], report["zip"])
+                        _forget(sid)
+                    else:
+                        st = os.stat(_history_path(sid))
+                        if (st.st_size, st.st_mtime_ns) != item["file_stat"]:
+                            raise _Changed("history file changed after it was backed up")
+                        dmu.save_json_file(item["rest"], _history_path(sid), indent=4)
+                except _Changed as e:
+                    report["skipped"].append({"id": sid, "reason": str(e)})
+                    continue
+                except Exception as e:
+                    report["errors"].append({"id": sid, "error": str(e)})
+                    continue
+                # The history no longer points at these; one left behind is
+                # clutter, not loss — the ZIP holds it.
+                for rel in snap:
+                    try:
+                        os.remove(os.path.join(cfg.folder(sid), rel))
+                    except OSError as e:
+                        logger.warning("history prune: could not remove %s/%s (%s)", sid, rel, e)
+                report["pruned"][sid] = seqs
+        finally:
+            if be is not None:
+                be.close()
+    report["turns"] = sum(len(v) for v in report["pruned"].values())
+    logger.info("history prune: turns=%d sessions=%d skipped=%d errors=%d zip=%s",
+                report["turns"], len(report["pruned"]), len(report["skipped"]),
+                len(report["errors"]), report["zip"])
+    return report
+
+
+def _restore_turns(sid: str, zip_name: str, zf, meta: dict, members: list,
+                   hist_member: str, history: Optional[dict], overwrite: bool) -> dict:
+    """Put a turns ZIP back into the session it was pruned from."""
+    seqs = sorted(int(s) for s in meta.get("seqs") or [])
+    folder = cfg.folder(sid)
+    backend = meta.get("backend", "file")
+    root = f"{cfg.prefix}{sid}/"
+    with _RunLock():
+        be = _db_backend() if backend in _DB_BACKENDS else None
+        try:
+            if backend in _DB_BACKENDS and (be is None or be.name != backend):
+                raise RuntimeError(f"these turns were stored in {backend}; restore them with "
+                                   f"SESSION_STORE_METHOD set to it")
+            if not (os.path.isdir(folder) or (be is not None and be.has_live(sid))):
+                raise FileNotFoundError(f"session {sid} is not there; restore the session first")
+            if be is None:
+                path = _history_path(sid)
+                if not os.path.exists(path):
+                    raise RuntimeError(f"session {sid} no longer keeps its history in {cfg.history_file}")
+                cur = dmu.read_json_file(path) or {}
+                clash = sorted(int(k) for k in cur if k in {str(s) for s in seqs})
+                if clash and not overwrite:
+                    raise FileExistsError(f"session {sid} still has turns {clash}; "
+                                          f"pass overwrite to replace them")
+                cur.update(history or {})
+                merged = {k: cur[k] for k in sorted(cur, key=lambda x: (not x.isdigit(), int(x) if x.isdigit() else 0))}
+                dmu.save_json_file(merged, path, indent=4)
+                rows = None
+            else:
+                rows = be.restore_turns(sid, seqs, history, overwrite)
+            files = [n for n in members if n != hist_member]
+            for n in files:
+                target = Path(folder) / n[len(root):]
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(n) as src, open(target, "wb") as dst:
+                    shutil.copyfileobj(src, dst)
+            _forget(sid)
+        finally:
+            if be is not None:
+                be.close()
+    logger.info("history restore: turns %s of %s from %s (%s)", seqs, sid, zip_name, backend)
+    return {"action": "restore", "id": sid, "zip": zip_name, "backend": backend,
+            "restored_as": "turns", "seqs": seqs, "files": len(files), "rows": rows}
+
+
 # =============================================================== restore ===
 def restore(session_id: str, zip_name: Optional[str] = None, overwrite: bool = False) -> dict:
     """Bring a purged session back. The folder comes from the ZIP (the newest
-    one holding the session unless `zip_name` says otherwise); DB rows come
-    from the archive store, or from the ZIP's history when the store has none.
-    A session that still exists is refused unless `overwrite`."""
+    one holding the whole session unless `zip_name` says otherwise); DB rows
+    come from the archive store, or from the ZIP's history when the store has
+    none. A session that still exists is refused unless `overwrite`.
+    A turns ZIP (from a prune) puts its turns back into the session instead."""
     sid = session_id
     folder = cfg.folder(sid)
     if not zip_name:
-        holding = [a["zip"] for a in list_archives() if sid in a.get("sessions", {})]
+        holding = [a["zip"] for a in list_archives()
+                   if (a.get("sessions", {}).get(sid) or {"scope": "turns"}).get("scope") != "turns"]
         if not holding:
             raise FileNotFoundError(f"no archive ZIP holds session {sid}")
         zip_name = holding[0]
@@ -1197,6 +1672,8 @@ def restore(session_id: str, zip_name: Optional[str] = None, overwrite: bool = F
         hist_member = root + cfg.history_file
         history = (json.loads(zf.read(hist_member).decode("utf-8"))
                    if hist_member in names else None)
+        if meta.get("scope") == "turns":
+            return _restore_turns(sid, zip_name, zf, meta, members, hist_member, history, overwrite)
 
         with _RunLock():
             # A DB-archived session restored where SESSION_STORE_METHOD is now
@@ -1242,7 +1719,7 @@ def _print_scan(rows: list):
 def _cli(argv) -> int:
     import argparse
     ap = argparse.ArgumentParser(prog="DigiM_HistoryArchive.py",
-                                 description="Back up, purge and restore chat history.")
+                                 description="Back up, purge, prune and restore chat history.")
     sub = ap.add_subparsers(dest="cmd", required=True)
     for c in ("list", "backup", "purge"):
         p = sub.add_parser(c)
@@ -1252,6 +1729,13 @@ def _cli(argv) -> int:
         p.add_argument("--session", action="append", default=None, help="limit to these session ids")
         if c != "list":
             p.add_argument("--dry-run", action="store_true", help="show what would happen")
+    p = sub.add_parser("prune", help="delete old turns inside sessions, keeping the newest ones")
+    p.add_argument("--days", type=float, default=None,
+                   help=f"turns older than this (default ARCHIVE_TURN_DAYS={cfg.turn_days})")
+    p.add_argument("--keep", type=int, default=None,
+                   help=f"newest turns every session keeps (default ARCHIVE_KEEP_TURNS={cfg.keep_turns}, min 1)")
+    p.add_argument("--session", action="append", default=None, help="limit to these session ids")
+    p.add_argument("--dry-run", action="store_true", help="show what would happen")
     p = sub.add_parser("restore")
     p.add_argument("--session", required=True)
     p.add_argument("--zip", default=None)
@@ -1270,13 +1754,17 @@ def _cli(argv) -> int:
             return 2
         print(json.dumps(purge(days=a.days if a.days is not None else 0, session_ids=a.session,
                                dry_run=a.dry_run), ensure_ascii=False, indent=2))
+    elif a.cmd == "prune":
+        print(json.dumps(prune_turns(days=a.days, keep=a.keep, session_ids=a.session, dry_run=a.dry_run),
+                         ensure_ascii=False, indent=2))
     elif a.cmd == "restore":
         print(json.dumps(restore(a.session, zip_name=a.zip, overwrite=a.overwrite),
                          ensure_ascii=False, indent=2))
     elif a.cmd == "archives":
         for z in list_archives():
+            turns = sum(len(m.get("seqs") or []) for m in z.get("sessions", {}).values())
             print(f"{z['zip']}  {z['size'] / 1e6:.1f}MB  {z.get('action') or '(legacy)'}  "
-                  f"{len(z.get('sessions', {}))} sessions")
+                  f"{len(z.get('sessions', {}))} sessions" + (f", {turns} turns" if turns else ""))
     return 0
 
 

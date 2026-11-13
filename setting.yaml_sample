@@ -40,6 +40,11 @@ MST_STORE_CACHE_SEC: 10
 # partition key /session_id).
 ARCHIVE_FOLDER: "user/archive/"
 ARCHIVE_DAYS: 30
+# Turn mode (prune): turns older than ARCHIVE_TURN_DAYS are backed up and
+# removed from their session; every session keeps its newest
+# ARCHIVE_KEEP_TURNS turns (at least 1 — the newest carries the digest).
+ARCHIVE_TURN_DAYS: 30
+ARCHIVE_KEEP_TURNS: 10
 COSMOS_ARCHIVE_CONTAINER: "chat_history_archive"
 AGENT_FOLDER: "user/common/agent/"
 CHARACTER_FOLDER: "user/common/agent/character/"

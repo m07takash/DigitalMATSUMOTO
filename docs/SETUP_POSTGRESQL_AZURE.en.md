@@ -469,6 +469,9 @@ CREATE TABLE IF NOT EXISTS digim_chat_history_archive (
     created_at  TIMESTAMPTZ NOT NULL,
     updated_at  TIMESTAMPTZ NOT NULL,
     archived_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Set when the turn was pruned out of live (kept here; restorable).
+    pruned_at   TIMESTAMPTZ,
+    pruned_zip  TEXT,
     PRIMARY KEY (session_id, seq, sub_seq)
 );
 -- One row per backed-up session: what was copied, and whether it was purged.
@@ -486,6 +489,7 @@ CREATE INDEX IF NOT EXISTS idx_digim_chat_history_archive_sessions_purged
 ```
 
 > The archive table has the same shape as `digim_chat_history` and holds whole sessions. A purge copies a session here and deletes the live rows only when row count and content hash match.
+> A prune (old turns only) sets `pruned_at` / `pruned_zip` on the rows of the turns it removed, so later backups keep them; a restore clears them again. On an existing table the next backup adds the two columns with `ALTER TABLE … ADD COLUMN IF NOT EXISTS`.
 > It is separate from the analytics tables `digim_sessions` / `digim_dialogs` / `digim_references`; purging never removes the analytics mirror.
 > The analytics mirror has its own backup tables, described in 6-10.
 

@@ -469,6 +469,9 @@ CREATE TABLE IF NOT EXISTS digim_chat_history_archive (
     created_at  TIMESTAMPTZ NOT NULL,
     updated_at  TIMESTAMPTZ NOT NULL,
     archived_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Set when the turn was pruned out of live (kept here; restorable).
+    pruned_at   TIMESTAMPTZ,
+    pruned_zip  TEXT,
     PRIMARY KEY (session_id, seq, sub_seq)
 );
 -- One row per backed-up session: what was copied, and whether it was purged.
@@ -486,6 +489,7 @@ CREATE INDEX IF NOT EXISTS idx_digim_chat_history_archive_sessions_purged
 ```
 
 > 退避テーブルは `digim_chat_history` と同じ形で、セッションを丸ごと保持します。purge はここに複製して件数と内容ハッシュが一致したものだけをライブ側から削除します。
+> 古いターンだけを消す prune では、消したターンの行に `pruned_at` / `pruned_zip` が入ります（以後の backup で消されず、復元するとまた空になります）。既存の表には次の backup で `ALTER TABLE … ADD COLUMN IF NOT EXISTS` により足されます。
 > 分析用の `digim_sessions` / `digim_dialogs` / `digim_references` とは別物で、purge しても分析ミラーは消えません。
 > 分析ミラーの退避先は次の 6-10 です。
 

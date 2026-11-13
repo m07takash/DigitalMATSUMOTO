@@ -195,11 +195,13 @@ def _iter_chat_memory(session_glob: str = _SESSION_GLOB,
     """Yield (session_id, chat_memory_dict) over both live session folders and
     archived ZIPs.
 
-    Archived ZIPs (`archive_old_sessions` writes these) hold one folder per
-    session each containing `chat_memory.json`. Once a session is archived,
-    its live folder is deleted — so the two sources cannot double-count under
-    normal operation. For safety we still de-dupe by session_id (live wins)."""
-    seen: set[str] = set()
+    Archived ZIPs (DigiM_HistoryArchive writes these) hold one folder per
+    session each containing `chat_memory.json`. A purge ZIP holds a whole
+    session whose folder is gone; a prune ZIP holds only the old turns of a
+    session that is still live. De-duplication is therefore per turn: a
+    session already yielded is yielded again with just the seqs not seen yet
+    (live wins)."""
+    seen: dict[str, set] = {}
 
     # 1) Live session folders
     for sf in sorted(glob.glob(session_glob), reverse=True):
@@ -213,7 +215,7 @@ def _iter_chat_memory(session_glob: str = _SESSION_GLOB,
         sid = os.path.basename(sf).replace("session", "")
         if sid in seen:
             continue
-        seen.add(sid)
+        seen[sid] = set(data)
         yield sid, data
 
     # 2) Archived ZIPs — each session folder lives at the ZIP root as
@@ -231,13 +233,15 @@ def _iter_chat_memory(session_glob: str = _SESSION_GLOB,
                         continue
                     folder = name.rsplit("/", 1)[0]
                     sid = folder.replace("session", "")
-                    if sid in seen:
-                        continue
                     try:
                         data = json.loads(zf.read(name).decode("utf-8"))
                     except Exception:
                         continue
-                    seen.add(sid)
+                    had = seen.setdefault(sid, set())
+                    data = {k: v for k, v in data.items() if k not in had}
+                    if not data:
+                        continue
+                    had |= set(data)
                     yield sid, data
             finally:
                 zf.close()
@@ -298,12 +302,16 @@ def scan_agent_turns(agent_file: str, session_glob: str = _SESSION_GLOB,
         seen_sids |= pg_sids
 
     # 2) + 3) Live folders + archives, skipping sessions already covered by PG.
+    #    One session can arrive more than once (live turns, then the old
+    #    turns from a prune ZIP); _iter_chat_memory never repeats a turn.
     for sid, data in _iter_chat_memory(session_glob, archive_folder):
         if sid in seen_sids:
             continue
-        seen_sids.add(sid)
-        seq1_setting = (data.get("1", {}) or {}).get("SETTING", {}) or {}
-        user_info = seq1_setting.get("user_info") or {}
+        # Seq 1 is gone from a pruned session; any turn's SETTING has it.
+        user_info = next(((data[k].get("SETTING") or {}).get("user_info")
+                          for k in sorted((k for k in data if str(k).isdigit()), key=int)
+                          if isinstance(data[k], dict) and (data[k].get("SETTING") or {}).get("user_info")),
+                         None) or {}
 
         for seq_key, seq_block in data.items():
             if not isinstance(seq_block, dict):

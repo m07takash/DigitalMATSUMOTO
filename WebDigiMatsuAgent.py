@@ -5218,17 +5218,27 @@ def _scheduler_view():
     def _sch_history_archive_params(_params, kp):
         """history_archive step: backup refreshes the DB archive copy (and
         zips sessions idle for N days when N is given); purge backs up and
-        then deletes sessions idle for N days."""
-        _acts = ["backup", "purge"]
+        then deletes sessions idle for N days; prune backs up and then
+        deletes turns older than N days, keeping each session's newest."""
+        _acts = ["backup", "purge", "prune"]
         _a = _params.get("action") if _params.get("action") in _acts else "backup"
         _c1, _c2 = st.columns(2)
         _params["action"] = _c1.selectbox("Action", _acts, index=_acts.index(_a), key=kp + "ha_action")
-        _d_default = int(_params.get("days") or (dmha.cfg.default_days if _params["action"] == "purge" else 0))
+        _act = _params["action"]
+        _d_default = int(_params.get("days") or (dmha.cfg.default_days if _act == "purge" else
+                                                 dmha.cfg.turn_days if _act == "prune" else 0))
         _params["days"] = int(_c2.number_input(
-            "Idle Days" + (" (0 = DB copy only)" if _params["action"] == "backup" else ""),
-            min_value=0 if _params["action"] == "backup" else 1,
-            value=max(_d_default, 0 if _params["action"] == "backup" else 1),
+            "Idle Days" + (" (0 = DB copy only)" if _act == "backup" else "") if _act != "prune" else "Turn Age Days",
+            min_value=0 if _act == "backup" else 1,
+            value=max(_d_default, 0 if _act == "backup" else 1),
             step=1, key=kp + "ha_days"))
+        if _act == "prune":
+            _params["keep_turns"] = int(st.number_input(
+                "Keep Newest Turns", min_value=1,
+                value=max(int(_params.get("keep_turns") or dmha.cfg.keep_turns), 1),
+                step=1, key=kp + "ha_keep"))
+        else:
+            _params.pop("keep_turns", None)
         return _params
 
     def _sch_agent_run_params(_params, kp):
@@ -5504,7 +5514,8 @@ def _scheduler_view():
         _step_notes = {
             "rag_update": "Re-vectorize every active RAG (same as Update RAG Data).",
             "user_memory_nowaday": "Update this month's Nowaday for all users, then merge into Persona.",
-            "history_archive": "Back up chat history, or back up and then delete sessions idle for N days.",
+            "history_archive": "Back up chat history, or back up and then delete sessions idle for N days "
+                               "(purge) or the turns older than N days inside sessions (prune).",
         }
         st.markdown("**Workflow** — steps run top to bottom; if one fails, the job stops there.")
         for _ni, _node in enumerate(_nodes):
@@ -6252,7 +6263,9 @@ def _user_memory_explorer():
                         _d = _json_ua.load(open(_p, encoding="utf-8"))
                     except Exception:
                         continue
-                    _seq1_st = _d.get("1", {}).get("SETTING", {})
+                    # Seq 1 is gone once old turns are pruned; any turn's SETTING carries user_info.
+                    _seq1_st = next((_d[_k].get("SETTING") or {} for _k in sorted((_k for _k in _d if str(_k).isdigit()), key=int)
+                                     if isinstance(_d[_k], dict) and (_d[_k].get("SETTING") or {}).get("user_info")), {})
                     if (_seq1_st.get("user_info") or {}).get("USER_ID") != uid:
                         continue
                     _sid = os.path.basename(_sf).replace("session", "")
@@ -10068,6 +10081,61 @@ def main():
                     st.session_state._hist_purge_n = st.session_state.get("_hist_purge_n", 0) + 1
                     st.rerun()
 
+                # Old turns inside sessions that are still in use. Whole turns
+                # only, and the newest ones stay: the next turn builds on the
+                # newest digest, so the conversation carries on.
+                st.markdown("**Old Turns**")
+                st.caption("Turns older than the period below are zipped and removed from their session "
+                           "(with their vectors, contents and analytics files); each session keeps its newest turns. "
+                           "Analytics rows are not touched.")
+                _ht1, _ht2 = st.columns(2)
+                _ht_days = _ht1.number_input(
+                    "Turn Age Days", min_value=1, value=int(dmha.cfg.turn_days), step=1,
+                    key="archive_turn_days_input",
+                    help="A turn qualifies when its last prompt / response is at least this many days old.")
+                _ht_keep = _ht2.number_input(
+                    "Keep Newest", min_value=1, value=int(dmha.cfg.keep_turns), step=1,
+                    key="archive_keep_turns_input",
+                    help="Turns every session keeps however old they are. The newest active turn is always kept.")
+                if st.button("Preview Turns", key="hist_turn_preview"):
+                    try:
+                        st.session_state._hist_turn_preview = dmha.scan_turns(
+                            days=_ht_days, keep=_ht_keep, exclude=_ha_exclude)
+                    except Exception as e:
+                        st.session_state.sidebar_message = f"Preview error: {e}"
+                    st.rerun()
+                _tprev = st.session_state.get("_hist_turn_preview")
+                if _tprev is not None:
+                    _telig = [r for r in _tprev if r["eligible"]]
+                    st.caption(f"{sum(len(r['prune']) for r in _telig)} turns in {len(_telig)} of "
+                               f"{len(_tprev)} sessions qualify")
+                    if _telig:
+                        st.dataframe(
+                            pd.DataFrame([{"id": r["id"], "name": r["name"], "backend": r["backend"],
+                                           "turns": r["turns"], "to delete": len(r["prune"]),
+                                           "seq": f"{r['prune'][0]}-{r['prune'][-1]}",
+                                           "oldest turn": r["oldest_turn"][:10]}
+                                          for r in _telig]),
+                            hide_index=True, height=min(35 * len(_telig) + 38, 240))
+                _ht_ok = st.checkbox("Delete the qualifying turns after backing them up",
+                                     key=f"hist_prune_ok_{st.session_state.get('_hist_prune_n', 0)}")
+                if st.button("Prune Old Turns", key="hist_prune", disabled=not _ht_ok):
+                    with st.spinner("Backing up and deleting turns..."):
+                        try:
+                            _r = dmha.prune_turns(days=_ht_days, keep=_ht_keep, exclude=_ha_exclude)
+                            st.session_state.sidebar_message = (
+                                f"Prune: {_r['turns']} turns deleted from {len(_r['pruned'])} sessions"
+                                + (f" (backup: {_r['zip']})" if _r["zip"] else "")
+                                + (f", {len(_r['skipped'])} skipped" if _r["skipped"] else "")
+                                + (f", {len(_r['errors'])} failed" if _r["errors"] else ""))
+                            st.session_state.last_archive_zip = (
+                                os.path.join(dmha.cfg.archive_folder, _r["zip"]) if _r["zip"] else None)
+                        except Exception as e:
+                            st.session_state.sidebar_message = f"Prune error: {e}"
+                    st.session_state._hist_turn_preview = None
+                    st.session_state._hist_prune_n = st.session_state.get("_hist_prune_n", 0) + 1
+                    st.rerun()
+
                 # Archive ZIPs: download and restore
                 _archive_dir = dmha.cfg.archive_folder
                 _zip_files = sorted(
@@ -10099,18 +10167,29 @@ def main():
                         st.rerun()
                     _zs = st.session_state.get("_hist_zip_sessions")
                     if _zs and _zs[0] == _selected_zip and _zs[1]:
-                        _zs_label = {sid: f"{sid}  {m.get('name', '')}".strip() for sid, m in _zs[1]}
+                        _zs_label = {sid: (f"{sid}  {m.get('name', '')}".strip()
+                                           + (f"  (turns {m['seqs'][0]}-{m['seqs'][-1]})"
+                                              if m.get("scope") == "turns" and m.get("seqs") else ""))
+                                     for sid, m in _zs[1]}
                         _rsid = st.selectbox("Session to Restore", list(_zs_label),
                                              format_func=lambda s: _zs_label.get(s, s),
                                              key="hist_restore_sid")
-                        _rover = st.checkbox("Replace it if it still exists", key="hist_restore_overwrite")
-                        if st.button("Restore Session", key="hist_restore"):
+                        _rover = st.checkbox("Replace it if it still exists", key="hist_restore_overwrite",
+                                             help="For a turns backup: replace those turns if the session has them.")
+                        if st.button("Restore Session", key="hist_restore",
+                                     help="A turns backup puts its turns back into the session they came from."):
                             try:
                                 _r = dmha.restore(_rsid, zip_name=_selected_zip, overwrite=_rover)
                                 st.session_state.sidebar_message = (
-                                    f"Restored {_r['id']} as a {_r['restored_as']} session "
-                                    f"({_r['files']} files"
+                                    (f"Restored {len(_r['seqs'])} turns into {_r['id']} "
+                                     if _r["restored_as"] == "turns" else
+                                     f"Restored {_r['id']} as a {_r['restored_as']} session ")
+                                    + f"({_r['files']} files"
                                     + (f", {_r['rows']} rows" if _r.get("rows") is not None else "") + ")")
+                                # This window's copy of the session is the one the restore
+                                # just changed under it.
+                                if _r["id"] == getattr(st.session_state.get("session"), "session_id", ""):
+                                    st.session_state.session.set_history()
                                 refresh_session_list(st.session_state.service_id, st.session_state.user_id,
                                                      st.session_state.user_admin_flg)
                             except Exception as e:
@@ -10734,6 +10813,13 @@ def main():
         seq_visible_key = int(max_seq) - num_seq_visible
     else:
         seq_visible_key = 0
+
+    # Turns before the first stored seq were moved to an archive ZIP (History
+    # Retention > Old Turns). Seq numbers are never reused, so the gap says so.
+    _first_seq = min((int(_s) for _s in (st.session_state.session.chat_history_dict or {}) if str(_s).isdigit()),
+                     default=1)
+    if _first_seq > 1 and seq_visible_key <= _first_seq:
+        st.caption(f"Turns 1-{_first_seq - 1} of this session were moved to the history archive.")
 
     # Render chat history
     # Temporary instrumentation: one line per rerun in logs/streamlit.log, so the
