@@ -90,6 +90,7 @@ import DigiM_GeneUserDialog as dmgu
 import DigiM_VAnalytics as dmva
 import DigiM_DB_Export as dmdbe
 import DigiM_HistoryArchive as dmha
+import DigiM_PEReport as dmper
 import DigiM_AgentPersona as dap
 import DigiM_Scheduler as dmsch
 
@@ -2744,6 +2745,7 @@ def _agent_with_engine(agent_file, engine, persona=None):
 
 def _explanation_block(state_base, template_name, fallback_agent, ctx_builder, label, kp, postprocess=None):
     """Explanation: pick agent + engine, run multiple times, show one via a dropdown. Returns the currently displayed text."""
+    st = dmper.ui()  # the Performance Explorer exports what it shows; elsewhere this is streamlit
     _hk = f"{state_base}_history"
     _sk = f"{state_base}_sel"
     st.markdown(f"**{label} explanation:**")
@@ -7706,6 +7708,7 @@ def _pe_memo(key, fn, store="_pe_memo"):
 
 
 def _pe_answer_panel(dmpe, sc, turn_ids, tag, top_n, stop, akeys=None, store="_pe_memo"):
+    st = dmper.ui()  # records what is drawn while an HTML export is being prepared
     def _build():
         _terms, _freq = dmpe.response_terms(sc, turn_ids, top_n, stop, akeys=akeys)
         return _terms, dmpe.wordcloud_png(_freq)
@@ -7727,6 +7730,7 @@ def _pe_answer_panel(dmpe, sc, turn_ids, tag, top_n, stop, akeys=None, store="_p
 
 
 def _pe_knowledge_panel(dmpe, sc, turn_ids, tag, top_n, kp, akeys=None, store="_pe_memo"):
+    st = dmper.ui()  # records what is drawn while an HTML export is being prepared
     import altair as alt
     _by_label = st.radio("Rank knowledge by:", ["Reference count", "Cumulative utility"], horizontal=True, key=f"{kp}_kby")
     _by = "ref_count" if _by_label == "Reference count" else "utility_sum"
@@ -7843,6 +7847,7 @@ def _pe_prepare_answers(dmpe, sc, items, top_n, stop, slot, store="_pe_memo"):
 
 
 def _pe_examples(reps, n_chars=600):
+    st = dmper.ui()  # records what is drawn while an HTML export is being prepared
     for _r in reps:
         st.markdown(f"**{_r['user_id']}** · {_r['ts']:%Y-%m-%d %H:%M}")
         # Shown as code so that markup in an input or an answer is not rendered.
@@ -7854,19 +7859,53 @@ def _pe_examples(reps, n_chars=600):
         st.divider()
 
 
+def _pe_html_request(view):
+    st.session_state._pe_html_req = view
+
+
 def _performance_explorer():
     st.subheader("Performance Explorer")
     _sec = st.radio("Section:", ["User", "Agent"], horizontal=True, key="pe_section", label_visibility="collapsed")
-    if _sec == "User":
-        _pe_user_section()
-    elif st.radio("Agent view:", ["Summary", "Knowledge map"], horizontal=True, key="pe_agent_view",
-                  label_visibility="collapsed") == "Summary":
-        _pe_agent_section()
-    else:
-        _agent_performance_explorer()
+    _view = "User" if _sec == "User" else st.radio(
+        "Agent view:", ["Summary", "Knowledge map"], horizontal=True, key="pe_agent_view", label_visibility="collapsed")
+    # Filled after the view has drawn: the export is made from this very run.
+    # A fixed container, so the buttons never shift the tabs below them.
+    _dl = st.container()
+    # Recording runs only on the rerun the button asked for; every other
+    # rerun draws through streamlit directly.
+    _rec = dmper.start() if st.session_state.pop("_pe_html_req", None) == _view else None
+    try:
+        if _view == "User":
+            _pe_user_section()
+        elif _view == "Summary":
+            _pe_agent_section()
+        else:
+            _agent_performance_explorer()
+    finally:
+        dmper.stop()
+    if _rec is not None:
+        if _rec.armed:
+            st.session_state._pe_html = {
+                "view": _view, "data": dmper.render_html(_rec, f"Performance Explorer — {_view}"),
+                "name": dmper.file_name(_view), "at": datetime.now().strftime("%H:%M:%S")}
+        else:
+            st.session_state._pe_html = None
+            st.session_state.sidebar_message = "Nothing to export yet: run the analysis first."
+    _h = st.session_state.get("_pe_html")
+    _h = _h if _h and _h["view"] == _view else None
+    with _dl:
+        _c = st.columns([1, 1, 4])
+        _c[0].button("Prepare HTML", key="pe_html_build", on_click=_pe_html_request, args=(_view,),
+                     help="Writes everything this view shows, every tab included, as it is now into one HTML file.")
+        _c[1].download_button("Download HTML", data=_h["data"] if _h else b"", file_name=_h["name"] if _h else "report.html",
+                              mime="text/html", key="pe_html_dl", disabled=_h is None, on_click="ignore")
+        if _h:
+            _c[2].caption(f"Prepared at {_h['at']} ({len(_h['data']) / 1e6:.1f} MB). "
+                          "Press Prepare HTML again after changing the view.")
 
 
 def _pe_user_section():
+    st = dmper.ui()  # records what is drawn while an HTML export is being prepared
     import altair as alt
     import DigiM_PerformanceExplorer as dmpe
     alt.data_transformers.disable_max_rows()
@@ -7948,6 +7987,7 @@ def _pe_user_section():
     _note = f" Left out as not typed by a user: {' and '.join(_left)}." if _left else ""
     if _lo.get("skill_blocks"):
         _note += f" Text a skill injected (web search results) was removed from {_lo['skill_blocks']:,} inputs."
+    dmper.arm("Performance Explorer — User", f"Times are in {_tz}.")
     st.caption("Showing: " + " / ".join(_desc) + "." + _note)
 
     _sm = _pe_memo(("summary",), lambda: dmpe.usage_summary(_sc))
@@ -8350,6 +8390,7 @@ def _pe_user_section():
 
 
 def _pe_agent_section():
+    st = dmper.ui()  # records what is drawn while an HTML export is being prepared
     import altair as alt
     import DigiM_PerformanceExplorer as dmpe
     alt.data_transformers.disable_max_rows()
@@ -8415,6 +8456,7 @@ def _pe_agent_section():
     _desc = [f"{_pf:%Y-%m-%d %H:%M} – {(_pt - timedelta(minutes=1)):%Y-%m-%d %H:%M}"]
     if _sc["filters"]["agents"]:
         _desc.append("agents: " + ", ".join(dmpe.agent_label(a) for a in _sc["filters"]["agents"]))
+    dmper.arm("Performance Explorer — Agent summary", f"Times are in {_tz}.")
     st.caption("Showing: " + " / ".join(_desc))
 
     _an = _sc["answers"]
@@ -8791,6 +8833,7 @@ def _agent_performance_explorer():
       - Overview: scale (sessions/turns/users/period) + monthly activity
       - KB Utilization: per-RAG scatter (query-type colored, referenced
         chunks highlighted), top-N rankings, PageIndex page hotspots."""
+    st = dmper.ui()  # records what is drawn while an HTML export is being prepared
     import DigiM_AgentPerformanceExplorer as ape
     import matplotlib
     matplotlib.use("Agg")
@@ -8834,6 +8877,7 @@ def _agent_performance_explorer():
         st.info(f"No turns for {_ape_af} in {_ape_from} – {_ape_to}.")
         return
 
+    dmper.arm(f"Performance Explorer — Knowledge map: {_ape_af}", f"Period {_ape_from} – {_ape_to}")
     _tab_overview, _tab_kb = st.tabs(["Overview", "Knowledge / Book Utilization"])
 
     # =================================================================

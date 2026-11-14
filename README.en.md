@@ -3324,6 +3324,7 @@ The **Performance Explorer** sidebar option analyses the accumulated conversatio
 
 - **User** — pick a period, groups / users and agents, and follow "user input → the agent's answers to it → the knowledge those answers used". Backend: `DigiM_PerformanceExplorer.py`.
 - **Agent** — switches between **Summary** (pick a period and agents, and compare output, habits, knowledge, skills, support agents and feedback signals; see "Summary of the Agent section" below) and **Knowledge map** (the cross-session performance of one agent; backend `DigiM_AgentPerformanceExplorer.py`). "Data sources", "Tab 1" and "Tab 2" in this chapter describe the Knowledge map.
+- **Save as HTML** — in every view, **Prepare HTML** above the results writes what the view shows at that moment (every tab and expander, tables, charts, word clouds, LLM explanations, and the cluster or theme picked) into one HTML file, saved with **Download HTML**. Press Prepare HTML again after changing the view. Tables and text read offline; charts load the Vega libraries from cdn.jsdelivr.net when the file is opened. `DigiM_PEReport.py` does the recording, and only on the rerun the button asks for.
 
 #### What the User section reads
 

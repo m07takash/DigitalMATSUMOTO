@@ -3383,6 +3383,7 @@ Knowledge Explorerは、RAGデータの分析画面です。サイドバーの�
 
 - **User** — 期間・グループ／ユーザー・エージェントを指定し、「ユーザー入力 → 対応するエージェントの回答 → 活用された知識」の順に分析します。バックエンドは `DigiM_PerformanceExplorer.py`。
 - **Agent** — **Summary**（期間とエージェントを指定し、出力傾向・Habit・知識・SKILL・サポートエージェント・フィードバックの兆候を比べる。下の「Agent セクションの Summary」）と、**Knowledge map**（エージェント1体の累積パフォーマンス。バックエンドは `DigiM_AgentPerformanceExplorer.py`）を切り替えます。この章の「データソース」「Tab 1」「Tab 2」は Knowledge map の説明です。
+- **HTML で保存** — どのビューでも、分析結果の上にある **Prepare HTML** を押すと、そのとき表示している内容（全タブ・エクスパンダの中身、表、グラフ、ワードクラウド、LLM の説明、選んでいるクラスタやテーマ）を1つの HTML にまとめ、**Download HTML** で保存できます。表示を変えたら Prepare HTML を押し直してください。表と文章はオフラインでも読めますが、グラフは開いたときに cdn.jsdelivr.net から Vega のライブラリを読み込みます。記録は `DigiM_PEReport.py` が行い、ボタンを押した回の再描画でだけ動きます。
 
 #### User セクションの対象データ
 
