@@ -124,6 +124,7 @@ CREATE TABLE digim_dialogs (
     user_input                TEXT,
     query_text                TEXT,
     response_text             TEXT,
+    response_refs             TEXT,
     digest_text               TEXT,
     prompt_timestamp          TIMESTAMP,
     response_timestamp        TIMESTAMP,
@@ -166,6 +167,11 @@ CREATE TABLE digim_dialogs (
 >   ADD COLUMN IF NOT EXISTS persona_name VARCHAR(128),
 >   ADD COLUMN IF NOT EXISTS chain_index  INTEGER,
 >   ADD COLUMN IF NOT EXISTS chain_role   VARCHAR(32);
+> ```
+>
+> 回答の下に出す参照の節（`## Reference Info` / `## Reference Knowledge`）は `response_text` に入れず `response_refs` に分けています。列が無ければエクスポートが最初の書き込みで足しますが、先に作っておく場合:
+> ```sql
+> ALTER TABLE digim_dialogs ADD COLUMN IF NOT EXISTS response_refs TEXT;
 > ```
 
 ### 4-3. digim_references

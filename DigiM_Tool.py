@@ -52,6 +52,15 @@ def render_appended_skills(entry):
                     for _o, _n, _h, _t in _rows)
 
 
+def render_response_tail(entry):
+    """Everything shown under the answer: its reference sections, then the
+    APPEND skills. `response.text` itself holds only the answer."""
+    _resp = (entry or {}).get("response") or {}
+    _refs = _resp.get("ref_sections") if isinstance(_resp, dict) else ""
+    _refs = _refs.strip() if isinstance(_refs, str) else ""
+    return (f"\n\n{_refs}" if _refs else "") + render_appended_skills(entry)
+
+
 def render_skill_header(template, name, default=""):
     """A skill's HEADER with `{name}` filled in, or `default` when unset.
 

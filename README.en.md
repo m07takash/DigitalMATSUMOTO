@@ -2834,6 +2834,8 @@ Two Chat-sidebar checkboxes control what gets appended to the answer.
 
 **Reference Knowledge**: unlike `## References` (an extra LLM pass), this section is built **deterministically in code** from the retrieval log (`knowledge_selected`). It is therefore unaffected by citation-injector failures and still fires on turns with nothing citable. Handles both Vector chunks (dicts) and PageIndex / Graph LOG_TEMPLATE strings, de-duplicated by `(rag_name, title)`, capped at 20 entries.
 
+**Where it is stored**: the Reference Knowledge and Reference Info sections are not written into the answer (`response.text`). They are saved in `response.ref_sections` and joined under the answer when displayed, the same way APPEND skills are. Mixed into the answer, memory, digests, analytics and the Performance Explorer would count the source lists as the agent's words. Turns saved before this carry the sections at the end of the text, and readers cut them off (`dmu.answer_body()`). In the analytics mirror the answer goes to `response_text` and the sections to `response_refs`.
+
 **Emphasis**: marks the load-bearing wording — conclusions, figures, proper nouns — with `**bold**`, and structures longer answers with headings (##/###) and bullets. **Emphasis only reads as emphasis while it stays rare, so the instruction caps it at one or two spots per paragraph** rather than simply asking for more of it. Formatting only: the persona voice (PERSONALITY / CHARACTER) is untouched. Combines with Diagrams — both instructions are concatenated at the prompt tail.
 
 **Diagrams**: Mermaid blocks are split out of the body by [`render_response_markdown`](WebDigiMatsuAgent.py) and rendered inside an iframe (tables pass through as plain Markdown). The Mermaid runtime is **inlined from `static/mermaid.min.js` when that file exists**, falling back to the CDN otherwise - **place `static/mermaid.min.js` for closed networks** (without it and offline, the diagram source is shown verbatim). Responses with no ```mermaid fence go straight to `st.markdown`, so existing rendering is untouched.
@@ -3868,7 +3870,8 @@ API default values are used for omitted parameters. These correspond to the WebU
   "session_id": "API_TEST_001",
   "session_name": "(User:TestUser) Question about AI",
   "response": "Agent response text",
-  "response_display": "Agent response text\n\n## Mood Score\n\n...",
+  "response_display": "Agent response text\n\n## Reference Info\n...\n\n## Mood Score\n\n...",
+  "ref_sections": "## Reference Info\n...",
   "skills": {
     "refine_expression": {"phase": "AFTER", "merge": "REPLACE", "order": 20,
                            "text": "...", "model": "...", "prompt_token": 820, "response_token": 310},
@@ -3905,6 +3908,11 @@ API default values are used for omitted parameters. These correspond to the WebU
 > and analytics do not mistake it for the agent's own words. Use `response_display` for the same text the
 > WebUI shows.
 >
+> The reference sections shown under an answer (`## Reference Info` / `## Reference Knowledge`) stay out of
+> `response` for the same reason and arrive in `ref_sections` (empty when there are none). Only the inline
+> citation markers such as `[1]` remain in `response`. `response_display` is the answer, then the reference
+> sections, then APPEND skill output.
+>
 > An unknown name passed in `skills` / `skill` comes back in `skills_ignored` (the key is absent when none were).
 
 > `attachments_processed` is an empty array (`[]`) when the request has no attachments.
@@ -3928,6 +3936,7 @@ Files can be passed as context to the LLM via the same path the WebUI uses (forw
 - Same-request name collisions get an auto-suffix: `report (1).pdf`, `(2)…`
 - Staging path: `TEMP_FOLDER/api/<uuid-16>/` — one per request, kept separate from the WebUI's temp folder
 - The response's `attachments_processed` lists what the server accepted with filename, byte size, and source (`base64` / `multipart` / `url` / `user_input_url`)
+- Readable formats are the same as WebUI attachments: text (txt / md / csv / json / vtt), HTML (only the body text and tables are kept), PDF / docx / pptx / xlsx, images, mp3, and source / config files (py / js / ts / java / go / sql / yaml, etc.; passed as code blocks, with only the cells kept from ipynb; the list is `DigiM_Util.CODE_FILE_EXTS`)
 
 **`fetch_urls_from_input` (WebUI parity)**:
 

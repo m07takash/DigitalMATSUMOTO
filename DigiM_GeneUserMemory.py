@@ -186,7 +186,7 @@ def _gather_session_dialog_text(session_id: str, model_name=None, tokenizer=None
             q = (sub.get("prompt", {}) or {}).get("query", {}) or {}
             r = sub.get("response", {}) or {}
             user_text = q.get("text") or q.get("input") or ""
-            assistant_text = r.get("text") or ""
+            assistant_text = dmu.answer_body(r.get("text") or "")
             if user_text:
                 rows.append({"role": "user", "seq": k, "sub_seq": sk, "content": user_text})
             if assistant_text:

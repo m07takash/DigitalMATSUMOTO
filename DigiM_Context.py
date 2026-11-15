@@ -105,6 +105,13 @@ def get_text_content(agent_data, content, seq, sub_seq, file_seq):
         content_context = _header + text
         if extracted_images:
             image_file = extracted_images
+    elif file_ext in [".html", ".htm"]:
+        content_context = _header + dmu.read_html_file(content)
+    elif dmu.is_code_file(content):
+        content_context = _header + dmu.read_code_file(content)
+        # The history preview picks its widget from this type, and the guessed
+        # one is often missing or wrong (.rs comes back as XML).
+        file_type = "text/plain"
     elif file_ext in [".pdf"] or (file_type and "pdf" in file_type):
         pdf_text, extracted_images = dmu.read_pdf_with_images(content, temp_folder_path)
         content_context = _header + json.dumps(pdf_text, ensure_ascii=False)

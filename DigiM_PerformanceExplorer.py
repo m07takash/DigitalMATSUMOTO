@@ -279,6 +279,13 @@ def _fetch_rows(p_from, p_to, with_deleted=False):
         import DigiM_Tool as dmt
         df.loc[blocks, "user_input"] = df.loc[blocks, "user_input"].map(lambda t: dmt.strip_skill_wraps(t).strip())
     df["had_skill_block"] = blocks
+    # Turns mirrored before the reference sections moved out of the answer
+    # still end with the source lists shown under it.
+    import DigiM_Util as dmu
+    df["response_text"] = df["response_text"].map(dmu.answer_body)
+    # A diagram is part of the answer but not prose: its source would count
+    # as length and come up as the answer's words.
+    df["response_prose"] = df["response_text"].str.replace(_MERMAID_RE, "", regex=True).str.strip()
     # A column that is NULL on every row arrives as object, which breaks the
     # aggregations.
     for c in ("answer_sec", "llm_sec", "prompt_tokens_total", "response_tokens", "knowledge_ref_count"):
@@ -403,7 +410,7 @@ def usage_by_axis(scope):
     g = x.groupby("axis_value").agg(
         turns=("turn", "size"), sessions=("session_id", "nunique"), users=("user_id", "nunique"),
         active_days=("ts", lambda s: s.dt.normalize().nunique()), avg_input_chars=("input_chars", "mean"))
-    per_turn = a.assign(chars=a["response_text"].str.len()).groupby("turn").agg(
+    per_turn = a.assign(chars=a["response_prose"].str.len()).groupby("turn").agg(
         answers=("akey", "size"), answer_chars=("chars", "mean"), sec=("answer_sec", "mean"),
         tokens=("response_tokens", "sum"), refs=("knowledge_ref_count", "sum"))
     m = x.merge(per_turn, left_on="turn", right_index=True, how="left").groupby("axis_value").agg(
@@ -419,6 +426,7 @@ def usage_by_axis(scope):
 # ---------------------------------------------------------------- keywords
 
 _URL_RE = re.compile(r"https?://\S+")
+_MERMAID_RE = re.compile(r"```mermaid\s.*?```", re.DOTALL)
 _KEEP_NOUN = {"一般", "固有名詞", "サ変接続"}
 _KEEP_SUFFIX = {"一般", "サ変接続"}
 _TAGGER = None
@@ -515,10 +523,10 @@ def tokenize_scope(scope, on_progress=None, inputs=True):
     t, a = scope["turns"], scope["answers"]
     if not inputs:
         t = t.iloc[0:0]
-    text_answers = a[a["response_text"].str.strip() != ""]
+    text_answers = a[a["response_prose"] != ""]
     total = len(t) + len(text_answers)
     scope["input_terms"] = _explode_terms(t["turn"], t["user_input"], on_progress, 0, total)
-    scope["answer_terms"] = _explode_terms(text_answers["akey"], text_answers["response_text"],
+    scope["answer_terms"] = _explode_terms(text_answers["akey"], text_answers["response_prose"],
                                            on_progress, len(t), total)
     scope["n_text_answers"] = len(text_answers)
     scope["_answer_terms_by_stop"] = {}
@@ -669,6 +677,7 @@ def vectorize_missing(keys, on_progress=None, batch=16):
     mirror's own vectorize run to reach these rows.
     """
     import DigiM_DB_Export as dbex
+    import DigiM_Util as dmu
     embed = dbex.dialog_embedder()
     if embed is None:
         raise RuntimeError("Embedding is not configured (AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_API_KEY).")
@@ -685,7 +694,8 @@ def vectorize_missing(keys, on_progress=None, batch=16):
             for sid, seq, sub, q, r, q_null, r_null in cur.fetchall():
                 if q_null and (q or "").strip():
                     jobs.append((sid, seq, sub, "query_vec", q))
-                if r_null and (r or "").strip():
+                r = dmu.answer_body(r or "")
+                if r_null and r.strip():
                     jobs.append((sid, seq, sub, "response_vec", r))
             try:
                 vecs = embed([j[4] for j in jobs]) if jobs else []
@@ -1200,7 +1210,7 @@ def load_agent_scope(p_from, p_to, agents=None):
 
 def agent_summary(scope):
     a = scope["answers"]
-    g = a.assign(chars=a["response_text"].str.len()).groupby("agent").agg(
+    g = a.assign(chars=a["response_prose"].str.len()).groupby("agent").agg(
         answers=("akey", "size"), turns=("turn", "nunique"), sessions=("session_id", "nunique"),
         users=("user_id", "nunique"), avg_answer_chars=("chars", "mean"),
         avg_answer_sec=("answer_sec", "mean"), avg_llm_sec=("llm_sec", "mean"),
@@ -1217,7 +1227,7 @@ def agent_summary(scope):
 
 def agent_models(scope):
     a = scope["answers"]
-    g = a.assign(chars=a["response_text"].str.len()).groupby(["agent", "model_name"]).agg(
+    g = a.assign(chars=a["response_prose"].str.len()).groupby(["agent", "model_name"]).agg(
         answers=("akey", "size"), avg_answer_chars=("chars", "mean"), avg_answer_sec=("answer_sec", "mean"),
         avg_llm_sec=("llm_sec", "mean"), avg_response_tokens=("response_tokens", "mean"))
     out = g.reset_index().sort_values(["agent", "answers"], ascending=[True, False])

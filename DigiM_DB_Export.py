@@ -14,7 +14,7 @@ import psycopg2.extras
 from dotenv import load_dotenv
 from openai import AzureOpenAI
 
-from DigiM_Util import read_yaml_file
+from DigiM_Util import read_yaml_file, split_display_only_sections, answer_body
 import DigiM_Session as dms
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -121,6 +121,43 @@ def _get_model_name(engine: dict) -> str:
 # ------------------------------------------------------------------ #
 # Parser: a single session
 # ------------------------------------------------------------------ #
+def _answer_parts(response: dict):
+    """(answer, reference sections) of a response entry.
+
+    Analytics count, embed and score `response_text` as what the agent said,
+    so the source lists shown under it go to their own column. Turns saved
+    before `ref_sections` existed carry them at the end of the text.
+    """
+    text = response.get("text") if isinstance(response, dict) else None
+    if not isinstance(text, str):
+        return text, None
+    body, tail = split_display_only_sections(text)
+    kept = response.get("ref_sections")
+    kept = kept if isinstance(kept, str) else ""
+    refs = "\n\n".join(p.strip() for p in (tail, kept) if p and p.strip())
+    return (body.rstrip() if tail else body), (refs or None)
+
+
+_mirror_columns_checked = False
+
+
+def _ensure_mirror_columns(cur):
+    """Add the columns this version writes to a mirror made from older docs.
+
+    Without them every post-turn export fails until someone runs the ALTER
+    from the setup guide. Checked once per process: ALTER TABLE takes an
+    exclusive lock even when the column is already there.
+    """
+    global _mirror_columns_checked
+    if _mirror_columns_checked:
+        return
+    cur.execute("SELECT 1 FROM pg_attribute WHERE attrelid = 'digim_dialogs'::regclass "
+                "AND attname = 'response_refs' AND NOT attisdropped")
+    if cur.fetchone() is None:
+        cur.execute("ALTER TABLE digim_dialogs ADD COLUMN IF NOT EXISTS response_refs TEXT")
+    _mirror_columns_checked = True
+
+
 def parse_session(session_id: str, status: dict, memory: dict, from_seq: int = 0) -> tuple[dict, list[dict], list[dict]]:
     """
     Returns:
@@ -191,6 +228,8 @@ def parse_session(session_id: str, status: dict, memory: dict, from_seq: int = 0
             kr_refs  = ref.get("knowledge_rag", []) if isinstance(ref, dict) else []
             mem_refs = ref.get("memory", []) if isinstance(ref, dict) else []
 
+            _answer, _refs = _answer_parts(response)
+
             ts_log   = log.get("timestamp_log", "") if isinstance(log, dict) else ""
             duration = _parse_duration(ts_log)
 
@@ -219,7 +258,8 @@ def parse_session(session_id: str, status: dict, memory: dict, from_seq: int = 0
                 "situation_time":            _safe_ts(sit.get("TIME") if isinstance(sit, dict) else None),
                 "user_input":                _own_words(query.get("input")),
                 "query_text":                query.get("text"),
-                "response_text":             response.get("text"),
+                "response_text":             _answer,
+                "response_refs":             _refs,
                 "digest_text":               digest.get("text"),
                 "prompt_timestamp":          _safe_ts(prompt.get("timestamp")),
                 "response_timestamp":        _safe_ts(response.get("timestamp")),
@@ -277,6 +317,8 @@ VALUES
     (%(session_id)s, %(session_name)s, %(user_id)s, %(service_id)s, %(agent_file)s,
      %(active)s, %(status)s, %(user_dialog)s, %(last_update_date)s, %(created_date)s)
 ON CONFLICT (session_id) DO UPDATE SET
+    user_id          = COALESCE(NULLIF(EXCLUDED.user_id, ''), digim_sessions.user_id),
+    service_id       = COALESCE(NULLIF(EXCLUDED.service_id, ''), digim_sessions.service_id),
     session_name     = EXCLUDED.session_name,
     agent_file       = EXCLUDED.agent_file,
     active           = EXCLUDED.active,
@@ -291,7 +333,7 @@ INSERT INTO digim_dialogs
      persona_id, persona_name, chain_index, chain_role,
      practice_name, model_type,
      agent_file, agent_name, model_name, prompt_template, situation_time,
-     user_input, query_text, response_text, digest_text,
+     user_input, query_text, response_text, response_refs, digest_text,
      prompt_timestamp, response_timestamp, response_duration_sec,
      prompt_tokens_total, query_tokens, response_tokens, digest_tokens, digest_model,
      rag_query_used, rag_query_model, rag_query_prompt_tokens, rag_query_response_tokens,
@@ -302,7 +344,7 @@ VALUES
      %(persona_id)s, %(persona_name)s, %(chain_index)s, %(chain_role)s,
      %(practice_name)s, %(model_type)s,
      %(agent_file)s, %(agent_name)s, %(model_name)s, %(prompt_template)s, %(situation_time)s,
-     %(user_input)s, %(query_text)s, %(response_text)s, %(digest_text)s,
+     %(user_input)s, %(query_text)s, %(response_text)s, %(response_refs)s, %(digest_text)s,
      %(prompt_timestamp)s, %(response_timestamp)s, %(response_duration_sec)s,
      %(prompt_tokens_total)s, %(query_tokens)s, %(response_tokens)s, %(digest_tokens)s, %(digest_model)s,
      %(rag_query_used)s, %(rag_query_model)s, %(rag_query_prompt_tokens)s, %(rag_query_response_tokens)s,
@@ -324,6 +366,7 @@ VALUES
 """
 
 def write_session(cur, session_row: dict, dialog_rows: list, ref_rows: list):
+    _ensure_mirror_columns(cur)
     # sessions
     cur.execute(INSERT_SESSION, session_row)
 
@@ -744,6 +787,9 @@ _DIALOG_FIELDS = [c for c in re.findall(r"%\((\w+)\)s", INSERT_DIALOG)
 _REF_FIELDS = [c for c in re.findall(r"%\((\w+)\)s", INSERT_REF)
                if c not in ("dialog_id", "session_id", "seq", "sub_seq")]
 _SESSION_FIELDS = ("session_name", "agent_file", "active", "status", "user_dialog", "last_update_date")
+# Only filled in, never cleared: a status.yaml without them must not blank a
+# row that has them.
+_SESSION_IDS = ("user_id", "service_id")
 # query_vec / response_vec are embeddings of these two columns.
 _VECTOR_SOURCES = ("user_input", "response_text")
 _TS_COLS = {"situation_time", "prompt_timestamp", "response_timestamp", "chunk_timestamp", "last_update_date"}
@@ -824,10 +870,12 @@ def resync_session(session_id: str, conn=None, dry_run: bool = False) -> dict:
     cur = conn.cursor()
     try:
         _lock_session(cur, sid)
-        cur.execute(f"SELECT {', '.join(_SESSION_FIELDS)} FROM digim_sessions WHERE session_id=%s", (sid,))
+        _ensure_mirror_columns(cur)
+        cur.execute(f"SELECT {', '.join(_SESSION_FIELDS + _SESSION_IDS)} FROM digim_sessions WHERE session_id=%s", (sid,))
         old_s = cur.fetchone()
         rep["session_updated"] = old_s is None or any(
-            _canon(c, o) != _canon(c, srow[c]) for c, o in zip(_SESSION_FIELDS, old_s))
+            _canon(c, o) != _canon(c, srow[c]) for c, o in zip(_SESSION_FIELDS, old_s)) or any(
+            srow.get(c) and not o for c, o in zip(_SESSION_IDS, old_s[len(_SESSION_FIELDS):]))
         if rep["session_updated"] and not dry_run:
             cur.execute(INSERT_SESSION, srow)
 
@@ -1151,7 +1199,7 @@ def vectorize_dialogs():
 
         for row in rows:
             try:
-                query_vec, response_vec = embed([row["user_input"], row["response_text"]])
+                query_vec, response_vec = embed([row["user_input"], answer_body(row["response_text"])])
 
                 cur.execute("""
                     UPDATE digim_dialogs

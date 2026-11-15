@@ -143,6 +143,16 @@ def split_display_only_sections(text: str):
                 break
     return text[:cut_at], text[cut_at:]
 
+def answer_body(text: str) -> str:
+    """The answer of record without the reference sections shown under it.
+
+    Those sections are kept in `response.ref_sections`; turns saved before
+    that carry them at the end of `response.text`, and this cuts them off.
+    Unlike `strip_display_only_sections` the answer's own diagrams stay.
+    """
+    body, tail = split_display_only_sections(text)
+    return body.rstrip() if tail else (body or "")
+
 def strip_display_only_sections(text: str) -> str:
     if not text or not isinstance(text, str):
         return text or ""
@@ -432,6 +442,85 @@ def read_pdf_with_images(file_path, temp_folder):
                 img_idx += 1
     doc.close()
     return pdf_text, image_files
+
+# Source and config files are read as text by extension: mimetypes has no
+# entry for many of them and guesses others wrong (.ts as a Qt translation
+# file, .rs as XML). Scripts on the URL fetch blocklist and .env (secrets) are
+# left out on purpose.
+CODE_FILE_EXTS = (
+    ".py", ".ipynb", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".vue", ".svelte",
+    ".java", ".kt", ".kts", ".scala", ".groovy", ".gradle", ".c", ".h", ".cpp", ".cc", ".hpp",
+    ".cs", ".go", ".rs", ".rb", ".php", ".swift", ".dart", ".r", ".lua", ".pl", ".sql",
+    ".sh", ".bash", ".zsh", ".css", ".scss", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf",
+    ".xml", ".tf",
+)
+
+def is_code_file(file_name):
+    return os.path.splitext(str(file_name))[1].lower() in CODE_FILE_EXTS
+
+def decode_text_bytes(raw):
+    # Older Japanese sources are often Shift_JIS; failing the whole turn over
+    # an encoding is worse than a few replaced characters.
+    for enc in ("utf-8-sig", "cp932"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            pass
+    return raw.decode("utf-8", errors="replace")
+
+def _fenced(text, lang):
+    longest = max((len(m) for m in re.findall(r"`{3,}", text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}{lang}\n{text.rstrip()}\n{fence}"
+
+def code_to_text(raw, file_name):
+    ext = os.path.splitext(str(file_name))[1].lower()
+    if ext == ".ipynb":
+        try:
+            return _ipynb_to_text(json.loads(decode_text_bytes(raw)))
+        except (ValueError, AttributeError, TypeError):
+            pass
+    return _fenced(decode_text_bytes(raw), ext.lstrip("."))
+
+def _ipynb_to_text(nb):
+    # Outputs are dropped: they are mostly base64 plots and long logs.
+    lang = ((nb.get("metadata") or {}).get("kernelspec") or {}).get("language") or "python"
+    parts = []
+    for cell in nb.get("cells") or []:
+        src = cell.get("source") or ""
+        src = "".join(src) if isinstance(src, list) else str(src)
+        if not src.strip():
+            continue
+        parts.append(_fenced(src, lang) if cell.get("cell_type") == "code" else src.strip())
+    return "\n\n".join(parts)
+
+def read_code_file(file_path):
+    with open(file_path, "rb") as f:
+        return code_to_text(f.read(), file_path)
+
+# Extract the readable text of an HTML file
+def read_html_file(file_path):
+    with open(file_path, "rb") as f:
+        return html_to_text(f.read())
+
+def html_to_text(raw):
+    # Raw markup would hand the LLM scripts, styles and base64 images (a saved
+    # report is mostly that). Bytes go to BeautifulSoup so it can honour the
+    # page's own charset declaration.
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(raw, "html.parser")
+    for tag in soup(["script", "style", "noscript", "template", "svg"]):
+        tag.decompose()
+    # One line per row keeps a table readable; cell-per-line text loses which
+    # value belongs to which column.
+    for tr in soup.find_all("tr"):
+        cells = [c.get_text(" ", strip=True) for c in tr.find_all(["th", "td"])]
+        tr.replace_with("| " + " | ".join(cells) + " |\n")
+    title = soup.title.get_text(strip=True) if soup.title else ""
+    if soup.title:
+        soup.title.decompose()
+    text = (soup.body or soup).get_text(separator="\n", strip=True)
+    return (f"# {title}\n\n" if title else "") + text
 
 # Extract text + images from DOCX
 def read_docx_file(file_path, temp_folder):

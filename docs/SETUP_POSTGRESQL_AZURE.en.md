@@ -171,6 +171,7 @@ CREATE TABLE digim_dialogs (
     user_input                TEXT,
     query_text                TEXT,
     response_text             TEXT,
+    response_refs             TEXT,
     digest_text               TEXT,
     prompt_timestamp          TIMESTAMP,
     response_timestamp        TIMESTAMP,
@@ -211,6 +212,11 @@ CREATE TABLE digim_dialogs (
 >   ADD COLUMN IF NOT EXISTS persona_name VARCHAR(128),
 >   ADD COLUMN IF NOT EXISTS chain_index  INTEGER,
 >   ADD COLUMN IF NOT EXISTS chain_role   VARCHAR(32);
+> ```
+>
+> The reference sections shown under an answer (`## Reference Info` / `## Reference Knowledge`) go to `response_refs`, not `response_text`. The export adds the column on its first write when it is missing; to create it beforehand:
+> ```sql
+> ALTER TABLE digim_dialogs ADD COLUMN IF NOT EXISTS response_refs TEXT;
 > ```
 
 ### 6-3. digim_references

@@ -56,7 +56,7 @@ def get_feedback_data(fb_k, memo, category, k1, k2, v2, service_id, user_id):
     situation = v2["prompt"]["query"]["situation"]["SITUATION"]
     if situation:
         fb_data["query"] = fb_data["query"]+"\n"+situation
-    fb_data["response"] = v2["response"]["text"]
+    fb_data["response"] = dmu.answer_body(v2["response"]["text"])
     fb_data["memo"] = memo
     return fb_data
 

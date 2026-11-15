@@ -984,7 +984,7 @@ def _render_token_usage_tab(v2: dict):
     try:
         _q = ((v2.get("prompt") or {}).get("query") or {})
         _q_text = (_q.get("text") or _q.get("input") or "")[:8000]
-        _r_text = ((v2.get("response") or {}).get("text") or "")[:8000]
+        _r_text = dmu.answer_body((v2.get("response") or {}).get("text") or "")[:8000]
         _emb_total = (
             dmu.count_token("tiktoken", _embed_model, _q_text)
             + dmu.count_token("tiktoken", _embed_model, _r_text)
@@ -1156,7 +1156,7 @@ def _run_knowledge_utility_turn(session, target, ak_mode, dim_mode, exec_info):
         for _gp in target["graph_refs"]:
             _gu_by_name.setdefault(_gp.get("rag", ""), []).append(_gp)
         _q_text_gu = ((_v2.get("prompt") or {}).get("query") or {}).get("input", "") or ""
-        _resp_text_gu = (_v2.get("response") or {}).get("text", "") or ""
+        _resp_text_gu = dmu.answer_body((_v2.get("response") or {}).get("text", "") or "")
         _saved_traces = ((_v2.get("response") or {}).get("reference") or {}).get("graph_seed_traces") or {}
         _gu_out = {}
         for _gu_rag_name in _gu_by_name.keys():
@@ -1192,9 +1192,9 @@ def _run_knowledge_utility_turn(session, target, ak_mode, dim_mode, exec_info):
 
 
 def _append_skill_text(entry):
-    """Text that MERGE=APPEND skills contribute below the answer.
-    The rule itself lives in DigiM_Tool so the API renders it identically."""
-    return dmt.render_appended_skills(entry)
+    """Text shown below the answer: its reference sections, then MERGE=APPEND
+    skills. The rule itself lives in DigiM_Tool so the API renders it identically."""
+    return dmt.render_response_tail(entry)
 
 
 def _read_bg_task_status():
@@ -2234,9 +2234,33 @@ def render_response_markdown(text, allow_html=True):
             st.markdown(part, unsafe_allow_html=allow_html)
 
 
+# The history redraws every attachment on each rerun; parsing a saved report
+# of a few MB takes about a second, so parse each file once.
+@st.cache_data(show_spinner=False, max_entries=64)
+def _html_preview_text(path, _mtime):
+    return dmu.read_html_file(path)
+
+
+@st.cache_data(show_spinner=False, max_entries=16)
+def _html_upload_text(raw):
+    return dmu.html_to_text(raw)
+
+
 def show_uploaded_files_memory(seq_key, file_path, file_name, file_type):
     uploaded_file = file_path+file_name
-    if "text" in file_type:
+    if dmu.is_code_file(file_name):
+        try:
+            _txt = dmu.read_code_file(uploaded_file)
+        except Exception as _e:
+            _txt = f"(File not readable: {_e})"
+        st.text_area("Code:", _txt, height=100, key=seq_key+file_name)
+    elif "html" in file_type:
+        try:
+            _txt = _html_preview_text(uploaded_file, os.path.getmtime(uploaded_file))
+        except Exception as _e:
+            _txt = f"(HTML text not readable: {_e})"
+        st.text_area("HTML (text):", _txt, height=100, key=seq_key+file_name)
+    elif "text" in file_type:
         with open(uploaded_file, "r", encoding="utf-8") as f:
             text_content = f.read()
         st.text_area("TextFile:", text_content, height=100, key=seq_key+file_name)
@@ -2269,7 +2293,12 @@ def show_uploaded_files_memory(seq_key, file_path, file_name, file_type):
 def show_uploaded_files_widget(uploaded_files):
     for uploaded_file in uploaded_files:
         file_type = uploaded_file.type
-        if "text" in file_type:
+        # Browsers report many source files with no type or a wrong one.
+        if dmu.is_code_file(uploaded_file.name):
+            st.text_area("Code:", dmu.code_to_text(uploaded_file.getvalue(), uploaded_file.name), height=100)
+        elif "html" in file_type:
+            st.text_area("HTML (text):", _html_upload_text(uploaded_file.getvalue()), height=100)
+        elif "text" in file_type:
             text_content = uploaded_file.read().decode("utf-8")
             st.text_area("TextFile:", text_content, height=100)
         elif "csv" in file_type:
@@ -3652,13 +3681,13 @@ def _knowledge_explorer():
                                         query=_orig_query, import_contents=[], situation=_orig_situation,
                                         overwrite_items=_cmp_overwrite, prompt_temp_cd=_orig_template,
                                         seq_limit="1", sub_seq_limit="0")
-                                    vec_resp = dmu.embed_text(_v2["response"]["text"])
+                                    vec_resp = dmu.embed_text(dmu.answer_body(_v2["response"]["text"]))
                                     vec_cmp = dmu.embed_text(cmp_resp)
                                     cmp_diff = dmu.calculate_cosine_distance(vec_resp, vec_cmp)
                                     exec_agent_name = dma.get_agent_item(_v2["setting"]["agent_file"], "DISPLAY_NAME")
                                     _, _, cmp_text, cmp_text_model, _, _ = dmt.compare_texts(
                                         st.session_state.web_service, st.session_state.web_user,
-                                        exec_agent_name, _v2["response"]["text"], _cmp_agent, cmp_resp)
+                                        exec_agent_name, dmu.answer_body(_v2["response"]["text"]), _cmp_agent, cmp_resp)
                                     st.session_state[f"_{key_prefix}_cmp_result"] = {
                                         "agent_file": _cmp_file, "agent": _cmp_agent, "model_name": cmp_model,
                                         "response": cmp_resp, "diff": round(cmp_diff, 3),
@@ -3741,7 +3770,7 @@ def _knowledge_explorer():
                                     for _gp in _ak_graph_refs:
                                         _gu_by_name.setdefault(_gp.get("rag", ""), []).append(_gp)
                                     _q_text = ((_v2.get("prompt", {}) or {}).get("query", {}) or {}).get("input", "") or ""
-                                    _resp_text = ((_v2.get("response", {}) or {}).get("text", "") or "")
+                                    _resp_text = dmu.answer_body((_v2.get("response", {}) or {}).get("text", "") or "")
                                     _gu_all = {}
                                     for _gu_rag_name in _gu_by_name.keys():
                                         _gu_rag_cfg = next(
@@ -6281,7 +6310,7 @@ def _user_memory_explorer():
                             if _st_.get("agent_file") != af:
                                 continue
                             _q = ((_bv.get("prompt") or {}).get("query") or {}).get("input", "") or ""
-                            _r = ((_bv.get("response") or {}).get("text", "")) or ""
+                            _r = dmu.answer_body(((_bv.get("response") or {}).get("text", "")) or "")
                             _ts = ((_bv.get("response") or {}).get("timestamp", "")
                                    or (_bv.get("prompt") or {}).get("timestamp", ""))
                             _tsd = _ts[:10] if _ts else ""
@@ -11117,12 +11146,12 @@ def main():
                                                         import_contents=[], situation=_cmp_v2["prompt"]["query"]["situation"],
                                                         overwrite_items=_cmp_overwrite, prompt_temp_cd=_cmp_v2["prompt"]["prompt_template"]["setting"],
                                                         seq_limit=_cmp_seq, sub_seq_limit=_cmp_sub_seq)
-                                                    vec_resp = dmu.embed_text(_cmp_v2["response"]["text"])
+                                                    vec_resp = dmu.embed_text(dmu.answer_body(_cmp_v2["response"]["text"]))
                                                     vec_cmp = dmu.embed_text(cmp_resp)
                                                     cmp_diff = dmu.calculate_cosine_distance(vec_resp, vec_cmp)
                                                     exec_agent_name = dma.get_agent_item(_cmp_v2["setting"]["agent_file"], "DISPLAY_NAME")
                                                     _, _, cmp_text, cmp_text_model, _, _ = dmt.compare_texts(
-                                                        _cmp_svc, _cmp_usr, exec_agent_name, _cmp_v2["response"]["text"], _cmp_agent_id, cmp_resp)
+                                                        _cmp_svc, _cmp_usr, exec_agent_name, dmu.answer_body(_cmp_v2["response"]["text"]), _cmp_agent_id, cmp_resp)
                                                     if "compare_agents" not in _cmp_analytics_dict:
                                                         _cmp_analytics_dict["compare_agents"] = []
                                                     _cmp_analytics_dict["compare_agents"].append({
@@ -11174,7 +11203,7 @@ def main():
                                                     for _gp in _ak_graph_refs:
                                                         _gu_by_name.setdefault(_gp.get("rag", ""), []).append(_gp)
                                                     _q_text_gu = (v2.get("prompt", {}) or {}).get("query", {}).get("input", "") or ""
-                                                    _resp_text_gu = (v2.get("response", {}) or {}).get("text", "") or ""
+                                                    _resp_text_gu = dmu.answer_body((v2.get("response", {}) or {}).get("text", "") or "")
                                                     # Recover the multi-query list captured at chat time
                                                     # so the replay honors the same seed detection scope
                                                     # the original retrieval used.
@@ -11537,7 +11566,7 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                                                     or "agent_57KnowledgeInterpret.json"
                                                 )
                                                 _ki_user_query = (v2.get("prompt", {}).get("query", {}) or {}).get("input", "") or ""
-                                                _ki_ai_response = (v2.get("response", {}) or {}).get("text", "") or ""
+                                                _ki_ai_response = dmu.answer_body((v2.get("response", {}) or {}).get("text", "") or "")
                                                 _ki_interp = analytics_dict["knowledge_utility"].setdefault("llm_interpretation", {})
 
                                                 if "image_files" in analytics_dict["knowledge_utility"]:
@@ -11702,7 +11731,8 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
         # File uploader (after run completion, increment the key to re-instantiate the widget -> clear attachments)
         uploaded_files = st.file_uploader(
             "Attached Files:",
-            type=["txt", "vtt", "csv", "json", "pdf", "md", "docx", "xlsx", "pptx", "jpg", "jpeg", "png", "mp3"],
+            type=["txt", "vtt", "csv", "json", "pdf", "md", "html", "htm", "docx", "xlsx", "pptx", "jpg", "jpeg", "png", "mp3"]
+                 + [e.lstrip(".") for e in dmu.CODE_FILE_EXTS],
             accept_multiple_files=True,
             key=f"file_upload_{st.session_state.file_uploader_key}",
         )

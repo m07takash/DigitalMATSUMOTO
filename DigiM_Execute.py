@@ -1448,6 +1448,11 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                         _kv.get("summary") or "", max_len=60),
                 })
 
+        # Reference sections are shown under the answer but kept out of
+        # `text`: memory, the digest and the analytics read that as what the
+        # agent said, and a source list read back that way is not.
+        _ref_info = ""
+        _ref_knowledge = ""
         if cfg["insert_citations"] and _ci_sources:
             citation_agent_file = dma.resolve_support_agent(
                 (agent.agent.get("SUPPORT_AGENT") or {}).get("CITATION_INJECT", ""),
@@ -1488,12 +1493,16 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                     # UI + stripping code only need to know the new label.
                     if "## Reference Info" not in _cited and "## References" in _cited:
                         _cited = _cited.replace("## References", "## Reference Info")
-                    response = _cited
+                    # The inline [N] markers are part of the answer; the
+                    # section the injector appends is not.
+                    response, _ref_info = dmu.split_display_only_sections(_cited)
+                    response = response.rstrip()
+                    _ref_info = _ref_info.strip()
                     response_chat_dict["text"] = response
                     _lg_ci.getLogger(__name__).info(
                         f"[citation_inject] applied: new body_len={len(response)}, "
                         f"contains '[1]': {'[1]' in response}, "
-                        f"contains '## Reference Info': {'## Reference Info' in response}"
+                        f"contains '## Reference Info': {'## Reference Info' in _ref_info}"
                     )
                 else:
                     # Injection was rejected (LLM returned meta commentary or
@@ -1504,9 +1513,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                     # a plain References block built directly from the source
                     # list, without inline [N] markers in the body.
                     _refs_block = dmt.build_plain_references_block(_ci_sources)
-                    if _refs_block and "## Reference Info" not in response:
-                        response = f"{(response or '').rstrip()}\n\n{_refs_block}"
-                        response_chat_dict["text"] = response
+                    if _refs_block and not _ref_info:
+                        _ref_info = _refs_block.strip()
                         _lg_ci.getLogger(__name__).info(
                             f"[citation_inject] kept original body but appended "
                             f"plain Reference Info block ({len(_ci_sources)} sources)"
@@ -1535,9 +1543,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                 # asked to see references whenever Web/Book were searched,
                 # so even on injector failure we surface the source list.
                 _refs_block = dmt.build_plain_references_block(_ci_sources)
-                if _refs_block and "## Reference Info" not in response:
-                    response = f"{(response or '').rstrip()}\n\n{_refs_block}"
-                    response_chat_dict["text"] = response
+                if _refs_block and not _ref_info:
+                    _ref_info = _refs_block.strip()
 
         # Referenced KNOWLEDGE — populated by a dedicated second-pass
         # selector agent that reads the primary answer + the Retrieved
@@ -1592,12 +1599,11 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                         )
                     _ks = dmt.build_knowledge_section(_entries, _cite_chunk_lookup)
                     if _ks:
-                        # Append AFTER any ## Reference Info the citation
-                        # injector just added, so the two sections coexist:
+                        # Shown after any ## Reference Info, so the two
+                        # sections coexist:
                         #   ## Reference Info       (Web / Book)
                         #   ## Reference Knowledge  (internal KNOWLEDGE)
-                        response = f"{(response or '').rstrip()}\n\n{_ks}"
-                        response_chat_dict["text"] = response
+                        _ref_knowledge = _ks.strip()
                         # Count matched only — unmatched rows are dropped from
                         # the visible section by cite_knowledge.build_knowledge_section.
                         _ck_dbg["emitted_rows"] = sum(
@@ -1620,6 +1626,10 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                 import logging as _lg_ks
                 _lg_ks.getLogger(__name__).exception(
                     f"Knowledge reference section skipped: {_kse}")
+
+        _ref_sections = "\n\n".join(s for s in (_ref_info, _ref_knowledge) if s)
+        if _ref_sections:
+            response_chat_dict["ref_sections"] = _ref_sections
 
         # Image log (IMAGEGEN)
         img_dict = {}
@@ -1650,7 +1660,9 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         session.save_user_dialog_session("UNSAVED")
 
         # Reflect the finalized response into the status (for pseudo-streaming)
-        session.save_status_message("Generating digest", response=response)
+        session.save_status_message(
+            "Generating digest",
+            response=response + (f"\n\n{_ref_sections}" if _ref_sections else ""))
 
         # Kick off digest generation in the background (UNLOCK the session after completion)
         if cfg["save_digest"]:
@@ -1719,6 +1731,17 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         try:
             import DigiM_DB_Export as _dbex
             if _dbex.auto_export_enabled():
+                # The session row is written from status.yaml, whose metadata
+                # is saved only after the whole turn (every chain step). The
+                # first step's export got there first and the new session went
+                # in with no user, which no later export filled in.
+                _st_ids = dms.get_status_data(session_id) or {}
+                _sv_id = service_info.get("SERVICE_ID") if isinstance(service_info, dict) else None
+                _us_id = user_info.get("USER_ID") if isinstance(user_info, dict) else None
+                if not _st_ids.get("service_id") and _sv_id:
+                    session.save_service_id(_sv_id)
+                if not _st_ids.get("user_id") and _us_id:
+                    session.save_user_id(_us_id)
                 _exp_job_id = djr.new_job_id()
                 _exp_digest_thread = locals().get("_digest_thread")
 

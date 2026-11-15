@@ -2838,6 +2838,8 @@ Chat サイドバーの2つのチェックボックスで、回答への付加�
 
 **Reference Knowledge**: `## References` が LLM による追加パスなのに対し、こちらは検索ログ（`knowledge_selected`）から**コードで決定的に生成**します。したがって引用インジェクタが失敗しても影響を受けず、引用対象（Web/BOOK）が皆無のターンでも単独で機能します。Vector チャンク（dict）と PageIndex / Graph の LOG_TEMPLATE 文字列の両形式に対応し、`(RAG名, タイトル)` で重複排除して最大20件。
 
+**保存先**: Reference Knowledge と Reference Info の節は回答本文（`response.text`）に入れず、`response.ref_sections` に保存して表示時に本文の下へ連結します（APPEND の SKILL と同じ扱い）。本文に混ぜると、メモリ・ダイジェスト・アナリティクス・Performance Explorer が参照リストを「エージェントの発言」として数えるためです。これより前に保存されたターンは本文の末尾に節を持っているので、読む側（`dmu.answer_body()`）で切り離します。分析ミラーでは本文が `response_text`、節が `response_refs` に入ります。
+
 **Emphasis**: 結論・数値・固有名詞など回答の核心となる語句を `**太字**` にし、長い回答は見出し（##／###）と箇条書きで整理させます。**強調は「稀であるほど強調として機能する」ため、1段落あたり1〜2箇所という上限を指示に明記**しています（全文が太字になるのを防ぐため）。書式のみの指示で、口調や人格設定（PERSONALITY / CHARACTER）には介入しません。Diagrams と併用でき、その場合は両方の指示がプロンプト末尾に連結されます。
 
 **Diagrams**: Mermaid ブロックは WebUI 側の [`render_response_markdown`](WebDigiMatsuAgent.py) が本文から切り出し、iframe 内でレンダリングします（表は Markdown のまま素通し）。Mermaid ランタイムは **`static/mermaid.min.js` があればそれをインライン展開**し、無ければ CDN を参照します。**閉域環境では `static/mermaid.min.js` を配置**してください（未配置かつオフラインの場合は図のソースをそのまま表示するフォールバック）。```mermaid フェンスを含まない回答は従来どおり `st.markdown` に素通しされるため、既存表示への影響はありません。
@@ -3927,7 +3929,8 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
   "session_id": "API_TEST_001",
   "session_name": "(User:TestUser)AIについての質問",
   "response": "エージェントの応答テキスト",
-  "response_display": "エージェントの応答テキスト\n\n## Mood Score\n\n...",
+  "response_display": "エージェントの応答テキスト\n\n## Reference Info\n...\n\n## Mood Score\n\n...",
+  "ref_sections": "## Reference Info\n...",
   "skills": {
     "refine_expression": {"phase": "AFTER", "merge": "REPLACE", "order": 20,
                            "text": "...", "model": "...", "prompt_token": 820, "response_token": 310},
@@ -3963,6 +3966,8 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
 > `MERGE: "APPEND"` の SKILL 出力は `response.text` には入れず、`skills` に入ります（メモリ・ダイジェスト・
 > アナリティクスが「エージェント自身の発言」と誤読しないため）。画面と同じ表示が欲しいときは `response_display` を使ってください。
 >
+> 回答の下に出す参照の節（`## Reference Info` / `## Reference Knowledge`）も同じ理由で `response` に入れず、`ref_sections` に入ります（無ければ空文字）。`response` に残るのは本文中の `[1]` などの引用マーカーだけです。`response_display` は「本文 → 参照の節 → APPEND の SKILL」の順に連結したものです。
+>
 > 存在しない SKILL 名を `skills` / `skill` に渡した場合は `skills_ignored` に配列で返ります（渡していなければキー自体が出ません）。
 
 > `attachments_processed` はリクエストに添付が無ければ空配列（`[]`）です。
@@ -3986,6 +3991,7 @@ WebUI と同じ経路（`DigiMatsuExecute_Practice` の `in_contents=`）で LLM
 - 同一リクエスト内の同名ファイルは自動で `report (1).pdf` `(2)...` とサフィックス付与
 - 一時保存先: `TEMP_FOLDER/api/<uuid-16>/`（リクエストごとに独立、WebUI の保存先と分離）
 - レスポンスの `attachments_processed` に受理されたファイル名・サイズ・出所 (`base64` / `multipart` / `url` / `user_input_url`) が返る
+- 読み取れる形式は WebUI の添付と同じ：テキスト（txt / md / csv / json / vtt）、HTML（本文と表だけを取り出す）、PDF / docx / pptx / xlsx、画像、mp3、プログラム・設定ファイル（py / js / ts / java / go / sql / yaml など。コードブロックとして渡し、ipynb はセルだけを取り出す。一覧は `DigiM_Util.CODE_FILE_EXTS`）
 
 **`fetch_urls_from_input`（WebUI パリティ）**:
 

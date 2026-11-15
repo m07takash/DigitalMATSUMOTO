@@ -448,6 +448,7 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
     # turn back is what makes `response` the answer of record rather than the
     # draft that happened to be streamed.
     skills_out = {}
+    ref_sections = ""
     response_display = response
     try:
         _sess = dms.DigiMSession(session_id, session_name)
@@ -459,7 +460,9 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
         _resp = _entry.get("response") or {}
         if isinstance(_resp.get("skills"), dict):
             skills_out = _resp["skills"]
-        response_display = response + dmt.render_appended_skills(_entry)
+        if isinstance(_resp.get("ref_sections"), str):
+            ref_sections = _resp["ref_sections"]
+        response_display = response + dmt.render_response_tail(_entry)
     except Exception:
         # MEMORY_SAVE=False saves no turn to read back; the streamed text is
         # then all there is.
@@ -469,9 +472,13 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
         "session_id": session_id,
         "session_name": session_name,
         "response": response,
-        # The answer with MERGE="APPEND" skill output concatenated underneath,
-        # in SKILL.ORDER — what the WebUI shows in the chat bubble.
+        # The answer with its reference sections and then MERGE="APPEND"
+        # skill output underneath, in SKILL.ORDER — what the WebUI shows in
+        # the chat bubble.
         "response_display": response_display,
+        # The `## Reference Info` / `## Reference Knowledge` sections, kept
+        # out of `response`. Empty when neither was produced.
+        "ref_sections": ref_sections,
         # {name: {phase, merge, header, order, text, model, tokens, error}} for
         # every SKILL that ran after the answer. Empty when none did.
         "skills": skills_out,
