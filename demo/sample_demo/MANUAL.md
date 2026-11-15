@@ -12,7 +12,7 @@
 4. [画面全体マップ](#4-画面全体マップ)
 5. [ヘッダー操作](#5-ヘッダー操作)
 6. [各タブの使い方](#6-各タブの使い方)
-   - 6-1. Chat (/run)
+   - 6-1. Chat
    - 6-2. Sessions
    - 6-3. Agents & Engines
    - 6-4. Web Search Engines
@@ -157,44 +157,69 @@ location /demo/ {
 
 ## 6. 各タブの使い方
 
-### 6-1. Chat (/run) — メインのデモ画面
+### 6-1. Chat — メインのデモ画面（WebUI のチャットと同じ操作）
 
-**やりたいこと**: エージェントとチャットする（=`POST /run`）
+**やりたいこと**: WebUI（`WebDigiMatsuAgent.py`）の Chat でしている操作を、API だけで同じようにできることを見せる
 
 **画面レイアウト**:
-- 左サイドバー: 実行パラメータ設定
-- 中央: チャット履歴と入力欄
+- 左サイドバー: セッション、セッション一覧、ペルソナ、Books、Skills、Thinking、実行フラグ、Personality、Run、Session Summary
+- 中央: 上にセッション名とボタン（表示の切替 / Reload / Rename / ⬇ .md）、その下にチャット履歴と入力欄
 
 **基本操作**:
 1. 左サイドバーで **User ID**（例: `DemoUser`）と **Service ID**（例: `DEMO`）を設定
-2. **Agent file** ドロップダウンから使うエージェントを選択
-3. **Engine (LLM)** ドロップダウンからモデルを選択（未選択の場合はエージェント既定）
-4. **Session ID** は空のままにすると新規セッションを自動採番。同じ会話を続ける場合は既存 ID を貼付
-5. 実行フラグ（`memory_use` / `rag_query_gene` / `meta_search` / `web_search` / `web_search_guardrail` / `thinking_mode` / `max_thinking_turns` / `private_mode` / `insert_citations` / `cite_knowledge` / `diagram_mode` / `emphasis_mode`）で挙動を切替
-6. 入力欄にメッセージを入力し **Send** ボタン、または `Ctrl+Enter`（Mac: `⌘+Enter`）
+2. **Agent file** を選ぶと `GET /agents/{file}/chat_options` が走り、そのエージェントで選べるもの（エンジン、画像エンジン、ペルソナ、Books、Skills、Thinking の対象、実行フラグの初期値、Language / Speaking style）がサイドバーに入ります
+3. **Session ID** は空のまま（または **+ New chat**）で新規セッション。既存の会話を続けるときは **Sessions** 一覧から選ぶか、ID を入れて **Open**
+4. 必要なら次を選びます（どれも WebUI のサイドバーと同じ意味です）
+   - **Personas**: ORG を選んでペルソナにチェック。2人以上で並列実行になり、1ターンに各ペルソナの回答が並びます。次のターンで **Include Query** を ON にすると、前のターンの各ペルソナの回答を入力の先頭に付けます
+   - **Books**: このターンに足す BOOK
+   - **Skills**: BEFORE / AFTER ごとに表示。エージェントの `DEFAULT` でチェックされた状態から始まり、変えなければ WebUI と同じく「Thinking が断れる候補」として送ります。変えると、そのターンの指定として送ります
+   - **Thinking**: `thinking_mode` を ON にすると、対象（Habit / Web Search / RAG Query / Books / Skills / Personas）と最大ターン数が効きます
+   - **Personality**: Language / Speaking style を変えたときだけ上書きとして送ります
+5. 入力欄にメッセージを入力し **Send** ボタン、または `Ctrl+Enter`（Mac: `⌘+Enter`）
+
+**実行中の表示（Run → Background run with progress）**:
+- 既定は ON で、`POST /run_async` で送ってから `GET /jobs/{id}` を2秒おきに読みます。吹き出しには途中までの回答、その下に `⏳ Running LLM · 12s` のような状態が出ます（WebUI の実行中の表示と同じ情報です）
+- 終わると `GET /sessions/{id}/turns` でそのセッションを読み直し、回答にボタンが付きます
+- 回答のすぐ後に `⏳ Finishing: …` が出ることがあります。ダイジェストを裏で作っている間で、終わると消えます
+- OFF にすると従来どおり `POST /run` で、回答ができるまで待ちます
+
+**セッション一覧（左サイドバー "Sessions"）**:
+- **↻** でこのユーザーのセッションを新しい順に表示します（`GET /sessions?active=Y`）。名前をクリックで開きます。実行中のセッションには ⏳ が付き、開くと途中経過を表示して終わったら読み直します
+- **✎** で名前の変更、**×** で一覧から隠します（WebUI の Del と同じで、消してはいません）
+- **Show hidden sessions** を ON にすると隠したセッションが出て、**↺** で再表示できます
 
 **チャット履歴表示**:
-- 青い右寄せ吹き出し = ユーザー発話
-- グレーの左寄せ吹き出し = エージェント応答
-- 各エージェント応答の下に `session=...` メタ情報
+- 青い右寄せ吹き出し = ユーザー発話（上に `ユーザー · seq N`、添付があれば 📎 リンク）
+- グレーの左寄せ吹き出し = エージェント応答（上に `エージェント名 · ペルソナ · エンジン`）。本文は参照の節と SKILL の出力を連結したもの（WebUI の吹き出しと同じ）、生成画像があれば下に表示
+- ヘッダーの **Summary / All entries** は WebUI の History Detail Visible（SUMMARY / ALL）と同じです。Summary は1ターンを質問と最後の回答にまとめ、All はチェーンの全エントリを出します
+- Memory Off のターンは回答の左端が点線になります
+
+**回答のボタン（各ターンの最後の回答の下）**:
+- **Detail**: 右のドロワーに Detail Information（LLM への入力、トークン数など）を表示
+- **Memory Off / Memory On**: 画面には残したまま、次のターンからの会話メモリに入れない / 戻す
+- **Delete**: ターンを消します（WebUI と同じく非表示にするだけ）
+- **Feedback**: エージェントのフィードバック項目ごとにメモとカテゴリを入れて保存（`POST /feedback`。WebUI と同じ形で保存します）
+- 実行中（ダイジェスト作成中を含む）のセッションでは Delete / Memory Off / Rename が `409` になります。少し待ってからやり直してください
+
+**ダウンロード**: ヘッダーの **⬇ .md** で会話を Markdown に書き出します（`GET /sessions/{id}/export`）
 
 **プレゼン向けチップス**:
-- **web_search** を ON にしてリアルタイム性を見せる
-- **thinking_mode** を ON にして「エージェントが考えている感」を強調
+- **Personas** を2人選んで並列に答えさせ、次のターンで **Include Query** を ON にして「どちらが良い？」と聞く
+- **Skills** の `WebSearch` を ON にしてリアルタイム性を見せる
+- **thinking_mode** を ON にして「エージェントが考えている感」を強調（途中経過の表示がよく動きます）
 - **private_mode** ON で「メモリに残らない機微な会話」を示す
 - **insert_citations** ON で応答末尾の `## Reference Info` に Web / Book のソース一覧を表示
-- **cite_knowledge** ON で実際に参照した内部 KNOWLEDGE を `## Reference Knowledge` として一覧化（Knowledge Utility スコア付き）
-- **diagram_mode** ON で回答内に Markdown 表と Mermaid 図を織り込ませる
-- **emphasis_mode** ON で要点の太字強調と長い回答の見出し整理を促す
+- Skills の `cite_knowledge`（Reference Knowledge）で実際に参照した内部 KNOWLEDGE を一覧化
+- SKILL を持たないエージェントでは、`web_search` / `cite_knowledge` / `diagram_mode` / `emphasis_mode` のチェックボックスが実行フラグの下に出ます
 
 **添付ファイル（📎 Attach）**:
 - 入力欄の上に **📎 Attach** ボタンがあり、複数ファイルを選択できます
 - 選んだファイルはチップとして表示され、`×` で個別削除できます
 - Send すると:
-  - **既定（`Send as base64` OFF）**: ファイルは `multipart/form-data` で **`POST /run_multipart`** に送信
-  - **`Send as base64` ON**: ファイルは base64 エンコードされ **`POST /run`** の JSON ボディに `attachments` として同梱
-- 添付なしの送信は従来通り `POST /run`
-- サーバ側は WebUI と同じ経路（`in_contents` として `DigiMatsuExecute_Practice` に渡す）で処理
+  - **既定（`Send as base64` OFF）**: ファイルは `multipart/form-data` で **`POST /run_async_multipart`**（Background run OFF なら `/run_multipart`）に送信
+  - **`Send as base64` ON**: ファイルは base64 エンコードされ **`POST /run_async`**（OFF なら `/run`）の JSON ボディに `attachments` として同梱
+- サーバ側は WebUI と同じ経路（`in_contents` として `DigiMatsuExecute_MultiPersona` に渡す）で処理
+- 送った添付は、開き直したチャットで 📎 リンクとして表示されます（`GET /sessions/{id}/contents/{file}`）
 - レスポンスの `attachments_processed` に受理されたファイル名一覧が返り、吹き出し下のメタ欄に `attached=N` として表示
 
 **セッションサマリの操作（左サイドバー "Session Summary" 欄）**:
@@ -203,7 +228,7 @@ location /demo/ {
 - テンプレの中身を確認・編集したり、生成済みのサマリ内容を見るのは **6-8. Summary タブ** から
 
 **参照情報の閲覧（References ドロワー）**:
-- エージェントの応答吹き出しをクリックすると、右側に **References** ドロワーがスライドインします
+- エージェントの応答吹き出しをクリックすると、右側に **References** ドロワーがスライドインします（Detail ボタンでも同じドロワーに Detail Information が出ます）
 - 右上の **×** ボタンで閉じます
 - 参照が1件以上あった応答には `🔎` の小さなアイコンが表示され、クリック可能であることを示します
 - ドロワー内は以下のセクションに分かれます:

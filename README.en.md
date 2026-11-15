@@ -3326,7 +3326,7 @@ The **Performance Explorer** sidebar option analyses the accumulated conversatio
 
 - **User** — pick a period, groups / users and agents, and follow "user input → the agent's answers to it → the knowledge those answers used". Backend: `DigiM_PerformanceExplorer.py`.
 - **Agent** — switches between **Summary** (pick a period and agents, and compare output, habits, knowledge, skills, support agents and feedback signals; see "Summary of the Agent section" below) and **Knowledge map** (the cross-session performance of one agent; backend `DigiM_AgentPerformanceExplorer.py`). "Data sources", "Tab 1" and "Tab 2" in this chapter describe the Knowledge map.
-- **Save as HTML** — in every view, **Prepare HTML** above the results writes what the view shows at that moment (every tab and expander, tables, charts, word clouds, LLM explanations, and the cluster or theme picked) into one HTML file, saved with **Download HTML**. Press Prepare HTML again after changing the view. Tables and text read offline; charts load the Vega libraries from cdn.jsdelivr.net when the file is opened. `DigiM_PEReport.py` does the recording, and only on the rerun the button asks for.
+- **Saving an analysis, and HTML** — in every view, **Save Analytics** above the results saves the view's results and conditions (period, filters, Top N and so on) as an analysis session in `user/common/analytics/performance_explorer/`, and at the same time writes what the view shows at that moment (every tab and expander, tables, charts, word clouds, LLM explanations, and the cluster or theme picked) into one HTML file. As in Knowledge Explorer, the sidebar lists the 10 latest saved analyses: click one to load it, **Del** to delete it. Loading brings the conditions back, and the saved HTML is ready for **Download HTML**. Press Save Analytics again after changing the view. The dialogs (Example / Knowledge Reference) opened during the analysis are added at the end of the HTML, one folded section each, in the order they were opened (not every row: about 1 MB each, and making them all would take the save past ten minutes). Tables and text read offline; charts load the Vega libraries from cdn.jsdelivr.net when the file is opened. `DigiM_PEReport.py` does the recording, and only on the rerun the button asks for.
 
 #### What the User section reads
 
@@ -3342,15 +3342,19 @@ Only the PostgreSQL analytics backup tables (`digim_sessions_archive` / `digim_d
 
 | Tab | Content | LLM |
 |---|---|---|
-| **1. Usage** | Weekday × hour heatmap, turns per period, and a per group / user table (turns, sessions, active days, input and answer length, seconds to answer, tokens, references) | Not used |
-| **2. Interests / Topics** | Ranking of the keywords in user inputs (30 shown by default) with turns, share, users, the **period where it peaked** and the trend. Below it, one after another for every keyword: the **word cloud and Top N keywords of the agent's answers**, and the latest inputs with their answers | Only on **Explain Topics** |
-| **3. Diversity / Homogeneity** | Cluster analysis of the user inputs. In the scatter plot **colour = group (or user), shape = cluster**. Per cluster: word cloud and Top N keywords of the answers, and the Top N knowledge used (reference count / scatter plot / cumulative knowledge utility). An expander holds the cluster mix per group and, per cluster × group, representative inputs with their answers and the knowledge used | Only on **Explain Diversity** |
-| **4. Achievement** | An LLM scores, 0-100, how far the user inputs achieve each theme you set (several allowed). Score bands, a ranking by group / user, and per band the answer keywords and the knowledge used | On **Score** |
+| **1. Usage** | Weekday × hour heatmaps (overall and per group / user, each cell showing its turns), turns per period as a **bar chart stacked by group** (the groups shown can be picked), and a per group / user table (turns, sessions, active days, input and answer length, seconds to answer, tokens, references) ending with a **Total** row | Not used |
+| **2. Interests / Topics** | Ranking of the keywords in user inputs (30 shown by default), **overall and per group / user**, with turns, share, users, the **period where it peaked**, the trend, and in one column the **Top N keywords of the agent's answers** to the inputs with that keyword (`keyword:count(share%)`). A word cloud of the user inputs follows each table. Select a row and press **Example** for, from the peak period, the input whose answers carry the most of those answer keywords, with the Knowledge Utility of its answers | Only on **Explain Topics** |
+| **3. Diversity / Homogeneity** | Cluster analysis of the user inputs (their vectors). Scatter plots **coloured by cluster**, overall first and then per group / user, one under the other (same coordinates throughout). Under each: per cluster its separation (mean silhouette), inputs, size (distance from the centre to the farthest input), density (within-cluster sum of squares), Top N input keywords and Top N answer keywords. Select a row for **Knowledge Reference** (the knowledge its answers referenced, per Knowledge / Book) or **Example** (the input closest to the centre, its answers and their Knowledge Utility). An expander holds the cluster mix per group | Only on **Explain Diversity** |
+| **4. Achievement** | An LLM scores, 0-100, how far the user inputs achieve each theme you set (several allowed). Score bands, a ranking by group / user, and per band the answer keywords and the **Knowledge Utility per Knowledge / Book** | On **Score** |
 
 - **Keywords** are compound nouns extracted with MeCab (no LLM). `Exclude words` removes instruction words such as "作成" or "文章". Answer keywords are ordered by count weighted by how rare the term is across all answers, so words every answer uses do not come first.
 - **Clustering** is K-means (2-10 clusters) on the first 256 dimensions of the input vectors (`query_vec`). The vectors are the ones a turn computes and saves while it runs (the input for retrieval, the answer for Knowledge Utility); the export brings them to the mirror, so **new turns are covered with no extra embedding**. Earlier turns (before inputs were kept on 2026-08-29, and before this update for answers) were never embedded; **Embed these N rows once** fills them in one go (it calls the embedding API and stores the vectors in the backup table). An answer without a vector only leaves `Answer spread` empty; it does not affect the clustering.
 - **Diversity figures**: `Evenness` (spread over the clusters; 1 = even, 0 = all in one), `Input spread` (mean cosine distance between inputs), `Distance from all` (difference from the overall cluster mix). A group with few turns looks more homogeneous than it is, so read them with the turn count.
 - **Answer consistency**: `Answer / input` (answer spread ÷ input spread). Above 1, the answers vary more than the inputs they answer.
+- **Cluster names** come from the LLM at the start of the **Explain Diversity** explanation (as in Knowledge Explorer). Until then clusters are numbered (`C1`, ...); afterwards the legends and tables read `C1 name`. Clustering again goes back to numbers.
+- **Cluster figures** are measured in the space K-means worked in (Euclidean over unit vectors). A group / user table keeps the overall clusters and counts only that group's inputs.
+- **Knowledge Utility per Knowledge / Book**: as Chat's Analytics Results - Knowledge Utility, the top 20 knowledge by references, a picture of where they sit (the knowledge graph for Graph, for Vector the whole collection on two maps of one size side by side, coloured by references and by category (the groups and colours of `category_map`), the table of contents for PageIndex), and the cumulative utility (Q and A in the order of the top 20, then the knowledge in the top 20 by cumulative utility but not by references, by utility). Graph references have no distances, so they have no cumulative bars.
+- `st.dataframe` cannot hold buttons, so a row's buttons work by **selecting the row, then pressing the button under the table**. The dialogs opened are added at the end of the HTML on Save Analytics.
 - **Knowledge utility** is the figure Chat's Analytics Results - Knowledge Utility shows (Norm(All)), computed per answer and summed. Above 0 the answer moved toward the knowledge; below 0 it was retrieved but the answer moved away. Graph references have no utility, so only their count is shown.
 - **The scoring unit** is Session (the user's inputs of one session in the period, scored together; default) or Input (each input on its own). When there are more units than `Max scored per theme`, the ones whose vectors are closest to the theme are scored. Scores are stored in `digim_pe_scores`, so **the same theme, text and model is never scored twice**. The themes offered at first come from `PERFORMANCE_EXPLORER_THEMES` in `setting.yaml` (a list of strings; `{NAME, CRITERIA}` also states what counts as achieving it).
 - The explanation and scoring prompts are `Topic Analyst PE` / `Diversity Analyst PE` / `Achievement Scorer PE` in `prompt_templates.json`. The agent and the engine are chosen on the screen.
@@ -3748,13 +3752,27 @@ When FastAPI is launched, you can execute the agent via REST API. It also suppor
 |---------|------|------|
 | `POST` | `/run` | Send a message and get the agent's response (synchronous). Files can be attached inline via JSON `attachments` (base64) / `attachment_urls` |
 | `POST` | `/run_multipart` | `multipart/form-data` variant of `/run`. Ships JSON metadata (`data`) and binary files (`files`) in one request |
+| `POST` | `/run_async` | Run the same input as `/run` in the background and return a `job_id` at once (what the WebUI chat does) |
+| `POST` | `/run_async_multipart` | `multipart/form-data` variant of `/run_async` |
+| `GET` | `/jobs/{job_id}` | State of a background run (`running` / `done` / `error`). While running: the progress message and the answer so far; when done: a `result` shaped like the `/run` response |
 | `GET` | `/agents` | Get the list of available agents |
 | `GET` | `/agents/{agent_file}/engines` | Get the list of engines available for the agent |
+| `GET` | `/agents/{agent_file}/chat_options` | Everything the WebUI chat sidebar offers (engines, SKILLs, BOOKs, ORGs and personas, Thinking, personality, the execution toggles a turn starts from) |
 | `GET` | `/agents/{agent_file}/feedback` | Get the agent's feedback settings |
 | `GET` | `/web_search_engines` | Get the list of available Web search engines |
 | `POST` | `/feedback` | Send feedback (saved to CSV/Notion) |
-| `GET` | `/sessions` | Get the session list |
-| `GET` | `/sessions/{session_id}` | Get the conversation history of a session |
+| `GET` | `/sessions` | Get the session list (newest first; filter with `?user_id=` / `?service_id=` / `?active=Y\|N`) |
+| `GET` | `/sessions/{session_id}` | Get the conversation history of a session (as stored) |
+| `GET` | `/sessions/{session_id}/turns` | The conversation shaped like the chat pane (`?view=summary\|all`, `?last=N`, `?include_refs=false`). Deleted turns are left out |
+| `GET` | `/sessions/{session_id}/status` | Whether a turn is running (`LOCKED`), with its progress message and the answer so far |
+| `GET` | `/sessions/{session_id}/turns/{seq}/detail` | A turn's Detail Information (`?sub_seq=`) |
+| `POST` | `/sessions/{session_id}/turns/{seq}/delete` | Delete a turn (hidden, as in the WebUI) |
+| `POST` | `/sessions/{session_id}/turns/{seq}/memory` | Memory Off / On (`{"enabled": false}`) |
+| `POST` | `/sessions/{session_id}/rename` | Rename the session (`{"name": "..."}`) |
+| `POST` | `/sessions/{session_id}/hide` | Hide the session from the list (the WebUI sidebar's Del) |
+| `POST` | `/sessions/{session_id}/activate` | Show a hidden session again |
+| `GET` | `/sessions/{session_id}/contents/{file_name}` | An attachment or generated image (the `url` in turns) |
+| `GET` | `/sessions/{session_id}/export` | The conversation as Markdown (`?view=`; `?images=true` embeds images) |
 | `GET` | `/sessions/{session_id}/summary` | Get the session summary state (`enabled` / `template` / `content` / `updated_at`) |
 | `POST` | `/sessions/{session_id}/summary` | Update the session summary `enabled` / `template` (either field is optional) |
 | `GET` | `/session_summary_presets` | List preset templates for session summaries |
@@ -3769,9 +3787,47 @@ When FastAPI is launched, you can execute the agent via REST API. It also suppor
 
 > The API server's listen port is read from `system.env`'s `API_PORT` (default 8899). Changing it makes the "Web API" menu in the WebUI start uvicorn on that port automatically.
 
+#### How the WebUI chat maps to the API
+
+| WebUI chat | API |
+|------------|-----|
+| Sidebar choices (engines, SKILLs, BOOK, ORG / Personas, Thinking, Language, ...) | List them with `GET /agents/{file}/chat_options`, send the picks as `/run`'s `skills` / `books` / `org` / `personas` / `thinking_targets` / `personality` ... |
+| Send and wait while watching the progress | `POST /run_async`, then read `GET /jobs/{job_id}` every few seconds (`progress.message` / `progress.partial_response`) |
+| Several personas in parallel, Include Query | Two or more ids in `personas`; `include_query: true` on the next turn |
+| Sidebar session list, Del, Activate, Change Session Name | `GET /sessions?active=Y`, `/hide`, `/activate`, `/rename` |
+| The conversation (reference sections and SKILL output appended, images, attachments) | `GET /sessions/{id}/turns` (`response_display`, `images[].url`, `contents[].url`) |
+| Per-answer Detail Information, delete, Memory Off, Feedback | `/turns/{seq}/detail`, `/turns/{seq}/delete`, `/turns/{seq}/memory`, `POST /feedback` |
+| Markdown download | `GET /sessions/{id}/export` |
+
+- Runs go through `DigiMatsuExecute_MultiPersona`, as in the WebUI (with zero or one persona it is `DigiMatsuExecute_Practice` as before).
+- In the SUMMARY view (`view=summary`) a turn is its question and its last answer. Send feedback to each entry's `sub_seq` and `answer_agent_file` (in a chain the last answer can come from another agent). Read Detail with `detail_sub_seq`.
+- Deleting a turn, Memory Off and renaming return `409` while the session is running a turn (digest writing included): the running turn saves its own copy of the history over the change.
+- The analytics (Compare Agents, Knowledge Utility and its interpretation), saving user-memory layers, the background-job list and Batch Test are not in the API.
+- The API has no authentication, and it can rename and hide sessions and delete turns. Put authentication in front of it before exposing it.
+
+#### Background runs (`/run_async` and `/jobs/{job_id}`)
+
+`/run` holds one request open until the answer is ready. A Thinking or multi-persona turn can take minutes, and once it passes the proxy's limit in front (about 230 s on Azure App Service) the caller gets a `504` although the run carries on. `/run_async` returns at once and the run continues inside the server.
+
+```bash
+curl -s -X POST http://localhost:8899/run_async -H "Content-Type: application/json" \
+  -d '{"service_info":{"SERVICE_ID":"DEMO"},"user_info":{"USER_ID":"U1"},"user_input":"Hello"}'
+# → {"job_id": "540f67f1...", "session_id": "API20261115_121943_0", "state": "running", ...}
+
+curl -s http://localhost:8899/jobs/540f67f1...
+# running: {"state": "running", "elapsed_sec": 4,
+#           "progress": {"status": "LOCKED", "message": "Running LLM", "partial_response": "...", "error": ""}}
+# done:    {"state": "done", "result": { same as the /run response }, ...}
+```
+
+- The session is locked when the request is accepted. Another request for the same session gets `429` (`/run` waits up to 60 s; `/run_async` does not wait).
+- The job state is written to `TEMP_FOLDER/api/jobs/<job_id>.json`, not kept in process memory, so any gunicorn worker can answer the poll. Progress comes from the session's `status.yaml` (the same source the WebUI chat reads).
+- Restarting the API process stops running jobs and leaves them `running`. A job still `running` after `progress.status` turned `UNLOCKED` has stopped.
+- `progress.status` can stay `LOCKED` for a while after `done`: the digest is being written in the background.
+
 ### POST /run — Send a message
 
-A single HTTP request completes one LLM execution and returns the response directly. The conversation continues when the same `session_id` is specified.
+A single HTTP request completes one LLM execution and returns the response directly. The conversation continues when the same `session_id` is specified. For long turns, or to show progress, send the same input to `POST /run_async`.
 
 If the same session is in execution (LOCKED), it waits up to 60 seconds and runs after release. On timeout, it returns `429`.
 
@@ -3787,6 +3843,10 @@ If the same session is in execution (LOCKED), it waits up to 60 seconds and runs
   "situation": {"TIME": "", "SITUATION": ""},
   "agent_file": "AgentFileName",
   "engine": "EngineName",
+  "imagegen_engine": "ImageEngineName",
+  "personas": ["E0001", "E0002"],
+  "books": ["Digital MATSUMOTO System Guide"],
+  "personality": {"LANGUAGE": "English", "SPEAKING_STYLE": "polite"},
   "stream_mode": true,
   "save_digest": true,
   "memory_use": true,
@@ -3822,20 +3882,23 @@ If the same session is in execution (LOCKED), it waits up to 60 seconds and runs
 | `user_info` | Yes | | User identification (`USER_ID` distinguishes users) |
 | `user_input` | Yes | | The user's input message |
 | `session_id` | | Auto-issued | Session ID. For LINE integration, specifying the LINE user ID continues the conversation |
-| `session_name` | | Auto-generated | Session name |
+| `session_name` | | Auto-generated | Session name. Left out, only a new session is named, from its first input (later turns keep the current name) |
 | `agent_file` | | `API_AGENT_FILE` | The agent to use (e.g., `agent_10Sample.json`) |
 | `engine` | | Agent's DEFAULT | LLM engine name (e.g., `Gemini-3.5-Flash`). Specify a name defined in the agent's ENGINE.LLM |
+| `imagegen_engine` | | Agent's DEFAULT | Image-generation engine name (a name in ENGINE.IMAGEGEN) |
 | `situation` | | `{"TIME":"","SITUATION":""}` | Date/time / situation settings. If `TIME` is empty, executes without date/time |
 
 **Execution settings (Exec Setting):**
 
-API default values are used for omitted parameters. These correspond to the WebUI's Exec Setting.
+API default values are used for omitted parameters. When the agent has `EXECUTION_DEFAULTS`, those values win over the API defaults (as in the WebUI). These correspond to the WebUI's Exec Setting.
 
 | Parameter | API default | Description |
 |-----------|-------------|------|
 | `stream_mode` | `true` | Streaming mode |
 | `save_digest` | `true` | Save the conversation digest |
 | `memory_use` | `true` | Reference the conversation history |
+| `memory_save` | `true` | Save this turn to the history |
+| `memory_similarity` | `false` | Pick conversation history by similarity (the WebUI's Memory Similarity) |
 | `magic_word_use` | `false` | Habit switching by MAGIC_WORD |
 | `meta_search` | `true` | Metadata search (date extraction) |
 | `rag_query_gene` | `true` | Query generation for RAG search |
@@ -3843,7 +3906,13 @@ API default values are used for omitted parameters. These correspond to the WebU
 | `web_search_engine` | `"OpenAI"` | Web search engine (`Perplexity` / `OpenAI` / `Google`). Not used when `web_search` is `false` |
 | `web_search_guardrail` | `true` | Wrap web-search results in a "reference material" instruction that keeps the LLM's persona and conversation context in charge. Set `false` to pass the raw snippet through unwrapped |
 | `private_mode` | `false` | Private Mode. When `true`, RAG data with `private: true` is excluded from search |
-| `skills` | (unset) | SKILL names to run this turn. **Left unset, the agent's own `SKILL.TOOLS.<name>.DEFAULT: true` entries apply** — the same set the WebUI's Skills picker opens with. Passing it replaces that selection for the turn (`[]` runs none). Unknown names do not run and come back in `skills_ignored` |
+| `personas` | (unset) | Persona ids (from `chat_options`' `orgs[].personas`). Two or more run in parallel and the turn holds one answer per persona. Ids not found come back in `personas_ignored` |
+| `org` | The agent's first ORG | The ORG to find the personas in (`chat_options`' `orgs[].org`). Left out, the agent's ORGs are searched in order |
+| `books` | (unset) | `RAG_NAME`s of BOOKs to add to this turn (the WebUI's BOOK). Inactive or unknown names come back in `books_ignored` |
+| `include_query` | `false` | When the previous turn ran several personas, put their answers ahead of the input (RAG still searches with the bare question). The WebUI's Include Query |
+| `personality` | (unset) | `PERSONALITY` overrides (`LANGUAGE` / `SPEAKING_STYLE` / `CHARACTER` / `BIG5`, ...), merged onto the agent JSON |
+| `overwrite_items` | `{}` | Any other agent-setting override (HABIT / KNOWLEDGE ... given directly) |
+| `skills` | (unset) | SKILL names to run this turn. **Left unset, the agent's own `SKILL.TOOLS.<name>.DEFAULT: true` entries apply** — the same set the WebUI's Skills picker opens with. Passing it replaces that selection for the turn (`[]` runs none). Unknown names do not run and come back in `skills_ignored`. As in the WebUI, picking a flag SKILL (`cite_knowledge` / `diagram_mode` / `emphasis_mode` / `match_input_language`) sets its flag and picking a `WebSearch` skill turns web search on (an explicit flag field of the same name wins) |
 | `skill` | (unset) | One extra SKILL to run on top, the API form of the WebUI's `/<name>`. It adds to `skills` rather than replacing it |
 | `thinking_mode` | the agent's `THINKING.MODE` | Thinking Mode. When `true`, the AI analyzes the question and dynamically decides Habit / Web search / RAG query generation / Book addition / SKILLs |
 | `thinking_targets` | the agent's `THINKING.TARGETS` | Labels for what Thinking may decide (`Habit` / `Web Search` / `RAG Query` / `Books` / `Skills` / `Personas`). With `Skills` included, a BEFORE skill that is on only because of its `DEFAULT` runs only when Thinking keeps it |
@@ -3859,8 +3928,6 @@ API default values are used for omitted parameters. These correspond to the WebU
 | `session_summary_enabled` | (unspecified) | Toggle the session summary feature inline. When set, the value is written to `status.yaml` and takes effect starting on the same turn. Unspecified = keep whatever the session already has |
 | `session_summary_template` | (unspecified) | Session summary template (Markdown). When set, written to `status.yaml`. Fetch presets from `GET /session_summary_presets` |
 
-> `memory_similarity` is always `false` via the API (the parameter cannot be specified).
->
 > User Memory injection is enabled only when `memory_use=true` (the API default) and at LLM execution time (even if `user_memory` is specified, it is not injected if `memory_use=false`). When enabled, the User Memory text is also included as input to RAG search query generation.
 
 **Response:**
@@ -3869,6 +3936,8 @@ API default values are used for omitted parameters. These correspond to the WebU
 {
   "session_id": "API_TEST_001",
   "session_name": "(User:TestUser) Question about AI",
+  "seq": "3",
+  "sub_seq": "1",
   "response": "Agent response text",
   "response_display": "Agent response text\n\n## Reference Info\n...\n\n## Mood Score\n\n...",
   "ref_sections": "## Reference Info\n...",
@@ -3913,7 +3982,9 @@ API default values are used for omitted parameters. These correspond to the WebU
 > citation markers such as `[1]` remain in `response`. `response_display` is the answer, then the reference
 > sections, then APPEND skill output.
 >
-> An unknown name passed in `skills` / `skill` comes back in `skills_ignored` (the key is absent when none were).
+> An unknown name passed in `skills` / `skill` comes back in `skills_ignored` (the key is absent when none were). `personas` / `books` likewise come back in `personas_ignored` / `books_ignored`.
+>
+> `seq` / `sub_seq` are where the answer of record was saved (`null` with `memory_save=false`); use them with `POST /feedback` and `/sessions/{id}/turns/{seq}/...`. `answers` holds every answer of the turn (several with multiple personas or a chain; each with `sub_seq` / `name` / `persona_name` / `response` / `response_display` / `images`).
 
 > `attachments_processed` is an empty array (`[]`) when the request has no attachments.
 >

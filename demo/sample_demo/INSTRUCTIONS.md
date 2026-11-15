@@ -29,6 +29,7 @@
 ### ❌ 触らないでほしいもの（不可侵の契約）
 
 - **`js/api.js` の `Api.call(method, path, body)` シグネチャ**、および `Api.health / listSessions / getSession / listAgents / listEngines / listWebEngines / feedbackConfig / submitFeedback / run` の名前と戻り値。DigiM_API.py と直接対応しています。
+- **Chat サイドバーのセッション一覧は `GET /sessions` に `active=` を付けて呼ぶ**こと。再生時はこれで Sessions タブの一覧と見分けています（`handleChatPlayback`）。
 - **`js/recorder.js` の `event` オブジェクト形状**（下記）。過去の録画ファイルとの互換のため。
 
   ```js
@@ -51,8 +52,19 @@
 
 | エンドポイント                       | 画面 (data-panel) | 主要 DOM ID |
 |--------------------------------------|-------------------|-------------|
-| `POST /run`                          | `chat`            | `#chat-input`, `#btn-send`, `#chat-log`, `#chat-agent`, `#chat-engine`, `#flag-*`, `#chat-files`, `#chat-files-list`, `#chat-attach-base64` |
+| `POST /run`                          | `chat`            | `#chat-input`, `#btn-send`, `#chat-log`, `#chat-agent`, `#chat-engine`, `#chat-imagegen-engine`, `#flag-*`, `#chat-files`, `#chat-files-list`, `#chat-attach-base64`（`#chat-async` が OFF のとき） |
 | `POST /run_multipart`                | `chat`            | Same as `/run` (fires when files are attached and "Send as base64" is OFF) |
+| `POST /run_async` / `/run_async_multipart` | `chat`      | `#chat-async`（ON が既定）。送信内容は `/run` と同じ（`buildChatBody`） |
+| `GET /jobs/{id}`                     | `chat`            | 実行中の吹き出し（`showJobProgress`）。2秒おきに読む |
+| `GET /agents/{file}/chat_options`    | `chat`            | `#chat-skills`, `#chat-books`, `#chat-org`, `#chat-personas`, `#chat-include-query`, `#chat-thinking-box`, `#chat-max-thinking-turns`, `#chat-po-language`, `#chat-po-style`, `#chat-legacy-flags`（`applyChatOptions`） |
+| `GET /sessions?active=Y\|N`          | `chat`            | `#chat-sess-list`, `#btn-chat-sess-reload`, `#chat-sess-hidden` |
+| `GET /sessions/{id}/turns`           | `chat`            | `#chat-log`（`renderTurns`）, `#chat-head-name`, `#chat-view`, `#btn-chat-reload`, `#btn-chat-open`, `#btn-chat-new` |
+| `GET /sessions/{id}/status`          | `chat`            | 実行中のセッションを開いたときの吹き出し（`watchRunningSession`） |
+| `GET /sessions/{id}/turns/{seq}/detail` | `chat`         | 回答の Detail ボタン → `#refs-drawer`（`#refs-title` が "Detail Information"） |
+| `POST /sessions/{id}/turns/{seq}/delete` / `memory` | `chat` | 回答の Delete / Memory Off ボタン（`.turn-actions`） |
+| `POST /sessions/{id}/rename` / `hide` / `activate` | `chat` | `#btn-chat-rename`、`#chat-sess-list` の ✎ / × / ↺ |
+| `GET /sessions/{id}/contents/{file}` | `chat`            | 吹き出し内の画像と添付リンク（`Api.contentUrl`。`fetch` ではなく `<img src>` なので録画されない） |
+| `GET /sessions/{id}/export`          | `chat`            | `#btn-chat-export` |
 | References drawer                    | `chat`            | `#refs-drawer`, `#refs-body`, `#refs-turn`, `#btn-refs-close`, `.msg.agent`（クリックで開く） |
 | Session summary (chat sidebar)       | `chat`            | `#chat-summary-enabled`, `#chat-summary-preset` |
 | `GET /session_summary_presets`       | `summary`         | `#btn-summary-presets`, `#chat-summary-preset`, `#summary-preset-select` |
@@ -64,7 +76,7 @@
 | `GET /agents/{file}/engines`         | `agents`          | `#engines-detail`（行クリックで発火） |
 | `GET /web_search_engines`            | `websearch`       | `#btn-web-load`, `#web-detail` |
 | `GET /agents/{file}/feedback`        | `feedback`        | `#fb-agent`, `#btn-fb-config`, `#fb-config` |
-| `POST /feedback`                     | `feedback`        | `#fb-session`, `#fb-seq`, `#fb-subseq`, `#fb-body`, `#btn-fb-send`, `#fb-result` |
+| `POST /feedback`                     | `feedback` / `chat` | `#fb-session`, `#fb-seq`, `#fb-subseq`, `#fb-body`, `#btn-fb-send`, `#fb-result`。Chat では回答の Feedback ボタン（`.fb-form`） |
 | `GET /health`                        | header / `health` | `#btn-health`, `#health-dot`, `#btn-raw-health`, `#raw-response` |
 | （任意）                             | `health`          | `#raw-method`, `#raw-path`, `#raw-body`, `#btn-raw-send` |
 | Recording 編集                       | `editor`          | `#ed-select`, `#ed-id`, `#ed-title`, `#ed-createdAt`, `#ed-backend`, `#ed-table`, `#ed-json`, `#btn-ed-*` |

@@ -229,6 +229,9 @@ user/common/analytics/knowledge_explorer/*
 !user/common/analytics/user_memory_explorer/
 user/common/analytics/user_memory_explorer/*
 !user/common/analytics/user_memory_explorer/.gitkeep
+!user/common/analytics/performance_explorer/
+user/common/analytics/performance_explorer/*
+!user/common/analytics/performance_explorer/.gitkeep
 user/common/temp/*
 !user/common/temp/tempファイルの格納先
 user/common/user_memory/*

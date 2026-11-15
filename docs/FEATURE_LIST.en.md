@@ -224,9 +224,9 @@
 
 | # | Feature | Overview |
 |---|---------|----------|
-| 5-16 | Message Send API | Execute an agent via `/run` (supports calls from external services such as LINE/Slack). Memory injection can be enabled and per-layer via the `user_memory` / `user_memory_layers` parameters |
-| 5-17 | Session Retrieval API | Retrieve session lists and history via `/sessions` and `/sessions/{id}` |
-| 5-18 | Agent Information API | Retrieve agent lists, engine lists and feedback settings via `/agents`, `/agents/{file}/engines`, `/agents/{file}/feedback`. Get the list of search engines via `/web_search_engines` |
+| 5-16 | Message Send API | Execute an agent via `/run` (supports calls from external services such as LINE/Slack). Runs through `DigiMatsuExecute_MultiPersona` like the WebUI chat, so personas (several in parallel), BOOKs, Include Query and personality overrides can be given. Memory injection can be enabled and per-layer via the `user_memory` / `user_memory_layers` parameters. `/run_async` + `/jobs/{id}` run in the background with progress |
+| 5-17 | Session Retrieval and Operation API | Retrieve session lists and history via `/sessions` and `/sessions/{id}`. `/sessions/{id}/turns` gives the conversation shaped like the chat pane; turn Detail, delete and Memory Off; rename, hide and re-display sessions; fetch attachments and images; Markdown export |
+| 5-18 | Agent Information API | Retrieve agent lists, engine lists and feedback settings via `/agents`, `/agents/{file}/engines`, `/agents/{file}/feedback`. `/agents/{file}/chat_options` lists everything the chat sidebar offers. Get the list of search engines via `/web_search_engines` |
 | 5-19 | Feedback Submission API | Submit feedback from external sources via `/feedback` |
 | 5-20 | Function Execution API | Call tool functions directly via `/run_function` (through Function Calling) |
 | 5-21 | Health Check API | Return liveness via `/health` |

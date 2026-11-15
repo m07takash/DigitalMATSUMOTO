@@ -377,8 +377,10 @@ def usage_summary(scope):
     }
 
 
-def usage_heatmap(scope):
+def usage_heatmap(scope, turn_ids=None):
     t = scope["turns"]
+    if turn_ids is not None:
+        t = t[t["turn"].isin(turn_ids)]
     out = pd.DataFrame({"weekday": t["ts"].dt.weekday, "hour": t["ts"].dt.hour})
     out = out.groupby(["weekday", "hour"]).size().rename("turns").reset_index()
     out["day"] = out["weekday"].map(dict(enumerate(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])))
@@ -386,6 +388,17 @@ def usage_heatmap(scope):
 
 
 OTHER = "(other)"
+
+
+def axis_turns(scope, value):
+    """Turns of one group or user."""
+    x = axis_frame(scope)
+    return set(x.loc[x["axis_value"] == value, "turn"])
+
+
+def turn_akeys(scope, turn_ids):
+    a = scope["answers"]
+    return set(a.loc[a["turn"].isin(set(turn_ids)), "akey"])
 
 
 def axis_values(scope, max_series=8):
@@ -396,6 +409,15 @@ def axis_values(scope, max_series=8):
     return sorted(x["axis_value"].value_counts().head(max_series).index)
 
 
+def usage_stack(scope, keep):
+    """Turns per period and group/user with a label per period, and every
+    period of the range in order, so empty periods stay visible as gaps."""
+    tl = usage_timeline(scope, keep)
+    tl["label"] = [bucket_label(b, scope["bucket"]) for b in tl["bucket"]]
+    labels = [bucket_label(b, scope["bucket"]) for b in _bucket_range(*scope["period"], scope["bucket"])]
+    return tl, labels
+
+
 def usage_timeline(scope, keep):
     x = axis_frame(scope)
     x["bucket"] = bucket_start(x["ts"], scope["bucket"])
@@ -403,8 +425,13 @@ def usage_timeline(scope, keep):
     return x.groupby(["bucket", "series"]).size().rename("turns").reset_index()
 
 
+TOTAL = "Total"
+
+
 def usage_by_axis(scope):
-    x = axis_frame(scope)
+    """One row per group or user, then the total. A user in several groups
+    counts in each, so the rows can add up to more than the total."""
+    x = pd.concat([axis_frame(scope), scope["turns"].assign(axis_value=TOTAL)], ignore_index=True)
     a = scope["answers"]
     x["input_chars"] = x["user_input"].str.len()
     g = x.groupby("axis_value").agg(
@@ -416,7 +443,9 @@ def usage_by_axis(scope):
     m = x.merge(per_turn, left_on="turn", right_index=True, how="left").groupby("axis_value").agg(
         answers=("answers", "sum"), avg_answer_chars=("answer_chars", "mean"),
         avg_answer_sec=("sec", "mean"), response_tokens=("tokens", "sum"), references=("refs", "sum"))
-    out = g.join(m).reset_index().sort_values("turns", ascending=False)
+    out = g.join(m).reset_index()
+    out = pd.concat([out[out["axis_value"] != TOTAL].sort_values("turns", ascending=False),
+                     out[out["axis_value"] == TOTAL]], ignore_index=True)
     for c in ("avg_input_chars", "avg_answer_chars"):
         out[c] = out[c].round(0)
     out["avg_answer_sec"] = out["avg_answer_sec"].round(1)
@@ -549,13 +578,20 @@ def parse_stop_words(extra):
     return STOP_WORDS | frozenset(words)
 
 
-def keyword_ranking(scope, top_n=30, stop=STOP_WORDS):
-    """Input keywords by the number of turns that mention them, with when they peaked."""
+def keyword_ranking(scope, top_n=30, stop=STOP_WORDS, turn_ids=None):
+    """Input keywords by the number of turns that mention them, with when they peaked.
+
+    With `turn_ids` (a group's turns) the shares and peaks are that group's.
+    """
     it = scope["input_terms"]
     it = it[~it["term"].isin(stop)]
+    turns = scope["turns"]
+    if turn_ids is not None:
+        it = it[it["key"].isin(set(turn_ids))]
+        turns = turns[turns["turn"].isin(set(turn_ids))]
     if it.empty:
         return pd.DataFrame()
-    turns = scope["turns"].set_index("turn")
+    turns = turns.set_index("turn")
     top = it.groupby("term")["key"].size().sort_values(ascending=False).head(int(top_n))
     bucket = scope["bucket"]
     buckets = _bucket_range(*scope["period"], bucket)
@@ -578,9 +614,73 @@ def keyword_ranking(scope, top_n=30, stop=STOP_WORDS):
     return pd.DataFrame(rows)
 
 
-def turns_with_keyword(scope, keyword):
+def turns_with_keyword(scope, keyword, turn_ids=None):
     it = scope["input_terms"]
-    return set(it.loc[it["term"] == keyword, "key"])
+    out = set(it.loc[it["term"] == keyword, "key"])
+    return out if turn_ids is None else out & set(turn_ids)
+
+
+def input_term_freq(scope, turn_ids=None, stop=STOP_WORDS, n=60):
+    """Input keywords and the number of turns that mention them, for a word cloud."""
+    it = scope["input_terms"]
+    it = it[~it["term"].isin(stop)]
+    if turn_ids is not None:
+        it = it[it["key"].isin(set(turn_ids))]
+    top = it.groupby("term")["key"].size().sort_values(ascending=False).head(n)
+    return {k: int(v) for k, v in top.items()}
+
+
+def term_cell(terms, n=10, count="answers"):
+    """"keyword:count(share%)" for the first n rows of a term table, in one string."""
+    if terms is None or terms.empty:
+        return ""
+    return " / ".join(f"{k}:{int(c)}({s}%)" for k, c, s in
+                      zip(terms["keyword"].head(n), terms[count].head(n), terms["share"].head(n)))
+
+
+def answer_keyword_cell(scope, turn_ids, stop=STOP_WORDS, n=10):
+    terms, _ = response_terms(scope, turn_ids, n, stop)
+    return term_cell(terms, n)
+
+
+def keyword_example(scope, keyword, turn_ids=None, stop=STOP_WORDS, n_terms=10):
+    """One turn that shows how a keyword was answered.
+
+    Taken from the keyword's peak period, and among those the turn whose
+    answers carry the most of the keyword's top answer terms (weighted by
+    rank), so the example is typical rather than merely recent.
+    """
+    turns = turns_with_keyword(scope, keyword, turn_ids)
+    if not turns:
+        return None
+    t = scope["turns"]
+    t = t[t["turn"].isin(turns)].copy()
+    t["bucket"] = bucket_start(t["ts"], scope["bucket"])
+    peak = t.groupby("bucket").size().idxmax()
+    cand = t[t["bucket"] == peak]
+    top, _ = response_terms(scope, turns, n_terms, stop)
+    weight = {k: n_terms - i for i, k in enumerate(top["keyword"])}
+    at, _ = _answer_terms(scope, stop)
+    a = scope["answers"]
+    a = a[a["turn"].isin(set(cand["turn"]))]
+    hits = at[at["key"].isin(set(a["akey"])) & at["term"].isin(weight)]
+    by_turn = (hits.assign(w=hits["term"].map(weight), turn=hits["key"].map(a.set_index("akey")["turn"]))
+               .groupby("turn")["w"].sum())
+    cand = cand.assign(score=cand["turn"].map(by_turn).fillna(0)).sort_values(["score", "ts"], ascending=False)
+    row = cand.iloc[0]
+    return {**example_turn(scope, row["turn"]), "peak": bucket_label(peak, scope["bucket"]),
+            "matched": [k for k in top["keyword"] if k in set(hits.loc[hits["key"].isin(
+                set(a.loc[a["turn"] == row["turn"], "akey"])), "term"])]}
+
+
+def example_turn(scope, turn):
+    t = scope["turns"].set_index("turn").loc[turn]
+    a = scope["answers"]
+    a = a[a["turn"] == turn]
+    return {"turn": turn, "user_id": t["user_id"], "ts": t["ts"], "input": t["user_input"],
+            "session_name": t["session_name"],
+            "answers": [{"agent": r["agent_name"] or r["agent_file"], "model": r["model_name"],
+                         "text": r["response_text"], "akey": r["akey"]} for _, r in a.iterrows()]}
 
 
 def response_terms(scope, turn_ids=None, top_n=10, stop=STOP_WORDS, akeys=None):
@@ -765,9 +865,50 @@ def cluster_inputs(scope, k=6, seed=0):
     labels = np.asarray([renum[int(x)] for x in km.labels_])
     cent = _unit(km.cluster_centers_[order])
     xy = PCA(n_components=2, random_state=seed).fit_transform(m) if m.shape[0] > 2 else np.zeros((len(keys), 2))
+    # Measured in the space K-means worked in (Euclidean over unit vectors), so
+    # the radius and the within-cluster sum of squares describe the clusters
+    # it actually made.
+    dist = np.linalg.norm(m - km.cluster_centers_[order][labels - 1], axis=1)
+    sil = np.full(len(keys), np.nan)
+    if 1 < k < len(keys):
+        from sklearn.metrics import silhouette_samples
+        sil = silhouette_samples(m, labels)
     frame = pd.DataFrame({"turn": keys, "cluster": labels, "x": xy[:, 0], "y": xy[:, 1],
-                          "centrality": np.einsum("ij,ij->i", m, cent[labels - 1])})
+                          "centrality": np.einsum("ij,ij->i", m, cent[labels - 1]),
+                          "dist": dist, "silhouette": sil})
     return {"k": k, "frame": frame, "centroids": cent}
+
+
+def cluster_table(scope, cl, turn_ids=None, stop=STOP_WORDS, n_terms=10, names=None):
+    """Per cluster: how separate, how many, how wide and how tight, and what
+    the inputs and the answers are about. With `turn_ids` only those inputs
+    count; the clusters themselves are the overall ones."""
+    f = cl["frame"]
+    if turn_ids is not None:
+        f = f[f["turn"].isin(set(turn_ids))]
+    it = scope["input_terms"]
+    it = it[~it["term"].isin(stop) & it["key"].isin(set(cl["frame"]["turn"]))]
+    df_all = it.groupby("term")["key"].size()
+    n_all = max(len(cl["frame"]), 1)
+    rows = []
+    for c in range(1, cl["k"] + 1):
+        g = f[f["cluster"] == c]
+        if g.empty:
+            continue
+        turns = set(g["turn"])
+        sub = it[it["key"].isin(turns)]
+        tf = sub.groupby("term")["key"].size()
+        score = (tf * np.log1p(n_all / df_all.reindex(tf.index))).sort_values(ascending=False)
+        top = score.head(n_terms).index
+        inputs = " / ".join(f"{k}:{int(tf[k])}({round(100.0 * tf[k] / len(g), 1)}%)" for k in top)
+        rows.append({
+            "cluster": f"C{c}", "name": (names or {}).get(f"C{c}", ""),
+            "silhouette": round(float(np.nanmean(g["silhouette"])), 3) if g["silhouette"].notna().any() else None,
+            "inputs": len(g), "share": round(100.0 * len(g) / max(len(f), 1), 1),
+            "radius": round(float(g["dist"].max()), 3), "wcss": round(float((g["dist"] ** 2).sum()), 3),
+            "input_keywords": inputs, "answer_keywords": answer_keyword_cell(scope, turns, stop, n_terms),
+        })
+    return pd.DataFrame(rows)
 
 
 def cluster_summary(scope, cl, stop=STOP_WORDS, n_terms=5):
@@ -858,13 +999,13 @@ def load_refs(scope):
     sids = sorted(set(a["session_id"]))
     # A graph edge has no title; its triple text is the only readable name.
     sql = (f"SELECT session_id, seq, sub_seq, rag_name, db_name, chunk_id, "
-           f"COALESCE(NULLIF(title, ''), left(text_short, 60), chunk_id) AS title, "
+           f"COALESCE(NULLIF(title, ''), left(text_short, 60), chunk_id) AS title, left(text_short, 300) AS text, "
            f"similarity_prompt, similarity_response FROM {T_REFS} WHERE session_id = ANY(%s)")
     with closing(_connect()) as conn:
         r = pd.read_sql_query(sql, conn, params=(sids,))
     r["akey"] = r["session_id"] + ":" + r["seq"].astype(str) + ":" + r["sub_seq"].astype(str)
     r = r[r["akey"].isin(set(a["akey"]))].drop(columns=["session_id", "seq", "sub_seq"])
-    for c in ("rag_name", "db_name", "chunk_id", "title"):
+    for c in ("rag_name", "db_name", "chunk_id", "title", "text"):
         r[c] = r[c].fillna("")
     r["chunk"] = r["rag_name"] + " | " + r["db_name"] + " | " + r["chunk_id"]
 
@@ -879,9 +1020,12 @@ def load_refs(scope):
     ms = s.where(scored).groupby(r["akey"]).transform("max")
     r["utility"] = (q / mq - s / ms).where(scored & (mq > 0) & (ms > 0))
     r["dist_q"], r["dist_a"] = q.where(scored), s.where(scored)
+    # The two halves of the utility, kept for the cumulative Q / A bars.
+    r["norm_q"] = (q / mq).where(scored & (mq > 0) & (ms > 0))
+    r["norm_a"] = (s / ms).where(scored & (mq > 0) & (ms > 0))
     meta = r.groupby("chunk").agg(rag_name=("rag_name", "first"), db_name=("db_name", "first"),
-                                  chunk_id=("chunk_id", "first"), title=("title", "first"))
-    scope["refs"] = r[["akey", "chunk", "utility", "dist_q", "dist_a"]].reset_index(drop=True)
+                                  chunk_id=("chunk_id", "first"), title=("title", "first"), text=("text", "first"))
+    scope["refs"] = r[["akey", "chunk", "utility", "dist_q", "dist_a", "norm_q", "norm_a"]].reset_index(drop=True)
     scope["chunks"] = meta
     return scope
 
@@ -899,8 +1043,9 @@ def knowledge_ranking(scope, turn_ids=None, top_n=10, by="ref_count", akeys=None
     g = r.groupby("chunk").agg(ref_count=("akey", "size"), answers=("akey", "nunique"),
                                scored=("utility", "count"), utility_sum=("utility", "sum"),
                                utility_avg=("utility", "mean"),
-                               dist_q=("dist_q", "mean"), dist_a=("dist_a", "mean"))
-    g.loc[g["scored"] == 0, "utility_sum"] = np.nan
+                               dist_q=("dist_q", "mean"), dist_a=("dist_a", "mean"),
+                               q_sum=("norm_q", "sum"), a_sum=("norm_a", "sum"))
+    g.loc[g["scored"] == 0, ["utility_sum", "q_sum", "a_sum"]] = np.nan
     g = g.join(scope["chunks"]).reset_index()
     if rag_name is not None:
         g = g[g["rag_name"] == rag_name]
@@ -909,7 +1054,7 @@ def knowledge_ranking(scope, turn_ids=None, top_n=10, by="ref_count", akeys=None
     g = g.sort_values([by, "ref_count"], ascending=False, na_position="last").reset_index(drop=True)
     g["rank"] = g.index + 1
     g["top"] = g["rank"] <= int(top_n)
-    for c in ("utility_sum", "utility_avg", "dist_q", "dist_a"):
+    for c in ("utility_sum", "utility_avg", "dist_q", "dist_a", "q_sum", "a_sum"):
         g[c] = g[c].round(3)
     return g
 
@@ -1472,6 +1617,7 @@ def agent_knowledge_config(agent_file):
                     "retriever": it.get("RETRIEVER", "Vector"), "active": it.get("ACTIVE", True) is not False,
                     "collections": [d.get("DATA_NAME") for d in (it.get("DATA") or [])
                                     if isinstance(d, dict) and d.get("DATA_TYPE") == "DB" and d.get("DATA_NAME")],
+                    "definition": it,
                 })
     except FileNotFoundError:
         return None
@@ -1501,7 +1647,7 @@ def knowledge_map(collections):
     key = tuple((n, c.count()) for n, c in cols)
     if key in _MAP_CACHE:
         return _MAP_CACHE[key]
-    ids, dbs, titles, vecs = [], [], [], []
+    ids, dbs, titles, cats, vecs = [], [], [], [], []
     for name, col in cols:
         got = col.get(include=["metadatas"])
         for cid, meta in zip(got["ids"], got["metadatas"]):
@@ -1510,15 +1656,23 @@ def knowledge_map(collections):
                 continue
             v = np.fromstring(raw, sep=",", dtype=np.float32)
             if v.size:
-                ids.append(str(cid)); dbs.append(name); titles.append(str((meta or {}).get("title", ""))); vecs.append(v)
+                ids.append(str(cid)); dbs.append(name); titles.append(str((meta or {}).get("title", "")))
+                cats.append(str((meta or {}).get("category", "") or "")); vecs.append(v)
     dims = {v.size for v in vecs}
     if len(vecs) < 3 or len(dims) != 1:
         _MAP_CACHE[key] = None
         return None
     xy = PCA(n_components=2, random_state=0).fit_transform(_unit(np.vstack(vecs)))
-    out = pd.DataFrame({"chunk_id": ids, "db_name": dbs, "title": titles, "x": xy[:, 0], "y": xy[:, 1]})
+    out = pd.DataFrame({"chunk_id": ids, "db_name": dbs, "title": titles, "category": cats, "x": xy[:, 0], "y": xy[:, 1]})
     _MAP_CACHE[key] = out
     return out
+
+
+def category_colors():
+    """(category -> group, group -> colour) from the category master, as the
+    per-turn Knowledge Utility category scatter uses them."""
+    cm = dmms.load("category_map") or {}
+    return cm.get("Category") or {}, cm.get("CategoryColor") or {}
 
 
 def knowledge_sections(scope, agent, top_n=10):
@@ -1545,3 +1699,62 @@ def knowledge_sections(scope, agent, top_n=10):
                     "distinct": len(r)})
     return out, cfg is not None
 
+
+def ku_sections(scope, akeys, top_n=20):
+    """Knowledge Utility of a set of answers, one entry per Knowledge / Book
+    that they referenced, in the order their agents list them.
+
+    `ranking` is by references; `extra` holds the chunks that are in the top
+    N by cumulative utility but not by references, best first, so a chunk
+    that moved the answers a lot without being retrieved often still shows.
+    """
+    akeys = set(akeys)
+    a = scope["answers"]
+    files = a.loc[a["akey"].isin(akeys), "agent_file"].value_counts().index
+    cfg = {}
+    for f in files:
+        for c in agent_knowledge_config(f) or []:
+            cfg.setdefault(c["rag_name"], c)
+    used = knowledge_ranking(scope, top_n=top_n, akeys=akeys)
+    if used.empty:
+        return []
+    refs = used.groupby("rag_name")["ref_count"].sum().sort_values(ascending=False)
+    order = [r for r in cfg if r in refs.index] + [r for r in refs.index if r not in cfg]
+    out = []
+    for rag in order:
+        r = knowledge_ranking(scope, top_n=top_n, akeys=akeys, rag_name=rag)
+        top = r[r["top"]]
+        by_util = r.dropna(subset=["utility_sum"]).sort_values("utility_sum", ascending=False).head(int(top_n))
+        extra = by_util[~by_util["chunk"].isin(set(top["chunk"]))]
+        c = cfg.get(rag) or {"rag_name": rag, "origin": "Not configured now", "retriever": "",
+                             "active": False, "collections": [], "definition": None}
+        if not c.get("retriever"):
+            c = {**c, "retriever": "Graph" if r["db_name"].eq("Graph").all() else
+                 "PageIndex" if r["db_name"].eq("PageIndex").all() else "Vector"}
+        out.append({**c, "ranking": r, "top": top, "extra": extra,
+                    "references": int(r["ref_count"].sum()), "distinct": len(r)})
+    return out
+
+
+_TRIPLE_RE = re.compile(r"^\((.*)\) --\[(.*)\]--> \((.*)\)$", re.S)
+
+
+def graph_from_refs(ranking, max_edges=60):
+    """The referenced edges of a graph knowledge base as a drawable graph.
+
+    A graph reference is one edge (`id` = "<source>-><target>", text =
+    "(A) --[relation]--> (B)"). The most referenced edges are kept so the
+    layout stays readable.
+    """
+    nodes, edges = {}, []
+    for _, r in ranking.sort_values("ref_count", ascending=False).head(int(max_edges)).iterrows():
+        cid = str(r["chunk_id"])
+        m = _TRIPLE_RE.match(str(r.get("text") or r.get("title") or ""))
+        if "->" not in cid or not m:
+            continue
+        src, dst = cid.split("->", 1)
+        nodes.setdefault(src, {"name": m.group(1), "type": ""})
+        nodes.setdefault(dst, {"name": m.group(3), "type": ""})
+        edges.append({"source": src, "target": dst, "relation": f"{m.group(2)} ({int(r['ref_count'])})",
+                      "count": int(r["ref_count"]), "top": bool(r["top"])})
+    return {"nodes": nodes, "edges": edges}

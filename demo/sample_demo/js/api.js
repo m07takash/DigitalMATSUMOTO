@@ -143,6 +143,32 @@
     },
     // Legacy alias kept intentionally so demos targeting older backends work.
     runLegacy(body)        { return this.call("POST", "/run_function", body); },
+
+    // --- WebUI chat parity -------------------------------------------------
+    // Sidebar choices for one agent: engines, skills, books, ORG/personas,
+    // Thinking, personality and the execution toggles a turn starts from.
+    chatOptions(file)      { return this.call("GET",  `/agents/${encodeURIComponent(file)}/chat_options`); },
+    // Background run: returns {job_id, session_id, state} at once; poll getJob.
+    runAsync(body)         { return this.call("POST", "/run_async", body); },
+    runAsyncMultipart(body, files) { return this.callMultipart("/run_async_multipart", body, files); },
+    getJob(jobId)          { return this.call("GET",  `/jobs/${encodeURIComponent(jobId)}`); },
+    sessionStatus(id)      { return this.call("GET",  `/sessions/${encodeURIComponent(id)}/status`); },
+    // The session as the chat pane shows it. params: {view: "summary"|"all", last, include_refs}
+    getTurns(id, params)   { return this.call("GET",  `/sessions/${encodeURIComponent(id)}/turns` + qs(params)); },
+    turnDetail(id, seq, subSeq) {
+      return this.call("GET", `/sessions/${encodeURIComponent(id)}/turns/${encodeURIComponent(seq)}/detail` + qs({ sub_seq: subSeq }));
+    },
+    deleteTurn(id, seq)    { return this.call("POST", `/sessions/${encodeURIComponent(id)}/turns/${encodeURIComponent(seq)}/delete`, {}); },
+    setTurnMemory(id, seq, enabled) {
+      return this.call("POST", `/sessions/${encodeURIComponent(id)}/turns/${encodeURIComponent(seq)}/memory`, { enabled: !!enabled });
+    },
+    renameSession(id, name) { return this.call("POST", `/sessions/${encodeURIComponent(id)}/rename`, { name }); },
+    hideSession(id)        { return this.call("POST", `/sessions/${encodeURIComponent(id)}/hide`, {}); },
+    activateSession(id)    { return this.call("POST", `/sessions/${encodeURIComponent(id)}/activate`, {}); },
+    // Markdown text (not JSON); call() hands it back as a string.
+    exportSession(id, params) { return this.call("GET", `/sessions/${encodeURIComponent(id)}/export` + qs(params)); },
+    // Absolute URL of an attachment / generated image (`url` in a turn entry).
+    contentUrl(path)       { return this.getBackendUrl() + (path || ""); },
   };
 
   function qs(params) {

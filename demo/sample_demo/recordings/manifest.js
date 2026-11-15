@@ -16,10 +16,13 @@
 //   ------------------
 //   sample_chat.js   — 3-turn chat with the Sample Agent, plus a session list
 //                      and health check. Good for smoke-testing the UI.
+//   sample_async_chat.js — WebUI-style chat: sidebar options, a background run
+//                      polled to completion, the turn view, Detail, Memory Off.
 // ============================================================================
 
 window.DIGIM_RECORDING_INDEX = {
   bundled: [
-    "sample_chat"
+    "sample_chat",
+    "sample_async_chat"
   ]
 };

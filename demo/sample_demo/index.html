@@ -38,7 +38,7 @@
   </header>
 
   <nav class="tabs">
-    <button class="tab active" data-tab="chat">Chat (/run)</button>
+    <button class="tab active" data-tab="chat">Chat</button>
     <button class="tab" data-tab="sessions">Sessions</button>
     <button class="tab" data-tab="agents">Agents & Engines</button>
     <button class="tab" data-tab="websearch">Web Search Engines</button>
@@ -62,23 +62,73 @@
         <select id="chat-agent" class="select"></select>
         <label>Engine (LLM)</label>
         <select id="chat-engine" class="select"></select>
+        <label>Engine (Image)</label>
+        <select id="chat-imagegen-engine" class="select"></select>
         <label>Session ID (blank = new)</label>
         <input type="text" id="chat-session-id" placeholder="(new session)" />
+        <div class="side-btns">
+          <button id="btn-chat-new" class="btn ghost" title="Start a new session on the next Send">+ New chat</button>
+          <button id="btn-chat-open" class="btn ghost" title="GET /sessions/{id}/turns for the ID above">Open</button>
+        </div>
+
+        <h3>Sessions <button id="btn-chat-sess-reload" class="btn ghost mini" title="GET /sessions?active=Y">↻</button></h3>
+        <label class="inline"><input type="checkbox" id="chat-sess-hidden" /> Show hidden sessions</label>
+        <div id="chat-sess-list" class="sess-list"><p class="hint">Press ↻ to list this user's sessions.</p></div>
+
+        <div id="chat-persona-box" hidden>
+          <h3>Personas</h3>
+          <label>ORG</label>
+          <select id="chat-org" class="select"></select>
+          <div id="chat-personas" class="checklist"></div>
+          <label class="inline"><input type="checkbox" id="chat-include-query" /> Include Query (previous personas' answers)</label>
+        </div>
+
+        <div id="chat-book-box" hidden>
+          <h3>Books</h3>
+          <div id="chat-books" class="checklist"></div>
+        </div>
+
+        <div id="chat-skill-box" hidden>
+          <h3>Skills</h3>
+          <div id="chat-skills" class="checklist"></div>
+        </div>
+
+        <h3>Thinking</h3>
+        <div class="flags">
+          <label><input type="checkbox" id="flag-thinking_mode" /> thinking_mode</label>
+        </div>
+        <div id="chat-thinking-box" class="checklist"></div>
+        <label>Max thinking turns</label>
+        <input type="number" id="chat-max-thinking-turns" min="1" max="5" value="1" />
 
         <h3>Execution flags</h3>
         <div class="flags">
           <label><input type="checkbox" id="flag-memory_use" checked /> memory_use</label>
+          <label><input type="checkbox" id="flag-memory_save" checked /> memory_save</label>
+          <label><input type="checkbox" id="flag-save_digest" checked /> save_digest</label>
+          <label><input type="checkbox" id="flag-magic_word_use" /> magic_word_use</label>
           <label><input type="checkbox" id="flag-rag_query_gene" checked /> rag_query_gene</label>
           <label><input type="checkbox" id="flag-meta_search" checked /> meta_search</label>
-          <label><input type="checkbox" id="flag-web_search" /> web_search</label>
           <label><input type="checkbox" id="flag-web_search_guardrail" checked /> web_search_guardrail</label>
-          <label><input type="checkbox" id="flag-thinking_mode" /> thinking_mode</label>
           <label><input type="checkbox" id="flag-private_mode" /> private_mode</label>
           <label><input type="checkbox" id="flag-insert_citations" checked /> insert_citations</label>
+        </div>
+        <!-- Agents without SKILL.TOOLS still take the old flag fields. -->
+        <div id="chat-legacy-flags" class="flags">
+          <label><input type="checkbox" id="flag-web_search" /> web_search</label>
           <label><input type="checkbox" id="flag-cite_knowledge" /> cite_knowledge</label>
           <label><input type="checkbox" id="flag-diagram_mode" /> diagram_mode</label>
           <label><input type="checkbox" id="flag-emphasis_mode" /> emphasis_mode</label>
         </div>
+
+        <h3>Personality</h3>
+        <label>Language</label>
+        <input type="text" id="chat-po-language" placeholder="(agent default)" />
+        <label>Speaking style</label>
+        <input type="text" id="chat-po-style" placeholder="(agent default)" />
+
+        <h3>Run</h3>
+        <label class="inline" title="POST /run_async, then poll GET /jobs/{id} — the WebUI way, with progress"><input type="checkbox" id="chat-async" checked /> Background run with progress</label>
 
         <h3>Session Summary</h3>
         <label class="summary-toggle">
@@ -93,12 +143,22 @@
       </aside>
 
       <div class="main-col">
+        <div class="chat-head">
+          <span id="chat-head-name" class="chat-head-name">New chat</span>
+          <select id="chat-view" class="select" title="History Detail Visible">
+            <option value="summary">Summary</option>
+            <option value="all">All entries</option>
+          </select>
+          <button id="btn-chat-reload" class="btn ghost" title="GET /sessions/{id}/turns">Reload</button>
+          <button id="btn-chat-rename" class="btn ghost" title="POST /sessions/{id}/rename">Rename</button>
+          <button id="btn-chat-export" class="btn ghost" title="GET /sessions/{id}/export">⬇ .md</button>
+        </div>
         <div id="chat-log" class="chat-log"></div>
 
-        <!-- Reference drawer — populated when an agent bubble is clicked. -->
+        <!-- Side drawer — References of a bubble, or a turn's Detail Information. -->
         <aside id="refs-drawer" class="refs-drawer" hidden>
           <div class="refs-head">
-            <h3>References</h3>
+            <h3 id="refs-title">References</h3>
             <span id="refs-turn" class="refs-turn"></span>
             <button id="btn-refs-close" class="refs-close" title="Close">×</button>
           </div>
@@ -108,14 +168,14 @@
         </aside>
 
         <div class="chat-attach-row">
-          <label class="btn ghost" title="Attach file(s) — sent as multipart/form-data to /run_multipart">
+          <label class="btn ghost" title="Attach file(s) — sent as multipart/form-data">
             📎 Attach
             <input type="file" id="chat-files" multiple hidden />
           </label>
           <div id="chat-files-list" class="chat-files-list"></div>
-          <label class="chat-attach-mode" title="Base64 encodes files into the JSON body (calls /run). Multipart posts as form data (calls /run_multipart).">
+          <label class="chat-attach-mode" title="Base64 encodes files into the JSON body. Multipart posts as form data (/run_multipart or /run_async_multipart).">
             <input type="checkbox" id="chat-attach-base64" />
-            Send as base64 (/run)
+            Send as base64
           </label>
         </div>
 
@@ -413,6 +473,7 @@
   <script src="js/api.js"></script>
   <script src="recordings/manifest.js"></script>
   <script src="recordings/sample_chat.js"></script>
+  <script src="recordings/sample_async_chat.js"></script>
   <script src="js/editor.js"></script>
   <script src="js/video.js"></script>
   <script src="js/app.js"></script>

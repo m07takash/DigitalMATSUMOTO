@@ -14,8 +14,20 @@ Sample Agent の FastAPI バックエンドをそのまま叩けるデモ用画�
 
 | Method | Path                                    | 画面 |
 |--------|-----------------------------------------|------|
-| POST   | `/run`                                  | Chat |
-| POST   | `/run_multipart` (添付ファイル)         | Chat（📎 Attach ボタン） |
+| POST   | `/run`                                  | Chat（Background run を OFF にしたとき） |
+| POST   | `/run_multipart` (添付ファイル)         | Chat（📎 Attach ボタン、Background run OFF） |
+| POST   | `/run_async` / `/run_async_multipart`   | Chat（既定。WebUI と同じく途中経過を見ながら待つ） |
+| GET    | `/jobs/{job_id}`                        | Chat（実行中の吹き出しに途中経過を表示） |
+| GET    | `/agents/{file}/chat_options`           | Chat サイドバー（エンジン・ペルソナ・Books・Skills・Thinking・Personality） |
+| GET    | `/sessions?active=Y\|N`                 | Chat サイドバーの Sessions 一覧（Show hidden sessions で N） |
+| GET    | `/sessions/{id}/turns`                  | Chat（セッションを開く・Reload・表示の切替） |
+| GET    | `/sessions/{id}/status`                 | Chat（実行中のセッションを開いたとき） |
+| GET    | `/sessions/{id}/turns/{seq}/detail`     | Chat（回答の Detail ボタン） |
+| POST   | `/sessions/{id}/turns/{seq}/delete`     | Chat（回答の Delete ボタン） |
+| POST   | `/sessions/{id}/turns/{seq}/memory`     | Chat（回答の Memory Off / On ボタン） |
+| POST   | `/sessions/{id}/rename` / `hide` / `activate` | Chat（✎ / × / ↺、ヘッダーの Rename） |
+| GET    | `/sessions/{id}/contents/{file}`        | Chat（添付・生成画像の表示） |
+| GET    | `/sessions/{id}/export`                 | Chat（ヘッダーの ⬇ .md） |
 | POST   | `/run_function` (legacy)                | Raw fetch から呼び出し可 |
 | GET    | `/sessions`                             | Sessions |
 | GET    | `/sessions/{id}`                        | Sessions（行クリックで詳細表示） |
@@ -26,7 +38,7 @@ Sample Agent の FastAPI バックエンドをそのまま叩けるデモ用画�
 | GET    | `/agents/{file}/engines`                | Agents & Engines（行クリック） |
 | GET    | `/web_search_engines`                   | Web Search Engines |
 | GET    | `/agents/{file}/feedback`               | Feedback |
-| POST   | `/feedback`                             | Feedback |
+| POST   | `/feedback`                             | Feedback / Chat（回答の Feedback ボタン） |
 | GET    | `/health`                               | Header の Check ボタン / Health タブ |
 
 さらに、録画の内容を画面上で編集するための **Recording Editor** タブがあります（詳細は [`MANUAL.md`](MANUAL.md) の § 6-7 と § 7）。
@@ -109,7 +121,8 @@ sample_demo/
 │   └── app.js            UI 配線（各タブ / ボタン / セレクタ）
 ├── recordings/
 │   ├── manifest.js       録画の索引（コメントのみ）
-│   └── sample_chat.js    サンプル録画（3ターンの会話）
+│   ├── sample_chat.js    サンプル録画（3ターンの会話）
+│   └── sample_async_chat.js  サンプル録画（WebUI と同じ流れ：途中経過つきの実行・ターンの操作）
 ├── README.md             このファイル
 └── INSTRUCTIONS.md       AI ツール（Copilot/Claude）向け改造ガイド
 ```

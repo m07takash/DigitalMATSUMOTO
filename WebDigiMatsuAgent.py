@@ -7700,8 +7700,12 @@ _PE_SERIES_DARK = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#0083
 _PE_SEQ = ["#cde2fb", "#86b6ef", "#3987e5", "#1c5cab", "#0d366b"]
 _PE_SHAPES = ["circle", "square", "triangle-up", "diamond", "cross",
               "triangle-down", "triangle-right", "triangle-left", "wedge", "arrow"]
+# Up to MAX_CLUSTERS colours: the series palette and two more.
+_PE_CLUSTER_LIGHT = _PE_SERIES_LIGHT + ["#8a6d3b", "#0f9fb0"]
+_PE_CLUSTER_DARK = _PE_SERIES_DARK + ["#b08d57", "#2bb8c9"]
 _PE_STATE_KEYS = ("_pe_memo", "_pe_cluster", "_pe_scores", "_pe_topic_expl_history", "_pe_topic_expl_sel",
-                  "_pe_div_expl_history", "_pe_div_expl_sel")
+                  "_pe_div_expl_history", "_pe_div_expl_sel", "_pe_cluster_names", "_pe_dialog", "_pe_opened",
+                  "pe_tl_sel")
 
 
 def _pe_dark():
@@ -7758,60 +7762,217 @@ def _pe_answer_panel(dmpe, sc, turn_ids, tag, top_n, stop, akeys=None, store="_p
         })
 
 
-def _pe_knowledge_panel(dmpe, sc, turn_ids, tag, top_n, kp, akeys=None, store="_pe_memo"):
+def _pe_named(names, code):
+    # C1 plus the name the Diversity explanation gave it, as Knowledge Explorer does.
+    _n = (names or {}).get(code)
+    return f"{code} {_n}" if _n else code
+
+
+def _pe_selected_row(event):
+    try:
+        _rows = event.selection.rows
+    except Exception:
+        return None
+    return _rows[0] if _rows else None
+
+
+def _pe_heatmap(alt, hm, tz, height=250):
+    st = dmper.ui()  # records what is drawn while an HTML export is being prepared
+    if hm is None or hm.empty:
+        st.caption("No turns in this selection.")
+        return
+    _days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    _seq = list(reversed(_PE_SEQ)) if _pe_dark() else _PE_SEQ
+    # The number sits on the cell colour, which is dark at the top of the scale
+    # in light mode and at the bottom in dark mode.
+    _hm = hm.assign(light_text=(hm["turns"] > hm["turns"].max() / 2) != _pe_dark())
+    _base = alt.Chart(_hm).encode(
+        x=alt.X("hour:O", title=f"Hour of day ({tz})", scale=alt.Scale(domain=list(range(24))),
+                axis=alt.Axis(labelAngle=0)),
+        y=alt.Y("day:O", title=None, sort=_days, scale=alt.Scale(domain=_days)))
+    _rect = _base.mark_rect(stroke=_pe_surface(), strokeWidth=2).encode(
+        color=alt.Color("turns:Q", title="Turns", scale=alt.Scale(range=_seq)),
+        tooltip=[alt.Tooltip("day:N", title="Day"), alt.Tooltip("hour:O", title="Hour"),
+                 alt.Tooltip("turns:Q", title="Turns")])
+    _txt = _base.mark_text(fontSize=10).encode(
+        text="turns:Q", color=alt.condition("datum.light_text", alt.value("#ffffff"), alt.value("#1f1f1f")))
+    st.altair_chart((_rect + _txt).properties(height=height), use_container_width=True)
+
+
+def _pe_kmap_chart(alt, mp, ranking, top_n, height=300, title=None):
+    """Every knowledge of the collections on the Knowledge Utility map, the
+    referenced ones coloured and sized by their references."""
+    _pal = _PE_SERIES_DARK if _pe_dark() else _PE_SERIES_LIGHT
+    _md = mp.merge(ranking[["db_name", "chunk_id", "ref_count", "rank", "top"]], on=["db_name", "chunk_id"], how="left")
+    _dom = [f"Top {int(top_n)}", "Referenced", "Not referenced"]
+    _md["state"] = np.where(_md["top"].fillna(False).astype(bool), _dom[0],
+                            np.where(_md["ref_count"].notna(), _dom[1], _dom[2]))
+    _md["ref_count"] = _md["ref_count"].fillna(0)
+    _md["title"] = _md["title"].str.slice(0, 60)
+    _pts = alt.Chart(_md).mark_circle(stroke=_pe_surface(), strokeWidth=1).encode(
+        x=alt.X("x:Q", axis=None), y=alt.Y("y:Q", axis=None),
+        color=alt.Color("state:N", title=None, sort=_dom, legend=alt.Legend(orient="top"),
+                        scale=alt.Scale(domain=_dom, range=[_pal[0], "#86b6ef", _pe_gray()])),
+        size=alt.Size("ref_count:Q", legend=None, scale=alt.Scale(range=[45, 420])),
+        order=alt.Order("ref_count:Q"),
+        tooltip=[alt.Tooltip("title:N", title="Knowledge"), alt.Tooltip("db_name:N", title="DB"),
+                 alt.Tooltip("state:N", title="State"), alt.Tooltip("ref_count:Q", title="References")])
+    _lbl = alt.Chart(_md[_md["state"] == _dom[0]]).mark_text(dx=10, dy=-10, fontSize=11).encode(
+        x="x:Q", y="y:Q", text="rank:Q")
+    _out = (_pts + _lbl).properties(height=height)
+    return _out.properties(title=title) if title else _out
+
+
+def _pe_kmap_category_chart(alt, dmpe, mp, ranking, height=300, title=None):
+    """The same map coloured by category group, as the per-turn Knowledge
+    Utility category scatter: the category master folds categories into
+    groups and gives each group its colour; the rest is Other in gray."""
+    _cat, _col = dmpe.category_colors()
+    _md = mp.merge(ranking[["db_name", "chunk_id", "ref_count"]], on=["db_name", "chunk_id"], how="left")
+    _md["ref_count"] = _md["ref_count"].fillna(0)
+    _md["group"] = [(_cat.get(c, "Other") if c else "Other") for c in _md.get("category", pd.Series([""] * len(_md)))]
+    _md.loc[~_md["group"].isin(set(_col)), "group"] = "Other"
+    _md["title"] = _md["title"].str.slice(0, 60)
+    _dom = list(_col) + ["Other"]
+    _rng = list(_col.values()) + [_pe_gray()]
+    _out = alt.Chart(_md).mark_circle(size=55, opacity=0.75, stroke=_pe_surface(), strokeWidth=0.5).encode(
+        x=alt.X("x:Q", axis=None), y=alt.Y("y:Q", axis=None),
+        color=alt.Color("group:N", title=None, sort=_dom, legend=alt.Legend(orient="top"),
+                        scale=alt.Scale(domain=_dom, range=_rng)),
+        tooltip=[alt.Tooltip("title:N", title="Knowledge"), alt.Tooltip("category:N", title="Category"),
+                 alt.Tooltip("group:N", title="Group"), alt.Tooltip("db_name:N", title="DB"),
+                 alt.Tooltip("ref_count:Q", title="References")]).properties(height=height)
+    return _out.properties(title=title) if title else _out
+
+
+def _pe_graph_svg(dmpe, ranking, max_edges=60):
+    import DigiM_GraphUtility as _dgu
+    _g = dmpe.graph_from_refs(ranking, max_edges)
+    if not _g["edges"]:
+        return ""
+    _hi = {e["source"] for e in _g["edges"] if e["top"]} | {e["target"] for e in _g["edges"] if e["top"]}
+    return _dgu.render_graph_neutral_svg(_g, width=880, height=520, color_by_type=False, label_top_hubs=30,
+                                         highlight_node_ids=_hi, show_legend=False, interactive=False)
+
+
+def _pe_ku_sections(dmpe, sc, akeys, tag, top_n=20, store="_pe_memo"):
+    """Knowledge Utility per Knowledge / Book, as Analytics Results - Knowledge
+    Utility shows it for one turn: the most referenced knowledge, where it
+    sits (graph, map or page tree), and the cumulative Q / A behind its utility."""
     st = dmper.ui()  # records what is drawn while an HTML export is being prepared
     import altair as alt
-    _by_label = st.radio("Rank knowledge by:", ["Reference count", "Cumulative utility"], horizontal=True, key=f"{kp}_kby")
-    _by = "ref_count" if _by_label == "Reference count" else "utility_sum"
-    _kr = _pe_memo(("knowledge", tag, top_n, _by), lambda: dmpe.knowledge_ranking(sc, turn_ids, top_n, _by, akeys=akeys), store)
-    if _kr.empty:
+    _secs = _pe_memo(("ku", tag, top_n), lambda: dmpe.ku_sections(sc, akeys, top_n), store)
+    if not _secs:
         st.caption("No knowledge was referenced in this selection.")
         return
-    _top = _kr[_kr["top"]]
-    st.dataframe(
-        _top[["rank", "title", "rag_name", "db_name", "ref_count", "answers", "utility_sum", "utility_avg"]],
-        hide_index=True,
-        column_config={
-            "rank": st.column_config.NumberColumn("#", width="small"),
-            "title": st.column_config.TextColumn("Knowledge", width="large"),
-            "rag_name": st.column_config.TextColumn("RAG"),
-            "db_name": st.column_config.TextColumn("DB"),
-            "ref_count": st.column_config.NumberColumn("References"),
-            "answers": st.column_config.NumberColumn("Answers", help="Answers that referenced it."),
-            "utility_sum": st.column_config.NumberColumn("Cumulative utility", format="%.3f", help="Sum of the knowledge utility over every reference. Empty for graph references, which have no utility."),
-            "utility_avg": st.column_config.NumberColumn("Avg utility", format="%.3f"),
-        })
-    _plot = _kr.dropna(subset=["utility_sum"])
-    if _plot.empty:
-        st.caption("Only graph references here; they have no utility to plot.")
+    _pal = _PE_SERIES_DARK if _pe_dark() else _PE_SERIES_LIGHT
+    for _x in _secs:
+        _rag, _retr = _x["rag_name"], _x["retriever"]
+        st.markdown(f"##### {_rag} — {' · '.join(v for v in (_x['origin'], _retr) if v)}")
+        st.caption(f"{_x['references']:,} references to {_x['distinct']:,} knowledge. The top {int(top_n)} by references:")
+        _top = _x["top"]
+        st.dataframe(
+            _top[["rank", "title", "db_name", "ref_count", "answers", "q_sum", "a_sum", "utility_sum"]], hide_index=True,
+            column_config={
+                "rank": st.column_config.NumberColumn("#", width="small"),
+                "title": st.column_config.TextColumn("Knowledge", width="large"),
+                "db_name": st.column_config.TextColumn("DB"),
+                "ref_count": st.column_config.NumberColumn("References"),
+                "answers": st.column_config.NumberColumn("Answers"),
+                "q_sum": st.column_config.NumberColumn("Σ Q", format="%.3f", help="Sum of the normalised distance to the question. Empty for graph references, which have none."),
+                "a_sum": st.column_config.NumberColumn("Σ A", format="%.3f", help="Sum of the normalised distance to the answer."),
+                "utility_sum": st.column_config.NumberColumn("Cumulative utility", format="%.3f", help="Σ Q − Σ A. Above 0 the answers moved toward the knowledge."),
+            })
+        if _retr == "Graph":
+            _svg = _pe_memo(("ku_graph", tag, _rag, top_n), lambda: _pe_graph_svg(dmpe, _x["ranking"]), store)
+            if _svg:
+                st.markdown(_svg, unsafe_allow_html=True)
+                st.caption("The most referenced edges (up to 60), labelled with their references. "
+                           "Nodes of the top edges are ringed in blue.")
+            else:
+                st.caption("No edges to draw.")
+        elif _retr == "PageIndex":
+            _pages = {"PageIndex": {str(c): {"ref_count": int(n)} for c, n in
+                                    zip(_x["ranking"]["chunk_id"], _x["ranking"]["ref_count"])}}
+            _png = _pe_memo(("ku_pages", tag, _rag),
+                            lambda: _render_ape_pageindex_tree(_x["definition"], _rag, _pages, return_png=True, draw=False)
+                            if _x.get("definition") else None, store)
+            if _png:
+                st.image(_png)
+            else:
+                st.caption("The table of contents of this knowledge base could not be read.")
+        else:
+            _mp = _pe_memo(("ku_map", _rag), lambda: dmpe.knowledge_map(_x["collections"]) if _x["collections"] else None, store)
+            if _mp is None:
+                st.caption("No map for this knowledge base: its collections are not configured on the agent any more.")
+            else:
+                # Side by side at one size, as the per-turn Knowledge Utility shows them.
+                _mc = st.columns(2)
+                _mc[0].altair_chart(_pe_kmap_chart(alt, _mp, _x["ranking"], top_n, height=360, title="Referenced"),
+                                    use_container_width=True)
+                _mc[1].altair_chart(_pe_kmap_category_chart(alt, dmpe, _mp, _x["ranking"], height=360, title="Category"),
+                                    use_container_width=True)
+        _bars = pd.concat([_top, _x["extra"]]).dropna(subset=["q_sum", "a_sum"])
+        if _bars.empty:
+            continue
+        _bars = _bars.assign(label=[f"{r}. {str(t)[:26]}" for r, t in zip(_bars["rank"], _bars["title"])])
+        _long = pd.concat([
+            _bars[["label", "title", "utility_sum"]].assign(measure="Q (question)", value=_bars["q_sum"]),
+            _bars[["label", "title", "utility_sum"]].assign(measure="A (answer)", value=_bars["a_sum"])])
+        st.markdown("**Knowledge Utility (cumulative)**")
+        st.altair_chart(
+            alt.Chart(_long).mark_bar(cornerRadiusEnd=3).encode(
+                y=alt.Y("label:N", title=None, sort=list(_bars["label"]), axis=alt.Axis(labelLimit=240)),
+                yOffset=alt.YOffset("measure:N", sort=["Q (question)", "A (answer)"]),
+                x=alt.X("value:Q", title="Cumulative normalised distance"),
+                color=alt.Color("measure:N", title=None, sort=["Q (question)", "A (answer)"],
+                                scale=alt.Scale(domain=["Q (question)", "A (answer)"], range=_pal[:2]),
+                                legend=alt.Legend(orient="top")),
+                tooltip=[alt.Tooltip("title:N", title="Knowledge"), alt.Tooltip("measure:N", title="Measure"),
+                         alt.Tooltip("value:Q", title="Cumulative", format=".3f"),
+                         alt.Tooltip("utility_sum:Q", title="Cumulative utility", format=".3f")],
+            ).properties(height=max(160, 30 * len(_bars) + 60)), use_container_width=True)
+        _n_extra = len(_x["extra"].dropna(subset=["q_sum"]))
+        st.caption(f"In the order of the table, then {_n_extra} knowledge that are in the top {int(top_n)} by cumulative utility "
+                   "but not by references, by cumulative utility. Q is the distance to the question and A the distance to the answer, "
+                   "each scaled by the answer's largest one (Norm(All)); utility = Q − A." if _n_extra else
+                   "In the order of the table. Q is the distance to the question and A the distance to the answer, each scaled by "
+                   "the answer's largest one (Norm(All)); utility = Q − A.")
+
+
+def _pe_example_body(dmpe, sc, ex, tag, note=""):
+    st = dmper.ui()  # records what is drawn while an HTML export is being prepared
+    if not ex:
+        st.info("No example in this selection.")
         return
-    _cut = 2000
-    _shown = pd.concat([_plot[_plot["top"]], _plot[~_plot["top"]].head(_cut)])
-    _shown = _shown[["rank", "title", "rag_name", "ref_count", "utility_sum", "utility_avg", "top"]].copy()
-    _shown["title"] = _shown["title"].str.slice(0, 60)
-    _tip = [alt.Tooltip("title:N", title="Knowledge"), alt.Tooltip("rag_name:N", title="RAG"),
-            alt.Tooltip("ref_count:Q", title="References"),
-            alt.Tooltip("utility_sum:Q", title="Cumulative utility", format=".3f"),
-            alt.Tooltip("utility_avg:Q", title="Avg utility", format=".3f")]
-    _x = alt.X("ref_count:Q", title="References (log scale)", scale=alt.Scale(type="log", nice=True),
-               axis=alt.Axis(grid=False, tickCount=6))
-    _y = alt.Y("utility_sum:Q", title="Cumulative utility")
-    _base = alt.Chart(_shown)
-    _rest = _base.transform_filter("!datum.top").mark_circle(size=45, color=_pe_gray(), opacity=0.55).encode(x=_x, y=_y, tooltip=_tip)
-    _hi = _base.transform_filter("datum.top").mark_circle(
-        size=130, color=(_PE_SERIES_DARK if _pe_dark() else _PE_SERIES_LIGHT)[0],
-        stroke=_pe_surface(), strokeWidth=2, opacity=1).encode(x=_x, y=_y, tooltip=_tip)
-    _lab = _base.transform_filter("datum.top").mark_text(dx=10, dy=-10, fontSize=11).encode(x=_x, y=_y, text="rank:Q")
-    _zero = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color=_pe_gray(), strokeWidth=1).encode(y="y:Q")
-    st.altair_chart((_zero + _rest + _hi + _lab).properties(height=320), use_container_width=True)
-    _note = (f"Blue = top {int(top_n)} by {_by_label.lower()} (numbered by rank), gray = the other referenced knowledge. "
-             "Utility is the same figure as Analytics Results - Knowledge Utility (Norm(All)): above 0 the answer moved toward the knowledge, below 0 it was retrieved but the answer moved away.")
-    _left_out = int(_kr["utility_sum"].isna().sum())
-    if _left_out:
-        _note += f" {_left_out} graph references have no utility and are not plotted."
-    if len(_plot[~_plot["top"]]) > _cut:
-        _note += f" Gray points are limited to the {_cut} most referenced."
-    st.caption(_note)
+    st.markdown(f"**{ex['user_id']}** · {ex['ts']:%Y-%m-%d %H:%M}"
+                + (f" · {ex['session_name']}" if ex.get("session_name") else ""))
+    if note:
+        st.caption(note)
+    st.markdown("**User input**")
+    # Shown as code so that markup in an input or an answer is not rendered.
+    st.code(ex["input"][:4000] + ("…" if len(ex["input"]) > 4000 else ""), language=None, wrap_lines=True)
+    for _a in ex["answers"]:
+        _txt = _a["text"] or "(no text)"
+        st.markdown(f"**Answer** — {_a['agent']} / {_a['model']}")
+        st.code(_txt[:8000] + ("…" if len(_txt) > 8000 else ""), language=None, wrap_lines=True)
+    st.markdown("#### Knowledge Utility")
+    _pe_ku_sections(dmpe, sc, {_a["akey"] for _a in ex["answers"]}, tag)
+
+
+@st.dialog("Example", width="large")
+def _pe_example_dialog(title, note, example, tag):
+    import DigiM_PerformanceExplorer as dmpe
+    st.markdown(f"### {title}")
+    _pe_example_body(dmpe, st.session_state.get("_pe_scope"), example, tag, note)
+
+
+@st.dialog("Knowledge Reference", width="large")
+def _pe_knowledge_dialog(title, akeys, tag):
+    import DigiM_PerformanceExplorer as dmpe
+    st.markdown(f"### {title}")
+    st.caption(f"Over the {len(akeys):,} answers to these inputs.")
+    _pe_ku_sections(dmpe, st.session_state.get("_pe_scope"), akeys, tag)
 
 
 def _pe_busy_slot():
@@ -7857,35 +8018,132 @@ def _pe_archive_notice(dmpe, kp):
                     st.error(f"Archive copy error: {e}")
 
 
-def _pe_prepare_answers(dmpe, sc, items, top_n, stop, slot, store="_pe_memo"):
-    """Build the answer keywords and word clouds `_pe_answer_panel` will ask
-    for, with a progress bar when there is more than a moment of work."""
-    _m = st.session_state.setdefault(store, {})
-    _todo = [(_tag, _turns) for _tag, _turns in items if ("answers", _tag, top_n, stop) not in _m]
-    if not _todo:
-        return
-    with slot:
-        _bar = st.progress(0.0, text="Preparing answer keywords...") if len(_todo) > 3 else None
-        for _i, (_tag, _turns) in enumerate(_todo, 1):
-            _terms, _freq = dmpe.response_terms(sc, _turns, top_n, stop)
-            _m[("answers", _tag, top_n, stop)] = (_terms, dmpe.wordcloud_png(_freq))
-            if _bar:
-                _bar.progress(_i / len(_todo), text=f"Preparing answer keywords... {_i}/{len(_todo)}")
-        if _bar:
-            _bar.empty()
+_PE_SAVE_BASE = "user/common/analytics/performance_explorer/"
+# What a saved analysis restores for each view: the conditions on the screen
+# and the results the view keeps in session_state.
+_PE_SAVE_WIDGETS = {
+    "User": ("pe_from_d", "pe_from_t", "pe_to_d", "pe_to_t", "pe_axis", "pe_groups", "pe_users", "pe_agents",
+             "pe_top_n", "pe_stop", "pe_kw_n", "pe_k", "pe_unit", "pe_max_units"),
+    "Summary": ("pea_from_d", "pea_from_t", "pea_to_d", "pea_to_t", "pea_agents", "pea_top_n", "pea_stop"),
+    "Knowledge map": ("ape_agent", "ape_from", "ape_to"),
+}
+_PE_SAVE_STATE = {
+    "User": ("_pe_scope", "_pe_memo", "_pe_cluster", "_pe_scores", "_pe_cluster_names", "_pe_theme_now",
+             "_pe_topic_expl_history", "_pe_topic_expl_sel", "_pe_div_expl_history", "_pe_div_expl_sel", "_pe_opened"),
+    "Summary": ("_pea_scope", "_pea_memo", "_pea_reask"),
+    "Knowledge map": (),
+}
 
 
-def _pe_examples(reps, n_chars=600):
-    st = dmper.ui()  # records what is drawn while an HTML export is being prepared
-    for _r in reps:
-        st.markdown(f"**{_r['user_id']}** · {_r['ts']:%Y-%m-%d %H:%M}")
-        # Shown as code so that markup in an input or an answer is not rendered.
-        st.code(_r["input"][:n_chars] + ("…" if len(_r["input"]) > n_chars else ""), language=None, wrap_lines=True)
-        for _a in _r["answers"]:
-            _txt = _a["text"] or "(no text)"
-            st.caption(f"→ {_a['agent']} / {_a['model']}")
-            st.code(_txt[:n_chars] + ("…" if len(_txt) > n_chars else ""), language=None, wrap_lines=True)
-        st.divider()
+def _pe_wkey(key):
+    # Streamlit warns when a widget that has a default also gets its value
+    # through session_state. A loaded analysis therefore draws every widget it
+    # restores as a new one (new key), with the saved value as its default.
+    _g = st.session_state.get("_pe_gen", 0)
+    return f"{key}~{_g}" if _g else key
+
+
+def _pe_wval(key, default):
+    return (st.session_state.get("_pe_restored") or {}).get(key, default)
+
+
+def _pe_widx(key, options):
+    _v = _pe_wval(key, None)
+    return options.index(_v) if _v in options else 0
+
+
+def _pe_wsel(key, options):
+    return [v for v in (_pe_wval(key, None) or []) if v in options]
+
+
+def _pe_km_cache_key():
+    return (f"_ape_cache_{st.session_state.get(_pe_wkey('ape_agent'))}_"
+            f"{st.session_state.get(_pe_wkey('ape_from'))}_{st.session_state.get(_pe_wkey('ape_to'))}")
+
+
+def _pe_save_label(view):
+    if view == "Knowledge map":
+        return (f"{st.session_state.get(_pe_wkey('ape_agent'), '')} "
+                f"{st.session_state.get(_pe_wkey('ape_from'), '')}-{st.session_state.get(_pe_wkey('ape_to'), '')}")
+    _sc = st.session_state.get("_pe_scope" if view == "User" else "_pea_scope") or {}
+    if not _sc.get("period"):
+        return view
+    _pf, _pt = _sc["period"]
+    return f"{view} {_pf:%Y-%m-%d}-{(_pt - timedelta(minutes=1)):%Y-%m-%d}"
+
+
+def _pe_save_analysis(view, html):
+    """Save one view as an analysis session, as Knowledge Explorer and the
+    User Memory Explorer do: meta.json, state.pkl and the HTML report."""
+    import pickle
+    _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    _folder = os.path.join(_PE_SAVE_BASE, f"analytics{_ts}")
+    os.makedirs(_folder, exist_ok=True)
+    _state = {}
+    for _k in _PE_SAVE_STATE[view]:
+        if _k in st.session_state:
+            _v = st.session_state[_k]
+            if isinstance(_v, dict) and "_answer_terms_by_stop" in _v:
+                # A per-run cache of the answer terms; rebuilt on demand.
+                _v = {k: v for k, v in _v.items() if k != "_answer_terms_by_stop"}
+            _state[_k] = _v
+    if view == "Knowledge map":
+        _ck = _pe_km_cache_key()
+        _state["_ape_cache"] = (_ck, st.session_state.get(_ck))
+    _widgets = {k: st.session_state[_pe_wkey(k)] for k in _PE_SAVE_WIDGETS[view] if _pe_wkey(k) in st.session_state}
+    _payload = {"view": view, "state": _state, "widgets": _widgets}
+    try:
+        _blob = pickle.dumps(_payload)
+    except Exception:
+        # Keep what can be kept rather than losing the whole analysis.
+        _ok = {}
+        for _k, _v in _state.items():
+            try:
+                pickle.dumps(_v)
+                _ok[_k] = _v
+            except Exception:
+                pass
+        _blob = pickle.dumps({**_payload, "state": _ok})
+    with open(os.path.join(_folder, "state.pkl"), "wb") as f:
+        f.write(_blob)
+    with open(os.path.join(_folder, "report.html"), "wb") as f:
+        f.write(html)
+    dmu.save_json_file({"view": view, "label": _pe_save_label(view), "timestamp": _ts,
+                        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")},
+                       os.path.join(_folder, "meta.json"))
+    return _folder
+
+
+def _pe_load_analysis(folder):
+    import pickle
+    _meta_p = os.path.join(folder, "meta.json")
+    if not os.path.exists(_meta_p):
+        return None
+    _meta = dmu.read_json_file(_meta_p)
+    with open(os.path.join(folder, "state.pkl"), "rb") as f:
+        _payload = pickle.load(f)
+    _view = _payload.get("view") or _meta.get("view", "User")
+    for _k in _PE_SAVE_STATE.get(_view, ()) + (("_pe_dialog", "_pe_theme_seed") if _view == "User" else ()):
+        st.session_state.pop(_k, None)
+    for _k, _v in (_payload.get("state") or {}).items():
+        if _k == "_ape_cache":
+            _ck, _turns = _v
+            st.session_state[_ck] = _turns
+        else:
+            st.session_state[_k] = _v
+    if "_pe_theme_now" in (_payload.get("state") or {}):
+        st.session_state._pe_theme_seed = _payload["state"]["_pe_theme_now"]
+        st.session_state._pe_theme_seed_src = "loaded"
+    _w = dict(_payload.get("widgets") or {})
+    _w["pe_section"] = "User" if _view == "User" else "Agent"
+    if _view != "User":
+        _w["pe_agent_view"] = _view
+    st.session_state._pe_restored = _w
+    st.session_state._pe_gen = st.session_state.get("_pe_gen", 0) + 1
+    _html_p = os.path.join(folder, "report.html")
+    st.session_state._pe_html = ({"view": _view, "data": open(_html_p, "rb").read(), "name": dmper.file_name(_view),
+                                  "at": _meta.get("created_at", "")} if os.path.exists(_html_p) else None)
+    return _meta
 
 
 def _pe_html_request(view):
@@ -7894,9 +8152,19 @@ def _pe_html_request(view):
 
 def _performance_explorer():
     st.subheader("Performance Explorer")
-    _sec = st.radio("Section:", ["User", "Agent"], horizontal=True, key="pe_section", label_visibility="collapsed")
+    # A load asked for from the sidebar, applied before any widget is drawn.
+    _loaded = None
+    _lp = st.session_state.pop("_pe_load_folder", None)
+    if _lp:
+        try:
+            _loaded = _pe_load_analysis(_lp)
+        except Exception as e:
+            st.session_state.sidebar_message = f"Could not load the saved analytics: {e}"
+    _sec = st.radio("Section:", ["User", "Agent"], index=_pe_widx("pe_section", ["User", "Agent"]), horizontal=True,
+                    key=_pe_wkey("pe_section"), label_visibility="collapsed")
     _view = "User" if _sec == "User" else st.radio(
-        "Agent view:", ["Summary", "Knowledge map"], horizontal=True, key="pe_agent_view", label_visibility="collapsed")
+        "Agent view:", ["Summary", "Knowledge map"], index=_pe_widx("pe_agent_view", ["Summary", "Knowledge map"]),
+        horizontal=True, key=_pe_wkey("pe_agent_view"), label_visibility="collapsed")
     # Filled after the view has drawn: the export is made from this very run.
     # A fixed container, so the buttons never shift the tabs below them.
     _dl = st.container()
@@ -7912,25 +8180,41 @@ def _performance_explorer():
             _agent_performance_explorer()
     finally:
         dmper.stop()
+    _saved = None
     if _rec is not None:
         if _rec.armed:
+            _html = dmper.render_html(_rec, f"Performance Explorer — {_view}")
             st.session_state._pe_html = {
-                "view": _view, "data": dmper.render_html(_rec, f"Performance Explorer — {_view}"),
-                "name": dmper.file_name(_view), "at": datetime.now().strftime("%H:%M:%S")}
+                "view": _view, "data": _html, "name": dmper.file_name(_view), "at": datetime.now().strftime("%H:%M:%S")}
+            try:
+                _saved = _pe_save_analysis(_view, _html)
+            except Exception as e:
+                st.session_state.sidebar_message = f"Could not save the analytics: {e}"
+            if _saved:
+                # The sidebar was drawn before the save; draw again so the
+                # new analysis is listed there right away.
+                st.session_state._pe_saved_msg = (f"Saved to {_saved} ({len(_html) / 1e6:.1f} MB). "
+                                                  "Save again after changing the view.")
+                st.rerun()
         else:
             st.session_state._pe_html = None
-            st.session_state.sidebar_message = "Nothing to export yet: run the analysis first."
+            st.session_state.sidebar_message = "Nothing to save yet: run the analysis first."
     _h = st.session_state.get("_pe_html")
     _h = _h if _h and _h["view"] == _view else None
     with _dl:
         _c = st.columns([1, 1, 4])
-        _c[0].button("Prepare HTML", key="pe_html_build", on_click=_pe_html_request, args=(_view,),
-                     help="Writes everything this view shows, every tab included, as it is now into one HTML file.")
+        _c[0].button("Save Analytics", key="pe_html_build", on_click=_pe_html_request, args=(_view,),
+                     help="Saves this view, its results and conditions, as an analysis session listed in the sidebar, "
+                          "and prepares everything it shows, every tab included, as one HTML file for Download HTML.")
         _c[1].download_button("Download HTML", data=_h["data"] if _h else b"", file_name=_h["name"] if _h else "report.html",
                               mime="text/html", key="pe_html_dl", disabled=_h is None, on_click="ignore")
-        if _h:
-            _c[2].caption(f"Prepared at {_h['at']} ({len(_h['data']) / 1e6:.1f} MB). "
-                          "Press Prepare HTML again after changing the view.")
+        _msg = st.session_state.pop("_pe_saved_msg", None)
+        if _loaded:
+            _c[2].caption(f"Loaded the analytics saved at {_loaded.get('created_at', '')}: {_loaded.get('label', '')}.")
+        elif _msg:
+            _c[2].caption(_msg)
+        elif _h:
+            _c[2].caption(f"Saved at {_h['at']} ({len(_h['data']) / 1e6:.1f} MB). Save again after changing the view.")
 
 
 def _pe_user_section():
@@ -7957,15 +8241,15 @@ def _pe_user_section():
     # --- Conditions ------------------------------------------------------
     _last = _opt["last"] or datetime.now()
     _c = st.columns(4)
-    _d_from = _c[0].date_input("From:", value=(_last - timedelta(days=30)).date(), key="pe_from_d")
-    _t_from = _c[1].time_input("From (time):", value=dt_time(0, 0), step=60, key="pe_from_t")
-    _d_to = _c[2].date_input("To:", value=_last.date(), key="pe_to_d")
-    _t_to = _c[3].time_input("To (time):", value=dt_time(23, 59), step=60, key="pe_to_t")
+    _d_from = _c[0].date_input("From:", value=_pe_wval("pe_from_d", (_last - timedelta(days=30)).date()), key=_pe_wkey("pe_from_d"))
+    _t_from = _c[1].time_input("From (time):", value=_pe_wval("pe_from_t", dt_time(0, 0)), step=60, key=_pe_wkey("pe_from_t"))
+    _d_to = _c[2].date_input("To:", value=_pe_wval("pe_to_d", _last.date()), key=_pe_wkey("pe_to_d"))
+    _t_to = _c[3].time_input("To (time):", value=_pe_wval("pe_to_t", dt_time(23, 59)), step=60, key=_pe_wkey("pe_to_t"))
     _a = st.columns([1, 2, 2, 2])
-    _axis = _a[0].radio("Analyze by:", ["Group", "User"], horizontal=True, key="pe_axis")
-    _groups = _a[1].multiselect("Groups:", _opt["groups"], key="pe_groups", placeholder="All groups")
-    _users = _a[2].multiselect("Users:", _opt["users"], key="pe_users", placeholder="All users")
-    _agents = _a[3].multiselect("Agents:", _opt["agents"], key="pe_agents", placeholder="All agents")
+    _axis = _a[0].radio("Analyze by:", ["Group", "User"], index=_pe_widx("pe_axis", ["Group", "User"]), horizontal=True, key=_pe_wkey("pe_axis"))
+    _groups = _a[1].multiselect("Groups:", _opt["groups"], default=_pe_wsel("pe_groups", _opt["groups"]), key=_pe_wkey("pe_groups"), placeholder="All groups")
+    _users = _a[2].multiselect("Users:", _opt["users"], default=_pe_wsel("pe_users", _opt["users"]), key=_pe_wkey("pe_users"), placeholder="All users")
+    _agents = _a[3].multiselect("Agents:", _opt["agents"], default=_pe_wsel("pe_agents", _opt["agents"]), key=_pe_wkey("pe_agents"), placeholder="All agents")
     _span = (f" Backed-up history covers {_opt['first']:%Y-%m-%d %H:%M} – {_opt['last']:%Y-%m-%d %H:%M}."
              if _opt["first"] and _opt["last"] else "")
     st.caption(f"Times are in {_tz}.{_span} A user who belongs to several groups counts in each of them.")
@@ -8028,43 +8312,53 @@ def _pe_user_section():
     _kc[4].metric("References", f"{_sm['references']:,}")
 
     _s = st.columns([1, 3])
-    _top_n = int(_s[0].number_input("Top N (answer keywords / knowledge):", min_value=3, max_value=50, value=10, key="pe_top_n"))
+    _top_n = int(_s[0].number_input("Top N (keywords):", min_value=3, max_value=50, value=_pe_wval("pe_top_n", 10), key=_pe_wkey("pe_top_n"),
+                                    help="How many input and answer keywords each table lists. Knowledge is always shown as the top 20."))
     _stop = dmpe.parse_stop_words(_s[1].text_input(
-        "Exclude words (comma separated):", key="pe_stop",
+        "Exclude words (comma separated):", value=_pe_wval("pe_stop", ""), key=_pe_wkey("pe_stop"),
         help="Words to leave out of every keyword ranking and word cloud, on top of the built-in list of filler words."))
 
     _keep = _pe_memo(("axis_values",), lambda: dmpe.axis_values(_sc))
 
     _tab_use, _tab_topic, _tab_div, _tab_ach = st.tabs(
         ["1. Usage", "2. Interests / Topics", "3. Diversity / Homogeneity", "4. Achievement"])
+    # Everything per group (or user) is drawn for the overall scope first, then
+    # for each of the busiest axis values.
+    _subsets = [("All", None)] + [(_v, _pe_memo(("axis_turns", _v), lambda _v=_v: dmpe.axis_turns(_sc, _v)))
+                                  for _v in _keep]
+    _n_axis = _pe_memo(("axis_n",), lambda: int(dmpe.axis_frame(_sc)["axis_value"].nunique()))
+    _more = (f"The {len(_keep)} busiest of {_n_axis} {_axis_name.lower()}s are shown one by one."
+             if _n_axis > len(_keep) else "")
 
     # =================================================================
     # 1. Usage
     # =================================================================
     with _tab_use:
         st.markdown("#### When people use it")
-        _hm = _pe_memo(("heatmap",), lambda: dmpe.usage_heatmap(_sc))
-        _seq = list(reversed(_PE_SEQ)) if _pe_dark() else _PE_SEQ
-        st.altair_chart(
-            alt.Chart(_hm).mark_rect(stroke=_pe_surface(), strokeWidth=2).encode(
-                x=alt.X("hour:O", title=f"Hour of day ({_tz})", scale=alt.Scale(domain=list(range(24))),
-                        axis=alt.Axis(labelAngle=0)),
-                y=alt.Y("day:O", title=None, sort=["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
-                        scale=alt.Scale(domain=["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"])),
-                color=alt.Color("turns:Q", title="Turns", scale=alt.Scale(range=_seq)),
-                tooltip=[alt.Tooltip("day:N", title="Day"), alt.Tooltip("hour:O", title="Hour"),
-                         alt.Tooltip("turns:Q", title="Turns")],
-            ).properties(height=250), use_container_width=True)
+        for _lbl, _tt in _subsets:
+            st.markdown(f"**{_lbl}**")
+            _pe_heatmap(alt, _pe_memo(("heatmap", _lbl), lambda _tt=_tt: dmpe.usage_heatmap(_sc, _tt)), _tz,
+                        250 if _tt is None else 220)
+        if _more:
+            st.caption(_more)
 
         st.markdown(f"#### Turns per {_sc['bucket']}")
-        _tl = _pe_memo(("timeline",), lambda: dmpe.usage_timeline(_sc, _keep))
+        _tl, _tl_labels = _pe_memo(("stack",), lambda: dmpe.usage_stack(_sc, _keep))
+        _series = [v for v in list(_keep) + [dmpe.OTHER] if v in set(_tl["series"])]
+        _shown = st.multiselect(f"{_axis_name}s shown:", _series, default=_series, key="pe_tl_sel")
+        _tlf = _tl[_tl["series"].isin(_shown)]
         st.altair_chart(
-            alt.Chart(_tl).mark_line(strokeWidth=2, point=alt.OverlayMarkDef(size=60, filled=True)).encode(
-                x=alt.X("bucket:T", title=None), y=alt.Y("turns:Q", title="Turns"),
+            alt.Chart(_tlf).mark_bar().encode(
+                x=alt.X("label:O", title=None, sort=_tl_labels, scale=alt.Scale(domain=_tl_labels),
+                        axis=alt.Axis(labelAngle=-45 if len(_tl_labels) > 12 else 0)),
+                y=alt.Y("sum(turns):Q", title="Turns", stack="zero"),
                 color=_pe_series_color(dmpe, _keep, set(_tl["series"]), _axis_name),
-                tooltip=[alt.Tooltip("series:N", title=_axis_name), alt.Tooltip("bucket:T", title="Period"),
-                         alt.Tooltip("turns:Q", title="Turns")],
-            ).properties(height=280), use_container_width=True)
+                order=alt.Order("series:N"),
+                tooltip=[alt.Tooltip("series:N", title=_axis_name), alt.Tooltip("label:N", title="Period"),
+                         alt.Tooltip("sum(turns):Q", title="Turns")],
+            ).properties(height=300), use_container_width=True)
+        if _axis_name == "Group":
+            st.caption("A user in several groups counts in each of them, so a bar can be taller than the turns of its period.")
 
         st.markdown(f"#### By {_axis_name.lower()}")
         st.dataframe(
@@ -8083,55 +8377,75 @@ def _pe_user_section():
                 "references": st.column_config.NumberColumn("References", format="%d",
                                                             help="As counted when the turn ran."),
             })
+        if _axis_name == "Group":
+            st.caption("The Total row counts every turn once; the rows above it add up to more when a user belongs to several groups.")
 
     # =================================================================
     # 2. Interests / Topics
     # =================================================================
     with _tab_topic:
-        _n_kw = int(st.number_input("Keywords shown:", min_value=5, max_value=200, value=30, key="pe_kw_n"))
-        _rk = _pe_memo(("ranking", _n_kw, _stop), lambda: dmpe.keyword_ranking(_sc, _n_kw, _stop))
+        _n_kw = int(st.number_input("Keywords shown:", min_value=5, max_value=200, value=_pe_wval("pe_kw_n", 30), key=_pe_wkey("pe_kw_n")))
+        _tp_busy = _pe_busy_slot()
+
+        def _topic_table(_tt):
+            _r = dmpe.keyword_ranking(_sc, _n_kw, _stop, _tt)
+            if _r.empty:
+                return _r
+            _r = _r.copy()
+            _r["answer_keywords"] = [dmpe.answer_keyword_cell(_sc, dmpe.turns_with_keyword(_sc, _k, _tt), _stop, _top_n)
+                                     for _k in _r["keyword"]]
+            return _r
+        _tkey = lambda _lbl: ("topic", _lbl, _n_kw, _stop, _top_n)
+        _todo = [(_lbl, _tt) for _lbl, _tt in _subsets if _tkey(_lbl) not in st.session_state.get("_pe_memo", {})]
+        if _todo:
+            with _tp_busy, st.spinner("Ranking keywords and the answers they got..."):
+                for _lbl, _tt in _todo:
+                    _pe_memo(_tkey(_lbl), lambda _tt=_tt: _topic_table(_tt))
+        _rk = _pe_memo(_tkey("All"), lambda: _topic_table(None))
         if _rk.empty:
             st.info("No keywords were found in the user inputs.")
         else:
             st.markdown("#### What users ask about")
-            st.dataframe(
-                _rk, hide_index=True,
-                column_config={
-                    "rank": st.column_config.NumberColumn("#", width="small"),
-                    "keyword": st.column_config.TextColumn("Keyword"),
-                    "turns": st.column_config.NumberColumn("Turns", help="User inputs that contain the keyword."),
-                    "share": st.column_config.NumberColumn("Share %", help="Share of all turns in scope."),
-                    "users": st.column_config.NumberColumn("Users"),
-                    "peak": st.column_config.TextColumn(f"Peak {_sc['bucket']}", help="The period with the most turns, and how many."),
-                    "first": st.column_config.TextColumn("First"),
-                    "last": st.column_config.TextColumn("Last"),
-                    "trend": st.column_config.BarChartColumn(f"Turns per {_sc['bucket']}", y_min=0),
-                })
-            st.markdown("#### How the agent answered each keyword")
-            _kw_busy = _pe_busy_slot()
-            _kw_sets = [(_k, _pe_memo(("kw_turns", _k), lambda _k=_k: dmpe.turns_with_keyword(_sc, _k)))
-                        for _k in _rk["keyword"]]
-            _pe_prepare_answers(dmpe, _sc, [(f"kw:{_k}", _t) for _k, _t in _kw_sets], _top_n, _stop, _kw_busy)
-
-            def _kw_examples(turn_ids):
-                _t = _sc["turns"][_sc["turns"]["turn"].isin(turn_ids)].sort_values("ts", ascending=False).head(3)
-                _an = _sc["answers"]
-                _out = []
-                for _, _r in _t.iterrows():
-                    _out.append(f"[{_r['user_id']} · {_r['ts']:%Y-%m-%d %H:%M}]\n{_r['user_input'][:300]}")
-                    for _, _x in _an[_an["turn"] == _r["turn"]].iterrows():
-                        _out.append(f"  → {_x['agent_name'] or _x['agent_file']} / {_x['model_name']}\n"
-                                    f"  {(_x['response_text'] or '(no text)')[:300]}")
-                return "\n\n".join(_out)
-
-            for (_kw, _kw_turns), (_, _row) in zip(_kw_sets, _rk.iterrows()):
-                st.markdown(f"**{_row['rank']}. {_kw}** — {_row['turns']:,} turns ({_row['share']}%), "
-                            f"peak {_row['peak']}")
-                _pe_answer_panel(dmpe, _sc, _kw_turns, f"kw:{_kw}", _top_n, _stop)
-                with st.expander("Latest inputs and answers"):
-                    # Shown as code so that markup in an input or an answer is not rendered.
-                    st.code(_pe_memo(("kw_examples", _kw), lambda: _kw_examples(_kw_turns)),
-                            language=None, wrap_lines=True)
+            for _i, (_lbl, _tt) in enumerate(_subsets):
+                _t = _pe_memo(_tkey(_lbl), lambda _tt=_tt: _topic_table(_tt))
+                st.markdown(f"##### {_lbl}")
+                if _t.empty:
+                    st.caption("No keywords in this selection.")
+                    continue
+                _ev = st.dataframe(
+                    _t, hide_index=True, on_select="rerun", selection_mode="single-row", key=f"pe_tp_tbl_{_i}",
+                    column_config={
+                        "rank": st.column_config.NumberColumn("#", width="small"),
+                        "keyword": st.column_config.TextColumn("Keyword"),
+                        "turns": st.column_config.NumberColumn("Turns", help="User inputs that contain the keyword."),
+                        "share": st.column_config.NumberColumn("Share %", help="Share of the turns of this selection."),
+                        "users": st.column_config.NumberColumn("Users"),
+                        "peak": st.column_config.TextColumn(f"Peak {_sc['bucket']}", help="The period with the most turns, and how many."),
+                        "first": st.column_config.TextColumn("First"),
+                        "last": st.column_config.TextColumn("Last"),
+                        "trend": st.column_config.BarChartColumn(f"Turns per {_sc['bucket']}", y_min=0),
+                        "answer_keywords": st.column_config.TextColumn(
+                            f"Agent answer keywords (top {_top_n})", width="large",
+                            help="Keywords of the answers to the inputs with this keyword: answers that contain it and their share. "
+                                 "Ranked by how characteristic they are of these answers, so words every answer uses do not crowd the top."),
+                    })
+                _row = _pe_selected_row(_ev)
+                _bc = st.columns([1, 5])
+                if _bc[0].button("Example", key=f"pe_tp_ex_{_i}", disabled=_row is None):
+                    _kw = _t.iloc[_row]["keyword"]
+                    _ex = _pe_memo(("kw_example", _lbl, _kw, _stop, _top_n),
+                                   lambda: dmpe.keyword_example(_sc, _kw, _tt, _stop, _top_n))
+                    st.session_state._pe_dialog = {
+                        "kind": "example", "title": f"{_lbl} · {_kw}", "example": _ex, "tag": f"kwx:{_lbl}:{_kw}",
+                        "note": (f"From the peak {_sc['bucket']} ({_ex['peak']}): the input whose answers carry the most of the keyword's "
+                                 f"top answer keywords ({', '.join(_ex['matched']) or 'none'}).") if _ex else ""}
+                _bc[1].caption("Select a row, then press Example for one input from its peak period and the answers it got."
+                               if _row is None else f"Selected: {_t.iloc[_row]['keyword']}")
+                _wc = _pe_memo(("in_wc", _lbl, _stop), lambda _tt=_tt: dmpe.wordcloud_png(dmpe.input_term_freq(_sc, _tt, _stop)))
+                if _wc is not None:
+                    st.image(_wc, caption=f"User input keywords — {_lbl}", width=600)
+            if _more:
+                st.caption(_more)
             st.markdown("---")
             _explanation_block("_pe_topic_expl", "Topic Analyst PE", "agent_23DataAnalyst.json",
                                lambda: dmpe.topic_context(_sc, _rk, _stop, 10, _top_n), "Topics", "pe_tp")
@@ -8140,10 +8454,12 @@ def _pe_user_section():
     # 3. Diversity / Homogeneity
     # =================================================================
     with _tab_div:
+        st.caption("The clusters are made from the user inputs: the vector each turn kept of what the user typed. "
+                   "The answers are not clustered; the tables show what the answers to each cluster of inputs were about.")
         _miss = _pe_memo(("missing_vectors",), lambda: dmpe.missing_vectors(_sc))
         _no_in = _pe_memo(("missing_inputs",), lambda: int((~_sc["turns"]["has_qvec"]).sum()))
         _dc = st.columns([1, 1, 3])
-        _k = int(_dc[0].number_input("Clusters:", min_value=2, max_value=dmpe.MAX_CLUSTERS, value=6, key="pe_k"))
+        _k = int(_dc[0].number_input("Clusters:", min_value=2, max_value=dmpe.MAX_CLUSTERS, value=_pe_wval("pe_k", 6), key=_pe_wkey("pe_k")))
         _dc[1].markdown("<div style='height:1.75rem'></div>", unsafe_allow_html=True)
         _cl_clicked = _dc[1].button("Run clustering", key="pe_cl_run")
         _div_busy = _pe_busy_slot()
@@ -8159,8 +8475,8 @@ def _pe_user_section():
                     st.session_state._pe_cluster = {
                         "cl": _cl, "summary": _smry, "diversity": dmpe.diversity_by_axis(_sc, _cl),
                         "matrix": dmpe.cluster_axis_matrix(_sc, _cl), "run": datetime.now().strftime("%H%M%S")}
-                st.session_state.pop("_pe_div_expl_history", None)
-                st.session_state.pop("_pe_div_expl_sel", None)
+                for _sk in ("_pe_div_expl_history", "_pe_div_expl_sel", "_pe_cluster_names"):
+                    st.session_state.pop(_sk, None)
         # A turn keeps the vectors it computed while it ran, and the backup
         # carries them here. What is still missing was never embedded: turns
         # from before those vectors were kept.
@@ -8168,7 +8484,7 @@ def _pe_user_section():
             _dc[2].caption(f"{_no_in:,} of {len(_sc['turns']):,} inputs were never embedded (they ran before the turn kept its "
                            "vectors), so they are left out of the clustering.")
         elif len(_miss):
-            _dc[2].caption(f"All inputs have vectors. {len(_miss):,} answers were never embedded, so \"Answer spread\" is empty where they are.")
+            _dc[2].caption(f"All inputs have vectors. {len(_miss):,} answers were never embedded.")
         if len(_miss):
             if _dc[2].button(f"Embed these {len(_miss):,} rows once (embedding API)", key="pe_vec_run",
                              help="Embeds the inputs and answers that have no vector and stores them in digim_dialogs_archive. Needed once for old turns only: new turns bring their vectors with them."):
@@ -8191,63 +8507,79 @@ def _pe_user_section():
             st.info("Not enough vectorized inputs to cluster.")
         else:
             _cl, _smry, _run = _cs["cl"], _cs["summary"], _cs["run"]
-            _names = [f"C{i}" for i in range(1, _cl["k"] + 1)]
+            _cnames = st.session_state.get("_pe_cluster_names") or {}
+            _codes = [f"C{i}" for i in range(1, _cl["k"] + 1)]
+            _clabels = [_pe_named(_cnames, c) for c in _codes]
+            _cpal = (_PE_CLUSTER_DARK if _pe_dark() else _PE_CLUSTER_LIGHT)[:len(_codes)]
 
             def _scatter_data():
-                # One point per input. A user in several groups would otherwise
-                # be drawn once per group on the same spot, the last hiding the rest.
                 _x = _sc["turns"].merge(_cl["frame"], on="turn")
-                _x["series"] = _x["axis"].map(" + ".join)
-                _lab = list(_keep) + sorted(set(_x["series"]) - set(_keep))
-                _lab = _lab[:len(_PE_SERIES_LIGHT)]
-                _x["series"] = _x["series"].where(_x["series"].isin(_lab), dmpe.OTHER)
-                _x["cluster"] = "C" + _x["cluster"].astype(str)
+                _x["code"] = "C" + _x["cluster"].astype(str)
                 _x["when"] = _x["ts"].dt.strftime("%Y-%m-%d %H:%M")
                 _x["input"] = _x["user_input"].str.replace(r"\s+", " ", regex=True).str.slice(0, 140)
-                return _x[["x", "y", "series", "cluster", "user_id", "when", "input"]], [l for l in _lab if l in set(_x["series"])]
-            _sd, _sd_labels = _pe_memo(("scatter", _run), _scatter_data)
-            st.markdown(f"#### User inputs: colour = {_axis_name.lower()}, shape = cluster")
-            _pick = alt.selection_point(fields=["series"], bind="legend")
-            st.altair_chart(
-                alt.Chart(_sd).mark_point(filled=True, size=60, stroke=_pe_surface(), strokeWidth=0.5).encode(
-                    x=alt.X("x:Q", axis=None), y=alt.Y("y:Q", axis=None),
-                    color=_pe_series_color(dmpe, _sd_labels, set(_sd["series"]), _axis_name),
-                    shape=alt.Shape("cluster:N", title="Cluster",
-                                    scale=alt.Scale(domain=_names, range=_PE_SHAPES[:len(_names)])),
-                    opacity=alt.condition(_pick, alt.value(0.75), alt.value(0.08)),
-                    tooltip=[alt.Tooltip("cluster:N", title="Cluster"), alt.Tooltip("series:N", title=_axis_name),
-                             alt.Tooltip("user_id:N", title="User"), alt.Tooltip("when:N", title="When"),
-                             alt.Tooltip("input:N", title="Input")],
-                ).add_params(_pick).properties(height=480).interactive(), use_container_width=True)
-            st.caption(f"{len(_cl['frame']):,} inputs, placed by the first two principal components of their vectors. "
-                       f"An input from a user in several groups is one point, named after all of them. "
-                       f"Click a {_axis_name.lower()} in the legend to isolate it; scroll to zoom.")
+                return _x[["turn", "x", "y", "code", "user_id", "when", "input"]]
+            _sd = _pe_memo(("scatter", _run), _scatter_data)
+            _sd = _sd.assign(cname=_sd["code"].map(dict(zip(_codes, _clabels))))
+            # One frame for every chart, so a group's inputs sit where they sit overall.
+            _xd = [float(_sd["x"].min()), float(_sd["x"].max())]
+            _yd = [float(_sd["y"].min()), float(_sd["y"].max())]
+            for _i, (_lbl, _tt) in enumerate(_subsets):
+                _d = _sd if _tt is None else _sd[_sd["turn"].isin(_tt)]
+                st.markdown(f"#### {_lbl}: user inputs by cluster")
+                if _d.empty:
+                    st.caption("No vectorized inputs in this selection.")
+                    continue
+                _pick = alt.selection_point(fields=["cname"], bind="legend")
+                st.altair_chart(
+                    alt.Chart(_d).mark_circle(size=60, stroke=_pe_surface(), strokeWidth=0.5).encode(
+                        x=alt.X("x:Q", axis=None, scale=alt.Scale(domain=_xd)),
+                        y=alt.Y("y:Q", axis=None, scale=alt.Scale(domain=_yd)),
+                        color=alt.Color("cname:N", title="Cluster", scale=alt.Scale(domain=_clabels, range=_cpal)),
+                        opacity=alt.condition(_pick, alt.value(0.8), alt.value(0.08)),
+                        tooltip=[alt.Tooltip("cname:N", title="Cluster"), alt.Tooltip("user_id:N", title="User"),
+                                 alt.Tooltip("when:N", title="When"), alt.Tooltip("input:N", title="Input")],
+                    ).add_params(_pick).properties(height=420 if _tt is None else 340).interactive(),
+                    use_container_width=True)
+                _tb = _pe_memo(("cl_table", _run, _lbl, _stop, _top_n), lambda _tt=_tt: dmpe.cluster_table(_sc, _cl, _tt, _stop, _top_n))
+                _ev = st.dataframe(
+                    _tb.assign(cluster=_tb["cluster"].map(lambda c: _pe_named(_cnames, c))).drop(columns=["name"]),
+                    hide_index=True, on_select="rerun", selection_mode="single-row", key=f"pe_cl_tbl_{_i}",
+                    column_config={
+                        "cluster": st.column_config.TextColumn("Cluster"),
+                        "silhouette": st.column_config.NumberColumn("Separation", format="%.3f", help="Mean silhouette coefficient of its inputs. Near 1 = well apart from the other clusters, near 0 or below = on the border with another."),
+                        "inputs": st.column_config.NumberColumn("Inputs"),
+                        "share": st.column_config.NumberColumn("Share %"),
+                        "radius": st.column_config.NumberColumn("Size (max radius)", format="%.3f", help="Distance from the centre of the cluster to its farthest input."),
+                        "wcss": st.column_config.NumberColumn("Density (WCSS)", format="%.3f", help="Within-cluster sum of squares: the squared distances of its inputs to the centre, added up. Smaller for the same number of inputs = tighter."),
+                        "input_keywords": st.column_config.TextColumn(f"Input keywords (top {_top_n})", width="large", help="Inputs that contain the keyword and their share. Ranked by how characteristic they are of the cluster."),
+                        "answer_keywords": st.column_config.TextColumn(f"Agent answer keywords (top {_top_n})", width="large", help="Answers to those inputs that contain the keyword and their share."),
+                    })
+                _row = _pe_selected_row(_ev)
+                _code = _tb.iloc[_row]["cluster"] if _row is not None else None
+                _bc = st.columns([1, 1, 4])
+                if _bc[0].button("Knowledge Reference", key=f"pe_cl_kr_{_i}", disabled=_code is None):
+                    _cno = int(_code[1:])
+                    _ct = set(_cl["frame"].loc[_cl["frame"]["cluster"] == _cno, "turn"])
+                    if _tt is not None:
+                        _ct &= set(_tt)
+                    st.session_state._pe_dialog = {
+                        "kind": "knowledge", "title": f"{_lbl} · {_pe_named(_cnames, _code)}",
+                        "akeys": dmpe.turn_akeys(_sc, _ct), "tag": f"clk:{_run}:{_lbl}:{_cno}"}
+                if _bc[1].button("Example", key=f"pe_cl_ex_{_i}", disabled=_code is None):
+                    _cno = int(_code[1:])
+                    _reps = dmpe.representative_inputs(_sc, _cl, _cno, None if _tt is None else _lbl, 1)
+                    st.session_state._pe_dialog = {
+                        "kind": "example", "title": f"{_lbl} · {_pe_named(_cnames, _code)}",
+                        "example": _reps[0] if _reps else None, "tag": f"clx:{_run}:{_lbl}:{_cno}",
+                        "note": "The input closest to the centre of the cluster, and the answers it got."}
+                _bc[2].caption("Select a row, then press Knowledge Reference or Example." if _code is None
+                               else f"Selected: {_pe_named(_cnames, _code)}")
+            if _more:
+                st.caption(_more)
+            st.caption("Separation, size and density are measured in the space the clustering worked in; for a group, "
+                       "over that group's inputs against the overall clusters. Click a cluster in a legend to isolate it; scroll to zoom.")
 
-            st.markdown("#### Clusters")
-            st.dataframe(
-                _smry, hide_index=True,
-                column_config={
-                    "cluster": st.column_config.TextColumn("Cluster", width="small"),
-                    "turns": st.column_config.NumberColumn("Turns"),
-                    "share": st.column_config.NumberColumn("Share %"),
-                    "keywords": st.column_config.TextColumn("Characteristic input keywords", width="large"),
-                    "answers": st.column_config.NumberColumn("Answers"),
-                    "input_spread": st.column_config.NumberColumn("Input spread", format="%.3f", help="Mean cosine distance between the inputs of the cluster. Near 0 = almost the same input."),
-                    "answer_spread": st.column_config.NumberColumn("Answer spread", format="%.3f", help="Mean cosine distance between the answers to those inputs. Smaller = more consistent answers."),
-                    "answer_vs_input": st.column_config.NumberColumn("Answer / input", format="%.2f", help="Answer spread divided by input spread. Above 1 = the answers vary more than the inputs they answer."),
-                })
-
-            _csel = st.selectbox("Cluster:", _names, key="pe_cl_sel",
-                                 format_func=lambda c: f"{c}: {_smry.loc[_smry['cluster'] == c, 'keywords'].iloc[0]}")
-            _cno = int(_csel[1:])
-            _c_turns = _pe_memo(("cl_turns", _run, _cno),
-                                lambda: set(_cl["frame"].loc[_cl["frame"]["cluster"] == _cno, "turn"]))
-            st.markdown(f"#### {_csel}: how the agent answered")
-            _pe_answer_panel(dmpe, _sc, _c_turns, f"cl:{_run}:{_cno}", _top_n, _stop)
-            st.markdown(f"#### {_csel}: knowledge the agent used")
-            _pe_knowledge_panel(dmpe, _sc, _c_turns, f"cl:{_run}:{_cno}", _top_n, "pe_cl")
-
-            with st.expander(f"By {_axis_name.lower()}"):
+            with st.expander(f"Diversity by {_axis_name.lower()}"):
                 st.dataframe(
                     _cs["diversity"], hide_index=True,
                     column_config={
@@ -8262,65 +8594,79 @@ def _pe_user_section():
                 st.caption("A small number of turns makes a group look more homogeneous than it is; read evenness and spread together with Turns.")
                 _mx = _cs["matrix"].copy()
                 _mx["share"] = (100.0 * _mx["turns"] / _mx.groupby("axis_value")["turns"].transform("sum")).round(1)
+                _mx["cname"] = _mx["cluster"].map(dict(zip(_codes, _clabels)))
                 st.altair_chart(
                     alt.Chart(_mx).mark_rect(stroke=_pe_surface(), strokeWidth=2).encode(
-                        x=alt.X("cluster:O", title="Cluster", scale=alt.Scale(domain=_names), axis=alt.Axis(labelAngle=0)),
+                        x=alt.X("cname:O", title="Cluster", scale=alt.Scale(domain=_clabels), axis=alt.Axis(labelAngle=0)),
                         y=alt.Y("axis_value:O", title=None),
                         color=alt.Color("share:Q", title="Share %", scale=alt.Scale(range=list(reversed(_PE_SEQ)) if _pe_dark() else _PE_SEQ, domain=[0, 100])),
-                        tooltip=[alt.Tooltip("axis_value:N", title=_axis_name), alt.Tooltip("cluster:N", title="Cluster"),
+                        tooltip=[alt.Tooltip("axis_value:N", title=_axis_name), alt.Tooltip("cname:N", title="Cluster"),
                                  alt.Tooltip("turns:Q", title="Turns"), alt.Tooltip("share:Q", title="Share %")],
                     ).properties(height=max(120, 34 * _mx["axis_value"].nunique() + 50)), use_container_width=True)
 
-                _avals = list(_cs["diversity"]["axis_value"].iloc[1:])
-                _asel = st.selectbox(f"{_axis_name}:", _avals, key="pe_cl_axis") if _avals else None
-                if _asel is not None:
-                    def _ca_turns():
-                        _x = dmpe.axis_frame(_sc)
-                        return _c_turns & set(_x.loc[_x["axis_value"] == _asel, "turn"])
-                    _ca = _pe_memo(("cl_axis_turns", _run, _cno, _asel), _ca_turns)
-                    st.markdown(f"**{_csel} × {_asel}: {len(_ca):,} turns**")
-                    if _ca:
-                        st.markdown("Representative inputs and the answers they got:")
-                        _pe_examples(_pe_memo(("cl_reps", _run, _cno, _asel),
-                                              lambda: dmpe.representative_inputs(_sc, _cl, _cno, _asel, 3)))
-                        st.markdown("Answer keywords:")
-                        _pe_answer_panel(dmpe, _sc, _ca, f"cl:{_run}:{_cno}:{_asel}", _top_n, _stop)
-                        st.markdown("Knowledge used:")
-                        _pe_knowledge_panel(dmpe, _sc, _ca, f"cl:{_run}:{_cno}:{_asel}", _top_n, "pe_cla")
-                    else:
-                        st.caption("No inputs from this selection fall in the cluster.")
-
             st.markdown("---")
+
+            def _div_post(resp):
+                # The explanation opens with the cluster names, as Knowledge
+                # Explorer's does; they label the legends and the tables.
+                import re as _re_pe
+                import json as _json_pe
+                _m = _re_pe.search(r"```json\s*(\{.*?\})\s*```", resp, _re_pe.DOTALL)
+                if not _m:
+                    return resp
+                try:
+                    _raw = _json_pe.loads(_m.group(1))
+                    _nm = {}
+                    for _ck, _cv in _raw.items():
+                        _ck = str(_ck).strip().upper()
+                        _nm[_ck if _ck.startswith("C") else f"C{_ck}"] = str(_cv).strip()[:12]
+                    st.session_state._pe_cluster_names = _nm
+                    st.session_state._pe_names_new = True
+                except Exception:
+                    pass
+                return _re_pe.sub(r"```json\s*\{.*?\}\s*```\s*", "", resp, count=1, flags=_re_pe.DOTALL).strip()
             _explanation_block("_pe_div_expl", "Diversity Analyst PE", "agent_23DataAnalyst.json",
                                lambda: dmpe.diversity_context(_sc, _cl, _smry, _cs["diversity"], _stop, 5),
-                               "Diversity", "pe_dv")
+                               "Diversity", "pe_dv", postprocess=_div_post)
+            if st.session_state.pop("_pe_names_new", False):
+                st.rerun()
 
     # =================================================================
     # 4. Achievement
     # =================================================================
     with _tab_ach:
         st.markdown("#### Themes")
-        if "_pe_theme_seed" not in st.session_state:
-            _dt = dmpe.default_themes() or [("", "")]
+        # The seed is kept for the browser session, so a change to the themes in
+        # setting.yaml would otherwise not show until the next login. Themes
+        # brought back by a saved analysis are kept as they are.
+        _dt = dmpe.default_themes() or [("", "")]
+        if ("_pe_theme_seed" not in st.session_state
+                or st.session_state.get("_pe_theme_seed_src") not in (_dt, "loaded")):
             st.session_state._pe_theme_seed = pd.DataFrame(
                 [{"Theme": _n, "What counts as achieving it": _c} for _n, _c in _dt])
+            st.session_state._pe_theme_seed_src = _dt
+            st.session_state.pop(_pe_wkey("pe_themes"), None)
         _themes_df = st.data_editor(
-            st.session_state._pe_theme_seed, num_rows="dynamic", hide_index=True, key="pe_themes",
+            st.session_state._pe_theme_seed, num_rows="dynamic", hide_index=True, key=_pe_wkey("pe_themes"),
             column_config={
                 "Theme": st.column_config.TextColumn("Theme", width="medium", help="A short name, used as the label."),
                 "What counts as achieving it": st.column_config.TextColumn("What counts as achieving it", width="large", help="The task and the criteria the user inputs are scored against."),
             })
+        st.session_state._pe_theme_now = _themes_df
         _themes = []
         for _i, _row in enumerate(_themes_df.to_dict("records"), 1):
             _n, _t = (("" if pd.isna(_v) else str(_v).strip()) for _v in
                       (_row.get("Theme"), _row.get("What counts as achieving it")))
             if _n or _t:
                 _themes.append((_n or f"Theme {_i}", _t or _n))
+        # The table cuts long criteria off; the full text is what gets scored.
+        if _themes:
+            st.markdown("\n".join(f"- **{_n}** — {_t}" if _t != _n else f"- **{_n}**" for _n, _t in _themes))
 
         _ac = st.columns([1, 1, 2])
-        _unit = _ac[0].radio("Score per:", ["Session", "Input"], horizontal=True, key="pe_unit",
+        _unit = _ac[0].radio("Score per:", ["Session", "Input"], index=_pe_widx("pe_unit", ["Session", "Input"]), horizontal=True, key=_pe_wkey("pe_unit"),
                              help="Session: the user's inputs of one session in the period, taken together. Input: every input on its own (more LLM calls).")
-        _max_units = int(_ac[1].number_input("Max scored per theme:", min_value=1, max_value=5000, value=50, key="pe_max_units",
+        _max_units = int(_ac[1].number_input("Max scored per theme:", min_value=1, max_value=5000, value=_pe_wval("pe_max_units", 50), key=_pe_wkey("pe_max_units"),
                                              help="When there are more, the ones closest to the theme (by vector) are scored and the rest are left unscored."))
         _units = _pe_memo(("units", _unit), lambda: dmpe.achievement_units(_sc, _unit))
         _ac[2].caption(f"{len(_units):,} {_unit.lower()}s in scope. Each theme scores up to {min(len(_units), _max_units):,} of them, "
@@ -8414,8 +8760,33 @@ def _pe_user_section():
                                     lambda: {t for ts in _scd.loc[_scd["band"] == _bsel, "turns"] for t in ts})
                 st.markdown(f"#### Score {_bsel}: how the agent answered ({len(_b_turns):,} turns)")
                 _pe_answer_panel(dmpe, _sc, _b_turns, f"band:{_tag}:{_bsel}", _top_n, _stop)
-                st.markdown(f"#### Score {_bsel}: knowledge the agent used")
-                _pe_knowledge_panel(dmpe, _sc, _b_turns, f"band:{_tag}:{_bsel}", _top_n, "pe_band")
+                st.markdown(f"#### Score {_bsel}: Knowledge Utility per Knowledge / Book")
+                _pe_ku_sections(dmpe, _sc, dmpe.turn_akeys(_sc, _b_turns), f"band:{_tag}:{_bsel}")
+
+    # A dialog is not part of the page, so the report would leave out what was
+    # looked at in one. When the analysis is saved, every dialog opened since
+    # it ran is written after the tabs, each folded.
+    _opened = st.session_state.get("_pe_opened") or []
+    if _opened and dmper.active() is not None:
+        st.markdown("### Examples and Knowledge References opened")
+        st.caption("What the dialogs showed during this analysis, in the order they were opened.")
+        for _o in _opened:
+            with st.expander(f"{'Example' if _o['kind'] == 'example' else 'Knowledge Reference'}: {_o['title']}", _fold=True):
+                if _o["kind"] == "example":
+                    _pe_example_body(dmpe, _sc, _o.get("example"), _o["tag"], _o.get("note", ""))
+                else:
+                    st.caption(f"Over the {len(_o['akeys']):,} answers to these inputs.")
+                    _pe_ku_sections(dmpe, _sc, _o["akeys"], _o["tag"])
+
+    # Opened after every tab, so a dialog never moves what is drawn above it
+    # (a tab strip whose place changes goes back to its first tab).
+    _dlg = st.session_state.pop("_pe_dialog", None)
+    if _dlg and all(_o["tag"] != _dlg["tag"] for _o in _opened):
+        st.session_state._pe_opened = _opened + [_dlg]
+    if _dlg and _dlg["kind"] == "example":
+        _pe_example_dialog(_dlg["title"], _dlg.get("note", ""), _dlg["example"], _dlg["tag"])
+    elif _dlg:
+        _pe_knowledge_dialog(_dlg["title"], _dlg["akeys"], _dlg["tag"])
 
 
 def _pe_agent_section():
@@ -8443,11 +8814,11 @@ def _pe_agent_section():
     # --- Conditions ------------------------------------------------------
     _last = _opt["last"] or datetime.now()
     _c = st.columns(4)
-    _d_from = _c[0].date_input("From:", value=(_last - timedelta(days=30)).date(), key="pea_from_d")
-    _t_from = _c[1].time_input("From (time):", value=dt_time(0, 0), step=60, key="pea_from_t")
-    _d_to = _c[2].date_input("To:", value=_last.date(), key="pea_to_d")
-    _t_to = _c[3].time_input("To (time):", value=dt_time(23, 59), step=60, key="pea_to_t")
-    _agents = st.multiselect("Agents:", _opt["agents"], key="pea_agents", placeholder="All agents")
+    _d_from = _c[0].date_input("From:", value=_pe_wval("pea_from_d", (_last - timedelta(days=30)).date()), key=_pe_wkey("pea_from_d"))
+    _t_from = _c[1].time_input("From (time):", value=_pe_wval("pea_from_t", dt_time(0, 0)), step=60, key=_pe_wkey("pea_from_t"))
+    _d_to = _c[2].date_input("To:", value=_pe_wval("pea_to_d", _last.date()), key=_pe_wkey("pea_to_d"))
+    _t_to = _c[3].time_input("To (time):", value=_pe_wval("pea_to_t", dt_time(23, 59)), step=60, key=_pe_wkey("pea_to_t"))
+    _agents = st.multiselect("Agents:", _opt["agents"], default=_pe_wsel("pea_agents", _opt["agents"]), key=_pe_wkey("pea_agents"), placeholder="All agents")
     st.caption(f"Times are in {_tz}. A turn answered by several agents counts for each of them.")
 
     _clicked = st.button("Run analysis", key="pea_run", type="primary")
@@ -8499,9 +8870,9 @@ def _pe_agent_section():
     _kc[4].metric("Answers with step data", f"{_cov[0]:,}")
 
     _s = st.columns([1, 3])
-    _top_n = int(_s[0].number_input("Top N (keywords / knowledge):", min_value=3, max_value=50, value=10, key="pea_top_n"))
+    _top_n = int(_s[0].number_input("Top N (keywords / knowledge):", min_value=3, max_value=50, value=_pe_wval("pea_top_n", 10), key=_pe_wkey("pea_top_n")))
     _stop = dmpe.parse_stop_words(_s[1].text_input(
-        "Exclude words (comma separated):", key="pea_stop",
+        "Exclude words (comma separated):", value=_pe_wval("pea_stop", ""), key=_pe_wkey("pea_stop"),
         help="Words to leave out of every keyword ranking and word cloud, on top of the built-in list of filler words."))
 
     _names = _pe_memo(("agents",), lambda: list(_an["agent"].value_counts().index), _M)
@@ -8878,7 +9249,7 @@ def _agent_performance_explorer():
     # Default to the sidebar-active agent when it exists in the dropdown
     _default_idx = (_all_agents.index(st.session_state.agent_file)
                      if st.session_state.agent_file in _all_agents else 0)
-    _ape_af = st.selectbox("Agent:", _all_agents, index=_default_idx, key="ape_agent")
+    _ape_af = st.selectbox("Agent:", _all_agents, index=(_all_agents.index(_pe_wval("ape_agent", None)) if _pe_wval("ape_agent", None) in _all_agents else _default_idx), key=_pe_wkey("ape_agent"))
 
     _today = now_time.date()
     try:
@@ -8886,8 +9257,8 @@ def _agent_performance_explorer():
     except ValueError:
         _def_from = _today
     _pcol1, _pcol2 = st.columns(2)
-    _ape_from = _pcol1.date_input("Period From:", value=_def_from, key="ape_from")
-    _ape_to   = _pcol2.date_input("Period To:",   value=_today,    key="ape_to")
+    _ape_from = _pcol1.date_input("Period From:", value=_pe_wval("ape_from", _def_from), key=_pe_wkey("ape_from"))
+    _ape_to   = _pcol2.date_input("Period To:",   value=_pe_wval("ape_to", _today), key=_pe_wkey("ape_to"))
 
     # --- Scan + cache -----------------------------------------------------
     _cache_key = f"_ape_cache_{_ape_af}_{_ape_from}_{_ape_to}"
@@ -9159,7 +9530,7 @@ def _render_ape_vector_scatter(rag_def, rag_name, rag_agg, dim, perp, size_mode,
     st.pyplot(_fig); plt.close(_fig)
 
 
-def _render_ape_pageindex_tree(rag_def, rag_name, rag_agg, return_png=False):
+def _render_ape_pageindex_tree(rag_def, rag_name, rag_agg, return_png=False, draw=True):
     """PageIndex Page Tree — same shape as Knowledge Explorer's PageIndex
     view. Pages grouped under their category, referenced ones rendered in
     blue with `(N refs)` next to the title; unreferenced pages stay muted."""
@@ -9222,7 +9593,8 @@ def _render_ape_pageindex_tree(rag_def, rag_name, rag_agg, return_png=False):
                       fontweight=weight, fontfamily="IPAexGothic")
             y_pos -= 1
     plt.tight_layout()
-    st.pyplot(_fig)
+    if draw:
+        st.pyplot(_fig)
     # The tree is drawn live rather than saved, so the HTML export asks for
     # the same figure as bytes instead of re-deriving the layout.
     _png = None
@@ -10730,6 +11102,32 @@ def main():
                             st.session_state.sidebar_message = (
                                 f"Delete failed ({_sf}): {_e}"
                             )
+                        st.rerun()
+
+        # Performance Explorer: saved analyses (parity with Knowledge Explorer / UME / Evaluation)
+        elif st.session_state.get("main_view", "Chat") == "Performance Explorer":
+            st.markdown("----")
+            if os.path.exists(_PE_SAVE_BASE):
+                _pe_folders = sorted(
+                    [f for f in os.listdir(_PE_SAVE_BASE)
+                     if os.path.isdir(os.path.join(_PE_SAVE_BASE, f)) and f.startswith("analytics")],
+                    reverse=True)
+                for _sf in _pe_folders[:10]:
+                    _meta_p = os.path.join(_PE_SAVE_BASE, _sf, "meta.json")
+                    if not os.path.exists(_meta_p):
+                        continue
+                    _m = dmu.read_json_file(_meta_p)
+                    _label = f"{_m.get('created_at', '')[:10]} {_m.get('label', '')}"[:32]
+                    if st.button(_label, key=f"pe_load_{_sf}", help=_m.get("label", "")):
+                        st.session_state._pe_load_folder = os.path.join(_PE_SAVE_BASE, _sf)
+                        st.rerun()
+                    if st.button("Del", key=f"pe_del_{_sf}"):
+                        import shutil as _shutil
+                        try:
+                            _shutil.rmtree(os.path.join(_PE_SAVE_BASE, _sf))
+                            st.session_state.sidebar_message = f"Deleted saved Performance Explorer analytics: {_sf}"
+                        except Exception as _e:
+                            st.session_state.sidebar_message = f"Delete failed ({_sf}): {_e}"
                         st.rerun()
 
     _perf_mark("sb_list")
@@ -13753,7 +14151,13 @@ f"Target sheet (sheets with Question: {len(_q_sheets)})"
                         _max_seq = max(_hist.keys(), key=int)
                         _seq_block = _hist.get(_max_seq, {})
                         _setting = _seq_block.get("SETTING", {})
-                        if _setting.get("MEMORY_FLG", "Y") == "N":
+                        # Parallel personas mark the turn MEMORY_FLG=N; a practice
+                        # with chain PERSONAS marks each answer instead, and the
+                        # checkbox is offered for both.
+                        _n_personas = sum(
+                            1 for _k, _v in _seq_block.items()
+                            if _k != "SETTING" and ((_v or {}).get("setting") or {}).get("persona_id"))
+                        if _setting.get("MEMORY_FLG", "Y") == "N" or _n_personas >= 2:
                             _persona_blobs = []
                             for _ssk in sorted([k for k in _seq_block.keys() if k != "SETTING"], key=int):
                                 _sub = _seq_block[_ssk]

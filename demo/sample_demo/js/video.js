@@ -122,7 +122,7 @@
 
     const turns = extractTurns(rec);
     if (!turns.length) {
-      setStatus("This recording has no chat turns (/run events) to animate.", "err");
+      setStatus("This recording has no chat turns (/run or /run_async events) to animate.", "err");
       return;
     }
 
@@ -222,11 +222,28 @@
 
   // -------------------------------------------------- scene construction
   // Pull chat turns (user_input + response) out of the recording in order.
+  // A background run is two events: /run_async carries the question, the
+  // /jobs/{id} poll that reports "done" carries the answer.
   function extractTurns(rec) {
     const turns = [];
+    const pending = {};
     for (const evt of rec.events || []) {
       if (evt.type !== "api") continue;
-      if (evt.path !== "/run" && evt.path !== "/run_function") continue;
+      const path = (evt.path || "").split("?")[0];
+      if (path === "/run_async" || path === "/run_async_multipart") {
+        const id = evt.response && evt.response.job_id;
+        if (id) pending[id] = (evt.request && evt.request.user_input) || "";
+        continue;
+      }
+      if (path.startsWith("/jobs/")) {
+        const r = evt.response || {};
+        if (r.state !== "done" || !(r.job_id in pending)) continue;
+        const a = (r.result && r.result.response) || "";
+        turns.push({ user: String(pending[r.job_id]), agent: String(a) });
+        delete pending[r.job_id];
+        continue;
+      }
+      if (path !== "/run" && path !== "/run_function") continue;
       const q = (evt.request && evt.request.user_input) || "";
       const a = (evt.response && evt.response.response) || "";
       if (!q && !a) continue;

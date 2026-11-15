@@ -224,9 +224,9 @@
 
 | # | 機能 | 概要 |
 |---|------|------|
-| 5-16 | メッセージ送信API | `/run` でエージェント実行（LINE/Slack等外部サービスからの呼び出し対応）。`user_memory` / `user_memory_layers` パラメータでメモリ注入を有効化・層指定可能 |
-| 5-17 | セッション取得API | `/sessions` `/sessions/{id}` でセッション一覧・履歴の取得 |
-| 5-18 | エージェント情報API | `/agents` `/agents/{file}/engines` `/agents/{file}/feedback` でエージェント一覧・エンジン一覧・フィードバック設定の取得。`/web_search_engines` で検索エンジン一覧 |
+| 5-16 | メッセージ送信API | `/run` でエージェント実行（LINE/Slack等外部サービスからの呼び出し対応）。WebUI のチャットと同じく `DigiMatsuExecute_MultiPersona` 経由で、ペルソナ（複数で並列）・BOOK・Include Query・人格の上書きも指定できる。`user_memory` / `user_memory_layers` パラメータでメモリ注入を有効化・層指定可能。`/run_async` + `/jobs/{id}` でバックグラウンド実行と途中経過の取得 |
+| 5-17 | セッション取得・操作API | `/sessions` `/sessions/{id}` でセッション一覧・履歴の取得。`/sessions/{id}/turns` でチャット画面の形の会話、ターンの Detail・削除・Memory Off、セッションの改名・非表示・再表示、添付と画像の取得、Markdown の書き出し |
+| 5-18 | エージェント情報API | `/agents` `/agents/{file}/engines` `/agents/{file}/feedback` でエージェント一覧・エンジン一覧・フィードバック設定の取得。`/agents/{file}/chat_options` でチャットのサイドバーの選択肢一式。`/web_search_engines` で検索エンジン一覧 |
 | 5-19 | フィードバック送信API | `/feedback` で外部からフィードバックを送信 |
 | 5-20 | 関数実行API | `/run_function` でツール関数を直接呼び出し（Function Calling 経由） |
 | 5-21 | ヘルスチェックAPI | `/health` でlivenessを返却 |

@@ -1,12 +1,19 @@
 import os
+import re
+import json
 import time
 import base64
 import uuid
+import threading
 import traceback
+from datetime import datetime
+from urllib.parse import quote
 from typing import Dict, Any, Optional, List
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, File, UploadFile, Form, Header
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, PlainTextResponse
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 import uvicorn
 
@@ -17,6 +24,7 @@ import DigiM_Util as dmu
 import DigiM_MstStore as dmms
 import DigiM_Agent as dma
 import DigiM_GeneFeedback as dmgf
+import DigiM_AgentPersona as dap
 
 # Load the system.env file and set environment variables
 load_dotenv("system.env")
@@ -160,6 +168,28 @@ class InputData(BaseModel):
     #   GET  /session_summary_presets        → list shipped preset templates
     session_summary_enabled: Optional[bool] = None
     session_summary_template: Optional[str] = None
+    # WebUI chat-sidebar parity. Choices come from GET /agents/{file}/chat_options.
+    #   imagegen_engine : IMAGEGEN engine name (like `engine` for the LLM)
+    #   memory_save / memory_similarity : the Conversation Settings toggles
+    #   personas  : persona_id list. Two or more run in parallel as one turn,
+    #               exactly as picking several in the WebUI does.
+    #   org       : the ORG dict the personas belong to. Omitted, the agent's
+    #               ORG list is searched; the first ORG is still passed so
+    #               Thinking's "Personas" target has one to choose from.
+    #   books     : BOOK RAG_NAMEs added to this turn (ignored ones are reported)
+    #   include_query : prefix the previous multi-persona turn's answers
+    #   personality   : PERSONALITY fields to override (LANGUAGE, SPEAKING_STYLE,
+    #                   CHARACTER, BIG5, ...), deep-merged onto the agent JSON
+    #   overwrite_items : raw overwrite dict for anything else (HABIT/KNOWLEDGE ...)
+    imagegen_engine: Optional[str] = None
+    memory_save: Optional[bool] = None
+    memory_similarity: Optional[bool] = None
+    personas: Optional[List[str]] = None
+    org: Optional[Dict[str, Any]] = None
+    books: Optional[List[str]] = None
+    include_query: Optional[bool] = None
+    personality: Optional[Dict[str, Any]] = None
+    overwrite_items: Dict[str, Any] = {}
     # Other execution settings (when passing fields not covered above)
     execution: Dict[str, Any] = {}
 
@@ -366,16 +396,136 @@ def _shape_references(output_reference: dict) -> Dict[str, Any]:
     return out
 
 # ---------- Execution function ----------
+def _agent_data(agent_file: str) -> dict:
+    try:
+        return dmu.read_json_file(agent_file, dma.agent_folder_path) or {}
+    except Exception:
+        return {}
+
+
+def _agent_orgs(agent_data: dict) -> list:
+    return [o for o in (agent_data.get("ORG") or []) if isinstance(o, dict) and o]
+
+
+def _resolve_personas(agent_file: str, agent_data: dict, persona_ids, org):
+    """(persona dicts, org, ignored ids). The WebUI resolves ids inside the ORG
+    picked in its selectbox; a caller that names no ORG gets the first of the
+    agent's ORGs that knows the ids."""
+    if not persona_ids:
+        return [], org, []
+    orgs = [org] if isinstance(org, dict) and org else _agent_orgs(agent_data)
+    for o in orgs:
+        try:
+            cands = dap.find_personas_by_org(
+                o, template_agent=agent_file,
+                persona_files=agent_data.get("PERSONA_FILES") or None,
+                source=agent_data.get("PERSONA_SOURCE"))
+        except Exception:
+            continue
+        by_id = {p.get("persona_id"): p for p in cands}
+        picked = [by_id[pid] for pid in persona_ids if pid in by_id]
+        if picked:
+            return picked, o, [pid for pid in persona_ids if pid not in by_id]
+    return [], org, list(persona_ids)
+
+
+def _resolve_books(agent_data: dict, names):
+    if not names:
+        return [], []
+    books = [b for b in (agent_data.get("BOOK") or [])
+             if isinstance(b, dict) and dma.is_entry_active(b, True)]
+    picked = [b for b in books if b.get("RAG_NAME") in names]
+    known = {b.get("RAG_NAME") for b in picked}
+    return picked, [n for n in names if n not in known]
+
+
+def _include_query_input(session_id: str, user_input: str):
+    """(input, rag_query_text) the WebUI's Include Query builds: when the last
+    turn ran several personas, their answers lead the input while RAG still
+    searches with the bare question. Parallel personas mark the turn
+    MEMORY_FLG=N; a practice with chain PERSONAS marks each answer instead."""
+    if not session_id or not dms.get_session_data(session_id):
+        return user_input, ""
+    hist = dms.DigiMSession(session_id).chat_history_active_dict or {}
+    if not hist:
+        return user_input, ""
+    block = hist.get(max(hist.keys(), key=int), {})
+    _personas = sum(1 for k, v in block.items()
+                    if k != "SETTING" and ((v or {}).get("setting") or {}).get("persona_id"))
+    if (block.get("SETTING") or {}).get("MEMORY_FLG", "Y") != "N" and _personas < 2:
+        return user_input, ""
+    blobs = []
+    for k in sorted([k for k in block if k != "SETTING"], key=int):
+        sub = block[k]
+        text = (sub.get("response") or {}).get("text") or ""
+        name = (sub.get("setting") or {}).get("persona_name") or (sub.get("setting") or {}).get("name") or ""
+        if text:
+            blobs.append(f"- {name}:\n{text}")
+    if not blobs:
+        return user_input, ""
+    return ("[Each persona's previous response]\n" + "\n\n".join(blobs)
+            + "\n\n[Current question]\n" + user_input), user_input
+
+
+def _saved_references(entry: dict) -> dict:
+    """The saved turn keeps the same three sources the live run hands back as
+    `output_reference`, under different keys."""
+    ref = (entry.get("response") or {}).get("reference") or {}
+    return {
+        "knowledge_ref": ref.get("knowledge_rag") or [],
+        "memory_ref": ref.get("memory") or [],
+        "Web_search": (entry.get("prompt") or {}).get("web_search") or {},
+    }
+
+
+def _turn_answers(session_id: str, seq) -> list:
+    """Every answer of one turn (one per persona / chain agent), display-ready."""
+    turn = (dms.get_session_data(session_id) or {}).get(str(seq)) or {}
+    out = []
+    for k in sorted([k for k in turn if str(k).isdigit()], key=int):
+        e = turn[k] if isinstance(turn[k], dict) else {}
+        s = e.get("setting") or {}
+        if s.get("type") not in ("LLM", "IMAGEGEN"):
+            continue
+        r = e.get("response") or {}
+        out.append({
+            "sub_seq": k,
+            "type": s.get("type"),
+            "name": s.get("name", ""),
+            "persona_id": s.get("persona_id", ""),
+            "persona_name": s.get("persona_name", ""),
+            "response": r.get("text") or "",
+            "response_display": (r.get("text") or "") + dmt.render_response_tail(e),
+            "images": [_content_ref(session_id, i) for i in (e.get("image") or {}).values()
+                       if isinstance(i, dict)],
+        })
+    return out
+
+
 def exec_function(service_info: dict, user_info: dict, session_id: str, session_name: str,
                   user_input: str, situation: dict, agent_file: str, engine: str, execution: dict,
                   uploaded_contents: Optional[List[str]] = None,
                   session_summary_enabled: Optional[bool] = None,
-                  session_summary_template: Optional[str] = None) -> dict:
+                  session_summary_template: Optional[str] = None,
+                  imagegen_engine: str = "",
+                  overwrite_items: Optional[dict] = None,
+                  add_knowledge: Optional[list] = None,
+                  personas: Optional[list] = None,
+                  org: Optional[dict] = None,
+                  rag_query_text: str = "",
+                  wait_for_lock: bool = True) -> dict:
     uploaded_contents = list(uploaded_contents or [])
 
     # Set up the session (issue a new ID if not specified)
     if not session_id:
         session_id = "API" + dms.set_new_session_id()
+    # Loading a history reads the whole session, so it is done once here.
+    _hist_before = dms.get_session_data(session_id) or {}
+    seq_before = max((int(k) for k in _hist_before if str(k).isdigit()), default=0)
+    # A continued session keeps the name it already has; only a session that
+    # never got one is named after this turn.
+    if not session_name and _hist_before:
+        session_name = dms.get_session_name(session_id)
 
     # Session Summary inline configuration. When either field is set, persist
     # it to status.yaml BEFORE dispatch so the same turn benefits from
@@ -393,36 +543,45 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
         except Exception:
             pass  # Non-fatal — the run still proceeds without the summary.
 
-    # Wait for the session lock
-    waited = 0
-    while waited < LOCK_WAIT_MAX:
-        status = dms.get_status_data(session_id).get("status", "")
-        if status != "LOCKED":
-            break
-        time.sleep(LOCK_POLL_INTERVAL)
-        waited += LOCK_POLL_INTERVAL
-    else:
-        raise HTTPException(status_code=429, detail=f"Session {session_id} is locked. Retry after a moment.")
+    # Wait for the session lock (run_async locks before it hands off)
+    if wait_for_lock:
+        waited = 0
+        while waited < LOCK_WAIT_MAX:
+            status = dms.get_status_data(session_id).get("status", "")
+            if status != "LOCKED":
+                break
+            time.sleep(LOCK_POLL_INTERVAL)
+            waited += LOCK_POLL_INTERVAL
+        else:
+            raise HTTPException(status_code=429, detail=f"Session {session_id} is locked. Retry after a moment.")
 
     # Execution settings
     if not execution or "LAST_ONLY" not in execution:
         execution["LAST_ONLY"] = True
 
     # Engine override
-    overwrite_items = {}
-    if engine:
-        agent_data = dmu.read_json_file(agent_file, dma.agent_folder_path)
-        if engine in agent_data.get("ENGINE", {}).get("LLM", {}):
-            overwrite_items["ENGINE"] = {"LLM": agent_data["ENGINE"]["LLM"][engine]}
+    overwrite_items = dict(overwrite_items or {})
+    if engine or imagegen_engine:
+        agent_data = _agent_data(agent_file)
+        _eng = dict(overwrite_items.get("ENGINE") or {})
+        if engine and engine in agent_data.get("ENGINE", {}).get("LLM", {}):
+            _eng["LLM"] = agent_data["ENGINE"]["LLM"][engine]
+        if imagegen_engine and imagegen_engine in agent_data.get("ENGINE", {}).get("IMAGEGEN", {}):
+            _eng["IMAGEGEN"] = agent_data["ENGINE"]["IMAGEGEN"][imagegen_engine]
+        if _eng:
+            overwrite_items["ENGINE"] = _eng
 
-    # Execute — forward attachment paths as `in_contents`, matching the WebUI
-    # flow (WebDigiMatsuAgent.py builds `uploaded_contents` the same way).
+    # Execute through the same entry point as the WebUI chat: with 0/1 persona
+    # it is DigiMatsuExecute_Practice, with more it runs them in parallel.
     response_chunks = []
     output_reference = {}
-    for response_service_info, response_user_info, response_chunk, ref in dme.DigiMatsuExecute_Practice(
+    for response_service_info, response_user_info, response_chunk, ref in dme.DigiMatsuExecute_MultiPersona(
         service_info, user_info, session_id, session_name, agent_file, user_input,
         in_contents=uploaded_contents,
-        in_situation=situation, in_overwrite_items=overwrite_items, in_execution=execution
+        in_situation=situation, in_overwrite_items=overwrite_items,
+        in_add_knowledge=list(add_knowledge or []), in_execution=execution,
+        in_personas=list(personas or []), in_rag_query_text=rag_query_text or "",
+        in_org=org,
     ):
         if response_chunk and not str(response_chunk).startswith("[STATUS]"):
             response_chunks.append(response_chunk)
@@ -450,19 +609,28 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
     skills_out = {}
     ref_sections = ""
     response_display = response
+    seq = None
+    sub_seq = None
+    answers = []
     try:
         _sess = dms.DigiMSession(session_id, session_name)
         _seq = _sess.get_seq_history()
-        _sub, _stored = dme._saved_answer(_sess, _seq)
-        if _stored:
-            response = _stored
-        _entry = ((_sess.get_history() or {}).get(str(_seq)) or {}).get(_sub) or {}
-        _resp = _entry.get("response") or {}
-        if isinstance(_resp.get("skills"), dict):
-            skills_out = _resp["skills"]
-        if isinstance(_resp.get("ref_sections"), str):
-            ref_sections = _resp["ref_sections"]
-        response_display = response + dmt.render_response_tail(_entry)
+        if _seq > seq_before:
+            seq = str(_seq)
+            _sub, _stored = dme._saved_answer(_sess, _seq)
+            if _stored:
+                response = _stored
+            sub_seq = _sub
+            _entry = ((_sess.get_history() or {}).get(str(_seq)) or {}).get(_sub) or {}
+            _resp = _entry.get("response") or {}
+            if isinstance(_resp.get("skills"), dict):
+                skills_out = _resp["skills"]
+            if isinstance(_resp.get("ref_sections"), str):
+                ref_sections = _resp["ref_sections"]
+            response_display = response + dmt.render_response_tail(_entry)
+            answers = _turn_answers(session_id, _seq)
+            if not output_reference and _entry:
+                output_reference = _saved_references(_entry)
     except Exception:
         # MEMORY_SAVE=False saves no turn to read back; the streamed text is
         # then all there is.
@@ -471,6 +639,10 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
     return {
         "session_id": session_id,
         "session_name": session_name,
+        # Where the answer of record was saved (None when MEMORY_SAVE=False).
+        # Use them with /feedback and /sessions/{id}/turns/{seq}/... .
+        "seq": seq,
+        "sub_seq": sub_seq,
         "response": response,
         # The answer with its reference sections and then MERGE="APPEND"
         # skill output underneath, in SKILL.ORDER — what the WebUI shows in
@@ -482,6 +654,9 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
         # {name: {phase, merge, header, order, text, model, tokens, error}} for
         # every SKILL that ran after the answer. Empty when none did.
         "skills": skills_out,
+        # One row per answer of the turn — several when personas ran in
+        # parallel or a chain has more than one agent.
+        "answers": answers,
         # Structured references so the client can render a per-turn reference
         # panel without re-fetching /sessions/{id}. Empty when the agent didn't
         # touch any RAG / web / user-memory sources for this turn.
@@ -497,6 +672,40 @@ def _agent_thinking_block(agent_file: str) -> dict:
         return {}
     t = data.get("THINKING")
     return t if isinstance(t, dict) else {}
+
+
+_API_EXECUTION_DEFAULTS = {
+    "STREAM_MODE": True,
+    "SAVE_DIGEST": True,
+    "MEMORY_USE": True,
+    "MEMORY_SAVE": True,
+    "MEMORY_SIMILARITY": False,
+    "MAGIC_WORD_USE": False,
+    "META_SEARCH": True,
+    "RAG_QUERY_GENE": True,
+    "WEB_SEARCH": False,
+    "WEB_SEARCH_ENGINE": "OpenAI",
+    "PRIVATE_MODE": False,
+}
+
+_EXECUTION_DEFAULT_KEYS = ("STREAM_MODE", "MEMORY_USE", "MEMORY_SAVE", "SAVE_DIGEST",
+                           "PRIVATE_MODE", "MAGIC_WORD_USE", "RAG_QUERY_GENE",
+                           "META_SEARCH", "WEB_SEARCH_GUARDRAIL")
+
+
+def _agent_execution_defaults(agent_file: str) -> dict:
+    e = _agent_data(agent_file).get("EXECUTION_DEFAULTS")
+    if not isinstance(e, dict):
+        return {}
+    out = {k: bool(e[k]) for k in _EXECUTION_DEFAULT_KEYS if k in e}
+    if "MAX_PERSONAS" in e:
+        try:
+            out["MAX_PERSONAS"] = max(1, min(int(e["MAX_PERSONAS"]), 20))
+        except (TypeError, ValueError):
+            pass
+    if isinstance(e.get("WEB_SEARCH_ENGINE"), str) and e["WEB_SEARCH_ENGINE"]:
+        out["WEB_SEARCH_ENGINE"] = e["WEB_SEARCH_ENGINE"]
+    return out
 
 
 def _agent_skill_tools(agent_file: str) -> dict:
@@ -516,19 +725,10 @@ def _build_execution_dict(data: InputData, agent_file: str = "") -> tuple:
 
     Returns `(execution, skills_ignored)`.
     """
-    execution = {
-        "STREAM_MODE": True,
-        "SAVE_DIGEST": True,
-        "MEMORY_USE": True,
-        "MEMORY_SAVE": True,
-        "MEMORY_SIMILARITY": False,
-        "MAGIC_WORD_USE": False,
-        "META_SEARCH": True,
-        "RAG_QUERY_GENE": True,
-        "WEB_SEARCH": False,
-        "WEB_SEARCH_ENGINE": "OpenAI",
-        "PRIVATE_MODE": False,
-    }
+    execution = dict(_API_EXECUTION_DEFAULTS)
+    # agent.EXECUTION_DEFAULTS sits over the API defaults, as it sits over the
+    # user's Defaults in the WebUI.
+    execution.update(_agent_execution_defaults(agent_file))
     # The agent's own THINKING block sits under data.execution and the
     # explicit fields, matching the WebUI precedence
     # (agent.THINKING > user default > hardcoded).
@@ -548,6 +748,8 @@ def _build_execution_dict(data: InputData, agent_file: str = "") -> tuple:
         "STREAM_MODE": data.stream_mode,
         "SAVE_DIGEST": data.save_digest,
         "MEMORY_USE": data.memory_use,
+        "MEMORY_SAVE": data.memory_save,
+        "MEMORY_SIMILARITY": data.memory_similarity,
         "MAGIC_WORD_USE": data.magic_word_use,
         "META_SEARCH": data.meta_search,
         "RAG_QUERY_GENE": data.rag_query_gene,
@@ -619,16 +821,35 @@ def _build_execution_dict(data: InputData, agent_file: str = "") -> tuple:
         else:
             skills_ignored.append(data.skill)
 
+    # In the WebUI a flag skill's selection IS its execution flag, and picking
+    # a WebSearch skill turns web search on. An explicit flag field or
+    # data.execution entry still wins.
+    _picks = set(execution.get("_MANUAL_SKILL_PICKS") or [])
+    if data.skill:
+        _picks.add(data.skill)
+    _explicit = {k for k, v in _flag_map.items() if v is not None} | set((data.execution or {}).keys())
+    for _name, _flag in dma.FLAG_SKILLS.items():
+        if _name not in skill_tools or _flag["EXEC_KEY"] in _explicit:
+            continue
+        # No pick list and no DEFAULT: the WebUI would fall back to the user's
+        # Defaults, which the API does not have, so the executor's own default
+        # stands.
+        if data.skills is None and not data.skill and (skill_tools[_name] or {}).get("DEFAULT") is None:
+            continue
+        execution[_flag["EXEC_KEY"]] = _name in _picks
+    if data.skills is not None and "WEB_SEARCH" not in _explicit:
+        execution["WEB_SEARCH"] = any(n == "WebSearch" or n.startswith("WebSearch_") for n in _picks)
+
     return execution, skills_ignored
 
 
-async def _execute_shared(
+def _prepare_run(
     data: InputData,
     extra_content_paths: Optional[List[str]] = None,
     extra_processed: Optional[List[dict]] = None,
     tmp_dir: Optional[str] = None,
-) -> dict:
-    """Single execution path for /run, /run_function and /run_multipart.
+):
+    """(exec_function kwargs, notes for the response) for one request.
 
     `extra_content_paths` are files already staged on disk by the caller
     (e.g. /run_multipart's UploadFiles). They're appended after any inline
@@ -662,36 +883,190 @@ async def _execute_shared(
     if extra_processed:
         processed = list(processed) + list(extra_processed)
 
+    agent_data = _agent_data(agent_file)
+    personas, org, personas_ignored = _resolve_personas(agent_file, agent_data, data.personas, data.org)
+    if org is None and _agent_orgs(agent_data):
+        org = _agent_orgs(agent_data)[0]
+    books, books_ignored = _resolve_books(agent_data, data.books)
+
+    user_input, rag_query_text = data.user_input, ""
+    if data.include_query:
+        try:
+            user_input, rag_query_text = _include_query_input(data.session_id or "", data.user_input)
+        except Exception:
+            user_input, rag_query_text = data.user_input, ""
+
+    overwrite_items = dict(data.overwrite_items or {})
+    if data.personality:
+        _pers = dict(overwrite_items.get("PERSONALITY") or {})
+        _pers.update(data.personality)
+        overwrite_items["PERSONALITY"] = _pers
+
+    kwargs = dict(
+        service_info=service_info, user_info=user_info,
+        session_id=data.session_id or "", session_name=data.session_name or "",
+        user_input=user_input, situation=data.situation, agent_file=agent_file,
+        engine=data.engine or "", execution=execution,
+        uploaded_contents=uploaded_contents,
+        session_summary_enabled=data.session_summary_enabled,
+        session_summary_template=data.session_summary_template,
+        imagegen_engine=data.imagegen_engine or "",
+        overwrite_items=overwrite_items,
+        add_knowledge=books, personas=personas, org=org,
+        rag_query_text=rag_query_text,
+    )
+    notes = {"attachments_processed": processed}
+    # Silently dropping an unknown name is how a typo turns into "it just
+    # never ran", so each one is reported back.
+    if skills_ignored:
+        notes["skills_ignored"] = skills_ignored
+    if personas_ignored:
+        notes["personas_ignored"] = personas_ignored
+    if books_ignored:
+        notes["books_ignored"] = books_ignored
+    return kwargs, notes
+
+
+def _log_run_error(where: str, kwargs: dict):
+    # Full traceback + the request context go to stderr (captured in
+    # /var/log/digim_api.log when launched by the WebUI Start button).
+    # Without these the log only shows `POST /run 500` with no context.
+    import sys
+    print("=" * 78, file=sys.stderr, flush=True)
+    print(f"[{where} 500] agent_file={kwargs.get('agent_file')!r} engine={kwargs.get('engine')!r} "
+          f"user_input={kwargs.get('user_input')!r} session_id={kwargs.get('session_id')!r} "
+          f"exec_keys={list((kwargs.get('execution') or {}).keys())} "
+          f"attachments={len(kwargs.get('uploaded_contents') or [])}",
+          file=sys.stderr, flush=True)
+    traceback.print_exc()
+    print("=" * 78, file=sys.stderr, flush=True)
+
+
+async def _execute_shared(
+    data: InputData,
+    extra_content_paths: Optional[List[str]] = None,
+    extra_processed: Optional[List[dict]] = None,
+    tmp_dir: Optional[str] = None,
+) -> dict:
+    """Single execution path for /run, /run_function and /run_multipart."""
+    kwargs, notes = await run_in_threadpool(
+        _prepare_run, data, extra_content_paths, extra_processed, tmp_dir)
     try:
-        result = exec_function(
-            service_info, user_info,
-            data.session_id or "", data.session_name or "",
-            data.user_input, data.situation, agent_file,
-            data.engine or "", execution,
-            uploaded_contents=uploaded_contents,
-            session_summary_enabled=data.session_summary_enabled,
-            session_summary_template=data.session_summary_template,
-        )
-        result["attachments_processed"] = processed
-        if skills_ignored:
-            # Silently dropping an unknown name is how a typo turns into
-            # "the skill just never ran", so it is reported back.
-            result["skills_ignored"] = skills_ignored
+        # A turn takes minutes; run on the thread pool so the worker keeps
+        # answering /health and /jobs meanwhile.
+        result = await run_in_threadpool(lambda: exec_function(**kwargs))
+        result.update(notes)
         return result
+    except HTTPException:
+        raise
     except Exception as e:
-        # Full traceback + the raw request payload go to stderr (captured in
-        # /var/log/digim_api.log when launched by the WebUI Start button).
-        # Without these the log only shows `POST /run 500` with no context.
-        import sys
-        print("=" * 78, file=sys.stderr, flush=True)
-        print(f"[/run 500] agent_file={agent_file!r} engine={data.engine!r} "
-              f"user_input={data.user_input!r} session_id={data.session_id!r} "
-              f"exec_keys={list(execution.keys())} "
-              f"attachments={len(uploaded_contents)}",
-              file=sys.stderr, flush=True)
-        traceback.print_exc()
-        print("=" * 78, file=sys.stderr, flush=True)
+        _log_run_error("/run", kwargs)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------- Background runs (/run_async + /jobs) ----------
+# A job is a JSON file, not process memory: gunicorn runs several workers and
+# the poll may land on a different one than the run. Progress itself is read
+# from the session's status.yaml, which the executor writes as it goes (the
+# same source the WebUI's chat monitor polls).
+_JOB_ID_RE = re.compile(r"^[0-9a-f]{32}$")
+
+
+def _jobs_folder() -> str:
+    _setting = dmu.read_yaml_file("setting.yaml") or {}
+    base = _setting.get("TEMP_FOLDER", "user/common/temp/")
+    folder = os.path.join(base.rstrip("/\\"), "api", "jobs")
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+
+def _job_path(job_id: str) -> str:
+    if not _JOB_ID_RE.match(job_id or ""):
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    return os.path.join(_jobs_folder(), job_id + ".json")
+
+
+def _write_job(job: dict):
+    path = _job_path(job["job_id"])
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(job, f, ensure_ascii=False)
+    os.replace(tmp, path)
+
+
+def _read_job(job_id: str) -> dict:
+    path = _job_path(job_id)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _now() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _run_job(job: dict, kwargs: dict, notes: dict):
+    try:
+        result = exec_function(**kwargs)
+        result.update(notes)
+        job.update(state="done", result=result, session_name=result.get("session_name", ""))
+    except Exception as e:
+        _log_run_error("/run_async", kwargs)
+        job.update(state="error", error=str(e))
+        # Practice records its own failures; this covers one raised before it
+        # started, which would otherwise leave the session locked for good.
+        # The digest thread may still hold the lock, so give it time first.
+        try:
+            _sess = dms.DigiMSession(job["session_id"])
+            for _ in range(30):
+                if _sess.get_status() != "LOCKED":
+                    break
+                time.sleep(1)
+            if _sess.get_status() == "LOCKED" or not _sess.get_status_error():
+                _sess.save_status("UNLOCKED", error=str(e))
+        except Exception:
+            pass
+    job["finished_at"] = _now()
+    _write_job(job)
+
+
+async def _start_job(kwargs: dict, notes: dict) -> dict:
+    session_id = kwargs.get("session_id") or ("API" + dms.set_new_session_id())
+    kwargs["session_id"] = session_id
+    if dms.get_status_data(session_id).get("status") == "LOCKED":
+        raise HTTPException(status_code=429, detail=f"Session {session_id} is locked. Retry after a moment.")
+    # Lock before answering, so a client that polls at once never sees the
+    # session idle and a second request cannot slip in.
+    dms.DigiMSession(session_id, kwargs.get("session_name") or "").save_status("LOCKED")
+    kwargs["execution"]["_PRE_LOCKED"] = True
+    kwargs["wait_for_lock"] = False
+    job = {
+        "job_id": uuid.uuid4().hex,
+        "session_id": session_id,
+        "session_name": kwargs.get("session_name") or "",
+        "agent_file": kwargs.get("agent_file"),
+        "user_input": kwargs.get("user_input"),
+        "state": "running",
+        "started_at": _now(),
+        "finished_at": None,
+        "error": None,
+        "result": None,
+    }
+    _write_job(job)
+    threading.Thread(target=_run_job, args=(dict(job), kwargs, notes), daemon=True).start()
+    return job
+
+
+def _session_progress(session_id: str) -> dict:
+    st = dms.get_status_data(session_id) or {}
+    return {
+        "status": st.get("status") or "UNLOCKED",
+        "message": st.get("message") or "",
+        # Streamed text so far; cleared when the run unlocks the session.
+        "partial_response": st.get("response") or "",
+        "error": st.get("error") or "",
+    }
 
 
 # Main execution (synchronous - completes in a single request)
@@ -707,11 +1082,7 @@ async def run(data: InputData):
 # curl -X POST http://localhost:8899/run_multipart \
 #   -F 'data={"service_info":{"SERVICE_ID":"DEMO"},"user_info":{"USER_ID":"U"},"user_input":"要約して"};type=application/json' \
 #   -F 'files=@report.pdf' -F 'files=@notes.txt'
-@app.post("/run_multipart")
-async def run_multipart(
-    data: str = Form(..., description="JSON-encoded InputData payload"),
-    files: List[UploadFile] = File(default=[], description="Attachment files"),
-):
+async def _stage_multipart(data: str, files: List[UploadFile]):
     try:
         parsed = InputData.model_validate_json(data)
     except Exception as e:
@@ -741,13 +1112,58 @@ async def run_multipart(
             "content_type": uf.content_type,
             "source": "multipart",
         })
+    return parsed, saved_paths, processed, tmp_dir
 
+
+@app.post("/run_multipart")
+async def run_multipart(
+    data: str = Form(..., description="JSON-encoded InputData payload"),
+    files: List[UploadFile] = File(default=[], description="Attachment files"),
+):
+    parsed, saved_paths, processed, tmp_dir = await _stage_multipart(data, files)
     return await _execute_shared(
         parsed,
         extra_content_paths=saved_paths,
         extra_processed=processed,
         tmp_dir=tmp_dir,
     )
+
+
+# Background variant of /run — what the WebUI chat does. Returns at once with
+# a job_id; poll GET /jobs/{job_id} for progress and the final result. Use it
+# when a turn can outlast a proxy's request timeout (Azure App Service cuts
+# requests at 230 s) or when the client wants to show progress.
+@app.post("/run_async")
+async def run_async(data: InputData):
+    kwargs, notes = await run_in_threadpool(_prepare_run, data)
+    return await _start_job(kwargs, notes)
+
+
+@app.post("/run_async_multipart")
+async def run_async_multipart(
+    data: str = Form(..., description="JSON-encoded InputData payload"),
+    files: List[UploadFile] = File(default=[], description="Attachment files"),
+):
+    parsed, saved_paths, processed, tmp_dir = await _stage_multipart(data, files)
+    kwargs, notes = await run_in_threadpool(_prepare_run, parsed, saved_paths, processed, tmp_dir)
+    return await _start_job(kwargs, notes)
+
+
+@app.get("/jobs/{job_id}")
+async def get_job(job_id: str):
+    """state: running → done (with `result`, the /run response) or error.
+    While running, `progress` carries the executor's status message and the
+    streamed text so far."""
+    job = _read_job(job_id)
+    job["progress"] = _session_progress(job["session_id"])
+    try:
+        _t0 = datetime.strptime(job["started_at"], "%Y-%m-%d %H:%M:%S")
+        _t1 = (datetime.strptime(job["finished_at"], "%Y-%m-%d %H:%M:%S")
+               if job.get("finished_at") else datetime.now())
+        job["elapsed_sec"] = int((_t1 - _t0).total_seconds())
+    except Exception:
+        pass
+    return job
 
 
 # Backward compatibility (legacy endpoint -> falls back to the same synchronous handler)
@@ -860,14 +1276,24 @@ async def history_restore(data: HistoryRestoreRequest,
 
 
 @app.get("/sessions")
-async def get_sessions(user_id: Optional[str] = None, service_id: Optional[str] = None):
-    sessions = dms.get_session_list()
+async def get_sessions(user_id: Optional[str] = None, service_id: Optional[str] = None,
+                       active: Optional[str] = None):
+    """Newest first, like the WebUI sidebar. `active=Y` lists what the sidebar
+    shows, `active=N` the hidden sessions it can re-display."""
+    sessions = await run_in_threadpool(dms.get_session_list)
     if user_id:
         sessions = [s for s in sessions if s.get("user_id") == user_id]
     if service_id:
         sessions = [s for s in sessions if s.get("service_id") == service_id]
+    if active in ("Y", "N"):
+        sessions = [s for s in sessions if (s.get("active") or "Y") == active]
+    sessions = sorted(sessions, key=lambda s: str(s.get("last_update_date") or ""), reverse=True)
     return {"sessions": [{"id": s.get("id"), "name": s.get("name"), "agent": s.get("agent"),
-                          "last_update_date": s.get("last_update_date")} for s in sessions]}
+                          "last_update_date": s.get("last_update_date"),
+                          "active": s.get("active") or "Y",
+                          "status": s.get("status") or "UNLOCKED",
+                          "user_id": s.get("user_id"), "service_id": s.get("service_id")}
+                         for s in sessions]}
 
 # Session history
 @app.get("/sessions/{session_id}")
@@ -876,6 +1302,268 @@ async def get_session_history(session_id: str):
     if not data:
         raise HTTPException(status_code=404, detail="Session not found")
     return {"session_id": session_id, "history": data}
+
+
+# ---------- Chat view of a session (what the WebUI chat pane shows) ----------
+_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_\-.]+$")
+
+
+def _session_or_404(session_id: str) -> "dms.DigiMSession":
+    if not _SESSION_ID_RE.match(session_id or ""):
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    folder = os.path.join(dms.user_folder_path, dms.session_folder_prefix + session_id)
+    if not os.path.isdir(folder) and not dms.get_session_data(session_id):
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    return dms.DigiMSession(session_id)
+
+
+def _content_ref(session_id: str, item: dict) -> dict:
+    name = item.get("file_name") or ""
+    return {"file_name": name, "file_type": item.get("file_type") or "",
+            "url": f"/sessions/{quote(session_id)}/contents/{quote(name)}"}
+
+
+def _shape_entry(session_id: str, seq: str, sub: str, entry: dict, include_refs: bool,
+                 raw_turn: Optional[dict] = None) -> dict:
+    s = entry.get("setting") or {}
+    p = entry.get("prompt") or {}
+    q = p.get("query") or {}
+    r = entry.get("response") or {}
+    # A collapsed (SUMMARY) entry is keyed "1" but reads and writes belong to
+    # real coordinates: the chain's first entry for detail, its last for the
+    # answer and feedback.
+    write_sub = entry.get("_src_sub_seq_last", sub)
+    # POST /feedback checks the agent of the entry it writes to, which in a
+    # chain is not the one the collapsed entry is named after.
+    ws = (((raw_turn or {}).get(write_sub) or {}).get("setting") or {}) or s
+    fb = ws.get("feedback") or {}
+    out = {
+        "sub_seq": write_sub,
+        "detail_sub_seq": entry.get("_src_sub_seq", sub),
+        "type": s.get("type", ""),
+        "name": s.get("name", ""),
+        "agent_file": s.get("agent_file", ""),
+        "answer_agent_file": ws.get("agent_file", ""),
+        "persona_id": s.get("persona_id", ""),
+        "persona_name": s.get("persona_name", ""),
+        # PUSH / SKILL / TOOL entries carry no engine.
+        "engine": (s.get("engine") or {}).get("NAME", "") if isinstance(s.get("engine"), dict) else "",
+        "memory_flg": s.get("memory_flg", "Y"),
+        "prompt_role": p.get("role", ""),
+        "prompt_timestamp": p.get("timestamp", ""),
+        "user_input": dmt.strip_skill_wraps(q.get("input") or ""),
+        "contents": [_content_ref(session_id, c) for c in (q.get("contents") or []) if isinstance(c, dict)],
+        "response_timestamp": r.get("timestamp", ""),
+        "response": r.get("text") or "",
+        "response_display": (r.get("text") or "") + dmt.render_response_tail(entry),
+        "ref_sections": r.get("ref_sections") or "",
+        "skills": r.get("skills") if isinstance(r.get("skills"), dict) else {},
+        "images": [_content_ref(session_id, i) for i in (entry.get("image") or {}).values() if isinstance(i, dict)],
+        "feedback": entry.get("feedback") or {},
+        "feedback_config": {
+            "active": fb.get("ACTIVE") == "Y",
+            "items": fb.get("FEEDBACK_ITEM_LIST") or [],
+            "default_category": fb.get("DEFAULT_CATEGORY") or "",
+        },
+    }
+    if include_refs:
+        refs = _shape_references(_saved_references(entry))
+        # The raw log strings double the payload and the parsed fields hold
+        # everything a viewer shows.
+        for _k in ("knowledge", "page_index"):
+            for _it in refs.get(_k) or []:
+                _it.pop("_raw", None)
+        out["references"] = refs
+    return out
+
+
+@app.get("/sessions/{session_id}/status")
+async def get_session_status(session_id: str):
+    """LOCKED while a turn runs (WebUI, API or a job), with its progress."""
+    _session_or_404(session_id)
+    out = {"session_id": session_id, "name": dms.get_session_name(session_id),
+           "active": dms.get_active_session(session_id)}
+    out.update(_session_progress(session_id))
+    return out
+
+
+@app.get("/sessions/{session_id}/turns")
+async def get_session_turns(session_id: str, view: str = "summary", last: int = 0,
+                            include_refs: bool = True):
+    """Deleted turns are left out, as in the WebUI.
+
+    view=summary : one entry per turn, its question and final answer (the
+                   WebUI's History Detail Visible = SUMMARY)
+    view=all     : every entry of the chain (= ALL)
+    last         : only the newest N turns (0 = all)
+    """
+    sess = await run_in_threadpool(_session_or_404, session_id)
+    hist = sess.chat_history_active_omit_dict if view != "all" else sess.chat_history_active_dict
+    seqs = sorted(hist.keys(), key=int)
+    if last and last > 0:
+        seqs = seqs[-last:]
+    raw = sess.chat_history_active_dict or {}
+    turns = []
+    for k in seqs:
+        block = hist[k] or {}
+        setting = (raw.get(k) or {}).get("SETTING") or {}
+        turns.append({
+            "seq": k,
+            "memory_flg": setting.get("MEMORY_FLG", "Y"),
+            "user_id": (setting.get("user_info") or {}).get("USER_ID", ""),
+            "entries": [_shape_entry(session_id, k, k2, v2, include_refs, raw.get(k))
+                        for k2, v2 in sorted(((a, b) for a, b in block.items() if a != "SETTING"),
+                                             key=lambda x: int(x[0]))
+                        if isinstance(v2, dict)],
+        })
+    st = dms.get_status_data(session_id) or {}
+    return {
+        "session_id": session_id,
+        "session_name": sess.session_name,
+        "agent": st.get("agent") or "",
+        "active": st.get("active") or "Y",
+        "status": st.get("status") or "UNLOCKED",
+        "view": "all" if view == "all" else "summary",
+        "turn_count": len(hist),
+        "turns": turns,
+    }
+
+
+def _require_seq(sess, seq: str) -> dict:
+    turn = (sess.chat_history_dict or {}).get(str(seq))
+    if not isinstance(turn, dict) or "SETTING" not in turn:
+        raise HTTPException(status_code=404, detail=f"seq={seq} not found")
+    return turn
+
+
+def _require_unlocked(sess):
+    # The running turn saves its own copy of the history; a change made under
+    # it can be written over.
+    if sess.get_status() == "LOCKED":
+        raise HTTPException(status_code=409, detail=f"Session {sess.session_id} is running a turn. Retry after it finishes.")
+
+
+@app.get("/sessions/{session_id}/turns/{seq}/detail")
+async def get_turn_detail(session_id: str, seq: str, sub_seq: str = "1"):
+    """The WebUI's Detail Information text (LLM input, tokens, references, ...).
+    For a SUMMARY entry pass its `detail_sub_seq`."""
+    sess = await run_in_threadpool(_session_or_404, session_id)
+    turn = _require_seq(sess, seq)
+    if sub_seq not in turn:
+        raise HTTPException(status_code=404, detail=f"seq={seq}/sub_seq={sub_seq} not found")
+    text = await run_in_threadpool(sess.get_detail_info, seq, sub_seq)
+    return {"session_id": session_id, "seq": seq, "sub_seq": sub_seq, "detail": text}
+
+
+@app.post("/sessions/{session_id}/turns/{seq}/delete")
+async def delete_turn(session_id: str, seq: str):
+    """Hide a turn (FLG=N), as the WebUI's delete does. It stays in storage."""
+    sess = await run_in_threadpool(_session_or_404, session_id)
+    _require_seq(sess, seq)
+    _require_unlocked(sess)
+    await run_in_threadpool(sess.chg_seq_history, seq, "N")
+    return {"status": "ok", "session_id": session_id, "seq": seq}
+
+
+class TurnMemorySetting(BaseModel):
+    enabled: bool
+
+
+@app.post("/sessions/{session_id}/turns/{seq}/memory")
+async def set_turn_memory(session_id: str, seq: str, data: TurnMemorySetting):
+    """enabled=false is the WebUI's Memory Off: the turn stays visible but is
+    left out of the conversation memory sent to the LLM."""
+    sess = await run_in_threadpool(_session_or_404, session_id)
+    _require_seq(sess, seq)
+    _require_unlocked(sess)
+    await run_in_threadpool(sess.chg_seq_memory_flg, seq, "Y" if data.enabled else "N")
+    return {"status": "ok", "session_id": session_id, "seq": seq,
+            "memory_flg": "Y" if data.enabled else "N"}
+
+
+class SessionRename(BaseModel):
+    name: str
+
+
+@app.post("/sessions/{session_id}/rename")
+async def rename_session(session_id: str, data: SessionRename):
+    name = (data.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name is empty")
+    sess = await run_in_threadpool(_session_or_404, session_id)
+    _require_unlocked(sess)
+    await run_in_threadpool(sess.chg_session_name, name)
+    return {"status": "ok", "session_id": session_id, "name": name}
+
+
+@app.post("/sessions/{session_id}/hide")
+async def hide_session(session_id: str):
+    """The WebUI sidebar's Del: hidden from the list, nothing is deleted."""
+    sess = await run_in_threadpool(_session_or_404, session_id)
+    sess.save_active_session("N")
+    sess.save_user_dialog_session("DISCARD")
+    return {"status": "ok", "session_id": session_id, "active": "N"}
+
+
+@app.post("/sessions/{session_id}/activate")
+async def activate_session(session_id: str):
+    """The WebUI's Activate Sessions: show a hidden session again."""
+    sess = await run_in_threadpool(_session_or_404, session_id)
+    sess.save_active_session("Y")
+    sess.save_user_dialog_session("UNSAVED")
+    return {"status": "ok", "session_id": session_id, "active": "Y"}
+
+
+@app.get("/sessions/{session_id}/contents/{file_name}")
+async def get_session_content(session_id: str, file_name: str):
+    """An attachment or generated image of the session (the `url` in turns)."""
+    if not _SESSION_ID_RE.match(session_id or "") or os.path.basename(file_name) != file_name \
+            or file_name in ("", ".", ".."):
+        raise HTTPException(status_code=404, detail="File not found")
+    folder = os.path.join(dms.user_folder_path, dms.session_folder_prefix + session_id,
+                          dms.session_contents_folder)
+    path = os.path.join(folder, file_name)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return FileResponse(path)
+
+
+@app.get("/sessions/{session_id}/export")
+async def export_session(session_id: str, view: str = "summary", images: bool = False):
+    """The chat as Markdown, like the WebUI's Chats Only download. images=true
+    embeds attachments and generated images as base64 (can be several MB)."""
+    sess = await run_in_threadpool(_session_or_404, session_id)
+    hist = sess.chat_history_active_omit_dict if view != "all" else sess.chat_history_active_dict
+    folder = sess.session_contents_folder_path
+
+    def _img(name):
+        if not images or not name:
+            return []
+        path = folder + name
+        if not os.path.isfile(path) or not re.search(r"\.(png|jpe?g|gif|webp)$", name, re.I):
+            return []
+        b64 = dmu.encode_image_file(path).replace("\n", "").replace("\r", "")
+        return [f"![{name}](data:image/png;base64,{b64})", "---"]
+
+    lines = []
+    for k in sorted(hist.keys(), key=int):
+        block = hist[k] or {}
+        role = ((sess.chat_history_dict.get(k) or {}).get("SETTING") or {}).get("user_info", {}).get("USER_ID")
+        for k2 in sorted([x for x in block if x != "SETTING"], key=int):
+            v2 = block[k2]
+            p = v2.get("prompt") or {}
+            user = role or p.get("role", "user")
+            lines += [f"**User**\n **{user}:**\n\n" + dmt.strip_skill_wraps((p.get("query") or {}).get("input") or ""), "---"]
+            for c in (p.get("query") or {}).get("contents") or []:
+                lines += _img((c or {}).get("file_name"))
+            text = ((v2.get("response") or {}).get("text") or "") + dmt.render_response_tail(v2)
+            lines += [f"**Assistant**\n **{(v2.get('setting') or {}).get('name', '')}:**\n\n" + text, "---"]
+            for i in (v2.get("image") or {}).values():
+                lines += _img((i or {}).get("file_name"))
+    md = "\n\n".join(lines)
+    fname = f"{session_id}_chat.md"
+    return PlainTextResponse(md, media_type="text/markdown; charset=utf-8",
+                             headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
 
 # ---------- Session Summary endpoints ----------
@@ -976,6 +1664,96 @@ async def get_engine_list(agent_file: str):
         "LLM": {"default": default_llm, "engines": llm_engines},
         "IMAGEGEN": {"default": default_imagegen, "engines": imagegen_engines},
     }
+
+# Everything the WebUI chat sidebar offers for this agent, in one call:
+# engines, SKILLs by phase, BOOKs, ORG → personas, Thinking, personality and
+# the execution toggles a turn starts from. Values feed straight into /run.
+@app.get("/agents/{agent_file}/chat_options")
+async def get_chat_options(agent_file: str):
+    agent_data = _agent_data(agent_file)
+    if not agent_data:
+        raise HTTPException(status_code=404, detail=f"Agent file not found: {agent_file}")
+
+    def _engines(kind):
+        return {"default": agent_data.get("ENGINE", {}).get(kind, {}).get("DEFAULT", ""),
+                "engines": dma.get_engine_list(agent_data, kind)}
+
+    try:
+        import DigiM_ToolRegistry as dmtr
+    except Exception:
+        dmtr = None
+    skill_tools = _agent_skill_tools(agent_file)
+    skills = []
+    for phase in ("BEFORE", "AFTER"):
+        names = dma.sort_skill_names(
+            [n for n, c in skill_tools.items() if dma.normalize_skill_phase((c or {}).get("PHASE")) == phase],
+            skill_tools)
+        for n in names:
+            c = skill_tools.get(n) or {}
+            flag = dma.FLAG_SKILLS.get(n) or {}
+            desc = flag.get("DESCRIPTION", "")
+            if not desc and dmtr is not None:
+                try:
+                    desc = ((dmtr.get_tool(n) or {}).get("description") or "").strip()
+                except Exception:
+                    desc = ""
+            skills.append({"name": n, "phase": phase, "label": flag.get("LABEL") or n,
+                           "default": bool(c.get("DEFAULT")), "flag": n in dma.FLAG_SKILLS,
+                           "merge": c.get("MERGE", ""), "description": desc})
+
+    books = [{"rag_name": b.get("RAG_NAME"), "retriever": b.get("RETRIEVER", "")}
+             for b in (agent_data.get("BOOK") or [])
+             if isinstance(b, dict) and b.get("RAG_NAME") and dma.is_entry_active(b, True)]
+
+    orgs = []
+    for o in _agent_orgs(agent_data):
+        try:
+            cands = await run_in_threadpool(
+                dap.find_personas_by_org, o, agent_file,
+                agent_data.get("PERSONA_FILES") or None, agent_data.get("PERSONA_SOURCE"))
+        except Exception:
+            cands = []
+        orgs.append({"org": o, "label": ", ".join(f"{k}={v}" for k, v in o.items()),
+                     "personas": [{"persona_id": p.get("persona_id"), "name": p.get("name", "")}
+                                  for p in cands]})
+
+    thinking_options = ["Habit", "Web Search", "RAG Query"]
+    if books:
+        thinking_options.append("Books")
+    if skill_tools:
+        thinking_options.append("Skills")
+    if orgs:
+        thinking_options.append("Personas")
+    t = _agent_thinking_block(agent_file)
+    try:
+        _setting = dmu.read_yaml_file("setting.yaml") or {}
+        max_personas = int(_setting.get("MAX_PERSONAS", 3))
+    except Exception:
+        max_personas = 3
+    defaults = dict(_API_EXECUTION_DEFAULTS)
+    defaults.update(_agent_execution_defaults(agent_file))
+    pers = agent_data.get("PERSONALITY") or {}
+    return {
+        "agent_file": agent_file,
+        "agent_name": (agent_data.get("DISPLAY_NAME") or agent_data.get("NAME") or ""),
+        "LLM": _engines("LLM"),
+        "IMAGEGEN": _engines("IMAGEGEN"),
+        "skills": skills,
+        "books": books,
+        "orgs": orgs,
+        "thinking": {
+            "mode": bool(t.get("MODE", False)),
+            "targets": [("Skills" if x == "Tools" else x) for x in (t.get("TARGETS") or [])
+                        if ("Skills" if x == "Tools" else x) in thinking_options],
+            "max_turns": max(1, min(int(t.get("MAX_TURNS", 1) or 1), 5)),
+            "options": thinking_options,
+            "max_personas": int(defaults.get("MAX_PERSONAS", max_personas)),
+        },
+        "execution_defaults": defaults,
+        "personality": {k: v for k, v in pers.items() if isinstance(v, (str, int, float, bool)) or k == "BIG5"},
+        "feedback_active": (agent_data.get("FEEDBACK") or {}).get("ACTIVE") == "Y",
+    }
+
 
 # Web search engine list
 @app.get("/web_search_engines")

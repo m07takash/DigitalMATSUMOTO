@@ -98,30 +98,127 @@
         tbody.appendChild(tr);
       }
     }
-    // Refresh engine selector for the chat panel.
+    // Refresh the chat sidebar for the selected agent.
     onChatAgentChanged();
   }
+
+  // Everything the sidebar offers for the current agent, as last loaded.
+  const chatState = {
+    options: null,        // GET /agents/{file}/chat_options response
+    skillDefaults: [],    // names ticked by SKILL.TOOLS.<name>.DEFAULT
+    personality: {},      // agent PERSONALITY, to send only what was changed
+    sessionId: "",        // session shown in the chat log
+    sessionName: "",
+    feedbackCfg: {},      // agent_file -> GET /agents/{file}/feedback
+    justRan: "",          // session whose turn this page just ran
+  };
+
   async function onChatAgentChanged() {
     const file = $("#chat-agent").value;
     if (!file) return;
     try {
-      const r = await Api.listEngines(file);
-      const engSel = $("#chat-engine");
-      engSel.innerHTML = "";
-      const engines = (r.LLM && r.LLM.engines) || [];
-      const def     = (r.LLM && r.LLM.default)  || "";
-      for (const e of engines) {
-        const opt = document.createElement("option");
-        opt.value = e; opt.textContent = e;
-        if (e === def) opt.selected = true;
-        engSel.appendChild(opt);
-      }
+      applyChatOptions(await Api.chatOptions(file));
     } catch (e) {
-      // silent — chat can still fire with default engine
+      // Older backend without chat_options: fall back to the engine list.
+      try {
+        const r = await Api.listEngines(file);
+        applyChatOptions({ LLM: r.LLM, IMAGEGEN: r.IMAGEGEN, skills: [], books: [], orgs: [] });
+      } catch (e2) { /* chat can still fire with the default engine */ }
     }
   }
   $("#chat-agent").addEventListener("change", onChatAgentChanged);
   $("#btn-agents-load").addEventListener("click", loadAgents);
+
+  function fillSelect(el, values, def, blankLabel) {
+    el.innerHTML = "";
+    if (blankLabel != null) {
+      const o = document.createElement("option"); o.value = ""; o.textContent = blankLabel; el.appendChild(o);
+    }
+    for (const v of values || []) {
+      const opt = document.createElement("option");
+      opt.value = v; opt.textContent = v;
+      if (v === def) opt.selected = true;
+      el.appendChild(opt);
+    }
+  }
+
+  function checkItem(name, label, checked, desc, data) {
+    const l = document.createElement("label");
+    l.innerHTML = `<input type="checkbox" /><span><span class="lbl"></span><span class="desc"></span></span>`;
+    const cb = l.querySelector("input");
+    cb.value = name; cb.checked = !!checked;
+    for (const k of Object.keys(data || {})) cb.dataset[k] = data[k];
+    l.querySelector(".lbl").textContent = label;
+    l.querySelector(".desc").textContent = desc || "";
+    return l;
+  }
+  const checkedValues = sel => $$(`${sel} input[type=checkbox]`).filter(c => c.checked).map(c => c.value);
+
+  function applyChatOptions(r) {
+    chatState.options = r || {};
+    const llm = (r && r.LLM) || {}, img = (r && r.IMAGEGEN) || {};
+    fillSelect($("#chat-engine"), llm.engines, llm.default);
+    fillSelect($("#chat-imagegen-engine"), img.engines, img.default, (img.engines || []).length ? null : "(none)");
+
+    // Skills by phase, ticked by their DEFAULT.
+    const skills = (r && r.skills) || [];
+    const sk = $("#chat-skills"); sk.innerHTML = "";
+    let lastPhase = "";
+    for (const s of skills) {
+      if (s.phase !== lastPhase) {
+        const g = document.createElement("div"); g.className = "group"; g.textContent = s.phase; sk.appendChild(g);
+        lastPhase = s.phase;
+      }
+      sk.appendChild(checkItem(s.name, s.label === s.name ? s.name : `${s.label} (${s.name})`, s.default, s.description));
+    }
+    chatState.skillDefaults = skills.filter(s => s.default).map(s => s.name);
+    $("#chat-skill-box").hidden = skills.length === 0;
+    // Agents with SKILL.TOOLS pick web search / citations / diagrams / emphasis there.
+    $("#chat-legacy-flags").hidden = skills.length > 0;
+
+    const books = (r && r.books) || [];
+    const bk = $("#chat-books"); bk.innerHTML = "";
+    for (const b of books) bk.appendChild(checkItem(b.rag_name, b.rag_name, false, b.retriever));
+    $("#chat-book-box").hidden = books.length === 0;
+
+    const orgs = (r && r.orgs) || [];
+    const orgSel = $("#chat-org"); orgSel.innerHTML = "";
+    orgs.forEach((o, i) => {
+      const opt = document.createElement("option"); opt.value = String(i); opt.textContent = o.label; orgSel.appendChild(opt);
+    });
+    renderPersonaChoices();
+    $("#chat-persona-box").hidden = orgs.length === 0;
+
+    const t = (r && r.thinking) || {};
+    if (t.options) {
+      $("#flag-thinking_mode").checked = !!t.mode;
+      const tb = $("#chat-thinking-box"); tb.innerHTML = "";
+      for (const o of t.options) tb.appendChild(checkItem(o, o, (t.targets || []).includes(o)));
+      $("#chat-max-thinking-turns").value = t.max_turns || 1;
+    }
+
+    const d = (r && r.execution_defaults) || {};
+    const flagOf = { MEMORY_USE: "memory_use", MEMORY_SAVE: "memory_save", SAVE_DIGEST: "save_digest",
+                     MAGIC_WORD_USE: "magic_word_use", RAG_QUERY_GENE: "rag_query_gene",
+                     META_SEARCH: "meta_search", WEB_SEARCH_GUARDRAIL: "web_search_guardrail",
+                     PRIVATE_MODE: "private_mode" };
+    for (const k of Object.keys(flagOf)) {
+      const el = $("#flag-" + flagOf[k]);
+      if (el && k in d) el.checked = !!d[k];
+    }
+    chatState.personality = (r && r.personality) || {};
+    $("#chat-po-language").value = chatState.personality.LANGUAGE || "";
+    $("#chat-po-style").value = chatState.personality.SPEAKING_STYLE || "";
+  }
+
+  function renderPersonaChoices() {
+    const orgs = (chatState.options && chatState.options.orgs) || [];
+    const o = orgs[Number($("#chat-org").value || 0)];
+    const box = $("#chat-personas"); box.innerHTML = "";
+    for (const p of (o && o.personas) || []) box.appendChild(checkItem(p.persona_id, `${p.persona_id}: ${p.name}`, false));
+    if (o && !(o.personas || []).length) box.innerHTML = '<p class="hint">No matching personas</p>';
+  }
+  $("#chat-org").addEventListener("change", renderPersonaChoices);
 
   // ---------- Chat -------------------------------------------------------
   const chatLog = $("#chat-log");
@@ -131,6 +228,8 @@
   // them without stashing anything on the element itself (which serializes
   // poorly and can be large).
   const bubbleRefs = new WeakMap();
+  const JOB_POLL_MS = 2000;
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
 
   $("#btn-send").addEventListener("click", sendChat);
   $("#chat-input").addEventListener("keydown", e => {
@@ -183,31 +282,63 @@
     });
   }
 
-  async function sendChat() {
-    const text = $("#chat-input").value.trim();
-    if (!text && chatAttachments.length === 0) return;
-    $("#chat-input").value = "";
-    appendMsg("user", text || "(files only)");
-
-    const body = {
+  function chatIds() {
+    return {
       service_info: { SERVICE_ID: $("#chat-service-id").value || cfg.DEFAULT_SERVICE_ID, SERVICE_DATA: {} },
       user_info:    { USER_ID:    $("#chat-user-id").value    || cfg.DEFAULT_USER_ID,    USER_DATA: {} },
+    };
+  }
+
+  function buildChatBody(text) {
+    const opts = chatState.options || {};
+    const body = Object.assign(chatIds(), {
       session_id:   $("#chat-session-id").value || null,
       user_input:   text,
       agent_file:   $("#chat-agent").value || null,
       engine:       $("#chat-engine").value || null,
+      imagegen_engine: $("#chat-imagegen-engine").value || null,
       memory_use:      $("#flag-memory_use").checked,
+      memory_save:     $("#flag-memory_save").checked,
+      save_digest:     $("#flag-save_digest").checked,
+      magic_word_use:  $("#flag-magic_word_use").checked,
       rag_query_gene:  $("#flag-rag_query_gene").checked,
       meta_search:     $("#flag-meta_search").checked,
-      web_search:      $("#flag-web_search").checked,
       web_search_guardrail: $("#flag-web_search_guardrail").checked,
       thinking_mode:   $("#flag-thinking_mode").checked,
       private_mode:    $("#flag-private_mode").checked,
       insert_citations:$("#flag-insert_citations").checked,
-      cite_knowledge:  $("#flag-cite_knowledge").checked,
-      diagram_mode:    $("#flag-diagram_mode").checked,
-      emphasis_mode:   $("#flag-emphasis_mode").checked,
-    };
+    });
+    if ((opts.skills || []).length) {
+      // Unchanged from the agent's defaults: leave them as candidates Thinking
+      // may decline, exactly as the WebUI does. Changed: send them as orders.
+      const picked = checkedValues("#chat-skills");
+      const same = picked.length === chatState.skillDefaults.length &&
+                   picked.every(n => chatState.skillDefaults.includes(n));
+      if (!same) body.skills = picked;
+    } else {
+      body.web_search    = $("#flag-web_search").checked;
+      body.cite_knowledge = $("#flag-cite_knowledge").checked;
+      body.diagram_mode  = $("#flag-diagram_mode").checked;
+      body.emphasis_mode = $("#flag-emphasis_mode").checked;
+    }
+    if (body.thinking_mode) {
+      body.thinking_targets = checkedValues("#chat-thinking-box");
+      body.max_thinking_turns = Number($("#chat-max-thinking-turns").value || 1);
+    }
+    const books = checkedValues("#chat-books");
+    if (books.length) body.books = books;
+    const orgs = opts.orgs || [];
+    if (orgs.length) {
+      body.org = (orgs[Number($("#chat-org").value || 0)] || {}).org || null;
+      const pids = checkedValues("#chat-personas");
+      if (pids.length) body.personas = pids;
+      if ($("#chat-include-query").checked) body.include_query = true;
+    }
+    const pers = {};
+    const lang = $("#chat-po-language").value.trim(), style = $("#chat-po-style").value.trim();
+    if (lang && lang !== (chatState.personality.LANGUAGE || "")) pers.LANGUAGE = lang;
+    if (style && style !== (chatState.personality.SPEAKING_STYLE || "")) pers.SPEAKING_STYLE = style;
+    if (Object.keys(pers).length) body.personality = pers;
 
     // Session Summary — send both fields only when the operator opted in for
     // this turn. Sending them null-null preserves whatever was saved earlier.
@@ -219,41 +350,95 @@
         if (_tpl) body.session_summary_template = _tpl.template;
       }
     }
+    return body;
+  }
 
+  async function sendChat() {
+    const text = $("#chat-input").value.trim();
+    if (!text && chatAttachments.length === 0) return;
+    $("#chat-input").value = "";
+    appendMsg("user", text || "(files only)");
+
+    const body = buildChatBody(text);
     const files = chatAttachments.slice();
     const useBase64 = $("#chat-attach-base64").checked;
+    const background = $("#chat-async").checked;
+    if (files.length && useBase64) {
+      body.attachments = await Promise.all(files.map(async f => ({
+        filename: f.name,
+        content_base64: await fileToBase64(f),
+        content_type: f.type || null,
+      })));
+    }
+    const multipart = files.length > 0 && !useBase64;
 
     const placeholder = appendMsg("agent", "…");
+    placeholder.classList.add("pending");
+    $("#btn-send").disabled = true;
     try {
       let r;
-      if (files.length === 0) {
-        r = await Api.run(body);
-      } else if (useBase64) {
-        // /run + inline base64 attachments — good for small text/CSV/images.
-        body.attachments = await Promise.all(files.map(async f => ({
-          filename: f.name,
-          content_base64: await fileToBase64(f),
-          content_type: f.type || null,
-        })));
-        r = await Api.run(body);
+      if (background) {
+        const job = multipart ? await Api.runAsyncMultipart(body, files) : await Api.runAsync(body);
+        if (job.session_id) $("#chat-session-id").value = job.session_id;
+        const done = await pollJob(job.job_id, placeholder);
+        if (done.state !== "done") throw new Error(done.error || "Run failed");
+        r = done.result || {};
       } else {
-        // /run_multipart — the FastAPI endpoint that accepts UploadFiles.
-        r = await Api.runMultipart(body, files);
+        placeholder.querySelector(".body").textContent = "⏳ Waiting for the answer (synchronous /run)…";
+        r = multipart ? await Api.runMultipart(body, files) : await Api.run(body);
       }
       if (r.session_id) $("#chat-session-id").value = r.session_id;
-      placeholder.querySelector(".body").textContent = r.response || "(empty response)";
+      placeholder.classList.remove("pending");
+      placeholder.querySelector(".body").textContent = r.response_display || r.response || "(empty response)";
       const attachSummary = Array.isArray(r.attachments_processed) && r.attachments_processed.length
         ? ` · attached=${r.attachments_processed.length}` : "";
       placeholder.querySelector(".meta").textContent =
         `session=${r.session_id || ""}${r.session_name ? " · " + r.session_name : ""}${attachSummary}`;
-      // Attach references to this bubble so a click opens the drawer.
       attachRefsToBubble(placeholder, r.references, r.session_id, text);
       // Successful send → clear the attachment tray.
       chatAttachments.length = 0;
       renderAttachmentChips();
+      // Re-read the turn so it gets its actions (detail, memory, delete, feedback).
+      if (r.session_id && r.seq) { chatState.justRan = r.session_id; await openSession(r.session_id); }
+      loadChatSessions(true);
     } catch (e) {
+      placeholder.classList.remove("pending");
       placeholder.querySelector(".body").textContent = "⚠ " + e.message;
       placeholder.classList.add("error");
+    } finally {
+      $("#btn-send").disabled = false;
+    }
+  }
+
+  // Poll GET /jobs/{id} until the run leaves "running", showing the
+  // executor's status message and the streamed text the way the WebUI does.
+  async function pollJob(jobId, bubble) {
+    for (;;) {
+      const j = await Api.getJob(jobId);
+      showJobProgress(bubble, j);
+      if (j.state !== "running") return j;
+      await sleep(JOB_POLL_MS);
+    }
+  }
+
+  function showJobProgress(bubble, j) {
+    if (!bubble) return;
+    const p = j.progress || {};
+    if (j.state === "running") {
+      bubble.querySelector(".body").textContent = p.partial_response || "…";
+      bubble.querySelector(".meta").textContent =
+        `⏳ ${p.message || "Running..."}${j.elapsed_sec != null ? ` · ${j.elapsed_sec}s` : ""}`;
+    } else if (j.state === "done") {
+      const r = j.result || {};
+      bubble.classList.remove("pending");
+      bubble.querySelector(".body").textContent = r.response_display || r.response || "(empty response)";
+      bubble.querySelector(".meta").textContent =
+        `session=${r.session_id || ""}${r.session_name ? " · " + r.session_name : ""} · ${j.elapsed_sec || 0}s`;
+      attachRefsToBubble(bubble, r.references, r.session_id, j.user_input);
+    } else {
+      bubble.classList.remove("pending");
+      bubble.classList.add("error");
+      bubble.querySelector(".body").textContent = "⚠ " + (j.error || "Run failed");
     }
   }
 
@@ -266,6 +451,285 @@
     chatLog.scrollTop = chatLog.scrollHeight;
     if (role === "agent") el.addEventListener("click", () => onBubbleClick(el));
     return el;
+  }
+
+  // ---------- Chat: sessions and turns ------------------------------------
+  $("#btn-chat-new").addEventListener("click", () => {
+    $("#chat-session-id").value = "";
+    chatState.sessionId = ""; chatState.sessionName = "";
+    chatLog.innerHTML = "";
+    $("#chat-head-name").textContent = "New chat";
+    markCurrentSession();
+    closeRefs();
+  });
+  $("#btn-chat-open").addEventListener("click", () => {
+    const id = $("#chat-session-id").value.trim();
+    if (id) openSession(id);
+  });
+  $("#btn-chat-reload").addEventListener("click", () => { if (chatState.sessionId) openSession(chatState.sessionId); });
+  $("#chat-view").addEventListener("change", () => { if (chatState.sessionId) openSession(chatState.sessionId); });
+  $("#btn-chat-sess-reload").addEventListener("click", () => loadChatSessions(false));
+  $("#chat-sess-hidden").addEventListener("change", () => loadChatSessions(false));
+  $("#btn-chat-rename").addEventListener("click", () => { if (chatState.sessionId) renameSession(chatState.sessionId, chatState.sessionName); });
+  $("#btn-chat-export").addEventListener("click", async () => {
+    const id = chatState.sessionId;
+    if (!id) { setStatus("Open a session first."); return; }
+    try {
+      const md = await Api.exportSession(id, { view: $("#chat-view").value });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([typeof md === "string" ? md : JSON.stringify(md)], { type: "text/markdown" }));
+      a.download = `${id}_chat.md`;
+      a.click();
+      setStatus(`Exported ${id}_chat.md`);
+    } catch (e) { setStatus("Export failed: " + e.message); }
+  });
+
+  async function loadChatSessions(silent) {
+    const ids = chatIds();
+    try {
+      const r = await Api.listSessions({
+        user_id: ids.user_info.USER_ID, service_id: ids.service_info.SERVICE_ID,
+        active: $("#chat-sess-hidden").checked ? "N" : "Y",
+      });
+      renderChatSessionList(r.sessions || [], $("#chat-sess-hidden").checked);
+    } catch (e) { if (!silent) setStatus("Sessions load failed: " + e.message); }
+  }
+
+  function renderChatSessionList(sessions, hiddenView) {
+    const box = $("#chat-sess-list");
+    box.innerHTML = "";
+    if (!sessions.length) { box.innerHTML = '<p class="hint">No sessions.</p>'; return; }
+    for (const s of sessions) {
+      const row = document.createElement("div");
+      row.className = "sess-row" + (hiddenView ? " hidden-sess" : "");
+      row.dataset.sid = s.id;
+      row.innerHTML = `<span class="sess-name"></span>` +
+        (hiddenView ? `<button class="act" title="Show again (POST /sessions/{id}/activate)">↺</button>`
+                    : `<button class="ren" title="Rename">✎</button><button class="hide" title="Hide (POST /sessions/{id}/hide)">×</button>`);
+      const nm = row.querySelector(".sess-name");
+      nm.textContent = s.name || s.id;
+      nm.title = `${s.id} · ${s.last_update_date || ""}${s.status === "LOCKED" ? " · running" : ""}`;
+      if (s.status === "LOCKED") nm.insertAdjacentHTML("beforeend", "<small>⏳</small>");
+      nm.addEventListener("click", () => openSession(s.id));
+      const on = (cls, fn) => { const b = row.querySelector(cls); if (b) b.addEventListener("click", fn); };
+      on(".ren", () => renameSession(s.id, s.name));
+      on(".hide", async () => {
+        if (!confirm(`Hide "${s.name || s.id}"? (it can be shown again)`)) return;
+        try { await Api.hideSession(s.id); setStatus(`Hid ${s.id}`); loadChatSessions(true); }
+        catch (e) { setStatus("Hide failed: " + e.message); }
+      });
+      on(".act", async () => {
+        try { await Api.activateSession(s.id); setStatus(`Re-displayed ${s.id}`); loadChatSessions(true); }
+        catch (e) { setStatus("Activate failed: " + e.message); }
+      });
+      box.appendChild(row);
+    }
+    markCurrentSession();
+  }
+
+  function markCurrentSession() {
+    $$("#chat-sess-list .sess-row").forEach(r => r.classList.toggle("current", r.dataset.sid === chatState.sessionId));
+  }
+
+  async function renameSession(id, current) {
+    const name = prompt("New session name", current || "");
+    if (!name || name === current) return;
+    try {
+      await Api.renameSession(id, name);
+      if (id === chatState.sessionId) { chatState.sessionName = name; $("#chat-head-name").textContent = name; }
+      setStatus(`Renamed ${id}`);
+      loadChatSessions(true);
+    } catch (e) { setStatus("Rename failed: " + e.message); }
+  }
+
+  async function openSession(id) {
+    try {
+      const r = await Api.getTurns(id, { view: $("#chat-view").value });
+      renderTurns(r);
+    } catch (e) { setStatus("Open session failed: " + e.message); }
+  }
+
+  // Draw a session the way the WebUI chat pane does: per turn, the question,
+  // then each answer with its images and actions.
+  function renderTurns(r) {
+    chatState.sessionId = r.session_id || "";
+    chatState.sessionName = r.session_name || "";
+    $("#chat-session-id").value = chatState.sessionId;
+    $("#chat-head-name").textContent = chatState.sessionName || chatState.sessionId || "New chat";
+    if (r.view) $("#chat-view").value = r.view;
+    chatLog.innerHTML = "";
+    closeRefs();
+    for (const t of r.turns || []) {
+      const sep = document.createElement("hr"); sep.className = "turn-sep"; chatLog.appendChild(sep);
+      (t.entries || []).forEach((e, i) => {
+        const u = appendMsg("user", e.user_input || "");
+        u.insertAdjacentHTML("afterbegin", `<div class="who"></div>`);
+        u.querySelector(".who").textContent = `${t.user_id || e.prompt_role || "user"} · seq ${t.seq}`;
+        addLinks(u, e.contents, "📎");
+        const a = appendMsg("agent", e.response_display || e.response || "");
+        a.insertAdjacentHTML("afterbegin", `<div class="who"></div>`);
+        a.querySelector(".who").textContent =
+          [e.name, e.persona_name && e.persona_name !== e.name ? e.persona_name : "", e.engine, e.type !== "LLM" ? e.type : ""]
+            .filter(Boolean).join(" · ");
+        a.querySelector(".meta").textContent = e.response_timestamp || "";
+        for (const img of e.images || []) {
+          const el = document.createElement("img");
+          el.className = "gen"; el.src = Api.contentUrl(img.url); el.alt = img.file_name;
+          a.insertBefore(el, a.querySelector(".meta"));
+        }
+        if (t.memory_flg === "N" || e.memory_flg === "N") a.classList.add("memory-off");
+        attachRefsToBubble(a, e.references, r.session_id, e.user_input);
+        // Turn-level actions sit under the turn's last answer.
+        if (i === (t.entries.length - 1)) addTurnActions(a, r.session_id, t, e);
+        else if ((e.feedback_config || {}).active) addTurnActions(a, r.session_id, t, e, true);
+      });
+    }
+    if (!(r.turns || []).length) appendMsg("system", "(no turns yet)");
+    markCurrentSession();
+    chatLog.scrollTop = chatLog.scrollHeight;
+    // Not during playback: the recording already holds what came next.
+    if (r.status === "LOCKED" && Recorder.mode !== "playing") {
+      watchRunningSession(r.session_id, chatState.justRan === r.session_id);
+    }
+    chatState.justRan = "";
+  }
+
+  function addLinks(bubble, items, icon) {
+    if (!(items || []).length) return;
+    const div = document.createElement("div"); div.className = "attach-links";
+    for (const c of items) {
+      const a = document.createElement("a");
+      a.href = Api.contentUrl(c.url); a.target = "_blank"; a.rel = "noopener";
+      a.textContent = `${icon} ${c.file_name}`;
+      a.addEventListener("click", ev => ev.stopPropagation());
+      div.appendChild(a);
+    }
+    bubble.insertBefore(div, bubble.querySelector(".meta"));
+  }
+
+  function addTurnActions(bubble, sid, turn, entry, feedbackOnly) {
+    const bar = document.createElement("div"); bar.className = "turn-actions";
+    const btn = (label, title, fn, cls) => {
+      const b = document.createElement("button"); b.textContent = label; b.title = title;
+      if (cls) b.className = cls;
+      b.addEventListener("click", ev => { ev.stopPropagation(); fn(); });
+      bar.appendChild(b);
+    };
+    if (!feedbackOnly) {
+      btn("Detail", "GET /sessions/{id}/turns/{seq}/detail", () => showDetail(sid, turn.seq, entry.detail_sub_seq));
+      const off = turn.memory_flg === "N";
+      btn(off ? "Memory On" : "Memory Off",
+          "POST /sessions/{id}/turns/{seq}/memory — kept on screen, left out of the LLM's memory",
+          async () => {
+            try { await Api.setTurnMemory(sid, turn.seq, off); await openSession(sid); }
+            catch (e) { setStatus("Memory flag failed: " + e.message); }
+          });
+      btn("Delete", "POST /sessions/{id}/turns/{seq}/delete", async () => {
+        if (!confirm(`Delete turn ${turn.seq}?`)) return;
+        try { await Api.deleteTurn(sid, turn.seq); await openSession(sid); }
+        catch (e) { setStatus("Delete failed: " + e.message); }
+      }, "danger");
+    }
+    if ((entry.feedback_config || {}).active) {
+      btn("Feedback", "POST /feedback", () => toggleFeedback(bubble, sid, turn.seq, entry));
+    }
+    bubble.insertBefore(bar, bubble.querySelector(".meta"));
+  }
+
+  async function toggleFeedback(bubble, sid, seq, entry) {
+    const open = bubble.querySelector(".fb-form");
+    if (open) { open.remove(); return; }
+    const agentFile = entry.answer_agent_file || entry.agent_file;
+    let cats = [];
+    try {
+      if (!chatState.feedbackCfg[agentFile]) chatState.feedbackCfg[agentFile] = await Api.feedbackConfig(agentFile);
+      cats = chatState.feedbackCfg[agentFile].categories || [];
+    } catch (e) { /* categories are optional */ }
+    const cfgFb = entry.feedback_config || {};
+    const saved = entry.feedback || {};
+    const form = document.createElement("div"); form.className = "fb-form";
+    form.addEventListener("click", ev => ev.stopPropagation());
+    for (const item of cfgFb.items || []) {
+      const cur = saved[item] || {};
+      const row = document.createElement("div"); row.className = "fb-item"; row.dataset.item = item;
+      row.innerHTML = `<label><input type="checkbox" class="on" /> <span></span></label>
+                       <textarea class="memo" placeholder="Memo"></textarea>
+                       <select class="cat"></select>`;
+      row.querySelector("span").textContent = item;
+      row.querySelector(".on").checked = !!cur.visible;
+      row.querySelector(".memo").value = cur.memo || "";
+      const sel = row.querySelector(".cat");
+      for (const c of (cats.length ? cats : [cfgFb.default_category || "未設定"])) {
+        const o = document.createElement("option"); o.value = c; o.textContent = c; sel.appendChild(o);
+      }
+      sel.value = cur.category || cfgFb.default_category || sel.value;
+      form.appendChild(row);
+    }
+    const send = document.createElement("button"); send.className = "btn primary"; send.textContent = "Save feedback";
+    send.addEventListener("click", async () => {
+      // Same record the WebUI writes: per item {visible, flg, memo, category},
+      // flg set when the memo is new or changed.
+      const fbs = { name: "Feedback" };
+      for (const row of $$(".fb-item", form)) {
+        const item = row.dataset.item, prev = (saved[item] || {}).memo || "";
+        const on = row.querySelector(".on").checked;
+        const memo = on ? row.querySelector(".memo").value : "";
+        fbs[item] = { visible: on, memo, category: row.querySelector(".cat").value,
+                      flg: memo !== "" && memo !== prev };
+      }
+      try {
+        await Api.submitFeedback({ session_id: sid, agent_file: agentFile, seq, sub_seq: entry.sub_seq, feedbacks: fbs });
+        setStatus(`Saved feedback (${seq}_${entry.sub_seq})`);
+        await openSession(sid);
+      } catch (e) { setStatus("Feedback failed: " + e.message); }
+    });
+    form.appendChild(send);
+    bubble.insertBefore(form, bubble.querySelector(".meta"));
+  }
+
+  async function showDetail(sid, seq, subSeq) {
+    try {
+      const r = await Api.turnDetail(sid, seq, subSeq);
+      renderDetail(r);
+    } catch (e) { setStatus("Detail failed: " + e.message); }
+  }
+
+  function renderDetail(r) {
+    $("#refs-title").textContent = "Detail Information";
+    $("#refs-turn").textContent = `seq ${r.seq || ""}-${r.sub_seq || ""}`;
+    const body = $("#refs-body"); body.innerHTML = "";
+    const pre = document.createElement("pre"); pre.className = "detail-pre";
+    pre.textContent = r.detail || "(empty)";
+    body.appendChild(pre);
+    openRefs();
+  }
+
+  // A session opened while a turn runs (WebUI, another client, a job): show
+  // its progress until it unlocks, then redraw it. Right after our own run the
+  // answer is already on screen and the lock is the digest being written, so
+  // only the status line is shown.
+  let watching = "";
+  async function watchRunningSession(sid, statusOnly) {
+    if (watching === sid) return;
+    watching = sid;
+    const bubble = statusOnly ? appendMsg("system", "⏳") : appendMsg("agent", "…");
+    if (!statusOnly) bubble.classList.add("pending");
+    try {
+      for (;;) {
+        const s = await Api.sessionStatus(sid);
+        if (chatState.sessionId !== sid) return;
+        if (s.status !== "LOCKED") break;
+        if (statusOnly) {
+          bubble.querySelector(".body").textContent = `⏳ Finishing: ${s.message || "..."}`;
+        } else {
+          bubble.querySelector(".body").textContent = s.partial_response || "…";
+          bubble.querySelector(".meta").textContent = `⏳ ${s.message || "Running..."}`;
+        }
+        await sleep(JOB_POLL_MS);
+      }
+    } catch (e) { /* stop watching on error */ }
+    finally { watching = ""; }
+    if (chatState.sessionId === sid) openSession(sid);
   }
 
   // ---------- References drawer -----------------------------------------
@@ -308,6 +772,7 @@
   }
 
   function renderRefs(refs) {
+    $("#refs-title").textContent = "References";
     const body = $("#refs-body");
     const turn = $("#refs-turn");
     body.innerHTML = "";
@@ -678,8 +1143,46 @@
   });
 
   // Called for each event during playback. Route to the panel that owns it.
+  // Recorded chat-pane traffic: the async run and its polls, the turn view
+  // and its actions, the chat session list. Returns true when it handled it.
+  let playbackBubble = null;
+  function handleChatPlayback(evt) {
+    const path = evt.path || "";
+    const resp = evt.response || {};
+    const req = evt.request || {};
+    const bare = path.split("?")[0];
+    if (bare === "/run_async" || bare === "/run_async_multipart") {
+      if (req.user_input) appendMsg("user", req.user_input);
+      playbackBubble = appendMsg("agent", "…");
+      playbackBubble.classList.add("pending");
+      if (resp.session_id) $("#chat-session-id").value = resp.session_id;
+      if (evt.error) showJobProgress(playbackBubble, { state: "error", error: evt.error });
+    } else if (bare.startsWith("/jobs/")) {
+      showJobProgress(playbackBubble, resp);
+      if (resp.state !== "running") playbackBubble = null;
+    } else if (/^\/agents\/[^/]+\/chat_options$/.test(bare)) {
+      applyChatOptions(resp);
+    } else if (/^\/sessions\/[^/]+\/turns$/.test(bare)) {
+      renderTurns(resp);
+    } else if (/^\/sessions\/[^/]+\/turns\/[^/]+\/detail$/.test(bare)) {
+      renderDetail(resp);
+    } else if (/^\/sessions\/[^/]+\/(turns\/[^/]+\/(delete|memory)|rename|hide|activate)$/.test(bare)) {
+      setStatus(`${evt.method} ${bare} → ${evt.status || ""}`);
+    } else if (/^\/sessions\/[^/]+\/(export|status)$/.test(bare)) {
+      setStatus(`${evt.method} ${bare} → ${evt.status || ""}`);
+    } else if (bare === "/sessions" && /[?&]active=/.test(path)) {
+      // The chat sidebar asks with active=…; the Sessions tab does not.
+      renderChatSessionList(resp.sessions || [], /[?&]active=N/.test(path));
+    } else {
+      return false;
+    }
+    switchTab("chat");
+    return true;
+  }
+
   function handlePlaybackEvent(evt) {
     if (evt.type !== "api") return;
+    if (handleChatPlayback(evt)) return;
     // Switch to the relevant tab so the operator sees the update.
     const path = evt.path || "";
     if      (path === "/run" || path === "/run_function" ||
@@ -735,7 +1238,7 @@
       }
     } else if (path.startsWith("/sessions/")) {
       $("#sess-detail").textContent = JSON.stringify(evt.response, null, 2);
-    } else if (path === "/sessions") {
+    } else if (path === "/sessions" || path.startsWith("/sessions?")) {
       const tbody = $("#sess-table tbody");
       tbody.innerHTML = "";
       for (const s of (evt.response && evt.response.sessions) || []) {
@@ -773,6 +1276,7 @@
   // ---------- Boot -------------------------------------------------------
   refreshRecordingList();
   loadAgents();            // best-effort; falls back on network error
+  loadChatSessions(true);  // the chat sidebar's session list
   loadSummaryPresets(true); // populate summary preset dropdowns silently
   setStatus(`Ready. Backend: ${Api.getBackendUrl() || "(unset)"}`);
 })();

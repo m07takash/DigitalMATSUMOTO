@@ -219,7 +219,10 @@ class _Proxy:
                 return [_Proxy(t, rec, "tab", str(lbl)) for t, lbl in zip(attr(tabs, *a, **k), tabs)]
             return _tabs
         if name == "expander":
-            return lambda label, *a, **k: _Proxy(attr(label, *a, **k), rec, "expander", str(label).lstrip("# "))
+            # The report opens every expander so nothing is hidden; `_fold=True`
+            # (report only, not a Streamlit argument) keeps one closed.
+            return lambda label, *a, _fold=False, **k: _Proxy(attr(label, *a, **k), rec, "fold" if _fold else "expander",
+                                                                str(label).lstrip("# "))
         if name in ("container", "empty"):
             return lambda *a, **k: _Proxy(attr(*a, **k), rec)
         pre, post = _PRE_RECORDERS.get(name), _RECORDERS.get(name)
@@ -408,6 +411,7 @@ def render_html(rec: Recorder, title: str) -> bytes:
                        + (f'<p>{html.escape(kw["sub"])}</p>' if kw["sub"] else "") + "</header>")
         elif kind == "open":
             out.append(f'<section class="tab"><h2>{html.escape(kw["label"])}</h2>' if kw["kind"] == "tab"
+                       else f'<details><summary>{html.escape(kw["label"])}</summary>' if kw["kind"] == "fold"
                        else f'<details open><summary>{html.escape(kw["label"])}</summary>')
         elif kind == "close":
             out.append("</section>" if kw["kind"] == "tab" else "</details>")

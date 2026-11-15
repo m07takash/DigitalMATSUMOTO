@@ -3385,7 +3385,7 @@ Knowledge Explorerは、RAGデータの分析画面です。サイドバーの�
 
 - **User** — 期間・グループ／ユーザー・エージェントを指定し、「ユーザー入力 → 対応するエージェントの回答 → 活用された知識」の順に分析します。バックエンドは `DigiM_PerformanceExplorer.py`。
 - **Agent** — **Summary**（期間とエージェントを指定し、出力傾向・Habit・知識・SKILL・サポートエージェント・フィードバックの兆候を比べる。下の「Agent セクションの Summary」）と、**Knowledge map**（エージェント1体の累積パフォーマンス。バックエンドは `DigiM_AgentPerformanceExplorer.py`）を切り替えます。この章の「データソース」「Tab 1」「Tab 2」は Knowledge map の説明です。
-- **HTML で保存** — どのビューでも、分析結果の上にある **Prepare HTML** を押すと、そのとき表示している内容（全タブ・エクスパンダの中身、表、グラフ、ワードクラウド、LLM の説明、選んでいるクラスタやテーマ）を1つの HTML にまとめ、**Download HTML** で保存できます。表示を変えたら Prepare HTML を押し直してください。表と文章はオフラインでも読めますが、グラフは開いたときに cdn.jsdelivr.net から Vega のライブラリを読み込みます。記録は `DigiM_PEReport.py` が行い、ボタンを押した回の再描画でだけ動きます。
+- **分析の保存と HTML** — どのビューでも、分析結果の上にある **Save Analytics** を押すと、そのビューの結果と条件（期間・絞り込み・Top N など）を分析セッションとして `user/common/analytics/performance_explorer/` に保存し、同時にそのとき表示している内容（全タブ・エクスパンダの中身、表、グラフ、ワードクラウド、LLM の説明、選んでいるクラスタやテーマ）を1つの HTML にまとめます。Knowledge Explorer などと同じく、保存した分析はサイドバーに最近の10件が並び、押すと読み込み、**Del** で削除できます。読み込むと条件も戻り、保存した HTML をそのまま **Download HTML** でダウンロードできます。表示を変えたら Save Analytics を押し直してください。その分析で開いた小画面（Example / Knowledge Reference）は、HTML の最後に開いた順で1件ずつ折りたたんで付きます（全行分は入れません。1件約1MBで、全部作ると保存に10分以上かかるため）。表と文章はオフラインでも読めますが、グラフは開いたときに cdn.jsdelivr.net から Vega のライブラリを読み込みます。記録は `DigiM_PEReport.py` が行い、ボタンを押した回の再描画でだけ動きます。
 
 #### User セクションの対象データ
 
@@ -3401,15 +3401,19 @@ PostgreSQL の分析データ退避テーブル（`digim_sessions_archive` / `di
 
 | タブ | 内容 | LLM |
 |---|---|---|
-| **1. Usage** | 曜日×時間帯のヒートマップ、期間ごとのターン数の推移、グループ／ユーザー別の集計（ターン・セッション・利用日数・入力と回答の文字数・回答までの秒数・トークン・参照数） | 使わない |
-| **2. Interests / Topics** | ユーザー入力のキーワードランキング（表示数は既定30）。件数・割合・利用者数に加えて、**最も多かった時期**と期間ごとの推移を表示。その下に、キーワードごとに**エージェント回答のワードクラウドとキーワード Top N**、最近の入力と回答を順に並べます | **Explain Topics** を押したときだけ |
-| **3. Diversity / Homogeneity** | ユーザー入力のクラスター分析。散布図は**色＝グループ（またはユーザー）、形＝クラスター**。クラスターごとに回答のワードクラウド・キーワード Top N と、活用された知識の Top N（参照回数／散布図／知識活用度の累計）。エクスパンダにグループごとのクラスター分布と、クラスター×グループの代表的な入力・その回答・活用された知識 | **Explain Diversity** を押したときだけ |
-| **4. Achievement** | 設定したお題（複数可）に対する達成度を LLM が 0〜100 で採点。スコア帯の分布、グループ／ユーザーのランキング、スコア帯ごとの回答のキーワードと活用された知識 | **Score** を押したとき |
+| **1. Usage** | 曜日×時間帯のヒートマップ（全体とグループ／ユーザーごと。各マスにターン数）、期間ごとのターン数の**グループ別積み上げ棒グラフ**（表示するグループを選べます）、グループ／ユーザー別の集計（ターン・セッション・利用日数・入力と回答の文字数・回答までの秒数・トークン・参照数）と最後に **Total** 行 | 使わない |
+| **2. Interests / Topics** | ユーザー入力のキーワードランキング（表示数は既定30）を**全体とグループ／ユーザーごと**に表示。件数・割合・利用者数・**最も多かった時期**・推移に加えて、そのキーワードを含む入力への**エージェント回答のキーワード Top N**（`キーワード:件数(シェア%)`）を1列に並べます。各表の下にユーザー入力のワードクラウド。行を選んで **Example** を押すと、ピーク時期の入力のうち回答がそのキーワードの回答キーワードを最も多く含むもの1件と、その回答の Knowledge Utility を小画面で表示します | **Explain Topics** を押したときだけ |
+| **3. Diversity / Homogeneity** | ユーザー入力（入力ベクトル）のクラスター分析。散布図は**色＝クラスター**で、全体→グループ／ユーザーごとの順に縦に並べます（座標は全体と同じ）。各散布図の下に、クラスターごとの分離度（シルエット係数の平均）・入力数・大きさ（重心から最も遠い入力までの距離）・密度（クラスター内平方和）・入力のキーワード Top N・回答のキーワード Top N。行を選んで **Knowledge Reference**（そのクラスターの回答が参照した知識を Knowledge / Book ごとに）や **Example**（重心に最も近い入力とその回答、その Knowledge Utility）を小画面で表示。エクスパンダにグループごとのクラスター分布 | **Explain Diversity** を押したときだけ |
+| **4. Achievement** | 設定したお題（複数可）に対する達成度を LLM が 0〜100 で採点。スコア帯の分布、グループ／ユーザーのランキング、スコア帯ごとの回答のキーワードと、**Knowledge / Book ごとの Knowledge Utility** | **Score** を押したとき |
 
 - **キーワード**は MeCab で抜いた複合名詞です（LLM は使いません）。`Exclude words` で「作成」「文章」のような指示語を外せます。回答側のキーワードは、件数に「全回答の中での珍しさ」を掛けたスコアで並べるので、どの回答にも出る語は上に来ません。
 - **クラスター分析**は入力ベクトル（`query_vec`）の先頭256次元で K-means（2〜10個）を行います。ベクトルは、ターンの実行時に計算して保存したもの（入力は検索用、回答は Knowledge Utility 用）をエクスポートがミラーへ取り込むので、**新しいターンは追加の埋め込みなしで対象になります**。それ以前のターン（入力ベクトルを保存し始めた 2026-08-29 より前、回答ベクトルは今回の更新より前）は一度も埋め込まれていないため、必要なら画面の **Embed these N rows once** で一度だけ埋めます（埋め込み API を呼び、退避テーブルに保存します）。回答ベクトルの無い回答は `Answer spread` が空になるだけで、クラスター分析には影響しません。
 - **多様性の指標**: `Evenness`（クラスターへの散らばり。1＝均等、0＝1つに集中）、`Input spread`（入力同士の平均コサイン距離）、`Distance from all`（全体のクラスター構成との差）。件数の少ないグループは同質に見えやすいので、件数と併せて読みます。
 - **回答の一貫性**: `Answer / input`（回答のばらつき ÷ 入力のばらつき）。1 を超えるクラスターは、似た入力に対して回答がばらついています。
+- **クラスター名**は **Explain Diversity** の解説の冒頭で LLM が付けます（Knowledge Explorer と同じ方式）。付くまでは `C1` などの番号で、付いた後は凡例と表が `C1 名前` になります。もう一度クラスタリングすると番号に戻ります。
+- **クラスターの指標**は K-means が使った空間（単位ベクトルのユークリッド距離）で測ります。グループ／ユーザーの表は、全体のクラスターのまま、そのグループの入力だけで集計した値です。
+- **Knowledge Utility（Knowledge / Book ごと）**: Chat の Analytics Results - Knowledge Utility と同じく、参照回数の多い知識の Top 20 の一覧、参照された場所が分かる図（Graph はナレッジグラフ、Vector はコレクション全体の散布図を、参照の多さとカテゴリー（`category_map` のグループと色）で色分けして左右に同じ大きさで並べたもの、PageIndex は目次）、知識活用度の累計（Top 20 の順に Q と A を並べ、続けて活用度の累計で Top 20 に入るのに参照回数では入らない知識を活用度の大きい順）を出します。Graph の参照には距離が無いので累計の棒グラフはありません。
+- 表の行のボタンは、`st.dataframe` が表の中にボタンを置けないため、**行を選んでから表の下のボタンを押す**形です。開いた小画面は Save Analytics のとき HTML の最後に付きます。
 - **知識活用度**は Chat の Analytics Results - Knowledge Utility（Norm(All)）と同じ値を回答ごとに計算して合計したものです。0 より上は回答がその知識に近づいたこと、下は「検索されたが回答は離れた」ことを示します。Graph の参照には活用度が無いので、参照回数だけを出します。
 - **達成度の採点単位**は Session（期間内のそのセッションのユーザー入力をまとめて採点。既定）か Input（入力1件ごと）です。対象が `Max scored per theme` を超えるときは、お題にベクトルが近い順に絞ります。採点結果は `digim_pe_scores` に保存され、**同じお題・同じ内容・同じモデルは二度採点しません**。お題の初期値は `setting.yaml` の `PERFORMANCE_EXPLORER_THEMES`（文字列のリスト。`{NAME, CRITERIA}` で達成の基準も書けます）です。
 - 解説と採点のプロンプトは `prompt_templates.json` の `Topic Analyst PE` / `Diversity Analyst PE` / `Achievement Scorer PE` です。使うエージェントとエンジンは画面で選べます。
@@ -3807,13 +3811,27 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
 |---------|------|------|
 | `POST` | `/run` | メッセージを送信してエージェントの応答を取得（同期）。添付ファイルは JSON に `attachments` (base64) / `attachment_urls` として同梱可能 |
 | `POST` | `/run_multipart` | `multipart/form-data` でファイル添付可能な `/run` の派生。JSON メタデータ（`data`）＋バイナリファイル（`files`）を1リクエストで送る |
+| `POST` | `/run_async` | `/run` と同じ入力をバックグラウンドで実行し、すぐに `job_id` を返す（WebUI のチャットと同じ動き） |
+| `POST` | `/run_async_multipart` | `/run_async` の `multipart/form-data` 版 |
+| `GET` | `/jobs/{job_id}` | バックグラウンド実行の状態（`running` / `done` / `error`）。実行中は途中経過のメッセージと途中までの回答、終了後は `/run` と同じ形の `result` |
 | `GET` | `/agents` | 利用可能なエージェント一覧を取得 |
 | `GET` | `/agents/{agent_file}/engines` | エージェントの選択可能なエンジン一覧を取得 |
+| `GET` | `/agents/{agent_file}/chat_options` | WebUI のチャットのサイドバーで選べるもの一式（エンジン、SKILL、BOOK、ORG とペルソナ、Thinking、人格、実行設定の初期値） |
 | `GET` | `/agents/{agent_file}/feedback` | エージェントのフィードバック設定を取得 |
 | `GET` | `/web_search_engines` | 利用可能なWeb検索エンジン一覧を取得 |
 | `POST` | `/feedback` | フィードバックを送信（CSV/Notionに保存） |
-| `GET` | `/sessions` | セッション一覧を取得 |
-| `GET` | `/sessions/{session_id}` | セッションの会話履歴を取得 |
+| `GET` | `/sessions` | セッション一覧を取得（新しい順。`?user_id=` / `?service_id=` / `?active=Y\|N` で絞り込み） |
+| `GET` | `/sessions/{session_id}` | セッションの会話履歴を取得（保存形式のまま） |
+| `GET` | `/sessions/{session_id}/turns` | チャット画面の形に整えた会話（`?view=summary\|all`、`?last=N`、`?include_refs=false`）。削除したターンは除く |
+| `GET` | `/sessions/{session_id}/status` | 実行中か（`LOCKED`）と、途中経過のメッセージ・途中までの回答 |
+| `GET` | `/sessions/{session_id}/turns/{seq}/detail` | ターンの Detail Information（`?sub_seq=`） |
+| `POST` | `/sessions/{session_id}/turns/{seq}/delete` | ターンを削除（WebUI と同じく非表示にするだけ） |
+| `POST` | `/sessions/{session_id}/turns/{seq}/memory` | Memory Off / On（`{"enabled": false}`） |
+| `POST` | `/sessions/{session_id}/rename` | セッション名の変更（`{"name": "..."}`） |
+| `POST` | `/sessions/{session_id}/hide` | セッションを一覧から隠す（WebUI のサイドバーの Del） |
+| `POST` | `/sessions/{session_id}/activate` | 隠したセッションを再表示 |
+| `GET` | `/sessions/{session_id}/contents/{file_name}` | 添付ファイル・生成画像（turns の `url`） |
+| `GET` | `/sessions/{session_id}/export` | 会話を Markdown で書き出す（`?view=`、`?images=true` で画像を埋め込む） |
 | `GET` | `/sessions/{session_id}/summary` | セッションサマリーの状態を取得（`enabled` / `template` / `content` / `updated_at`） |
 | `POST` | `/sessions/{session_id}/summary` | セッションサマリーの `enabled` / `template` を変更（片方のみ更新も可） |
 | `GET` | `/session_summary_presets` | セッションサマリーのプリセット一覧を取得 |
@@ -3828,9 +3846,47 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
 
 > API サーバのリッスンポートは `system.env` の `API_PORT` で指定します（デフォルト 8899）。値を変えれば WebUI の「Web API」メニューから起動する uvicorn も自動的にそのポートを使います。
 
+#### WebUI のチャットとの対応
+
+| WebUI のチャット | API |
+|------------------|-----|
+| サイドバーの選択肢（エンジン、SKILL、BOOK、ORG / Personas、Thinking、Language など） | `GET /agents/{file}/chat_options` で一覧を取り、選んだものを `/run` の `skills` / `books` / `org` / `personas` / `thinking_targets` / `personality` などで送る |
+| 送信して途中経過を見ながら待つ | `POST /run_async` → `GET /jobs/{job_id}` を数秒おきに読む（`progress.message` / `progress.partial_response`） |
+| 複数ペルソナの並列実行、Include Query | `personas` に2つ以上の ID、次のターンで `include_query: true` |
+| サイドバーのセッション一覧、Del、Activate、Change Session Name | `GET /sessions?active=Y`、`/hide`、`/activate`、`/rename` |
+| 会話の表示（参照の節・SKILL の連結、画像、添付） | `GET /sessions/{id}/turns`（`response_display`、`images[].url`、`contents[].url`） |
+| 回答ごとの Detail Information、削除、Memory Off、Feedback | `/turns/{seq}/detail`、`/turns/{seq}/delete`、`/turns/{seq}/memory`、`POST /feedback` |
+| Markdown のダウンロード | `GET /sessions/{id}/export` |
+
+- 実行は WebUI と同じ `DigiMatsuExecute_MultiPersona` を通ります（ペルソナが0〜1件なら従来どおり `DigiMatsuExecute_Practice`）。
+- SUMMARY 表示（`view=summary`）の1ターンは、質問とそのターンの最後の回答です。フィードバックは各エントリの `sub_seq` と `answer_agent_file` に送ります（チェーンでは最後の回答が別のエージェントのことがあります）。Detail は `detail_sub_seq` で読みます。
+- ターンの削除・Memory Off・改名は、そのセッションが実行中（ダイジェスト作成中を含む）のときは `409` を返します。実行中のターンが保存する履歴で上書きされるためです。
+- 分析系（Compare Agents、Knowledge Utility とその解釈）、ユーザーメモリの層の保存、バックグラウンドジョブの一覧、Batch Test は API にありません。
+- この API には認証がありません。セッションの改名・非表示・ターン削除もできるので、外部に公開するときは前段で認証をかけてください。
+
+#### バックグラウンド実行（`/run_async` と `/jobs/{job_id}`）
+
+`/run` は回答ができるまで1つの要求を開いたままにします。Thinking や複数ペルソナのターンは数分かかることがあり、前段のプロキシの時間制限（Azure App Service は約230秒）を超えると、実行は続いていても呼び出し側には `504` が返ります。`/run_async` は要求をすぐに返し、実行はサーバの中で続きます。
+
+```bash
+curl -s -X POST http://localhost:8899/run_async -H "Content-Type: application/json" \
+  -d '{"service_info":{"SERVICE_ID":"DEMO"},"user_info":{"USER_ID":"U1"},"user_input":"こんにちは"}'
+# → {"job_id": "540f67f1...", "session_id": "API20261115_121943_0", "state": "running", ...}
+
+curl -s http://localhost:8899/jobs/540f67f1...
+# 実行中: {"state": "running", "elapsed_sec": 4,
+#          "progress": {"status": "LOCKED", "message": "Running LLM", "partial_response": "...", "error": ""}}
+# 終了後: {"state": "done", "result": { /run と同じレスポンス }, ...}
+```
+
+- 受け付けた時点でセッションをロックします。同じセッションに続けて送ると `429` です（`/run` は最大60秒待ちますが、`/run_async` は待ちません）。
+- ジョブの状態は `TEMP_FOLDER/api/jobs/<job_id>.json` に書きます。gunicorn の複数ワーカーのどれに問い合わせても読めるよう、プロセスのメモリには持ちません。途中経過はセッションの `status.yaml`（WebUI のチャットが読むものと同じ）から返します。
+- API のプロセスを再起動すると、実行中のジョブは止まり `running` のまま残ります。`progress.status` が `UNLOCKED` になったのに `running` のままなら、そのジョブは止まっています。
+- `done` の後もしばらく `progress.status` が `LOCKED` のことがあります。ダイジェストを裏で作っている間です。
+
 ### POST /run — メッセージ送信
 
-1回の HTTP リクエストで LLM 実行が完結し、応答を直接返します。同一 `session_id` を指定すれば会話が継続されます。
+1回の HTTP リクエストで LLM 実行が完結し、応答を直接返します。同一 `session_id` を指定すれば会話が継続されます。時間のかかるターンや、途中経過を見せたいときは同じ入力で `POST /run_async` を使います。
 
 同じセッションが実行中（LOCKED）の場合は最大60秒待機し、解除後に実行されます。タイムアウト時は `429` を返します。
 
@@ -3846,6 +3902,10 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
   "situation": {"TIME": "", "SITUATION": ""},
   "agent_file": "エージェントファイル名",
   "engine": "エンジン名",
+  "imagegen_engine": "画像生成エンジン名",
+  "personas": ["E0001", "E0002"],
+  "books": ["Digital MATSUMOTO System Guide"],
+  "personality": {"LANGUAGE": "English", "SPEAKING_STYLE": "丁寧語"},
   "stream_mode": true,
   "save_digest": true,
   "memory_use": true,
@@ -3881,20 +3941,23 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
 | `user_info` | ○ | | ユーザー識別情報（`USER_ID` でユーザーを区別） |
 | `user_input` | ○ | | ユーザーの入力メッセージ |
 | `session_id` | | 自動発番 | セッションID。LINE連携なら LINE ユーザーID を指定すると会話が継続される |
-| `session_name` | | 自動生成 | セッション名 |
+| `session_name` | | 自動生成 | セッション名。省略すると、新しいセッションだけ最初の入力から名前を付ける（続きのターンでは今の名前のまま） |
 | `agent_file` | | `API_AGENT_FILE` | 使用するエージェント（例: `agent_10Sample.json`） |
 | `engine` | | エージェントのDEFAULT | LLMエンジン名（例: `Gemini-3.5-Flash`）。エージェントの ENGINE.LLM に定義されている名前を指定 |
+| `imagegen_engine` | | エージェントのDEFAULT | 画像生成エンジン名（ENGINE.IMAGEGEN の名前） |
 | `situation` | | `{"TIME":"","SITUATION":""}` | 日時・状況設定。`TIME` を空にすると日時なしで実行 |
 
 **実行設定（Exec Setting）:**
 
-省略したパラメータはAPI用デフォルト値が使われます。WebUIのExec Settingに対応しています。
+省略したパラメータはAPI用デフォルト値が使われます。エージェントに `EXECUTION_DEFAULTS` があれば、その値が API 用デフォルトより優先されます（WebUI と同じ）。WebUIのExec Settingに対応しています。
 
 | パラメータ | APIデフォルト | 説明 |
 |-----------|-------------|------|
 | `stream_mode` | `true` | ストリーミングモード |
 | `save_digest` | `true` | 会話ダイジェストの保存 |
 | `memory_use` | `true` | 会話履歴の参照 |
+| `memory_save` | `true` | このターンを履歴に保存する |
+| `memory_similarity` | `false` | 会話履歴を類似度で選ぶ（WebUI の Memory Similarity） |
 | `magic_word_use` | `false` | MAGIC_WORD によるHabit切り替え |
 | `meta_search` | `true` | メタデータ検索（日付抽出） |
 | `rag_query_gene` | `true` | RAG検索用クエリ生成 |
@@ -3902,7 +3965,13 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
 | `web_search_engine` | `"OpenAI"` | Web検索エンジン（`Perplexity` / `OpenAI` / `Google`）。`web_search` が `false` の場合は使用されない |
 | `web_search_guardrail` | `true` | Web検索結果を「参考資料」ラップで囲み、LLMがトーン/文脈を保つよう指示。`false` にすると素の検索結果テキストがそのまま渡る |
 | `private_mode` | `false` | Private Mode。`true` にすると `private: true` のRAGデータが検索対象外になる |
-| `skills` | （未指定） | そのターンに走らせる SKILL 名の配列。**未指定ならエージェントの `SKILL.TOOLS.<name>.DEFAULT: true` がそのまま適用される**（WebUI の Skills ピッカーの初期選択と同じ）。指定するとそのターンの選択を置き換える（`[]` で全オフ）。存在しない名前は実行されず `skills_ignored` で返る |
+| `personas` | （未指定） | ペルソナ ID の配列（`chat_options` の `orgs[].personas`）。2つ以上で並列に実行し、1ターンに各ペルソナの回答が並ぶ。見つからない ID は `personas_ignored` で返る |
+| `org` | エージェントの最初の ORG | ペルソナを探す ORG（`chat_options` の `orgs[].org`）。省略時はエージェントの ORG を順に探す |
+| `books` | （未指定） | このターンに足す BOOK の `RAG_NAME` の配列（WebUI の BOOK）。無効・存在しない名前は `books_ignored` で返る |
+| `include_query` | `false` | 直前のターンが複数ペルソナだったとき、その回答を入力の先頭に付ける（RAG はもとの質問で検索）。WebUI の Include Query |
+| `personality` | （未指定） | `PERSONALITY` の上書き（`LANGUAGE` / `SPEAKING_STYLE` / `CHARACTER` / `BIG5` など）。エージェント JSON に重ねる |
+| `overwrite_items` | `{}` | その他のエージェント設定の上書き（HABIT / KNOWLEDGE などを直接指定するとき） |
+| `skills` | （未指定） | そのターンに走らせる SKILL 名の配列。**未指定ならエージェントの `SKILL.TOOLS.<name>.DEFAULT: true` がそのまま適用される**（WebUI の Skills ピッカーの初期選択と同じ）。指定するとそのターンの選択を置き換える（`[]` で全オフ）。存在しない名前は実行されず `skills_ignored` で返る。WebUI と同じく、フラグ型の SKILL（`cite_knowledge` / `diagram_mode` / `emphasis_mode` / `match_input_language`）は選んだかどうかがそのままフラグになり、`WebSearch` 系を選ぶと Web 検索が ON になる（同名のフラグを明示したときはそちらが優先） |
 | `skill` | （未指定） | SKILL を1つ上乗せする（WebUI の `/<name>` 相当）。`skills` を置き換えず追加で発火する |
 | `thinking_mode` | エージェントの `THINKING.MODE` | Thinking Mode。`true` にするとAIが質問を分析してHabit・Web検索・RAGクエリ生成・Book追加・SKILL を動的に判定する |
 | `thinking_targets` | エージェントの `THINKING.TARGETS` | Thinking に任せる対象のラベル配列（`Habit` / `Web Search` / `RAG Query` / `Books` / `Skills` / `Personas`）。`Skills` を含めると、`DEFAULT` でONになっているだけの BEFORE スキルは Thinking が選んだときだけ走る |
@@ -3918,8 +3987,6 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
 | `session_summary_enabled` | （未指定） | セッションサマリーを有効化するか（インライン切替）。指定すると `status.yaml` に保存され、この同じターンから注入が有効になる。未指定なら既存のセッション状態を維持 |
 | `session_summary_template` | （未指定） | セッションサマリーのテンプレート（Markdown 文字列）。指定すると `status.yaml` に保存される。プリセットは `GET /session_summary_presets` で取得可能 |
 
-> `memory_similarity` はAPI経由では常に `false` です（パラメータ指定不可）。
->
 > ユーザーメモリの注入は `memory_use=true`（APIデフォルト）かつ LLM 実行時のみ有効です（`user_memory` を指定しても `memory_use=false` だと注入されません）。有効時はユーザーメモリテキストがRAG検索クエリ生成の入力にも含まれます。
 
 **レスポンス:**
@@ -3928,6 +3995,8 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
 {
   "session_id": "API_TEST_001",
   "session_name": "(User:TestUser)AIについての質問",
+  "seq": "3",
+  "sub_seq": "1",
   "response": "エージェントの応答テキスト",
   "response_display": "エージェントの応答テキスト\n\n## Reference Info\n...\n\n## Mood Score\n\n...",
   "ref_sections": "## Reference Info\n...",
@@ -3968,7 +4037,9 @@ FastAPI を起動すると、REST API 経由でエージェントを実行でき
 >
 > 回答の下に出す参照の節（`## Reference Info` / `## Reference Knowledge`）も同じ理由で `response` に入れず、`ref_sections` に入ります（無ければ空文字）。`response` に残るのは本文中の `[1]` などの引用マーカーだけです。`response_display` は「本文 → 参照の節 → APPEND の SKILL」の順に連結したものです。
 >
-> 存在しない SKILL 名を `skills` / `skill` に渡した場合は `skills_ignored` に配列で返ります（渡していなければキー自体が出ません）。
+> 存在しない SKILL 名を `skills` / `skill` に渡した場合は `skills_ignored` に配列で返ります（渡していなければキー自体が出ません）。`personas` / `books` も同じく `personas_ignored` / `books_ignored` で返ります。
+>
+> `seq` / `sub_seq` は記録上の答えが保存された位置です（`memory_save=false` のときは `null`）。`POST /feedback` や `/sessions/{id}/turns/{seq}/...` に使います。`answers` にはそのターンの回答が全部入ります（複数ペルソナやチェーンでは複数件。各件に `sub_seq` / `name` / `persona_name` / `response` / `response_display` / `images`）。
 
 > `attachments_processed` はリクエストに添付が無ければ空配列（`[]`）です。
 >
