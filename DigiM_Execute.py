@@ -1,5 +1,6 @@
 import os
 import re
+import shutil
 import time
 import random
 import threading
@@ -15,6 +16,7 @@ import DigiM_Agent as dma
 import DigiM_Context as dmc
 import DigiM_Session as dms
 import DigiM_Tool as dmt
+import DigiM_Messages as dmmsg
 import DigiM_ToolRegistry as dmtr
 import DigiM_JobRegistry as djr
 import DigiM_UserMemoryBuilder as dmumb
@@ -530,14 +532,6 @@ def _as_int(value):
         return 0
 
 
-def _replace_status_messages(names):
-    """Status lines for the REPLACE group — one line when several skills share
-    the pass, so the UI does not look like it is doing N separate things."""
-    if len(names) == 1:
-        return [f"SKILL[AFTER]:{names[0]}"]
-    return [f"SKILL[AFTER]:{'+'.join(names)}"]
-
-
 def _run_replace_skills(service_info, user_info, session_id, session_name,
                          agent_file, agent, names, body):
     """Run the REPLACE skills as ONE post-processing step over `body`.
@@ -937,8 +931,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                           + ", ".join(_ws_skill_names) + " already ran]"
                           + str(datetime.now()) + "<br>")
     if cfg["web_search"] and not _ws_skill_names:
-        session.save_status_message("Starting web search")
-        yield service_info, user_info, "[STATUS]Starting web search", [], []
+        _st = dmmsg.status(session, "web_search_start", service_info)
+        yield service_info, user_info, "[STATUS]" + _st, [], []
         timestamp_log += "[06.Web search start]" + str(datetime.now()) + "<br>"
         # Prefer the Thinking-generated web search query, if any
         _thinking_result = execution.get("_THINKING_RESULT", {})
@@ -1090,8 +1084,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         _resolve_rag_query_generators(support_agent, agent.agent))
     need_meta = cfg["meta_search"] and ("META_EXTRACT" in support_agent or "EXTRACT_DATE" in support_agent)
     if need_intent or need_meta:
-        session.save_status_message("Starting RAG search-query generation")
-        yield service_info, user_info, "[STATUS]Starting RAG search-query generation", [], []
+        _st = dmmsg.status(session, "rag_query_gene_start", service_info)
+        yield service_info, user_info, "[STATUS]" + _st, [], []
 
     with ThreadPoolExecutor(max_workers=3) as executor:
         # Kick off memory retrieval in parallel
@@ -1133,8 +1127,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
 
     # Build the RAG context
     timestamp_log += "[11.RAG start]" + str(datetime.now()) + "<br>"
-    session.save_status_message("Starting RAG")
-    yield service_info, user_info, "[STATUS]Starting RAG", [], []
+    _st = dmmsg.status(session, "rag_start", service_info)
+    yield service_info, user_info, "[STATUS]" + _st, [], []
     if add_knowledge:
         agent.knowledge += add_knowledge
     # AgentSearch / FunctionSearch need session + parent agent_file to call
@@ -1235,7 +1229,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
     prompt = ""
     response = ""
     completion = []
-    session.save_status_message("Running LLM")
+    dmmsg.status(session, "llm_running", service_info)
     timestamp_log += "[13.LLM execution start]" + str(datetime.now()) + "<br>"
     response_service_info = {}
     response_user_info = {}
@@ -1250,7 +1244,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             yield response_service_info, response_user_info, response_chunk, export_files, knowledge_selected
             # Pseudo-streaming: periodically write the response into the status
             if cfg["stream_mode"] and time.time() - _last_stream_flush >= _STREAM_FLUSH_INTERVAL:
-                session.save_status_message("Running LLM", response=response)
+                dmmsg.status(session, "llm_running", service_info, response=response)
                 _last_stream_flush = time.time()
     timestamp_end = str(datetime.now())
     timestamp_log += "[14.LLM execution done]" + str(datetime.now()) + "<br>"
@@ -1468,7 +1462,7 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
                 f"agent_file={citation_agent_file!r}, body_len={len(response)}"
             )
             try:
-                session.save_status_message("Inserting citations", response=response)
+                dmmsg.status(session, "citations_inserting", service_info, response=response)
                 _, _, _cited, _, _, _ = dmt.call_function_by_name(
                     service_info, user_info, "inject_citations",
                     session_id, session_name, citation_agent_file,
@@ -1637,6 +1631,13 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
             for i, img_path in enumerate(completion):
                 img_file_name = "[OUT]seq" + str(seq) + "-" + str(sub_seq) + "_" + os.path.basename(img_path)
                 session.save_contents_file(img_path, img_file_name)
+                # Each generation writes into a folder of its own (see
+                # DigiM_FoundationModel._image_temp_dir); drop it once the
+                # session holds its copy, or TEMP_FOLDER grows per image.
+                _img_tmp = os.path.dirname(img_path)
+                if (os.path.basename(_img_tmp).startswith("imggen_")
+                        and os.path.exists(Path(session.session_contents_folder_path) / img_file_name)):
+                    shutil.rmtree(_img_tmp, ignore_errors=True)
                 _img_ext = os.path.splitext(img_file_name)[1].lstrip(".").lower()
                 _img_mime = f"image/{_img_ext}" if _img_ext else "image/png"
                 img_dict[i] = {"role": "image", "timestamp": timestamp_end,
@@ -1660,9 +1661,8 @@ def DigiMatsuExecute(service_info, user_info, session_id, session_name, agent_fi
         session.save_user_dialog_session("UNSAVED")
 
         # Reflect the finalized response into the status (for pseudo-streaming)
-        session.save_status_message(
-            "Generating digest",
-            response=response + (f"\n\n{_ref_sections}" if _ref_sections else ""))
+        dmmsg.status(session, "digest_generating", service_info,
+                     response=response + (f"\n\n{_ref_sections}" if _ref_sections else ""))
 
         # Kick off digest generation in the background (UNLOCK the session after completion)
         if cfg["save_digest"]:
@@ -1920,9 +1920,10 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
 
     # Lock the session (pre_locked=True means the caller has already locked it)
     _pre_locked = in_execution.get("_PRE_LOCKED", False)
-    if session.get_status() == "LOCKED" and not _pre_locked:
+    if _pre_locked:
+        session.save_status("LOCKED")
+    elif not dms.acquire_session_lock(session.session_id, status_path=session.session_status_path):
         raise Exception("Session is locked. Please unlock the session before executing the practice.")
-    session.save_status("LOCKED")
 
     try:
         agent = dma.DigiM_Agent(in_agent_file)
@@ -1960,8 +1961,10 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
             _web_preview_for_next = ""
             for _turn_idx in range(_max_turns):
                 _label = "Thinking" if _max_turns == 1 else f"Thinking (turn {_turn_idx + 1}/{_max_turns})"
-                session.save_status_message(f"{_label}...")
-                yield service_info, user_info, f"[STATUS]{_label}...", {}
+                _st = (dmmsg.status(session, "thinking", service_info) if _max_turns == 1 else
+                       dmmsg.status(session, "thinking_turn", service_info,
+                                    turn=_turn_idx + 1, max_turns=_max_turns))
+                yield service_info, user_info, "[STATUS]" + _st, {}
                 _tr, _tl = _run_thinking_agent(
                     service_info, user_info, session_id, session_name,
                     agent.agent["SUPPORT_AGENT"], agent, user_query,
@@ -2000,8 +2003,10 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
                 _ws_main, _ws_support = _situation_prompts(in_situation)
                 _search_text = dmt.build_web_search_text(
                     user_query, _preview_query, _thinking_digest, _ws_main, _ws_support)
-                session.save_status_message(f"{_label}: preview web search")
-                yield service_info, user_info, f"[STATUS]{_label}: preview web search...", {}
+                _st = (dmmsg.status(session, "thinking_preview", service_info) if _max_turns == 1 else
+                       dmmsg.status(session, "thinking_turn_preview", service_info,
+                                    turn=_turn_idx + 1, max_turns=_max_turns))
+                yield service_info, user_info, "[STATUS]" + _st + "...", {}
                 try:
                     _t_start = datetime.now()
                     _, _, _ws_text, _ws_urls = dmt.call_function_by_name(
@@ -2177,7 +2182,7 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
             except Exception as _e:
                 _candidates = list(in_personas or [])
             # Select via PersonaSelector
-            session.save_status_message(f"Selecting personas (up to {_max_p})")
+            dmmsg.status(session, "personas_selecting", service_info, max=_max_p)
             yield service_info, user_info, f"[STATUS]Selecting personas (up to {_max_p}, candidates: {len(_candidates)})", {}
             try:
                 _selected_ids, _select_reason, _, _, _ = dmt.call_function_by_name(
@@ -2210,8 +2215,8 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
         for _sk in _sel.get("BEFORE") or []:
             _cfg_sk = agent.skill_tools.get(_sk) or {}
             _merge = _cfg_sk.get("MERGE") or "CONTEXT"
-            session.save_status_message(f"SKILL[BEFORE]:{_sk}")
-            yield service_info, user_info, f"[STATUS]SKILL[BEFORE]:{_sk}", {}
+            _st = dmmsg.skill(session, [_sk], "BEFORE", service_info)
+            yield service_info, user_info, "[STATUS]" + _st, {}
             _add_info = dict(_cfg_sk.get("ARGS_HINT") or {})
             _skill_input = user_query
             _is_ws = _sk == "WebSearch" or str(_sk).startswith("WebSearch_")
@@ -2275,8 +2280,9 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
         for i, chain in enumerate(chains):
             # Reflect chain progress in the status
             if len(chains) > 1:
-                session.save_status_message(f"Chain {i+1}/{len(chains)} ({chain['TYPE']}) running")
-                yield service_info, user_info, f"[STATUS]Chain {i+1}/{len(chains)} ({chain['TYPE']}) running", {}
+                _st = dmmsg.status(session, "chain_running", service_info,
+                                   index=i + 1, count=len(chains), type=chain['TYPE'])
+                yield service_info, user_info, "[STATUS]" + _st, {}
             result = {}
             model_type = chain["TYPE"]
             input = ""
@@ -2668,9 +2674,10 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
         if _replace_names:
             _body, _tail = dmu.split_display_only_sections(
                 _answer_text or _after_input_text)
-            for _status in _replace_status_messages(_replace_names):
-                session.save_status_message(_status)
-                yield service_info, user_info, f"[STATUS]{_status}", {}
+            # One line for the whole REPLACE group, so the UI does not look
+            # like it is doing N separate things.
+            _st = dmmsg.skill(session, list(_replace_names), "AFTER", service_info)
+            yield service_info, user_info, "[STATUS]" + _st, {}
             _new_body, _replace_logs = _run_replace_skills(
                 service_info, user_info, session_id, session_name, in_agent_file,
                 agent, _replace_names, _body)
@@ -2694,8 +2701,8 @@ def DigiMatsuExecute_Practice(service_info, user_info, session_id, session_name,
         # APPEND / RECORD — recorded next to the answer, never inside it.
         for _sk in _other_names:
             _cfg_sk = agent.skill_tools.get(_sk) or {}
-            session.save_status_message(f"SKILL[AFTER]:{_sk}")
-            yield service_info, user_info, f"[STATUS]SKILL[AFTER]:{_sk}", {}
+            _st = dmmsg.skill(session, [_sk], "AFTER", service_info)
+            yield service_info, user_info, "[STATUS]" + _st, {}
             _skill_out, _skill_exp, _skill_meta = _invoke_skill(
                 service_info, user_info, session_id, session_name,
                 in_agent_file, _sk, _after_input_text,
@@ -2850,9 +2857,10 @@ def DigiMatsuExecute_MultiPersona(service_info, user_info, session_id, session_n
     _session_base_path = in_execution.get("_SESSION_BASE_PATH", "")
     session = dms.DigiMSession(session_id, session_name, base_path=_session_base_path)
     _pre_locked = in_execution.get("_PRE_LOCKED", False)
-    if session.get_status() == "LOCKED" and not _pre_locked:
+    if _pre_locked:
+        session.save_status("LOCKED")
+    elif not dms.acquire_session_lock(session.session_id, status_path=session.session_status_path):
         raise Exception("Session is locked. Please unlock the session before executing.")
-    session.save_status("LOCKED")
     seq = session.get_seq_history() + 1
 
     # Build per-persona execution settings (suppress serialized processing)

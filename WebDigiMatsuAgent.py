@@ -93,6 +93,7 @@ import DigiM_HistoryArchive as dmha
 import DigiM_PEReport as dmper
 import DigiM_AgentPersona as dap
 import DigiM_Scheduler as dmsch
+import DigiM_Messages as dmmsg
 
 # Start the background scheduler (follows SCHEDULES in setting.yaml; skips when only "off")
 try:
@@ -5142,7 +5143,8 @@ def _scheduler_view():
     if _ctl1.button("Reload Schedulers", key="sch_reload"):
         try:
             _r = _dmsch.reload()
-            st.session_state.sidebar_message = f"Reloaded. started={_r.get('started')}"
+            st.session_state.sidebar_message = (f"Reload requested: {_r.get('note')}" if _r.get("requested")
+                                                else f"Reloaded. started={_r.get('started')}")
         except Exception as e:
             st.session_state.sidebar_message = f"Reload failed: {e}"
         st.rerun()
@@ -5151,7 +5153,13 @@ def _scheduler_view():
         st.rerun()
 
     _status = _dmsch.get_status()
-    _ctl3.caption(f"scheduler running: **{_status.get('running')}** / active job_ids: {_status.get('active_job_ids')}")
+    if not _status.get("enabled", True):
+        _ctl3.caption("Scheduler is off in this process (SCHEDULER_ENABLE=N). Run Now still works here.")
+    elif not _status.get("leader", True):
+        _ctl3.caption("The scheduler runs in another process on this host; Reload asks it to re-read the jobs. "
+                      "Run Now runs the job here.")
+    else:
+        _ctl3.caption(f"scheduler running: **{_status.get('running')}** / active job_ids: {_status.get('active_job_ids')}")
 
     st.markdown("---")
 
@@ -5184,7 +5192,7 @@ def _scheduler_view():
                 if _ad.get("enabled"):
                     _col2.write("API delivery: `"
                                 + ("input and response" if _ad.get("content") == "pair" else "response only")
-                                + "`")
+                                + "`" + (f" via `{_ad['service_id']}`" if _ad.get("service_id") else ""))
                 if len(_agent_steps) > 1:
                     _col2.write(f"**agent_run #{_si + 1}**")
                 _t = _p.get("target") or {}
@@ -5444,6 +5452,7 @@ def _scheduler_view():
                  "Sessions whose service has no endpoint are only written to the history.",
             key=kp + "api_on")
         _api_content = _api_cur.get("content") if _api_cur.get("content") in ("response", "pair") else "response"
+        _api_service = _api_cur.get("service_id") or ""
         if _api_on:
             _api_content = st.radio(
                 "Send", ["response", "pair"], index=0 if _api_content == "response" else 1,
@@ -5454,8 +5463,17 @@ def _scheduler_view():
             try:
                 import DigiM_Services as _dmsv
                 _eps = _dmsv.endpoints()
+                _svc_all = list(_dmsv.load_all().keys())
             except Exception:
-                _eps = []
+                _eps, _svc_all = [], []
+            _svc_cur = _api_cur.get("service_id") or ""
+            _svc_opts = [""] + sorted(set(_svc_all) | ({_svc_cur} - {""}))
+            _api_service = st.selectbox(
+                "Deliver through", _svc_opts, index=_svc_opts.index(_svc_cur),
+                format_func=lambda v: v or "(each session's own service)",
+                help="A session's service is the channel that ran its last turn. Pick one here when the "
+                     "same conversation is also used from another channel (e.g. LINE and the WebUI).",
+                key=kp + "api_service")
             if _eps:
                 st.caption("Endpoints in the services master: " + ", ".join(f"`{e}`" for e in _eps))
             else:
@@ -5486,7 +5504,8 @@ def _scheduler_view():
             "per_session": _per_session,
             "max_generated_sessions": _max_gen,
             "save_to_memory": _save_mem,
-            "api_delivery": {"enabled": _api_on, "content": _api_content},
+            "api_delivery": {"enabled": _api_on, "content": _api_content,
+                             "service_id": (_api_service if _api_on else _api_cur.get("service_id", ""))},
             "execution": _exec,
         }
         return _params
@@ -12872,7 +12891,7 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                 if _partial:
                     st.markdown(_partial)
                 _msg = st.session_state.session.get_status_message()
-                st.info(f"⏳ {_msg}" if _msg else "⏳ Running...")
+                st.info("⏳ " + (_msg or dmmsg.render("running", st.session_state.get("service_id", ""))))
             with st.chat_message("ai"):
                 _lock_monitor()
 
@@ -12959,7 +12978,9 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                 return
 
             # Dispatch via the registry
-            session.save_status("LOCKED")
+            if not dms.acquire_session_lock(session.session_id, status_path=session.session_status_path):
+                st.warning("This session is running a turn (another window or the API). Try again when it finishes.")
+                return
             try:
                 result = dmt.call_function_by_name(
                     svc, usr, skill_name,
@@ -13487,9 +13508,8 @@ f"nodes {_missed_n_main} / edges {_missed_e_main}."
                                 }
 
                     sess = dms.DigiMSession(sid, sname)
-                    sess.save_status_message(
-                        f"Batch Q&A [{sheet_name}] ({idx + 1}/{n_total})"
-                    )
+                    dmmsg.status(sess, "batch_qa", st.session_state.get("web_service"),
+                                 sheet=sheet_name, index=idx + 1, count=n_total)
 
                     # Wait for any background digest from the prior row to release
                     # the session lock. Force-unlock as a last resort.
@@ -14344,7 +14364,17 @@ f"Target sheet (sheets with Question: {len(_q_sheets)})"
 
             # Start execution in the background (pre-locked)
             import threading
-            st.session_state.session.save_status("LOCKED")
+            # Checking and taking the lock in one step: the API or another
+            # window may have started a turn on this session since the page drew.
+            if not dms.acquire_session_lock(st.session_state.session.session_id,
+                                            status_path=st.session_state.session.session_status_path):
+                # Same outcome as sending while the page already showed LOCKED:
+                # keep the text as a draft rather than dropping it.
+                st.session_state.draft_input = user_input
+                st.session_state.is_processing = False
+                st.toast("Saved as draft: this session started a turn in another window or the API. "
+                         "Use Send draft after it finishes.")
+                st.rerun()
             execution["_PRE_LOCKED"] = True
             # SKILL orchestrator: slash-picked skill flows here so the phased
             # runner in DigiMatsuExecute_Practice can execute it in whatever

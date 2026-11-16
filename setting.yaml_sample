@@ -19,6 +19,13 @@ SESSION_ANALYTICS_FOLDER: "analytics/"
 # Existing on-disk sessions keep being read/written as JSON — the backend
 # choice only applies to newly-created sessions after switching.
 SESSION_STORE_METHOD: "JSON"
+# What PostgreSQL / CosmosDB do when the DB cannot be reached: "none" fails the
+# read or write (default); "file" uses the local chat_memory.json for that call,
+# which splits the session's history (the file wins from then on).
+SESSION_STORE_FALLBACK: "none"
+# A session left LOCKED by a process that died is taken over by the next turn
+# once status.yaml has not changed for this many seconds (0 = never).
+SESSION_LOCK_STALE_SEC: 3600
 # CosmosDB defaults (only used when SESSION_STORE_METHOD=CosmosDB)
 COSMOS_DATABASE: "digimatsu"
 COSMOS_CONTAINER: "chat_history"

@@ -6,10 +6,9 @@ from dotenv import load_dotenv
 
 import openai
 from openai import OpenAI, AzureOpenAI
-from google import genai
-from google.genai import types
-import anthropic
-from llamaapi import LlamaAPI
+# google-genai / anthropic / llamaapi are imported where they are used, so a
+# deployment on one provider (Azure OpenAI only, say) does not need the others
+# installed just to start.
 
 import mimetypes
 import logging
@@ -25,6 +24,21 @@ def _get_image_mime(image_path):
 # Load folder paths and other settings from setting.yaml
 system_setting_dict = dmu.read_yaml_file("setting.yaml")
 temp_folder_path = system_setting_dict["TEMP_FOLDER"]
+
+
+# Generated images were written under fixed names (0_dalle.png ...) in
+# TEMP_FOLDER, so two users generating at once overwrote each other's file and
+# one of them saved the other's picture. Each call writes into a folder of its
+# own instead; the file name inside stays the same, so the "[OUT]seq..." name
+# the session stores is unchanged.
+_IMG_TEMP_PREFIX = "imggen_"
+
+
+def _image_temp_dir() -> str:
+    import uuid
+    d = os.path.join(temp_folder_path, _IMG_TEMP_PREFIX + uuid.uuid4().hex[:12])
+    os.makedirs(d, exist_ok=True)
+    return d + os.sep
 
 # Load system.env and set environment variables
 if os.path.exists("system.env"):
@@ -144,16 +158,19 @@ def _get_bedrock_client(timeout=None, endpoint=None, region=None):
 
 def _get_gemini_client():
     if "gemini" not in _clients:
+        from google import genai
         _clients["gemini"] = genai.Client(api_key=gemini_api_key)
     return _clients["gemini"]
 
 def _get_anthropic_client():
     if "anthropic" not in _clients:
+        import anthropic
         _clients["anthropic"] = anthropic.Anthropic(api_key=anthropic_api_key)
     return _clients["anthropic"]
 
 def _get_llama_client():
     if "llama" not in _clients:
+        from llamaapi import LlamaAPI
         _clients["llama"] = LlamaAPI(llama_api_key)
     return _clients["llama"]
 
@@ -652,6 +669,7 @@ def generate_response_openai_tool(query, system_prompt, model, memories=[], imag
 
 # Run Gemini
 def generate_response_T_gemini(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
+    from google.genai import types
     gemini_client = _get_gemini_client()
     contents=[]
 
@@ -842,6 +860,7 @@ def generate_response_T_llama(query, system_prompt, model, memories=[], image_pa
 
 # Image generation via Gemini (nano banana 2, etc.)
 def generate_image_gemini(prompt, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
+    from google.genai import types
     gemini_client = _get_gemini_client()
 
     # Add memory to the prompt
@@ -890,6 +909,7 @@ def generate_image_gemini(prompt, system_prompt, model, memories=[], image_paths
         return "png"
 
     img_files = []
+    _img_dir = _image_temp_dir()
     response_text = "Image generated."
     num = 0
     for part in completion.parts:
@@ -926,7 +946,7 @@ def generate_image_gemini(prompt, system_prompt, model, memories=[], image_paths
         if not img_bytes:
             continue
         _ext = _ext_from_bytes(img_bytes, mime_hint)
-        img_file = temp_folder_path + f"{num}_gemini_image.{_ext}"
+        img_file = _img_dir + f"{num}_gemini_image.{_ext}"
         with open(img_file, "wb") as f:
             f.write(img_bytes)
         img_files.append(img_file)
@@ -966,10 +986,11 @@ def generate_image_dalle(prompt, system_prompt, model, memories=[], image_paths=
 
     # Save under the temp folder
     img_files = []
+    _img_dir = _image_temp_dir()
     num = 0
     ext = params.get("output_format", "png")
     for i, d in enumerate(completion.data):
-        img_file = temp_folder_path + f"{num}_dalle.{ext}"
+        img_file = _img_dir + f"{num}_dalle.{ext}"
         with open(img_file, "wb") as f:
             f.write(base64.b64decode(d.b64_json))
         img_files.append(img_file)
@@ -1005,10 +1026,11 @@ def generate_image_azure_dalle(prompt, system_prompt, model, memories=[], image_
     )
 
     img_files = []
+    _img_dir = _image_temp_dir()
     num = 0
     ext = params.get("output_format", "png")
     for i, d in enumerate(completion.data):
-        img_file = temp_folder_path + f"{num}_azure_dalle.{ext}"
+        img_file = _img_dir + f"{num}_azure_dalle.{ext}"
         with open(img_file, "wb") as f:
             f.write(base64.b64decode(d.b64_json))
         img_files.append(img_file)
@@ -1076,6 +1098,7 @@ def generate_image_grok(prompt, system_prompt, model, memories=[], image_paths=[
     # Save under the temp folder. The API picks the encoding, so take it from
     # the bytes rather than assuming PNG.
     img_files = []
+    _img_dir = _image_temp_dir()
     for num, item in enumerate(res.json().get("data") or []):
         if item.get("b64_json"):
             image_data = base64.b64decode(item["b64_json"])
@@ -1084,7 +1107,7 @@ def generate_image_grok(prompt, system_prompt, model, memories=[], image_paths=[
             image_res.raise_for_status()
             image_data = image_res.content
         ext = "png" if image_data[:8] == b"\x89PNG\r\n\x1a\n" else "jpg"
-        img_file = temp_folder_path + f"{num}_grok.{ext}"
+        img_file = _img_dir + f"{num}_grok.{ext}"
         with open(img_file, "wb") as f:
             f.write(image_data)
         img_files.append(img_file)

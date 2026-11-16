@@ -1,0 +1,53 @@
+{
+    "STATUS": {
+        "web_search_start": {
+            "DEFAULT": "Starting web search"
+        },
+        "rag_query_gene_start": {
+            "DEFAULT": "Starting RAG search-query generation"
+        },
+        "rag_start": {
+            "DEFAULT": "Starting RAG"
+        },
+        "llm_running": {
+            "DEFAULT": "Running LLM"
+        },
+        "citations_inserting": {
+            "DEFAULT": "Inserting citations"
+        },
+        "digest_generating": {
+            "DEFAULT": "Generating digest"
+        },
+        "thinking": {
+            "DEFAULT": "Thinking..."
+        },
+        "thinking_turn": {
+            "DEFAULT": "Thinking (turn {turn}/{max_turns})..."
+        },
+        "thinking_preview": {
+            "DEFAULT": "Thinking: preview web search"
+        },
+        "thinking_turn_preview": {
+            "DEFAULT": "Thinking (turn {turn}/{max_turns}): preview web search"
+        },
+        "personas_selecting": {
+            "DEFAULT": "Selecting personas (up to {max})"
+        },
+        "skill_before": {
+            "DEFAULT": "SKILL[BEFORE]:{name}"
+        },
+        "skill_after": {
+            "DEFAULT": "SKILL[AFTER]:{name}"
+        },
+        "chain_running": {
+            "DEFAULT": "Chain {index}/{count} ({type}) running"
+        },
+        "batch_qa": {
+            "DEFAULT": "Batch Q&A [{sheet}] ({index}/{count})"
+        },
+        "running": {
+            "DEFAULT": "Running..."
+        }
+    },
+    "SKILL": {}
+}

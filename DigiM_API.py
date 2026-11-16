@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import shutil
 import time
 import base64
 import uuid
@@ -543,17 +544,12 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
         except Exception:
             pass  # Non-fatal — the run still proceeds without the summary.
 
-    # Wait for the session lock (run_async locks before it hands off)
+    # Take the session (run_async took it before handing off). Waiting and
+    # taking are one step, so two requests cannot both find it free.
     if wait_for_lock:
-        waited = 0
-        while waited < LOCK_WAIT_MAX:
-            status = dms.get_status_data(session_id).get("status", "")
-            if status != "LOCKED":
-                break
-            time.sleep(LOCK_POLL_INTERVAL)
-            waited += LOCK_POLL_INTERVAL
-        else:
+        if not dms.acquire_session_lock(session_id, wait_sec=LOCK_WAIT_MAX, poll_sec=LOCK_POLL_INTERVAL):
             raise HTTPException(status_code=429, detail=f"Session {session_id} is locked. Retry after a moment.")
+        execution["_PRE_LOCKED"] = True
 
     # Execution settings
     if not execution or "LAST_ONLY" not in execution:
@@ -575,18 +571,28 @@ def exec_function(service_info: dict, user_info: dict, session_id: str, session_
     # it is DigiMatsuExecute_Practice, with more it runs them in parallel.
     response_chunks = []
     output_reference = {}
-    for response_service_info, response_user_info, response_chunk, ref in dme.DigiMatsuExecute_MultiPersona(
-        service_info, user_info, session_id, session_name, agent_file, user_input,
-        in_contents=uploaded_contents,
-        in_situation=situation, in_overwrite_items=overwrite_items,
-        in_add_knowledge=list(add_knowledge or []), in_execution=execution,
-        in_personas=list(personas or []), in_rag_query_text=rag_query_text or "",
-        in_org=org,
-    ):
-        if response_chunk and not str(response_chunk).startswith("[STATUS]"):
-            response_chunks.append(response_chunk)
-        if ref:
-            output_reference = ref
+    try:
+        for response_service_info, response_user_info, response_chunk, ref in dme.DigiMatsuExecute_MultiPersona(
+            service_info, user_info, session_id, session_name, agent_file, user_input,
+            in_contents=uploaded_contents,
+            in_situation=situation, in_overwrite_items=overwrite_items,
+            in_add_knowledge=list(add_knowledge or []), in_execution=execution,
+            in_personas=list(personas or []), in_rag_query_text=rag_query_text or "",
+            in_org=org,
+        ):
+            if response_chunk and not str(response_chunk).startswith("[STATUS]"):
+                response_chunks.append(response_chunk)
+            if ref:
+                output_reference = ref
+    except Exception as e:
+        # The executor unlocks on its own failures; one raised before it took
+        # over would leave the lock this function took behind.
+        try:
+            if dms.get_status_data(session_id).get("status") == "LOCKED":
+                dms.DigiMSession(session_id).save_status("UNLOCKED", error=str(e))
+        except Exception:
+            pass
+        raise
 
     if len(response_chunks) == 1 and not isinstance(response_chunks[0], str):
         response = response_chunks[0]
@@ -684,9 +690,30 @@ _API_EXECUTION_DEFAULTS = {
     "META_SEARCH": True,
     "RAG_QUERY_GENE": True,
     "WEB_SEARCH": False,
-    "WEB_SEARCH_ENGINE": "OpenAI",
     "PRIVATE_MODE": False,
 }
+
+
+def _web_search_engines():
+    """(engines a turn may use, the default) — the WebUI's rule: the
+    WEB_SEARCH_ENGINES_AVAILABLE allow-list (empty = all), WEB_SEARCH_DEFAULT
+    when it is allowed, else the first allowed one."""
+    _setting = dmu.read_yaml_file("setting.yaml") or {}
+    try:
+        _all = list(dmt.WEB_SEARCH_ENGINES.keys())
+    except AttributeError:
+        _all = ["Perplexity", "OpenAI", "AzureOpenAI", "Bedrock", "Google", "Claude"]
+    _allowed = [e for e in (_setting.get("WEB_SEARCH_ENGINES_AVAILABLE") or []) if e in _all] or _all
+    _default = _setting.get("WEB_SEARCH_DEFAULT", "Perplexity")
+    return _allowed, (_default if _default in _allowed else _allowed[0])
+
+
+def _api_execution_defaults() -> dict:
+    # A fixed "OpenAI" here ignored setting.yaml, so an API turn searched with
+    # an engine the deployment had switched off (and differently from the WebUI).
+    out = dict(_API_EXECUTION_DEFAULTS)
+    out["WEB_SEARCH_ENGINE"] = _web_search_engines()[1]
+    return out
 
 _EXECUTION_DEFAULT_KEYS = ("STREAM_MODE", "MEMORY_USE", "MEMORY_SAVE", "SAVE_DIGEST",
                            "PRIVATE_MODE", "MAGIC_WORD_USE", "RAG_QUERY_GENE",
@@ -725,7 +752,7 @@ def _build_execution_dict(data: InputData, agent_file: str = "") -> tuple:
 
     Returns `(execution, skills_ignored)`.
     """
-    execution = dict(_API_EXECUTION_DEFAULTS)
+    execution = _api_execution_defaults()
     # agent.EXECUTION_DEFAULTS sits over the API defaults, as it sits over the
     # user's Defaults in the WebUI.
     execution.update(_agent_execution_defaults(agent_file))
@@ -776,6 +803,10 @@ def _build_execution_dict(data: InputData, agent_file: str = "") -> tuple:
         except (TypeError, ValueError):
             _mt = 1
         execution["MAX_THINKING_TURNS"] = max(1, min(_mt, 5))
+
+    _allowed_ws, _default_ws = _web_search_engines()
+    if execution.get("WEB_SEARCH_ENGINE") not in _allowed_ws:
+        execution["WEB_SEARCH_ENGINE"] = _default_ws
 
     # User memory enable/disable (Execute reads execution["USER_MEMORY_LAYERS"]
     # as top priority; if unset, falls back to users.json / USER_MEMORY_DEFAULT_LAYERS)
@@ -915,7 +946,8 @@ def _prepare_run(
         add_knowledge=books, personas=personas, org=org,
         rag_query_text=rag_query_text,
     )
-    notes = {"attachments_processed": processed}
+    # Not part of the response: the caller removes the folder after the turn.
+    notes = {"attachments_processed": processed, "_tmp_dir": tmp_dir}
     # Silently dropping an unknown name is how a typo turns into "it just
     # never ran", so each one is reported back.
     if skills_ignored:
@@ -951,6 +983,7 @@ async def _execute_shared(
     """Single execution path for /run, /run_function and /run_multipart."""
     kwargs, notes = await run_in_threadpool(
         _prepare_run, data, extra_content_paths, extra_processed, tmp_dir)
+    tmp = notes.pop("_tmp_dir", None)
     try:
         # A turn takes minutes; run on the thread pool so the worker keeps
         # answering /health and /jobs meanwhile.
@@ -962,6 +995,45 @@ async def _execute_shared(
     except Exception as e:
         _log_run_error("/run", kwargs)
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        _remove_tmp(tmp)
+
+
+def _remove_tmp(folder: Optional[str]):
+    # The executor copied the attachments into the session's contents, so the
+    # per-request folder is spent once the turn is over.
+    if folder and os.path.basename(os.path.normpath(folder)) != "api":
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+def _prune_api_temp():
+    """Remove job files and per-request folders older than
+    API_JOB_RETENTION_HOURS (default 24): left by a crash, or by a version
+    that never removed them. Cheap enough to run on every job start."""
+    try:
+        hours = float(os.getenv("API_JOB_RETENTION_HOURS") or 24)
+    except ValueError:
+        hours = 24.0
+    if hours <= 0:
+        return
+    cutoff = time.time() - hours * 3600
+    base = os.path.dirname(_jobs_folder())
+    for folder, is_jobs in ((_jobs_folder(), True), (base, False)):
+        try:
+            names = os.listdir(folder)
+        except OSError:
+            continue
+        for n in names:
+            p = os.path.join(folder, n)
+            try:
+                if os.path.getmtime(p) >= cutoff:
+                    continue
+                if is_jobs and os.path.isfile(p):
+                    os.remove(p)
+                elif not is_jobs and n != "jobs" and os.path.isdir(p) and re.fullmatch(r"[0-9a-f]{16}", n):
+                    shutil.rmtree(p, ignore_errors=True)
+            except OSError:
+                continue
 
 
 # ---------- Background runs (/run_async + /jobs) ----------
@@ -1006,7 +1078,7 @@ def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _run_job(job: dict, kwargs: dict, notes: dict):
+def _run_job(job: dict, kwargs: dict, notes: dict, tmp: Optional[str] = None):
     try:
         result = exec_function(**kwargs)
         result.update(notes)
@@ -1029,16 +1101,17 @@ def _run_job(job: dict, kwargs: dict, notes: dict):
             pass
     job["finished_at"] = _now()
     _write_job(job)
+    _remove_tmp(tmp)
 
 
-async def _start_job(kwargs: dict, notes: dict) -> dict:
+def _start_job(kwargs: dict, notes: dict) -> dict:
     session_id = kwargs.get("session_id") or ("API" + dms.set_new_session_id())
     kwargs["session_id"] = session_id
-    if dms.get_status_data(session_id).get("status") == "LOCKED":
-        raise HTTPException(status_code=429, detail=f"Session {session_id} is locked. Retry after a moment.")
     # Lock before answering, so a client that polls at once never sees the
     # session idle and a second request cannot slip in.
-    dms.DigiMSession(session_id, kwargs.get("session_name") or "").save_status("LOCKED")
+    if not dms.acquire_session_lock(session_id):
+        _remove_tmp(notes.pop("_tmp_dir", None))
+        raise HTTPException(status_code=429, detail=f"Session {session_id} is locked. Retry after a moment.")
     kwargs["execution"]["_PRE_LOCKED"] = True
     kwargs["wait_for_lock"] = False
     job = {
@@ -1054,7 +1127,9 @@ async def _start_job(kwargs: dict, notes: dict) -> dict:
         "result": None,
     }
     _write_job(job)
-    threading.Thread(target=_run_job, args=(dict(job), kwargs, notes), daemon=True).start()
+    tmp = notes.pop("_tmp_dir", None)
+    threading.Thread(target=_run_job, args=(dict(job), kwargs, notes, tmp), daemon=True).start()
+    _prune_api_temp()
     return job
 
 
@@ -1063,6 +1138,10 @@ def _session_progress(session_id: str) -> dict:
     return {
         "status": st.get("status") or "UNLOCKED",
         "message": st.get("message") or "",
+        # The step behind the message (DigiM_Messages code + values), for a
+        # front end that words its own progress line.
+        "message_code": st.get("message_code") or "",
+        "message_params": st.get("message_params") or {},
         # Streamed text so far; cleared when the run unlocks the session.
         "partial_response": st.get("response") or "",
         "error": st.get("error") or "",
@@ -1136,7 +1215,7 @@ async def run_multipart(
 @app.post("/run_async")
 async def run_async(data: InputData):
     kwargs, notes = await run_in_threadpool(_prepare_run, data)
-    return await _start_job(kwargs, notes)
+    return await run_in_threadpool(_start_job, kwargs, notes)
 
 
 @app.post("/run_async_multipart")
@@ -1146,11 +1225,11 @@ async def run_async_multipart(
 ):
     parsed, saved_paths, processed, tmp_dir = await _stage_multipart(data, files)
     kwargs, notes = await run_in_threadpool(_prepare_run, parsed, saved_paths, processed, tmp_dir)
-    return await _start_job(kwargs, notes)
+    return await run_in_threadpool(_start_job, kwargs, notes)
 
 
 @app.get("/jobs/{job_id}")
-async def get_job(job_id: str):
+def get_job(job_id: str):
     """state: running → done (with `result`, the /run response) or error.
     While running, `progress` carries the executor's status message and the
     streamed text so far."""
@@ -1200,7 +1279,7 @@ def _require_history_token(token: Optional[str]):
 
 
 @app.get("/admin/history/sessions")
-async def history_sessions(days: Optional[float] = None,
+def history_sessions(days: Optional[float] = None,
                            x_admin_token: Optional[str] = Header(default=None)):
     _require_history_token(x_admin_token)
     import DigiM_HistoryArchive as ha
@@ -1208,7 +1287,7 @@ async def history_sessions(days: Optional[float] = None,
 
 
 @app.get("/admin/history/turns")
-async def history_turns(days: Optional[float] = None, keep_turns: Optional[int] = None,
+def history_turns(days: Optional[float] = None, keep_turns: Optional[int] = None,
                         x_admin_token: Optional[str] = Header(default=None)):
     _require_history_token(x_admin_token)
     import DigiM_HistoryArchive as ha
@@ -1216,14 +1295,14 @@ async def history_turns(days: Optional[float] = None, keep_turns: Optional[int] 
 
 
 @app.get("/admin/history/archives")
-async def history_archives(x_admin_token: Optional[str] = Header(default=None)):
+def history_archives(x_admin_token: Optional[str] = Header(default=None)):
     _require_history_token(x_admin_token)
     import DigiM_HistoryArchive as ha
     return {"archives": ha.list_archives()}
 
 
 @app.post("/admin/history/backup")
-async def history_backup(data: HistoryArchiveRequest,
+def history_backup(data: HistoryArchiveRequest,
                          x_admin_token: Optional[str] = Header(default=None)):
     _require_history_token(x_admin_token)
     import DigiM_HistoryArchive as ha
@@ -1234,7 +1313,7 @@ async def history_backup(data: HistoryArchiveRequest,
 
 
 @app.post("/admin/history/purge")
-async def history_purge(data: HistoryArchiveRequest,
+def history_purge(data: HistoryArchiveRequest,
                         x_admin_token: Optional[str] = Header(default=None)):
     _require_history_token(x_admin_token)
     if data.days is None:
@@ -1247,7 +1326,7 @@ async def history_purge(data: HistoryArchiveRequest,
 
 
 @app.post("/admin/history/prune")
-async def history_prune(data: HistoryArchiveRequest,
+def history_prune(data: HistoryArchiveRequest,
                         x_admin_token: Optional[str] = Header(default=None)):
     """Delete turns older than `days` (default ARCHIVE_TURN_DAYS) inside
     sessions, keeping each session's newest `keep_turns` (ARCHIVE_KEEP_TURNS)."""
@@ -1261,7 +1340,7 @@ async def history_prune(data: HistoryArchiveRequest,
 
 
 @app.post("/admin/history/restore")
-async def history_restore(data: HistoryRestoreRequest,
+def history_restore(data: HistoryRestoreRequest,
                           x_admin_token: Optional[str] = Header(default=None)):
     _require_history_token(x_admin_token)
     import DigiM_HistoryArchive as ha
@@ -1276,11 +1355,11 @@ async def history_restore(data: HistoryRestoreRequest,
 
 
 @app.get("/sessions")
-async def get_sessions(user_id: Optional[str] = None, service_id: Optional[str] = None,
+def get_sessions(user_id: Optional[str] = None, service_id: Optional[str] = None,
                        active: Optional[str] = None):
     """Newest first, like the WebUI sidebar. `active=Y` lists what the sidebar
     shows, `active=N` the hidden sessions it can re-display."""
-    sessions = await run_in_threadpool(dms.get_session_list)
+    sessions = dms.get_session_list()
     if user_id:
         sessions = [s for s in sessions if s.get("user_id") == user_id]
     if service_id:
@@ -1297,7 +1376,7 @@ async def get_sessions(user_id: Optional[str] = None, service_id: Optional[str] 
 
 # Session history
 @app.get("/sessions/{session_id}")
-async def get_session_history(session_id: str):
+def get_session_history(session_id: str):
     data = dms.get_session_data(session_id)
     if not data:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -1378,7 +1457,7 @@ def _shape_entry(session_id: str, seq: str, sub: str, entry: dict, include_refs:
 
 
 @app.get("/sessions/{session_id}/status")
-async def get_session_status(session_id: str):
+def get_session_status(session_id: str):
     """LOCKED while a turn runs (WebUI, API or a job), with its progress."""
     _session_or_404(session_id)
     out = {"session_id": session_id, "name": dms.get_session_name(session_id),
@@ -1388,7 +1467,7 @@ async def get_session_status(session_id: str):
 
 
 @app.get("/sessions/{session_id}/turns")
-async def get_session_turns(session_id: str, view: str = "summary", last: int = 0,
+def get_session_turns(session_id: str, view: str = "summary", last: int = 0,
                             include_refs: bool = True):
     """Deleted turns are left out, as in the WebUI.
 
@@ -1397,7 +1476,7 @@ async def get_session_turns(session_id: str, view: str = "summary", last: int = 
     view=all     : every entry of the chain (= ALL)
     last         : only the newest N turns (0 = all)
     """
-    sess = await run_in_threadpool(_session_or_404, session_id)
+    sess = _session_or_404(session_id)
     hist = sess.chat_history_active_omit_dict if view != "all" else sess.chat_history_active_dict
     seqs = sorted(hist.keys(), key=int)
     if last and last > 0:
@@ -1444,24 +1523,24 @@ def _require_unlocked(sess):
 
 
 @app.get("/sessions/{session_id}/turns/{seq}/detail")
-async def get_turn_detail(session_id: str, seq: str, sub_seq: str = "1"):
+def get_turn_detail(session_id: str, seq: str, sub_seq: str = "1"):
     """The WebUI's Detail Information text (LLM input, tokens, references, ...).
     For a SUMMARY entry pass its `detail_sub_seq`."""
-    sess = await run_in_threadpool(_session_or_404, session_id)
+    sess = _session_or_404(session_id)
     turn = _require_seq(sess, seq)
     if sub_seq not in turn:
         raise HTTPException(status_code=404, detail=f"seq={seq}/sub_seq={sub_seq} not found")
-    text = await run_in_threadpool(sess.get_detail_info, seq, sub_seq)
+    text = sess.get_detail_info(seq, sub_seq)
     return {"session_id": session_id, "seq": seq, "sub_seq": sub_seq, "detail": text}
 
 
 @app.post("/sessions/{session_id}/turns/{seq}/delete")
-async def delete_turn(session_id: str, seq: str):
+def delete_turn(session_id: str, seq: str):
     """Hide a turn (FLG=N), as the WebUI's delete does. It stays in storage."""
-    sess = await run_in_threadpool(_session_or_404, session_id)
+    sess = _session_or_404(session_id)
     _require_seq(sess, seq)
     _require_unlocked(sess)
-    await run_in_threadpool(sess.chg_seq_history, seq, "N")
+    sess.chg_seq_history(seq, "N")
     return {"status": "ok", "session_id": session_id, "seq": seq}
 
 
@@ -1470,13 +1549,13 @@ class TurnMemorySetting(BaseModel):
 
 
 @app.post("/sessions/{session_id}/turns/{seq}/memory")
-async def set_turn_memory(session_id: str, seq: str, data: TurnMemorySetting):
+def set_turn_memory(session_id: str, seq: str, data: TurnMemorySetting):
     """enabled=false is the WebUI's Memory Off: the turn stays visible but is
     left out of the conversation memory sent to the LLM."""
-    sess = await run_in_threadpool(_session_or_404, session_id)
+    sess = _session_or_404(session_id)
     _require_seq(sess, seq)
     _require_unlocked(sess)
-    await run_in_threadpool(sess.chg_seq_memory_flg, seq, "Y" if data.enabled else "N")
+    sess.chg_seq_memory_flg(seq, "Y" if data.enabled else "N")
     return {"status": "ok", "session_id": session_id, "seq": seq,
             "memory_flg": "Y" if data.enabled else "N"}
 
@@ -1486,36 +1565,36 @@ class SessionRename(BaseModel):
 
 
 @app.post("/sessions/{session_id}/rename")
-async def rename_session(session_id: str, data: SessionRename):
+def rename_session(session_id: str, data: SessionRename):
     name = (data.name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="name is empty")
-    sess = await run_in_threadpool(_session_or_404, session_id)
+    sess = _session_or_404(session_id)
     _require_unlocked(sess)
-    await run_in_threadpool(sess.chg_session_name, name)
+    sess.chg_session_name(name)
     return {"status": "ok", "session_id": session_id, "name": name}
 
 
 @app.post("/sessions/{session_id}/hide")
-async def hide_session(session_id: str):
+def hide_session(session_id: str):
     """The WebUI sidebar's Del: hidden from the list, nothing is deleted."""
-    sess = await run_in_threadpool(_session_or_404, session_id)
+    sess = _session_or_404(session_id)
     sess.save_active_session("N")
     sess.save_user_dialog_session("DISCARD")
     return {"status": "ok", "session_id": session_id, "active": "N"}
 
 
 @app.post("/sessions/{session_id}/activate")
-async def activate_session(session_id: str):
+def activate_session(session_id: str):
     """The WebUI's Activate Sessions: show a hidden session again."""
-    sess = await run_in_threadpool(_session_or_404, session_id)
+    sess = _session_or_404(session_id)
     sess.save_active_session("Y")
     sess.save_user_dialog_session("UNSAVED")
     return {"status": "ok", "session_id": session_id, "active": "Y"}
 
 
 @app.get("/sessions/{session_id}/contents/{file_name}")
-async def get_session_content(session_id: str, file_name: str):
+def get_session_content(session_id: str, file_name: str):
     """An attachment or generated image of the session (the `url` in turns)."""
     if not _SESSION_ID_RE.match(session_id or "") or os.path.basename(file_name) != file_name \
             or file_name in ("", ".", ".."):
@@ -1529,10 +1608,10 @@ async def get_session_content(session_id: str, file_name: str):
 
 
 @app.get("/sessions/{session_id}/export")
-async def export_session(session_id: str, view: str = "summary", images: bool = False):
+def export_session(session_id: str, view: str = "summary", images: bool = False):
     """The chat as Markdown, like the WebUI's Chats Only download. images=true
     embeds attachments and generated images as base64 (can be several MB)."""
-    sess = await run_in_threadpool(_session_or_404, session_id)
+    sess = _session_or_404(session_id)
     hist = sess.chat_history_active_omit_dict if view != "all" else sess.chat_history_active_dict
     folder = sess.session_contents_folder_path
 
@@ -1571,7 +1650,7 @@ async def export_session(session_id: str, view: str = "summary", images: bool = 
 # Returns the same tuple DigiMSession.get_session_summary() produces, plus
 # session_id echoed for client convenience.
 @app.get("/sessions/{session_id}/summary")
-async def get_session_summary(session_id: str):
+def get_session_summary(session_id: str):
     try:
         _sess = dms.DigiMSession(session_id, "")
         _enabled, _template, _content, _updated_at = _sess.get_session_summary()
@@ -1600,7 +1679,7 @@ class SessionSummarySettings(BaseModel):
 # DigiMatsuExecute_Practice. To clear the content, POST with a new template
 # (which resets on the next turn) or just leave it alone.
 @app.post("/sessions/{session_id}/summary")
-async def set_session_summary(session_id: str, data: SessionSummarySettings):
+def set_session_summary(session_id: str, data: SessionSummarySettings):
     try:
         _sess = dms.DigiMSession(session_id, "")
         _cur_enabled, _cur_template, _content, _updated_at = _sess.get_session_summary()
@@ -1620,7 +1699,7 @@ async def set_session_summary(session_id: str, data: SessionSummarySettings):
 
 # Return the shipped preset templates (same file the WebUI reads).
 @app.get("/session_summary_presets")
-async def get_session_summary_presets():
+def get_session_summary_presets():
     """List shipped preset templates that clients can use as starting points.
 
     Backed by `user/common/mst/session_summary_presets.json`. Operators can
@@ -1644,13 +1723,13 @@ async def get_session_summary_presets():
 
 # Agent list
 @app.get("/agents")
-async def get_agent_list():
+def get_agent_list():
     agents = dma.get_display_agents()
     return {"agents": agents}
 
 # List of engines selectable for the agent
 @app.get("/agents/{agent_file}/engines")
-async def get_engine_list(agent_file: str):
+def get_engine_list(agent_file: str):
     try:
         agent_data = dmu.read_json_file(agent_file, dma.agent_folder_path)
     except Exception:
@@ -1669,7 +1748,7 @@ async def get_engine_list(agent_file: str):
 # engines, SKILLs by phase, BOOKs, ORG → personas, Thinking, personality and
 # the execution toggles a turn starts from. Values feed straight into /run.
 @app.get("/agents/{agent_file}/chat_options")
-async def get_chat_options(agent_file: str):
+def get_chat_options(agent_file: str):
     agent_data = _agent_data(agent_file)
     if not agent_data:
         raise HTTPException(status_code=404, detail=f"Agent file not found: {agent_file}")
@@ -1708,8 +1787,7 @@ async def get_chat_options(agent_file: str):
     orgs = []
     for o in _agent_orgs(agent_data):
         try:
-            cands = await run_in_threadpool(
-                dap.find_personas_by_org, o, agent_file,
+            cands = dap.find_personas_by_org(o, agent_file,
                 agent_data.get("PERSONA_FILES") or None, agent_data.get("PERSONA_SOURCE"))
         except Exception:
             cands = []
@@ -1730,7 +1808,7 @@ async def get_chat_options(agent_file: str):
         max_personas = int(_setting.get("MAX_PERSONAS", 3))
     except Exception:
         max_personas = 3
-    defaults = dict(_API_EXECUTION_DEFAULTS)
+    defaults = _api_execution_defaults()
     defaults.update(_agent_execution_defaults(agent_file))
     pers = agent_data.get("PERSONALITY") or {}
     return {
@@ -1757,7 +1835,7 @@ async def get_chat_options(agent_file: str):
 
 # Web search engine list
 @app.get("/web_search_engines")
-async def get_web_search_engines():
+def get_web_search_engines():
     import DigiM_Tool as dmt
     _setting = dmu.read_yaml_file("setting.yaml")
     default_engine = _setting.get("WEB_SEARCH_DEFAULT", "Perplexity")
@@ -1784,7 +1862,7 @@ async def get_web_search_engines():
 
 # Get the agent's feedback configuration
 @app.get("/agents/{agent_file}/feedback")
-async def get_feedback_config(agent_file: str):
+def get_feedback_config(agent_file: str):
     try:
         agent = dma.DigiM_Agent(agent_file)
     except FileNotFoundError:
@@ -1812,7 +1890,7 @@ class FeedbackData(BaseModel):
     feedbacks: Dict[str, Any]
 
 @app.post("/feedback")
-async def post_feedback(data: FeedbackData):
+def post_feedback(data: FeedbackData):
     agent_file = data.agent_file or api_agent_file
     session_id = data.session_id
 

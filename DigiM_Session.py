@@ -319,25 +319,85 @@ def archive_old_sessions(days: int = None) -> dict:
             "errors": rep["errors"]}
 
 
-# Issue a new session ID (numeric sequence only)
+# ---- Taking a session for one turn --------------------------------------
+# status.yaml's LOCKED is what the WebUI, the API and the history archive read,
+# but checking it and then writing it are two steps: two requests for one
+# session (two gunicorn workers, the API and the WebUI) could both see it free
+# and run at once, the second save overwriting the first turn. The check and
+# the write happen under an OS file lock, which also holds across processes on
+# one host (several hosts need a database lock instead).
+try:
+    import fcntl as _fcntl
+except ImportError:          # Windows: only threads of this process are kept apart
+    _fcntl = None
+
+
+def _lock_stale_sec() -> float:
+    # A LOCKED left behind by a process that died would keep the session
+    # unusable for good; one not updated for this long is taken over. Running
+    # turns keep rewriting status.yaml (progress messages). 0 disables.
+    try:
+        return float(system_setting_dict.get("SESSION_LOCK_STALE_SEC", 3600) or 0)
+    except (TypeError, ValueError):
+        return 3600.0
+
+
+def _session_lock_file(session_id: str) -> str:
+    # Outside the session folder, so taking the lock never changes the folder
+    # the history archive compares before and after zipping.
+    folder = Path(user_folder_path) / ".session_locks"
+    folder.mkdir(parents=True, exist_ok=True)
+    return str(folder / f"{session_folder_prefix}{session_id}.lock")
+
+
+def acquire_session_lock(session_id: str, wait_sec: float = 0, status_path: str = "",
+                         poll_sec: float = 1.0) -> bool:
+    """Mark the session LOCKED for this caller, or return False when another
+    turn holds it (after waiting up to `wait_sec`)."""
+    import time as _t
+    status_path = status_path or str(Path(user_folder_path) / (session_folder_prefix + session_id)
+                                     / session_status_file_name)
+    lock_path = _session_lock_file(session_id)
+    deadline = _t.monotonic() + max(0.0, float(wait_sec or 0))
+    while True:
+        with _get_file_lock(lock_path):
+            with open(lock_path, "a") as fh:
+                if _fcntl is not None:
+                    _fcntl.flock(fh.fileno(), _fcntl.LOCK_EX)
+                try:
+                    st = dmu.read_yaml_file(status_path) or {}
+                    locked = st.get("status") == "LOCKED"
+                    stale = _lock_stale_sec()
+                    if locked and stale > 0:
+                        try:
+                            age = _t.time() - os.path.getmtime(status_path)
+                        except OSError:
+                            age = 0
+                        if age > stale:
+                            logger.warning("session %s: LOCKED unchanged for %.0f s; taking it over", session_id, age)
+                            locked = False
+                    if not locked:
+                        os.makedirs(os.path.dirname(status_path), exist_ok=True)
+                        dmu.save_yaml_file({"status": "LOCKED", "message": "", "response": "", "error": "",
+                                            "message_code": "", "message_params": {}}, status_path)
+                        return True
+                finally:
+                    if _fcntl is not None:
+                        _fcntl.flock(fh.fileno(), _fcntl.LOCK_UN)
+        if _t.monotonic() >= deadline:
+            return False
+        _t.sleep(poll_sec)
+
+
+# Issue a new session ID: "<YYYYmmdd_HHMMSS>_<random>".
+# The old numbered suffix never incremented (it always came out "_0"), so two
+# sessions opened in the same second — two users pressing New Chat, overlapping
+# API calls without a session_id — shared one ID and one history. A random
+# suffix is unique across threads, processes and containers without scanning
+# every session folder on each call. IDs already saved ("..._0") still load.
 def set_new_session_id():
-    new_session_prefix = datetime.now().strftime("%Y%m%d_%H%M%S")
-    session_list = get_session_list()
-
-    session_nums = []
-    for item in session_list:
-        id_val = item.get("id", "")
-        if id_val.startswith(new_session_prefix + "_"):
-            try:
-                session_nums.append(int(id_val.split("_", 1)[1]))
-            except ValueError:
-                pass
-    if session_nums:
-        new_session_id = new_session_prefix+"_"+str(max(session_nums))
-    else:
-        new_session_id = new_session_prefix+"_0"
-
-    return new_session_id
+    import uuid
+    return datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:12]
 
 
 # Centralized error log for backend errors (background jobs, dispatchers, etc.)
@@ -858,7 +918,8 @@ class DigiMSession:
     def save_status(self, status, error=""):
         if not os.path.exists(self.session_folder_path):
             os.makedirs(self.session_folder_path, exist_ok=True)
-        status_dict = {"status": status, "message": "", "response": "", "error": error}
+        status_dict = {"status": status, "message": "", "response": "", "error": error,
+                       "message_code": "", "message_params": {}}
         dmu.save_yaml_file(status_dict, self.session_status_path)
         # Mirror to errors.log under the session folder when an error is set,
         # so users can find the full context next to the session data.
@@ -903,8 +964,11 @@ class DigiMSession:
         status_dict = dmu.read_yaml_file(self.session_status_path)
         return status_dict.get("error", "")
 
-    def save_status_message(self, message, response=""):
-        status_dict = {"status": "LOCKED", "message": message}
+    def save_status_message(self, message, response="", code="", params=None):
+        # code / params (DigiM_Messages) let a front end word the step itself;
+        # they are always written so a plain message clears the previous code.
+        status_dict = {"status": "LOCKED", "message": message,
+                       "message_code": code or "", "message_params": dict(params or {})}
         if response:
             status_dict["response"] = response
         dmu.save_yaml_file(status_dict, self.session_status_path)

@@ -12,6 +12,7 @@ document to MST_FOLDER/_backup/<name>/, whichever backend is in use.
 import hashlib
 import json
 import os
+import re
 from datetime import datetime
 from typing import Any, Dict, List, Tuple
 
@@ -37,11 +38,14 @@ MASTER_INFO = {
                                 "Used from the next selection."),
     "services": ("Services", "Per-SERVICE_ID front-end endpoints for scheduled-job delivery.",
                  "Used from the next job run."),
+    "messages": ("Progress messages", "Lines shown while a turn runs (WebUI ⏳ / API progress.message), "
+                 "with per-SERVICE_ID wording and skill display names.",
+                 "Used from the next step of a turn."),
 }
 
 # Masters whose entries sit one level down (prompt_templates holds ~70 KB
 # under two keys, so editing a top-level entry would mean the whole file).
-ENTRY_DEPTH = {"prompt_templates": 2}
+ENTRY_DEPTH = {"prompt_templates": 2, "messages": 2}
 
 
 def names() -> List[str]:
@@ -228,6 +232,33 @@ def validate(name: str, data) -> Tuple[List[str], List[str]]:
                 warns.append(f"{k}: ACTIVE but PUSH.URL is empty (nothing will be sent)")
             if v.get("ACTIVE") and p.get("TOKEN_ENV") and not os.getenv(p["TOKEN_ENV"]):
                 warns.append(f"{k}: {p['TOKEN_ENV']} is not set in system.env (sent without Authorization)")
+    elif name == "messages":
+        import DigiM_Messages as dmmsg
+        for k in data:
+            if k not in ("STATUS", "SKILL"):
+                warns.append(f"top-level key {k!r} is not read (use STATUS / SKILL)")
+        for code, entry in (data.get("STATUS") or {}).items():
+            if code not in dmmsg.BUILTIN:
+                warns.append(f"STATUS.{code}: no step uses this code")
+            if not isinstance(entry, dict) or not all(isinstance(v, str) for v in entry.values()):
+                errors.append(f"STATUS.{code}: must be {{\"DEFAULT\": text, \"<SERVICE_ID>\": text}}")
+                continue
+            known = set(dmmsg.BUILTIN.get(code, ("", ()))[1])
+            for svc, text in entry.items():
+                extra = set(re.findall(r"{(\w+)}", text)) - known
+                if extra:
+                    warns.append(f"STATUS.{code}.{svc}: {{{', '.join(sorted(extra))}}} is not filled for this step "
+                                 f"(available: {', '.join(sorted(known)) or 'none'})")
+        for skill, entry in (data.get("SKILL") or {}).items():
+            if not isinstance(entry, dict):
+                errors.append(f"SKILL.{skill}: must be {{\"BEFORE\"/\"AFTER\"/\"DEFAULT\": text, \"<SERVICE_ID>\": {{...}}}}")
+                continue
+            for k, v in entry.items():
+                if k in ("BEFORE", "AFTER", "DEFAULT"):
+                    if not isinstance(v, str):
+                        errors.append(f"SKILL.{skill}.{k}: must be text")
+                elif not isinstance(v, dict) or not all(isinstance(x, str) for x in v.values()):
+                    errors.append(f"SKILL.{skill}.{k}: a service override must be {{\"BEFORE\"/\"AFTER\"/\"DEFAULT\": text}}")
     elif name == "session_summary_presets":
         for k, v in data.items():
             if not isinstance(v, dict) or not isinstance(v.get("template", ""), str):

@@ -23,4 +23,4 @@ done
 nohup gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8899 DigiM_API:app --timeout 600 --graceful-timeout 600 --keep-alive 5 --capture-output --log-level debug >> /var/log/digim_api.log 2>&1 &
 
 # Start the main Streamlit app (WebDigiMatsuAgent.py) in the foreground (container PID 1)
-exec streamlit run WebDigiMatsuAgent.py --server.port 8501 --server.address 0.0.0.0
+exec streamlit run WebDigiMatsuAgent.py --server.port 8501 --server.address 0.0.0.0 --browser.gatherUsageStats false

@@ -268,13 +268,18 @@ class PgSessionStore(SessionStore):
                     raise last
 
     def _fresh(self):
-        # Return a functional store — try PG, fall back to file store on any
-        # transient failure so a single bad DB doesn't take Chat offline.
+        # A functional cursor, or (with SESSION_STORE_FALLBACK=file) the file
+        # store; see _fallback_mode for why the default refuses the latter.
         if not self._pg_ok:
+            if _fallback_mode() != "file":
+                raise _unreachable("PostgreSQL", "psycopg2 is not installed")
             return None, self._fallback
         try:
             return self._cursor(), None
         except Exception as _e:
+            self._last_error = _e
+            if _fallback_mode() != "file":
+                raise _unreachable("PostgreSQL", _e)
             # Reads then come back empty (a PG-era session has no local file),
             # so this must be loud enough to explain a blank history.
             logger.error("PgSessionStore: connect failed (%s); using file store "
@@ -317,6 +322,7 @@ class PgSessionStore(SessionStore):
              folder_path: Optional[str] = None) -> None:
         cur, fb = self._fresh()
         if fb:
+            _log_file_fallback("PostgreSQL", session_id, getattr(self, "_last_error", "driver missing"))
             fb.save(session_id, chat_history_dict, folder_path); return
         # The caller always hands over the whole session, and writing all of
         # it back cost 11.5 s for a 216-row / 29.7 MB session (0.06 s for the
@@ -371,6 +377,32 @@ class PgSessionStore(SessionStore):
             except Exception: pass
 
 
+# -------------------------------------------------------- DB unreachable --
+def _fallback_mode() -> str:
+    """SESSION_STORE_FALLBACK in setting.yaml: "none" (default) or "file".
+
+    Falling back to the file store while the DB is down reads a PG-era session
+    as empty, and the next turn then writes a chat_memory.json holding only
+    that turn. Hybrid reads prefer the file from then on, so once the DB is
+    back the session shows the outage turns alone and the rest of the
+    conversation looks lost. "none" fails the call instead.
+    """
+    m = str(_setting.get("SESSION_STORE_FALLBACK") or "none").strip().lower()
+    return "file" if m == "file" else "none"
+
+
+def _unreachable(store: str, err) -> RuntimeError:
+    return RuntimeError(
+        f"{store} session store is unreachable ({err}). Refusing to use the local file store "
+        f"instead (SESSION_STORE_FALLBACK=none), because that splits the session's history.")
+
+
+def _log_file_fallback(store: str, session_id: str, err) -> None:
+    logger.error("%s unreachable (%s): session %s was written to the local file store; it is "
+                 "read from that file from now on, so import it back once the DB is reachable.",
+                 store, err, session_id)
+
+
 # ---------------------------------------------------------- Cosmos store --
 class CosmosSessionStore(SessionStore):
     """Azure Cosmos DB (SQL API) backend. Container must exist beforehand
@@ -417,10 +449,14 @@ class CosmosSessionStore(SessionStore):
 
     def _fresh(self):
         if not self._sdk_ok:
+            if _fallback_mode() != "file":
+                raise _unreachable("Cosmos DB", "azure-cosmos is not installed")
             return None, self._fallback
         try:
             return self._client(), None
         except Exception as _e:
+            if _fallback_mode() != "file":
+                raise _unreachable("Cosmos DB", _e)
             logger.warning("CosmosSessionStore: connect failed (%s); "
                            "using file store for this call.", _e)
             return None, self._fallback
@@ -435,6 +471,8 @@ class CosmosSessionStore(SessionStore):
                 partition_key=session_id))
             return bool(items)
         except Exception as _e:
+            if _fallback_mode() != "file":
+                raise _unreachable("Cosmos DB", _e)
             logger.warning("Cosmos exists() failed: %s", _e); return False
 
     def load(self, session_id: str, folder_path: Optional[str] = None) -> dict:
@@ -446,6 +484,10 @@ class CosmosSessionStore(SessionStore):
                 parameters=[{"name": "@s", "value": session_id}],
                 partition_key=session_id))
         except Exception as _e:
+            # An empty dict here reads as "no history" and the next save would
+            # start the conversation over.
+            if _fallback_mode() != "file":
+                raise _unreachable("Cosmos DB", _e)
             logger.warning("Cosmos load() failed: %s", _e); return {}
         result: dict = {}
         for it in items:
@@ -463,7 +505,9 @@ class CosmosSessionStore(SessionStore):
     def save(self, session_id: str, chat_history_dict: dict,
              folder_path: Optional[str] = None) -> None:
         c, fb = self._fresh()
-        if fb: fb.save(session_id, chat_history_dict, folder_path); return
+        if fb:
+            _log_file_fallback("Cosmos DB", session_id, "connect failed")
+            fb.save(session_id, chat_history_dict, folder_path); return
         # Same reasoning as PgSessionStore.save: every upsert is billed in RU,
         # so only rows whose content changed are written.
         desired: dict = {}
@@ -509,8 +553,9 @@ class CosmosSessionStore(SessionStore):
         except Exception as _e:
             with self._conn_lock:
                 self._row_hashes.pop(session_id, None)
-            logger.warning("Cosmos save() failed: %s; falling through to JSON",
-                           _e)
+            if _fallback_mode() != "file":
+                raise _unreachable("Cosmos DB", _e)
+            _log_file_fallback("Cosmos DB", session_id, _e)
             self._fallback.save(session_id, chat_history_dict, folder_path)
 
 

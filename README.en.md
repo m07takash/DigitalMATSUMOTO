@@ -572,6 +572,7 @@ Place the master data under `user/common/mst/`. Files prefixed with `sample_` ar
 | `sample_notion_db.json` | `notion_db.json` | Notion DB definitions |
 | `sample_scheduled_jobs.json` | `scheduled_jobs.json` | Scheduled jobs (created on the Scheduler screen) |
 | `sample_session_summary_presets.json` | `session_summary_presets.json` | Session summary templates |
+| `sample_messages.json` | `messages.json` | Progress messages shown while a turn runs (per-service wording, skill display names) |
 | `sample_services.json` | `services.json` | Per-service (`SERVICE_ID`) settings: where scheduled jobs send messages for the front end, how many per request, and the interval |
 | `sample_web_search_guard.json` | `web_search_guard.json` | Web search guardrail settings |
 
@@ -587,7 +588,7 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
 
 #### Editing in the WebUI (Master Maintenance)
 
-Users with `Allowed["Master Maintenance"]: true` get **Master Maintenance** in the view switcher at the top (default `false`). The eight masters are edited on one screen, in the JSON files or the `digim_mst` rows depending on `MST_STORE_METHOD` (users also covers the `digim_users` table of `LOGIN_AUTH_METHOD=RDB`).
+Users with `Allowed["Master Maintenance"]: true` get **Master Maintenance** in the view switcher at the top (default `false`). The nine masters are edited on one screen, in the JSON files or the `digim_mst` rows depending on `MST_STORE_METHOD` (users also covers the `digim_users` table of `LOGIN_AUTH_METHOD=RDB`).
 
 - **Entry** edits one entry at a time (prompt templates one under `PROMPT_TEMPLATE` / `SPEAKING_STYLE` at a time, with the template body as plain text); **Whole document** edits the whole master as JSON. Entries can be added and deleted.
 - The shape is checked before saving (e.g. a template outside `PROMPT_TEMPLATE`, a duplicate `job_id`, or a token written straight into a `services` `PUSH` is an error).
@@ -596,9 +597,31 @@ Users with `Allowed["Master Maintenance"]: true` get **Master Maintenance** in t
 - users' `PW` shows as `********`: leave it to keep the password, or type a new one to store its bcrypt hash.
 - When a change takes effect is shown per master (users at next login, rags after Update RAG, scheduled_jobs after Reload Schedulers, ...). In PostgreSQL mode other processes see it up to `MST_STORE_CACHE_SEC` later.
 
+#### Progress messages (`messages` master)
+
+The one line shown while a turn runs (the WebUI's "⏳ ...", the API's `progress.message`) is worded from `user/common/mst/messages.json` (sample `sample_messages.json`). Anything not in the master keeps the previous English. Edit it from **Progress messages** in Master Maintenance.
+
+```json
+{
+    "STATUS": {
+        "llm_running": {"DEFAULT": "Thinking about your answer…", "LINE": "Give me a moment"},
+        "chain_running": {"DEFAULT": "Agent {index} of {count} running ({type})"}
+    },
+    "SKILL": {
+        "refine_expression": {"AFTER": "Polishing the wording", "LINE": {"AFTER": "Tidying it up"}},
+        "WebSearch": {"DEFAULT": "Searching the web"}
+    }
+}
+```
+
+- `STATUS` is per step (`web_search_start` / `rag_query_gene_start` / `rag_start` / `llm_running` / `citations_inserting` / `digest_generating` / `thinking` / `thinking_turn` / `thinking_preview` / `thinking_turn_preview` / `personas_selecting` / `skill_before` / `skill_after` / `chain_running` / `batch_qa` / `running`). `DEFAULT` is the base wording; a `SERVICE_ID` key (`Streamlit`, `LINE`, ... — the calling service) overrides it.
+- `{turn}` `{max_turns}` `{max}` `{name}` `{index}` `{count}` `{type}` `{sheet}` ... are filled with the step's values (the save-time check lists which ones a step has; an unfilled `{...}` is shown as written).
+- `SKILL` holds a display name per skill (`BEFORE` / `AFTER` / `DEFAULT` for both, with per-service overrides). A skill without one keeps the previous "SKILL[AFTER]:refine_expression" line. Several rewriting skills running together read as one line joined by " / ".
+- The API's `progress` also returns `message_code` / `message_params`, so a front end can word the step itself.
+
 #### Master-data storage backend
 
-The eight masters under `user/common/mst/` (`users` / `rags` / `prompt_templates` / `notion_db` / `category_map` / `scheduled_jobs` / `session_summary_presets` / `services`) switch backend **together** through **`MST_STORE_METHOD`** in `setting.yaml`. Default is **JSON** (files, as before).
+The nine masters under `user/common/mst/` (`users` / `rags` / `prompt_templates` / `notion_db` / `category_map` / `scheduled_jobs` / `session_summary_presets` / `services` / `messages`) switch backend **together** through **`MST_STORE_METHOD`** in `setting.yaml`. Default is **JSON** (files, as before).
 
 | Mode | Storage | Notes |
 |---|---|---|
@@ -624,6 +647,7 @@ Selected via `SESSION_STORE_METHOD` in `setting.yaml`. Default is **JSON** (the 
 - Switching `SESSION_STORE_METHOD` never breaks existing sessions — any `chat_memory.json` still on disk keeps being read/written via the JSON path.
 - Only new sessions land in the configured backend.
 - Side files (`status.yaml`, `vec/*.npy`, `contents/`, `analytics/`) always stay on disk regardless of the setting.
+- **When PostgreSQL / CosmosDB cannot be reached**, `SESSION_STORE_FALLBACK` (`setting.yaml`) decides. The default `"none"` fails the read or write, so the turn fails. `"file"` uses the local `chat_memory.json` for that call, but a DB session then reads as empty and the file it writes wins from then on, so once the DB is back the session shows only the outage turns (the session IDs written are logged as errors).
 
 #### PostgreSQL backend setup
 
@@ -665,7 +689,7 @@ CREATE INDEX IF NOT EXISTS idx_digim_chat_history_session_seq
     ON digim_chat_history (session_id, seq DESC);
 
 -- Master data (users / rags / prompt_templates / notion_db / category_map /
--- scheduled_jobs / session_summary_presets / services) when MST_STORE_METHOD=PostgreSQL.
+-- scheduled_jobs / session_summary_presets / services / messages) when MST_STORE_METHOD=PostgreSQL.
 -- One row per master; the payload is the whole JSON document.
 CREATE TABLE IF NOT EXISTS digim_mst (
     name        TEXT PRIMARY KEY,
@@ -2761,7 +2785,7 @@ Scheduler → **Add New Job** → Kind `agent_run` covers both recurring agent r
 | **Message** | `generated` (hand the prompt to the agent) / `fixed` (no LLM call; the text is posted verbatim) |
 | **Compose separately for each target session** | For `generated` into existing sessions. On = one call per session |
 | **Keep in conversation memory** | When delivering into existing sessions. Off means the message **still renders in the chat but is not recalled** by later turns (`SETTING.MEMORY_FLG="N"`) |
-| **Send to the service's front end via API** | On: also send the message written to the history to the session's service front end. Choose **Response only** / **Input and response** (below) |
+| **Send to the service's front end via API** | On: also send the message written to the history to the session's service front end. Choose **Response only** / **Input and response**, and the service in **Deliver through** (below) |
 | **Execution flags** | MEMORY_USE / MEMORY_SAVE / RAG_QUERY_GENE / META_SEARCH / THINKING_MODE / PRIVATE_MODE, etc. What **MEMORY_SAVE** means when delivering into existing sessions is below |
 
 **Targets are a filter, not a stored group.** Sessions created after the job was registered are picked up automatically when they match, so there is no group CRUD to maintain. The form shows the live match count.
@@ -2831,6 +2855,7 @@ What the front end receives (header `X-DigiM-Event: push`):
 - A `2xx` marks every session of that request as sent. If some users could not be reached, return `{"failed": ["<session_id>", ...]}` (or `[{"session_id": "...", "error": "..."}]`) and only those count as failed. A non-`2xx` or a timeout fails the whole request.
 - Results go to the job's `last_push.api` (`sent` / `failed` / `no_endpoint` / `batches`) and show in the job list. The job errors only when every message that had an endpoint failed (the history write already succeeded, so a partial failure does not stop it).
 - With `MST_STORE_METHOD=PostgreSQL`, run `python3 DigiM_MstStore.py import services` once after creating `services.json`.
+- **Deliver through** (`api_delivery.service_id`) sends every message to that service's endpoint. A session's `service_id` is overwritten by the channel that ran its last turn, so a conversation used from both LINE and the WebUI would otherwise go to the WebUI (no endpoint).
 - [`demo/push_receiver/line_receiver.py`](demo/push_receiver/README.md) is a sample receiver that pushes what it gets to LINE through the Messaging API (with steps to try it on your own LINE).
 
 #### Running a SKILL explicitly from the WebUI (slash command)
@@ -3130,6 +3155,8 @@ Whatever the mode, the stored value and a human reading of it (e.g. `once at 202
 **Permissions:** The Scheduler menu is accessible only to users with `Allowed["Scheduler"] = true` (configured in `users.json` / `sample_users.json`). The owner user (`owner_user_id`) is auto-set to the logged-in user at save time, and is associated with the session at `agent_run` execution.
 
 **WebUI operations:** Per job, **Edit** / **Run Now** (run once immediately) / **Enable/Disable** / **Delete**. Add jobs from **Add New Job** (a new job opens with Enabled on, so saving it makes an enabled job); after adding a job or changing cron, reflect them in the running scheduler with **Reload Schedulers**. In environments without APScheduler installed, cron triggers are skipped, but manual execution via Run Now is possible.
+
+**The scheduler runs in one process per host.** With several WebUI processes (e.g. `WebDigiMatsuAgent.py` and `_modified`), only the one holding `TEMP_FOLDER/scheduler.lock` runs the jobs; when it ends, the next process to load the WebUI takes over. Reload Schedulers pressed in a process that does not run it makes the running one re-read within 30 s. `SCHEDULER_ENABLE=N` in `system.env` keeps a process from running it (an API-only container, a second host; nothing coordinates across hosts, so set `N` on every host but one).
 
 #### Persona status and auto-approval
 
@@ -3887,12 +3914,14 @@ curl -s -X POST http://localhost:8899/run_async -H "Content-Type: application/js
 
 curl -s http://localhost:8899/jobs/540f67f1...
 # running: {"state": "running", "elapsed_sec": 4,
-#           "progress": {"status": "LOCKED", "message": "Running LLM", "partial_response": "...", "error": ""}}
+#           "progress": {"status": "LOCKED", "message": "Running LLM", "message_code": "llm_running",
+#                        "message_params": {}, "partial_response": "...", "error": ""}}
 # done:    {"state": "done", "result": { same as the /run response }, ...}
 ```
 
 - The session is locked when the request is accepted. Another request for the same session gets `429` (`/run` waits up to 60 s; `/run_async` does not wait).
 - The job state is written to `TEMP_FOLDER/api/jobs/<job_id>.json`, not kept in process memory, so any gunicorn worker can answer the poll. Progress comes from the session's `status.yaml` (the same source the WebUI chat reads).
+- The per-request folder holding attachments (`TEMP_FOLDER/api/<id>/`) is removed when the turn ends. Job files and left-over folders older than `API_JOB_RETENTION_HOURS` (`system.env`, default 24 h, 0 keeps them) are removed when the next job starts.
 - Restarting the API process stops running jobs and leaves them `running`. A job still `running` after `progress.status` turned `UNLOCKED` has stopped.
 - `progress.status` can stay `LOCKED` for a while after `done`: the digest is being written in the background.
 
@@ -3900,7 +3929,7 @@ curl -s http://localhost:8899/jobs/540f67f1...
 
 A single HTTP request completes one LLM execution and returns the response directly. The conversation continues when the same `session_id` is specified. For long turns, or to show progress, send the same input to `POST /run_async`.
 
-If the same session is in execution (LOCKED), it waits up to 60 seconds and runs after release. On timeout, it returns `429`.
+If the same session is in execution (LOCKED), it waits up to 60 seconds and runs after release. On timeout, it returns `429`. Checking and writing LOCKED happen in one step under an OS file lock, so two requests for one session arriving together (two gunicorn workers, the WebUI and the API, ...) never both run (within one host; several hosts need a database lock on top). A LOCKED left by a process that died is taken over by the next turn once `status.yaml` has not changed for `SESSION_LOCK_STALE_SEC` (`setting.yaml`, default 3600 s, 0 disables).
 
 **Request:**
 
@@ -3974,7 +4003,7 @@ API default values are used for omitted parameters. When the agent has `EXECUTIO
 | `meta_search` | `true` | Metadata search (date extraction) |
 | `rag_query_gene` | `true` | Query generation for RAG search |
 | `web_search` | `false` | Web search (when `true`, searches with the engine specified by `web_search_engine`) |
-| `web_search_engine` | `"OpenAI"` | Web search engine (`Perplexity` / `OpenAI` / `Google`). Not used when `web_search` is `false` |
+| `web_search_engine` | `WEB_SEARCH_DEFAULT` in `setting.yaml` | Web search engine (`Perplexity` / `OpenAI` / `Google`, ...). An engine not in `WEB_SEARCH_ENGINES_AVAILABLE` is replaced by the default (as in the WebUI). Not used when `web_search` is `false` |
 | `web_search_guardrail` | `true` | Wrap web-search results in a "reference material" instruction that keeps the LLM's persona and conversation context in charge. Set `false` to pass the raw snippet through unwrapped |
 | `private_mode` | `false` | Private Mode. When `true`, RAG data with `private: true` is excluded from search |
 | `personas` | (unset) | Persona ids (from `chat_options`' `orgs[].personas`). Two or more run in parallel and the turn holds one answer per persona. Ids not found come back in `personas_ignored` |

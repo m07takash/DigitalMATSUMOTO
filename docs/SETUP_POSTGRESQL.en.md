@@ -379,14 +379,14 @@ CREATE TABLE IF NOT EXISTS digim_user_memory_persona (
 
 ### 4-8. digim_mst (master data)
 
-Setting `MST_STORE_METHOD` to `"PostgreSQL"` in `setting.yaml` moves the eight masters under `user/common/mst/`
-(`users` / `rags` / `prompt_templates` / `notion_db` / `category_map` / `scheduled_jobs` / `session_summary_presets` / `services`)
+Setting `MST_STORE_METHOD` to `"PostgreSQL"` in `setting.yaml` moves the nine masters under `user/common/mst/`
+(`users` / `rags` / `prompt_templates` / `notion_db` / `category_map` / `scheduled_jobs` / `session_summary_presets` / `services` / `messages`)
 into this table **together**. One row per master, holding the JSON document as JSONB.
 It is auto-created on first access via `CREATE TABLE IF NOT EXISTS`.
 
 ```sql
 -- Master data (users / rags / prompt_templates / notion_db / category_map /
--- scheduled_jobs / session_summary_presets / services) when MST_STORE_METHOD=PostgreSQL.
+-- scheduled_jobs / session_summary_presets / services / messages) when MST_STORE_METHOD=PostgreSQL.
 -- One row per master; the payload is the whole JSON document.
 CREATE TABLE IF NOT EXISTS digim_mst (
     name        TEXT PRIMARY KEY,
@@ -398,7 +398,7 @@ CREATE TABLE IF NOT EXISTS digim_mst (
 Flipping the setting moves nothing by itself; import once:
 
 ```bash
-python3 DigiM_MstStore.py import          # JSON files -> digim_mst (all eight)
+python3 DigiM_MstStore.py import          # JSON files -> digim_mst (all nine)
 python3 DigiM_MstStore.py import users    # one master only
 python3 DigiM_MstStore.py list            # which masters have a row / a file
 python3 DigiM_MstStore.py export          # digim_mst -> JSON files (to go back, or as a backup)
@@ -678,7 +678,7 @@ digim_sessions  (1)
 | `digim_dialogs` | Each turn of the conversation (input, response, token counts, RAG usage, etc.) |
 | `digim_references` | Details of the RAG knowledge chunks referenced in each turn |
 | `digim_chat_history` | Live R/W chat history (`SESSION_STORE_METHOD=PostgreSQL`); one row per turn, JSONB |
-| `digim_mst` | The eight master-data files (`MST_STORE_METHOD=PostgreSQL`); one row per master, JSONB |
+| `digim_mst` | The nine master-data files (`MST_STORE_METHOD=PostgreSQL`); one row per master, JSONB |
 | `digim_chat_history_archive` / `_sessions` | Chat-history backup copy and its per-session ledger (history retention) |
 | `digim_steps` | Support agents, web searches, skills and rewrites of each turn (one row per step; auto-created by the export) |
 | `digim_sessions_archive` / `digim_dialogs_archive` / `digim_references_archive` / `digim_steps_archive` | Backup copy of the analytics mirror; never pruned (refreshed by history-retention backup / purge) |

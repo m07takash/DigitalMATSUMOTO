@@ -1220,6 +1220,7 @@ def _load_tool_plugins(folder_path=None):
             module = importlib.util.module_from_spec(spec)
             sys.modules[mod_name] = module  # register before exec so the plugin can import itself
             spec.loader.exec_module(module)
+            _PLUGIN_MODULES[mod_name] = module
             log.info(f"Loaded tool plugin: {py_file.name}")
             return (py_file.name, "loaded", None)
         except Exception as e:
@@ -1240,6 +1241,12 @@ def _load_tool_plugins(folder_path=None):
         results.append(_load_one(py_file, f"digim_tool_plugin__local__{py_file.stem}"))
     return results
 
+
+# Loaded plugin modules, held here as well as in sys.modules. Streamlit drops
+# every module of the app folder from sys.modules when any of its files
+# changes; a turn already running keeps this DigiM_Tool and would then find
+# no plugin to read `build_manifest` and the like from, failing mid-answer.
+_PLUGIN_MODULES = {}
 
 # Run the loader at import time. Stored on the module so callers can
 # inspect what loaded (DigiM_Tool._LOADED_PLUGINS).
@@ -1274,7 +1281,7 @@ def __getattr__(name):
         if status != "loaded":
             continue
         mod_name = f"digim_tool_plugin__{plugin_filename.rsplit('.', 1)[0]}"
-        mod = _sys.modules.get(mod_name)
+        mod = _PLUGIN_MODULES.get(mod_name) or _sys.modules.get(mod_name)
         if mod is not None and hasattr(mod, name):
             return getattr(mod, name)
     # 3. Self-heal: a plugin can be missing from sys.modules if it failed to

@@ -260,3 +260,11 @@ RAG (internal knowledge search) is self-contained via Azure embeddings + local C
 | Vector DB | Bundled ChromaDB (`user/common/rag/chromadb/`) |
 | RDB | Azure Database for PostgreSQL (Private Endpoint) — see [SETUP_POSTGRESQL_AZURE.en.md](SETUP_POSTGRESQL_AZURE.en.md) |
 | Web search | Disabled by default (no external reachability) |
+
+---
+
+## Note: outbound usage statistics
+
+- ChromaDB starts with its anonymous usage statistics off (`anonymized_telemetry=False`; the image also sets `ANONYMIZED_TELEMETRY=False`), so a closed network no longer logs repeated DNS errors for it.
+- Streamlit's usage statistics are off through `--browser.gatherUsageStats false` in `startup.sh_sample`. Pass the same flag when starting it by hand, or put `[browser]` `gatherUsageStats = false` in `.streamlit/config.toml`.
+- LLM SDKs you do not use (google-genai / anthropic / llamaapi) are loaded only when their engine is used, so an Azure-OpenAI-only image starts without them.

@@ -496,7 +496,7 @@ def _api_deliver(job: dict, items: list, record: dict):
     rep = None
     if api.get("enabled") and items:
         import DigiM_Services as dmsv
-        rep = dmsv.deliver(job, items, api.get("content") or "response")
+        rep = dmsv.deliver(job, items, api.get("content") or "response", api.get("service_id") or "")
         logger.info(f"[scheduler] api delivery job_id={job.get('job_id')}: sent={len(rep['sent'])} "
                     f"failed={len(rep['failed'])} no_endpoint={len(rep['no_endpoint'])} batches={rep['batches']}")
         record = dict(record, api=rep)
@@ -727,9 +727,99 @@ def _stop_all_locked():
     _active = {}
 
 
+# ====== One scheduler per host ======
+# Every WebUI process imports this module and calls start_all(), so two
+# Streamlit processes (the stock and the _modified app, or several workers)
+# each fired every job: pushes arrived twice, Update RAG ran twice at once.
+# Only the process holding an OS lock on TEMP_FOLDER/scheduler.lock runs it;
+# when that process ends the lock is released and the next one to call
+# start_all() takes over. Separate hosts need their own SCHEDULER_ENABLE.
+_RELOAD_POLL_SEC = 30
+_leader_fh = None
+_reload_seen = 0.0
+
+
+def _temp_folder() -> str:
+    import DigiM_Util as _dmu
+    folder = (_dmu.read_yaml_file("setting.yaml") or {}).get("TEMP_FOLDER", "user/common/temp/")
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+
+def _reload_request_path() -> str:
+    return os.path.join(_temp_folder(), "scheduler.reload")
+
+
+def scheduler_enabled() -> bool:
+    """SCHEDULER_ENABLE=N in system.env keeps this process from ever running
+    the scheduler (an API-only container, a second WebUI host)."""
+    return (os.getenv("SCHEDULER_ENABLE") or "Y").strip().upper() not in ("N", "NO", "0", "FALSE", "OFF")
+
+
+def is_leader() -> bool:
+    global _leader_fh
+    if not scheduler_enabled():
+        return False
+    if _leader_fh is not None:
+        return True
+    try:
+        import fcntl
+    except ImportError:          # no OS lock (Windows): behave as before
+        return True
+    fh = open(os.path.join(_temp_folder(), "scheduler.lock"), "a")
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.close()
+        return False
+    _leader_fh = fh             # held for the life of the process
+    logger.info("[scheduler] this process runs the scheduler (pid=%s)", os.getpid())
+    return True
+
+
+def _check_reload_request():
+    """Runs in the leader: apply a Reload pressed in another process."""
+    global _reload_seen
+    try:
+        stamp = os.path.getmtime(_reload_request_path())
+    except OSError:
+        return
+    if stamp <= _reload_seen:
+        return
+    _reload_seen = stamp
+    # Not from this job's own thread: reload() shuts the scheduler down.
+    threading.Thread(target=reload, name="scheduler-reload", daemon=True).start()
+
+
 def start_all() -> dict:
+    if not is_leader():
+        return {"started": [], "skipped": [], "leader": False,
+                "note": "disabled by SCHEDULER_ENABLE" if not scheduler_enabled()
+                        else "another process runs the scheduler"}
     with _scheduler_lock:
-        return _start_all_locked()
+        res = _start_all_locked()
+        _add_reload_watch()
+        return res
+
+
+def _add_reload_watch():
+    global _scheduler, _reload_seen
+    if not _reload_seen:
+        try:
+            _reload_seen = os.path.getmtime(_reload_request_path())
+        except OSError:
+            _reload_seen = time.time()
+    if _scheduler is None:
+        _scheduler = _build_scheduler()
+        if _scheduler is None:
+            return
+    try:
+        _scheduler.add_job(_check_reload_request, "interval", seconds=_RELOAD_POLL_SEC,
+                           id="__reload_watch__", replace_existing=True)
+        if not getattr(_scheduler, "running", False):
+            _scheduler.start()
+    except Exception as e:
+        logger.warning(f"[scheduler] reload watch not started: {e}")
 
 
 def stop_all():
@@ -738,9 +828,18 @@ def stop_all():
 
 
 def reload() -> dict:
+    if not is_leader():
+        # Starting a scheduler here would run every job a second time; leave
+        # the request for the process that runs it.
+        with open(_reload_request_path(), "w") as f:
+            f.write(datetime.now().isoformat())
+        return {"started": [], "requested": True, "leader": False,
+                "note": f"the scheduler runs in another process; it reloads within {_RELOAD_POLL_SEC}s"}
     with _scheduler_lock:
         _stop_all_locked()
-        return _start_all_locked()
+        res = _start_all_locked()
+        _add_reload_watch()
+        return res
 
 
 def run_now(job_id: str) -> dict:
@@ -761,6 +860,8 @@ def get_status() -> dict:
     running = bool(_scheduler is not None and getattr(_scheduler, "running", False))
     return {
         "running": running,
+        "leader": bool(_leader_fh is not None) if scheduler_enabled() else False,
+        "enabled": scheduler_enabled(),
         "active_job_ids": list(_active.keys()),
         "jobs": jobs,
     }

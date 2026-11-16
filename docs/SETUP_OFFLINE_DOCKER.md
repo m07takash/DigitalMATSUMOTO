@@ -262,3 +262,11 @@ TIKTOKEN_DISABLE="true"
 | ベクトル DB | コンテナ内蔵 ChromaDB（`user/common/rag/chromadb/`） |
 | RDB | Azure Database for PostgreSQL（Private Endpoint）※ [SETUP_POSTGRESQL_AZURE.md](SETUP_POSTGRESQL_AZURE.md) |
 | Web 検索 | 原則無効（外部到達不可） |
+
+---
+
+## 補足: 外向きの利用統計
+
+- ChromaDB の匿名の利用統計は送らない設定で起動します（`anonymized_telemetry=False`、イメージにも `ANONYMIZED_TELEMETRY=False`）。閉域で名前解決エラーのログが繰り返し出ることはありません。
+- Streamlit の利用統計は `startup.sh_sample` の `--browser.gatherUsageStats false` で止めます。手で起動するときも同じ引数を付けるか、`.streamlit/config.toml` に `[browser]` `gatherUsageStats = false` を書いてください。
+- 使わない LLM の SDK（google-genai / anthropic / llamaapi）は、そのエンジンを使うときにだけ読み込みます。Azure OpenAI だけの構成なら、イメージから外しても起動できます。

@@ -379,14 +379,14 @@ CREATE TABLE IF NOT EXISTS digim_user_memory_persona (
 
 ### 4-8. digim_mst（マスタデータ）
 
-`setting.yaml` の `MST_STORE_METHOD` を `"PostgreSQL"` にすると、`user/common/mst/` 配下の8マスタ
-（`users` / `rags` / `prompt_templates` / `notion_db` / `category_map` / `scheduled_jobs` / `session_summary_presets` / `services`）が
+`setting.yaml` の `MST_STORE_METHOD` を `"PostgreSQL"` にすると、`user/common/mst/` 配下の9マスタ
+（`users` / `rags` / `prompt_templates` / `notion_db` / `category_map` / `scheduled_jobs` / `session_summary_presets` / `services` / `messages`）が
 **まとめて**このテーブルに移ります。1マスタ＝1行で、JSON ファイルの中身がそのまま JSONB に入ります。
 アプリ初回アクセス時に `CREATE TABLE IF NOT EXISTS` で自動作成されます。
 
 ```sql
 -- Master data (users / rags / prompt_templates / notion_db / category_map /
--- scheduled_jobs / session_summary_presets / services) when MST_STORE_METHOD=PostgreSQL.
+-- scheduled_jobs / session_summary_presets / services / messages) when MST_STORE_METHOD=PostgreSQL.
 -- One row per master; the payload is the whole JSON document.
 CREATE TABLE IF NOT EXISTS digim_mst (
     name        TEXT PRIMARY KEY,
@@ -398,7 +398,7 @@ CREATE TABLE IF NOT EXISTS digim_mst (
 切り替えは設定だけでは移行されません。一度だけ取り込みます。
 
 ```bash
-python3 DigiM_MstStore.py import          # JSON ファイル → digim_mst（8件）
+python3 DigiM_MstStore.py import          # JSON ファイル → digim_mst（9件）
 python3 DigiM_MstStore.py import users    # 1件だけ
 python3 DigiM_MstStore.py list            # 行とファイルの有無を一覧
 python3 DigiM_MstStore.py export          # digim_mst → JSON ファイル（JSON に戻す／バックアップ）
@@ -678,7 +678,7 @@ digim_sessions  (1)
 | `digim_dialogs` | 会話の各ターン（入力・応答・トークン数・RAG利用状況等） |
 | `digim_references` | 各ターンで参照されたRAGナレッジチャンクの詳細 |
 | `digim_chat_history` | 会話履歴のライブ R/W（`SESSION_STORE_METHOD=PostgreSQL`）。turn 1 行・JSONB |
-| `digim_mst` | マスタデータ8件（`MST_STORE_METHOD=PostgreSQL`）。1マスタ 1 行・JSONB |
+| `digim_mst` | マスタデータ9件（`MST_STORE_METHOD=PostgreSQL`）。1マスタ 1 行・JSONB |
 | `digim_chat_history_archive` / `_sessions` | 会話履歴の退避先とセッション単位の台帳（History Retention） |
 | `digim_steps` | 各ターンで走ったサポートエージェント・Web 検索・SKILL・書き換え（1ステップ 1 行。エクスポートで自動作成） |
 | `digim_sessions_archive` / `digim_dialogs_archive` / `digim_references_archive` / `digim_steps_archive` | 分析ミラーの退避先。削除しない（History Retention の backup / purge で更新） |

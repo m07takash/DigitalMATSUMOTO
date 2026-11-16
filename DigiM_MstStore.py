@@ -47,6 +47,7 @@ MASTERS = {
     "scheduled_jobs":          ("",                         "scheduled_jobs.json"),
     "session_summary_presets": ("",                         "session_summary_presets.json"),
     "services":                ("",                         "services.json"),
+    "messages":                ("",                         "messages.json"),
 }
 
 _TABLE = "digim_mst"

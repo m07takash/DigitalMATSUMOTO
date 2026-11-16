@@ -106,13 +106,16 @@ def _post(cfg: dict, payload: dict) -> List[dict]:
     return out
 
 
-def deliver(job: dict, items: List[dict], content: str = "response") -> Dict[str, Any]:
+def deliver(job: dict, items: List[dict], content: str = "response", service_id: str = "") -> Dict[str, Any]:
     """Send job messages to each session's service front end.
 
     items: [{session_id, seq, input, response, response_display}] — one per
     target session, as the job delivered it into the history.
     Sessions are grouped by their own service_id (the conversation partner's
     channel), sent BATCH_SIZE at a time with INTERVAL_SEC between POSTs.
+    `service_id` sends every message through that service instead: a
+    session's own service_id is whichever channel ran its last turn, so a
+    conversation used from LINE and the WebUI would otherwise go to the WebUI.
     """
     import DigiM_Session as dms
 
@@ -142,7 +145,7 @@ def deliver(job: dict, items: List[dict], content: str = "response") -> Dict[str
         }
         if content == "pair":
             msg["input"] = it.get("input") or ""
-        groups.setdefault(svc_id or "", []).append(msg)
+        groups.setdefault(service_id or svc_id or "", []).append(msg)
 
     for svc_id, msgs in groups.items():
         cfg = push_config(svc_id)

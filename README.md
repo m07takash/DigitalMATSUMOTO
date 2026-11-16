@@ -575,6 +575,7 @@ pip / Git / apt が使えない閉域ネットワーク下の Azure 環境へ構
 | `sample_notion_db.json` | `notion_db.json` | Notion DB定義 |
 | `sample_scheduled_jobs.json` | `scheduled_jobs.json` | スケジュールされたジョブ（Scheduler 画面で作成） |
 | `sample_session_summary_presets.json` | `session_summary_presets.json` | セッションサマリーのテンプレート |
+| `sample_messages.json` | `messages.json` | ターン実行中の進行メッセージ（サービスごとの文面、SKILL の表示名） |
 | `sample_services.json` | `services.json` | サービス（`SERVICE_ID`）ごとの設定。スケジュールジョブがフロントエンドへ送るときの送り先・1回の件数・間隔 |
 | `sample_web_search_guard.json` | `web_search_guard.json` | Web 検索のガードレール設定 |
 
@@ -590,7 +591,7 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
 
 #### WebUI での編集（Master Maintenance）
 
-`Allowed["Master Maintenance"]` が `true` のユーザーには、画面上部の切り替えに **Master Maintenance** が出ます（既定 `false`）。8つのマスタを、`MST_STORE_METHOD` に応じて JSON ファイルか `digim_mst` の行のどちらでも同じ画面で編集できます（users は `LOGIN_AUTH_METHOD=RDB` の `digim_users` にも対応）。
+`Allowed["Master Maintenance"]` が `true` のユーザーには、画面上部の切り替えに **Master Maintenance** が出ます（既定 `false`）。9つのマスタを、`MST_STORE_METHOD` に応じて JSON ファイルか `digim_mst` の行のどちらでも同じ画面で編集できます（users は `LOGIN_AUTH_METHOD=RDB` の `digim_users` にも対応）。
 
 - **Entry** で1件ずつ（プロンプトテンプレートは `PROMPT_TEMPLATE` / `SPEAKING_STYLE` の下の1件ずつ、テンプレートの本文はテキストのまま）、**Whole document** でマスタ全体を JSON で編集します。新しいエントリの追加と削除もできます。
 - 保存の前に形を検査します（例: テンプレートを `PROMPT_TEMPLATE` の外に置く、`job_id` の重複、`services` の `PUSH` にトークンを直接書く、はエラー）。
@@ -599,9 +600,31 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
 - users の `PW` は `********` で表示します。そのままなら今のパスワード、書き換えればその値を bcrypt でハッシュにして保存します。
 - 反映のタイミングはマスタごとに画面に出ます（users は次のログイン、rags は Update RAG、scheduled_jobs は Reload Schedulers など）。PostgreSQL モードでは、ほかのプロセスへの反映は最大 `MST_STORE_CACHE_SEC` 遅れます。
 
+#### 進行メッセージ（`messages` マスタ）
+
+ターンの実行中に出る1行（WebUI の「⏳ …」、API の `progress.message`）は `user/common/mst/messages.json`（サンプルは `sample_messages.json`）の文面で表示します。マスタに無いものは従来の英語のままです。Master Maintenance の **Progress messages** から編集できます。
+
+```json
+{
+    "STATUS": {
+        "llm_running": {"DEFAULT": "回答を考えています…", "LINE": "ちょっと考え中です"},
+        "chain_running": {"DEFAULT": "{index}/{count} 番目のエージェントが実行中（{type}）"}
+    },
+    "SKILL": {
+        "refine_expression": {"AFTER": "表現を整えています", "LINE": {"AFTER": "言い回しを直しています"}},
+        "WebSearch": {"DEFAULT": "Web を検索しています"}
+    }
+}
+```
+
+- `STATUS` はステップごと（`web_search_start` / `rag_query_gene_start` / `rag_start` / `llm_running` / `citations_inserting` / `digest_generating` / `thinking` / `thinking_turn` / `thinking_preview` / `thinking_turn_preview` / `personas_selecting` / `skill_before` / `skill_after` / `chain_running` / `batch_qa` / `running`）。`DEFAULT` が基本の文面で、`SERVICE_ID`（`Streamlit` / `LINE` など、呼び出し元のサービス）ごとに上書きできます。
+- `{turn}` `{max_turns}` `{max}` `{name}` `{index}` `{count}` `{type}` `{sheet}` などはステップの値で埋まります（使える値は保存時の検査が教えます。埋まらない `{…}` はそのまま表示）。
+- `SKILL` は SKILL ごとの表示名です（`BEFORE` / `AFTER` / 両方に使う `DEFAULT`、サービスごとの上書きも可）。無い SKILL は「SKILL[AFTER]:refine_expression」のような従来の表示です。表現を書き換える SKILL が複数同時に走るときは「 / 」でつないで1行にします。
+- API の `progress` には、文面と一緒に `message_code` / `message_params` も返るので、フロントエンドが自分の言葉に置き換えることもできます。
+
 #### マスタデータの保存バックエンド
 
-`user/common/mst/` 配下の8マスタ（`users` / `rags` / `prompt_templates` / `notion_db` / `category_map` / `scheduled_jobs` / `session_summary_presets` / `services`）は、`setting.yaml` の **`MST_STORE_METHOD`** で**まとめて**保存先を切り替えられます。既定は **JSON**（従来通りファイル）。
+`user/common/mst/` 配下の9マスタ（`users` / `rags` / `prompt_templates` / `notion_db` / `category_map` / `scheduled_jobs` / `session_summary_presets` / `services` / `messages`）は、`setting.yaml` の **`MST_STORE_METHOD`** で**まとめて**保存先を切り替えられます。既定は **JSON**（従来通りファイル）。
 
 | モード | 保存先 | 特徴 |
 |---|---|---|
@@ -627,6 +650,7 @@ PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
 - `SESSION_STORE_METHOD` を切り替えても、**既にディスクに存在する `chat_memory.json` は引き続き JSON 経路で R/W されます**（既存セッションは壊れない）
 - 新規セッションのみ選択したバックエンドに書かれます
 - サイドファイル（`status.yaml` / `vec/*.npy` / `contents/` / `analytics/`）は選択に関わらずディスク側で維持されます
+- **PostgreSQL / CosmosDB に繋がらないとき**は、`SESSION_STORE_FALLBACK`（`setting.yaml`）で決まります。既定の `"none"` は読み書きをエラーにしてターンを失敗させます。`"file"` はそのときだけローカルの `chat_memory.json` を使いますが、DB にあるセッションは空の履歴として読まれ、書いたファイルが以後優先されるため、DB が戻ってもそのセッションは障害中のターンだけに見えます（書いたセッション ID はエラーログに出ます）
 
 #### PostgreSQL バックエンドのセットアップ
 
@@ -668,7 +692,7 @@ CREATE INDEX IF NOT EXISTS idx_digim_chat_history_session_seq
     ON digim_chat_history (session_id, seq DESC);
 
 -- Master data (users / rags / prompt_templates / notion_db / category_map /
--- scheduled_jobs / session_summary_presets / services) when MST_STORE_METHOD=PostgreSQL.
+-- scheduled_jobs / session_summary_presets / services / messages) when MST_STORE_METHOD=PostgreSQL.
 -- One row per master; the payload is the whole JSON document.
 CREATE TABLE IF NOT EXISTS digim_mst (
     name        TEXT PRIMARY KEY,
@@ -3106,6 +3130,8 @@ USER_MEMORY_PERSONA_BACKEND="EXCEL"
 
 **WebUI操作:** ジョブごとに **Edit** / **Run Now**（即時1回実行）/ **Enable/Disable** / **Delete**。ジョブ追加は **Add New Job** から（新しいジョブは Enabled が ON の状態で開くので、そのまま Save すると有効なジョブになります）、追加・cron変更後は **Reload Schedulers** で稼働中スケジューラに反映。APScheduler 未インストール環境では cron 起動はスキップされますが Run Now による手動実行は可能。
 
+**スケジューラは1ホストで1プロセスだけ動きます。** WebUI を複数起動しても（例: `WebDigiMatsuAgent.py` と `_modified`）、`TEMP_FOLDER/scheduler.lock` を取れたプロセスだけがジョブを動かし、そのプロセスが終わると次に WebUI を読み込んだプロセスが引き継ぎます。動かしていないプロセスで Reload Schedulers を押すと、動かしているプロセスが 30 秒以内に読み直します。`system.env` の `SCHEDULER_ENABLE=N` でそのプロセスでは動かさないようにできます（API 専用のコンテナ、2台目のホストなど。ホストをまたぐ排他は行わないので、2台目以降は `N` にしてください）。
+
 #### スケジュール実行と配信（`kind: "agent_run"`）
 
 Scheduler の **Add New Job** → Kind `agent_run` で、エージェントの定期実行とメッセージ配信を1つの種別として設定します。
@@ -3118,7 +3144,7 @@ Scheduler の **Add New Job** → Kind `agent_run` で、エージェントの�
 | **Message** | `generated`（プロンプトを渡してエージェントに生成させる）/ `fixed`（LLM を呼ばず、入力文をそのまま投函） |
 | **Compose separately for each target session** | `generated` かつ配信先が既存セッションのとき。ON でセッション毎に個別生成 |
 | **Keep in conversation memory** | 既存セッションへの配信時。OFF で**チャットには表示されるが以降のターンでは想起されない**（`SETTING.MEMORY_FLG="N"`） |
-| **Send to the service's front end via API** | ON で、履歴に書いたメッセージをセッションのサービスのフロントエンドへも送る。送る内容は **Response only** / **Input and response**（下記） |
+| **Send to the service's front end via API** | ON で、履歴に書いたメッセージをセッションのサービスのフロントエンドへも送る。送る内容は **Response only** / **Input and response**、送り先のサービスは **Deliver through**（下記） |
 | **Execution flags** | 実行時の設定（MEMORY_USE / MEMORY_SAVE / RAG_QUERY_GENE / META_SEARCH / THINKING_MODE / PRIVATE_MODE ほか）。既存セッションへの配信での **MEMORY_SAVE** の意味は下記 |
 
 **送信対象は「グループ」ではなくフィルタ条件**として保持します。ジョブ登録後に作られたセッションも条件に合えば自動的に対象になり、グループの CRUD や整合管理が不要です。フォームには現在の該当件数が表示されます。
@@ -3188,6 +3214,7 @@ Scheduler の **Add New Job** → Kind `agent_run` で、エージェントの�
 - `2xx` を返せばその回の全セッションを送信済みにします。一部の相手に届けられなかったときは `{"failed": ["<session_id>", ...]}`（または `[{"session_id": "...", "error": "..."}]`）を返すと、それだけ失敗に数えます。`2xx` 以外・タイムアウトはその回の全件が失敗です。
 - 結果はジョブの `last_push.api`（`sent` / `failed` / `no_endpoint` / `batches`）に入り、一覧に表示されます。送り先があったのに全件失敗したときだけジョブはエラーになります（履歴への書き込みは済んでいるため、一部の失敗では止めません）。
 - `MST_STORE_METHOD=PostgreSQL` のときは、`services.json` を作ったあと `python3 DigiM_MstStore.py import services` で一度取り込みます。
+- **Deliver through**（`api_delivery.service_id`）でサービスを選ぶと、全メッセージをそのサービスの受け口へ送ります。セッションの `service_id` は最後にターンを実行したチャネルで上書きされるので、同じ会話を LINE と WebUI の両方で使うと、指定しない場合は WebUI（受け口なし）に向かいます。
 - 受け口の例として、受け取った JSON を LINE の Messaging API で push する [`demo/push_receiver/line_receiver.py`](demo/push_receiver/README.md) があります（自分の LINE で試す手順つき）。
 
 #### Personaのステータスと自動承認
@@ -3946,12 +3973,14 @@ curl -s -X POST http://localhost:8899/run_async -H "Content-Type: application/js
 
 curl -s http://localhost:8899/jobs/540f67f1...
 # 実行中: {"state": "running", "elapsed_sec": 4,
-#          "progress": {"status": "LOCKED", "message": "Running LLM", "partial_response": "...", "error": ""}}
+#          "progress": {"status": "LOCKED", "message": "Running LLM", "message_code": "llm_running",
+#                       "message_params": {}, "partial_response": "...", "error": ""}}
 # 終了後: {"state": "done", "result": { /run と同じレスポンス }, ...}
 ```
 
 - 受け付けた時点でセッションをロックします。同じセッションに続けて送ると `429` です（`/run` は最大60秒待ちますが、`/run_async` は待ちません）。
 - ジョブの状態は `TEMP_FOLDER/api/jobs/<job_id>.json` に書きます。gunicorn の複数ワーカーのどれに問い合わせても読めるよう、プロセスのメモリには持ちません。途中経過はセッションの `status.yaml`（WebUI のチャットが読むものと同じ）から返します。
+- 添付を置くリクエストごとの一時フォルダ（`TEMP_FOLDER/api/<id>/`）はターンが終わると消します。ジョブのファイルと取り残された一時フォルダは、`API_JOB_RETENTION_HOURS`（`system.env`、既定 24 時間、0 で残す）を過ぎると次のジョブの開始時に消します。
 - API のプロセスを再起動すると、実行中のジョブは止まり `running` のまま残ります。`progress.status` が `UNLOCKED` になったのに `running` のままなら、そのジョブは止まっています。
 - `done` の後もしばらく `progress.status` が `LOCKED` のことがあります。ダイジェストを裏で作っている間です。
 
@@ -3959,7 +3988,7 @@ curl -s http://localhost:8899/jobs/540f67f1...
 
 1回の HTTP リクエストで LLM 実行が完結し、応答を直接返します。同一 `session_id` を指定すれば会話が継続されます。時間のかかるターンや、途中経過を見せたいときは同じ入力で `POST /run_async` を使います。
 
-同じセッションが実行中（LOCKED）の場合は最大60秒待機し、解除後に実行されます。タイムアウト時は `429` を返します。
+同じセッションが実行中（LOCKED）の場合は最大60秒待機し、解除後に実行されます。タイムアウト時は `429` を返します。確認と LOCKED の書き込みは OS のファイルロックの中で1回で行うので、同じセッションへ同時に来た要求（gunicorn の別ワーカー、WebUI と API など）が両方とも実行されることはありません（同じホストの中で有効。複数ホストでは DB のロックが別に必要です）。落ちたプロセスが残した LOCKED は、`status.yaml` が `SESSION_LOCK_STALE_SEC`（`setting.yaml`、既定 3600 秒、0 で無効）変わらなければ次のターンが引き継ぎます。
 
 **リクエスト:**
 
@@ -4033,7 +4062,7 @@ curl -s http://localhost:8899/jobs/540f67f1...
 | `meta_search` | `true` | メタデータ検索（日付抽出） |
 | `rag_query_gene` | `true` | RAG検索用クエリ生成 |
 | `web_search` | `false` | Web検索（`true` にすると `web_search_engine` で指定したエンジンで検索） |
-| `web_search_engine` | `"OpenAI"` | Web検索エンジン（`Perplexity` / `OpenAI` / `Google`）。`web_search` が `false` の場合は使用されない |
+| `web_search_engine` | `setting.yaml` の `WEB_SEARCH_DEFAULT` | Web検索エンジン（`Perplexity` / `OpenAI` / `Google` など）。`WEB_SEARCH_ENGINES_AVAILABLE` に無いエンジンは既定のエンジンに置き換えます（WebUI と同じ）。`web_search` が `false` の場合は使用されない |
 | `web_search_guardrail` | `true` | Web検索結果を「参考資料」ラップで囲み、LLMがトーン/文脈を保つよう指示。`false` にすると素の検索結果テキストがそのまま渡る |
 | `private_mode` | `false` | Private Mode。`true` にすると `private: true` のRAGデータが検索対象外になる |
 | `personas` | （未指定） | ペルソナ ID の配列（`chat_options` の `orgs[].personas`）。2つ以上で並列に実行し、1ターンに各ペルソナの回答が並ぶ。見つからない ID は `personas_ignored` で返る |

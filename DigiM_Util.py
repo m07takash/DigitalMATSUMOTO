@@ -25,7 +25,6 @@ import base64
 import tiktoken
 import openai
 from openai import OpenAI, AzureOpenAI
-from google import genai
 import fitz  # PyMuPDF
 from docx import Document as DocxDocument
 from pptx import Presentation
@@ -1021,6 +1020,8 @@ def count_token(tokenizer, model, text):
             encoding = _load_tiktoken_encoding("cl100k_base")
             tokens = len(encoding.encode(text))
     elif tokenizer == "gemini":
+        # Imported here so deployments without google-genai still start.
+        from google import genai
         gemini_client = genai.Client(api_key=gemini_api_key)
         response_tokens = gemini_client.models.count_tokens(model=model, contents=text)
         tokens = response_tokens.total_tokens

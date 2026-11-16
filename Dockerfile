@@ -3,6 +3,8 @@ FROM ubuntu:22.04
 
 # Environment variables
 ENV DEBIAN_FRONTEND=noninteractive
+# No usage telemetry (ChromaDB): a closed network only logs DNS errors for it.
+ENV ANONYMIZED_TELEMETRY=False
 
 # Working directory
 WORKDIR /app

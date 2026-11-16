@@ -48,7 +48,23 @@ def get_chroma_client():
     if _chroma_client is None:
         with _chroma_client_lock:
             if _chroma_client is None:  # double-checked locking
-                _chroma_client = chromadb.PersistentClient(path=rag_folder_db_path)
+                # Telemetry off: Chroma otherwise tries to reach posthog on every
+                # start, which only fills the log with DNS errors on a closed network.
+                from chromadb.config import Settings as _ChromaSettings
+                try:
+                    _chroma_client = chromadb.PersistentClient(
+                        path=rag_folder_db_path, settings=_ChromaSettings(anonymized_telemetry=False))
+                except ValueError as _e:
+                    # Chroma keeps one client per path per process. When this
+                    # module is re-imported (Streamlit reloads changed modules)
+                    # the one made before can carry other settings, and asking
+                    # for different ones raises. Reuse it; the setting applies
+                    # from the next process start.
+                    if "different settings" not in str(_e):
+                        raise
+                    logger.warning("Chroma client for %s already exists with other settings; reusing it "
+                                   "(restart the process to apply anonymized_telemetry=False)", rag_folder_db_path)
+                    _chroma_client = chromadb.PersistentClient(path=rag_folder_db_path)
     return _chroma_client
 
 # Build context from attached content
