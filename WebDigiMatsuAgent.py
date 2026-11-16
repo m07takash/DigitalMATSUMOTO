@@ -218,6 +218,8 @@ if 'allowed_support_eval' not in st.session_state:
     st.session_state.allowed_support_eval = True
 if 'allowed_scheduler' not in st.session_state:
     st.session_state.allowed_scheduler = False
+if 'allowed_master_maintenance' not in st.session_state:
+    st.session_state.allowed_master_maintenance = False
 if 'eval_results_excel' not in st.session_state:
     st.session_state.eval_results_excel = None
 if 'eval_summary' not in st.session_state:
@@ -668,6 +670,7 @@ def user_allowed_parameter(allowded_dict):
     st.session_state.allowed_support_eval = allowded_dict.get("Support Eval", True)
     st.session_state.allowed_user_memory = allowded_dict.get("User Memory", True)
     st.session_state.allowed_scheduler = allowded_dict.get("Scheduler", False)
+    st.session_state.allowed_master_maintenance = allowded_dict.get("Master Maintenance", False)
 
 # Background task execution helper
 import threading as _threading
@@ -5177,31 +5180,36 @@ def _scheduler_view():
             _agent_steps = [_s for _s in _dmsj.job_steps(_j) if _s["kind"] == "agent_run"]
             for _si, _astep in enumerate(_agent_steps):
                 _p = _astep["params"]
+                _ad = _p.get("api_delivery") or {}
+                if _ad.get("enabled"):
+                    _col2.write("API delivery: `"
+                                + ("input and response" if _ad.get("content") == "pair" else "response only")
+                                + "`")
                 if len(_agent_steps) > 1:
                     _col2.write(f"**agent_run #{_si + 1}**")
-                    _t = _p.get("target") or {}
-                    _m = _p.get("message") or {}
-                    _col2.write(f"agent: `{_p.get('agent_file')}` / engine=`{_p.get('engine') or '(default)'}`")
-                    _t_mode_v = _t.get("mode") or "new"
-                    _t_desc = _t_mode_v
-                    if _t_mode_v == "selected":
-                        _t_desc += f" ({len(_t.get('session_ids') or [])} session(s))"
-                    elif _t_mode_v == "new":
-                        _t_desc += f" (x{_t.get('new_count') or 1}"
-                        _t_desc += f", owner={_t.get('user_id')}" if _t.get("user_id") else ""
-                        _t_desc += ")"
-                    elif _t.get("filter"):
-                        _t_desc += f" filter={_t.get('filter')}"
-                    _msg_v = _m.get("mode") or "generated"
-                    if _p.get("per_session"):
-                        _msg_v += " (per session)"
-                    _col2.write(f"target: `{_t_desc}` / message: `{_msg_v}`")
-                    if _t_mode_v != "new":
-                        _col2.write(f"keep in memory: `{_p.get('save_to_memory', True)}`")
-                    _body = _p.get("user_input") or _m.get("text") or _m.get("prompt") or ""
-                    if _body:
-                        st.text_area("prompt / message", value=_body, height=80, disabled=True,
-                                     key=f"sch_view_ui_{_jid}_{_si}")
+                _t = _p.get("target") or {}
+                _m = _p.get("message") or {}
+                _col2.write(f"agent: `{_p.get('agent_file')}` / engine=`{_p.get('engine') or '(default)'}`")
+                _t_mode_v = _t.get("mode") or "new"
+                _t_desc = _t_mode_v
+                if _t_mode_v == "selected":
+                    _t_desc += f" ({len(_t.get('session_ids') or [])} session(s))"
+                elif _t_mode_v == "new":
+                    _t_desc += f" (x{_t.get('new_count') or 1}"
+                    _t_desc += f", owner={_t.get('user_id')}" if _t.get("user_id") else ""
+                    _t_desc += ")"
+                elif _t.get("filter"):
+                    _t_desc += f" filter={_t.get('filter')}"
+                _msg_v = _m.get("mode") or "generated"
+                if _p.get("per_session"):
+                    _msg_v += " (per session)"
+                _col2.write(f"target: `{_t_desc}` / message: `{_msg_v}`")
+                if _t_mode_v != "new":
+                    _col2.write(f"keep in memory: `{_p.get('save_to_memory', True)}`")
+                _body = _p.get("user_input") or _m.get("text") or _m.get("prompt") or ""
+                if _body:
+                    st.text_area("prompt / message", value=_body, height=80, disabled=True,
+                                 key=f"sch_view_ui_{_jid}_{_si}")
             if _agent_steps:
                 _lp = _j.get("last_push") or {}
                 if _lp:
@@ -5212,6 +5220,17 @@ def _scheduler_view():
                     if _lp.get("failed"):
                         with st.expander("Failed deliveries", expanded=False):
                             st.json(_lp.get("failed"))
+                    _la = _lp.get("api")
+                    if _la:
+                        st.caption(
+                            f"API delivery: sent {len(_la.get('sent') or [])}, "
+                            f"failed {len(_la.get('failed') or [])}, "
+                            f"no endpoint {len(_la.get('no_endpoint') or [])} "
+                            f"({_la.get('batches', 0)} request(s))")
+                        if _la.get("failed") or _la.get("no_endpoint"):
+                            with st.expander("API delivery details", expanded=False):
+                                st.json({"failed": _la.get("failed") or [],
+                                         "no_endpoint": _la.get("no_endpoint") or []})
 
             _ls = _j.get("last_steps") or []
             if len(_ls) > 1:
@@ -5412,6 +5431,37 @@ def _scheduler_view():
                 help="Off: still shown in the chat, but later turns will not recall it.",
                 key=kp + "savemem")
 
+        # --- Delivery to the service front end -------------------------------
+        # The history write above always happens; this also hands the message to
+        # the front end of each session's service (LINE / Teams / a Bot Service
+        # app), which is the only way a user outside the WebUI ever sees it.
+        _api_cur = dict(_params.get("api_delivery") or {})
+        _api_on = st.checkbox(
+            "Send to the service's front end via API",
+            value=bool(_api_cur.get("enabled")),
+            help="POSTs each target session's message to the endpoint registered for that session's "
+                 "SERVICE_ID in the services master (batch size and interval are set there). "
+                 "Sessions whose service has no endpoint are only written to the history.",
+            key=kp + "api_on")
+        _api_content = _api_cur.get("content") if _api_cur.get("content") in ("response", "pair") else "response"
+        if _api_on:
+            _api_content = st.radio(
+                "Send", ["response", "pair"], index=0 if _api_content == "response" else 1,
+                horizontal=True,
+                format_func=lambda c: "Response only" if c == "response" else "Input and response",
+                help="Input is the prompt the agent was given; a fixed message has none.",
+                key=kp + "api_content")
+            try:
+                import DigiM_Services as _dmsv
+                _eps = _dmsv.endpoints()
+            except Exception:
+                _eps = []
+            if _eps:
+                st.caption("Endpoints in the services master: " + ", ".join(f"`{e}`" for e in _eps))
+            else:
+                st.caption("⚠ No service has an active endpoint in the services master yet "
+                           "(user/common/mst/services.json); nothing will be sent.")
+
         _exec = dict(_params.get("execution") or {})
         st.markdown("**Execution flags**")
         _ec1, _ec2, _ec3 = st.columns(3)
@@ -5436,6 +5486,7 @@ def _scheduler_view():
             "per_session": _per_session,
             "max_generated_sessions": _max_gen,
             "save_to_memory": _save_mem,
+            "api_delivery": {"enabled": _api_on, "content": _api_content},
             "execution": _exec,
         }
         return _params
@@ -5530,7 +5581,9 @@ def _scheduler_view():
                 key="sch_f_cron")
         st.caption(f"Stored as `{_cron}` — **{_dmsch.describe_schedule(_cron, _tz)}**")
 
-        _enabled = st.checkbox("Enabled", value=bool(_existing.get("enabled", False)), key="sch_f_enabled")
+        # A job is created to run; leaving a new one disabled after Save made
+        # it look registered while nothing ever fired.
+        _enabled = st.checkbox("Enabled", value=bool(_existing.get("enabled", _is_new)), key="sch_f_enabled")
 
         # --- Workflow: serial steps -----------------------------------------
         # Nodes live in session_state so + / ↑ / ↓ / ✕ survive reruns. Widget keys
@@ -5607,6 +5660,154 @@ def _scheduler_view():
             st.session_state._sch_edit_id = None
             st.session_state.pop("_sch_nodes_for", None)
             st.rerun()
+
+
+### Master Maintenance screen ###
+def _master_maintenance():
+    """Edit every master (JSON files or digim_mst rows) through DigiM_MstMaintenance."""
+    import DigiM_MstMaintenance as dmmm
+
+    st.subheader("Master Maintenance")
+    st.caption("Edit the masters under `user/common/mst/`, or their `digim_mst` rows when "
+               "`MST_STORE_METHOD` is PostgreSQL. A save is refused when the master changed after "
+               "you opened it, and the previous version is kept under `_backup/` first.")
+
+    _msg = st.session_state.pop("_mm_msg", None)
+    if _msg:
+        st.success(_msg[0])
+        for _w in _msg[1]:
+            st.warning(_w)
+
+    _names = dmmm.names()
+    _name = st.selectbox("Master", _names, format_func=lambda n: f"{dmmm.info(n)[0]} ({n})", key="mm_name")
+    _label, _desc, _after = dmmm.info(_name)
+    st.caption(f"{_desc}  \nStored in: `{dmmm.backend(_name)}`  \nAfter saving: {_after}")
+
+    try:
+        _data = dmmm.load(_name)
+    except Exception as _e:
+        st.error(f"Could not read {_name}: {_e}")
+        return
+    _base_key, _gen_key = f"_mm_base::{_name}", f"_mm_gen::{_name}"
+    if _base_key not in st.session_state:
+        st.session_state[_base_key] = dmmm.digest(_data)
+    _gen = st.session_state.get(_gen_key, 0)
+
+    _c1, _c2 = st.columns([1, 5])
+    if _c1.button("Reload", key="mm_reload", help="Read the master again and drop unsaved edits"):
+        st.session_state[_base_key] = dmmm.digest(_data)
+        st.session_state[_gen_key] = _gen + 1
+        st.rerun()
+    if dmmm.digest(_data) != st.session_state[_base_key]:
+        _c2.warning("This master changed after you opened it (another user, the scheduler, another tab). "
+                    "Press Reload to see the current version; a save now would be refused.")
+
+    _view = dmmm.masked(_name, _data)
+    _actor = st.session_state.get("user_id", "")
+
+    def _save(new_doc, what):
+        try:
+            _res = dmmm.save(_name, new_doc, st.session_state[_base_key], actor=_actor)
+        except dmmm.Conflict as _e:
+            st.error(str(_e))
+            return
+        except ValueError as _e:
+            st.error(f"Not saved: {_e}")
+            return
+        except Exception as _e:
+            st.error(f"Save failed: {_e}")
+            return
+        st.session_state[_base_key] = _res["digest"]
+        st.session_state[_gen_key] = _gen + 1
+        st.session_state._mm_msg = (f"Saved {what}. Previous version: `{_res['backup']}`", _res["warnings"])
+        st.rerun()
+
+    def _parse(text, as_text):
+        if as_text:
+            return text, None
+        try:
+            return _json.loads(text), None
+        except Exception as _e:
+            return None, f"Invalid JSON: {_e}"
+
+    _mode = st.radio("Edit", ["Entry", "Whole document"], horizontal=True, key="mm_mode")
+    if _mode == "Entry":
+        _ents = dmmm.entries(_name, _view)
+        _opts = [_json.dumps(list(p), ensure_ascii=False) for p, _ in _ents] + ["__new__"]
+        _labels = {_json.dumps(list(p), ensure_ascii=False): l for p, l in _ents}
+        _sel = st.selectbox(f"Entry ({len(_ents)})", _opts,
+                            format_func=lambda o: "+ New entry" if o == "__new__" else _labels.get(o, o),
+                            key=f"mm_entry::{_name}::{_gen}")
+        _depth = dmmm.ENTRY_DEPTH.get(_name, 1)
+        if _sel == "__new__":
+            if isinstance(_view, list):
+                _path, _cur = (len(_view),), {}
+                st.caption("Appended at the end.")
+            else:
+                _parent = ()
+                if _depth == 2:
+                    _parents = [k for k, v in _view.items() if isinstance(v, dict)]
+                    _parent = (st.selectbox("Under", _parents, key=f"mm_newparent::{_name}::{_gen}"),)
+                _newkey = st.text_input("Key", key=f"mm_newkey::{_name}::{_gen}").strip()
+                _path = _parent + (_newkey,)
+                _cur = "" if _depth == 2 else {}
+        else:
+            _path = tuple(_json.loads(_sel))
+            _cur = dmmm.get_at(_view, _path)
+        _as_text = isinstance(_cur, str)
+        _txt0 = _cur if _as_text else _json.dumps(_cur, indent=4, ensure_ascii=False)
+        _txt = st.text_area("Text" if _as_text else "JSON", value=_txt0,
+                            height=min(640, max(180, 22 * (_txt0.count("\n") + 2))),
+                            key=f"mm_val::{_name}::{_sel}::{_gen}")
+        if _name == "users":
+            st.caption(f"`PW` shows `{dmmm.PW_MASK}`: leave it to keep the password, or type a new one "
+                       "(saved as a bcrypt hash).")
+        _b1, _b2, _b3 = st.columns([1, 1, 2])
+        if _b1.button("Save entry", key=f"mm_save_entry::{_name}::{_gen}", type="primary"):
+            _val, _err = _parse(_txt, _as_text)
+            if _err:
+                st.error(_err)
+            elif _sel == "__new__" and not isinstance(_view, list) and not _path[-1]:
+                st.error("Enter a key for the new entry.")
+            elif _sel == "__new__" and not isinstance(_view, list) and _path[-1] in (dmmm.get_at(_view, _path[:-1]) or {}):
+                st.error(f"{_path[-1]!r} already exists; pick it from the list to edit it.")
+            else:
+                _save(dmmm.set_at(_view, _path, _val), " / ".join(map(str, _path)))
+        if _sel != "__new__":
+            _confirm = _b3.checkbox("Confirm delete", key=f"mm_del_ok::{_name}::{_sel}::{_gen}")
+            if _b2.button("Delete entry", key=f"mm_del::{_name}::{_gen}", disabled=not _confirm):
+                _save(dmmm.delete_at(_view, _path), "deletion of " + " / ".join(map(str, _path)))
+    else:
+        _full = _json.dumps(_view, indent=4, ensure_ascii=False)
+        _txt = st.text_area("JSON", value=_full, height=640, key=f"mm_full::{_name}::{_gen}")
+        if st.button("Save document", key=f"mm_save_full::{_name}::{_gen}", type="primary"):
+            _val, _err = _parse(_txt, False)
+            if _err:
+                st.error(_err)
+            else:
+                _save(_val, "the whole document")
+
+    _errs, _warns = dmmm.validate(_name, _data)
+    if _errs or _warns:
+        with st.expander(f"Checks on the saved version ({len(_errs)} error(s), {len(_warns)} warning(s))"):
+            for _e in _errs:
+                st.error(_e)
+            for _w in _warns:
+                st.warning(_w)
+
+    with st.expander("Backups"):
+        _bks = dmmm.backups(_name)
+        if not _bks:
+            st.caption("No backup yet. One is written before every save from this screen.")
+        else:
+            _bk = st.selectbox("Version", _bks[:10], format_func=os.path.basename, key=f"mm_bk::{_name}::{_gen}")
+            _ok = st.checkbox("Confirm restore (the current version is backed up first)",
+                              key=f"mm_bk_ok::{_name}::{_gen}")
+            if st.button("Restore this version", key=f"mm_bk_restore::{_name}::{_gen}", disabled=not _ok):
+                try:
+                    _save(dmmm.read_backup(_bk), f"a restore from {os.path.basename(_bk)}")
+                except Exception as _e:
+                    st.error(f"Could not read the backup: {_e}")
 
 
 ### User Memory Explorer screen ###
@@ -7902,7 +8103,9 @@ def _pe_ku_sections(dmpe, sc, akeys, tag, top_n=20, store="_pe_memo"):
             else:
                 st.caption("The table of contents of this knowledge base could not be read.")
         else:
-            _mp = _pe_memo(("ku_map", _rag), lambda: dmpe.knowledge_map(_x["collections"]) if _x["collections"] else None, store)
+            _pm = bool(sc.get("private_mode"))
+            _mp = _pe_memo(("ku_map", _rag, _pm), lambda: dmpe.knowledge_map(_x["collections"], private_mode=_pm)
+                           if _x["collections"] else None, store)
             if _mp is None:
                 st.caption("No map for this knowledge base: its collections are not configured on the agent any more.")
             else:
@@ -8023,9 +8226,10 @@ _PE_SAVE_BASE = "user/common/analytics/performance_explorer/"
 # and the results the view keeps in session_state.
 _PE_SAVE_WIDGETS = {
     "User": ("pe_from_d", "pe_from_t", "pe_to_d", "pe_to_t", "pe_axis", "pe_groups", "pe_users", "pe_agents",
-             "pe_top_n", "pe_stop", "pe_kw_n", "pe_k", "pe_unit", "pe_max_units"),
-    "Summary": ("pea_from_d", "pea_from_t", "pea_to_d", "pea_to_t", "pea_agents", "pea_top_n", "pea_stop"),
-    "Knowledge map": ("ape_agent", "ape_from", "ape_to"),
+             "pe_top_n", "pe_stop", "pe_kw_n", "pe_k", "pe_unit", "pe_max_units", "pe_private"),
+    "Summary": ("pea_from_d", "pea_from_t", "pea_to_d", "pea_to_t", "pea_agents", "pea_top_n", "pea_stop",
+                "pea_private"),
+    "Knowledge map": ("ape_agent", "ape_from", "ape_to", "ape_private"),
 }
 _PE_SAVE_STATE = {
     "User": ("_pe_scope", "_pe_memo", "_pe_cluster", "_pe_scores", "_pe_cluster_names", "_pe_theme_now",
@@ -8054,6 +8258,22 @@ def _pe_widx(key, options):
 
 def _pe_wsel(key, options):
     return [v for v in (_pe_wval(key, None) or []) if v in options]
+
+
+def _pe_private_note(sc):
+    """What Private Mode left out of a loaded scope, for the results header."""
+    if sc.get("private_mode") is None:
+        # Saved before the setting existed: its references were never filtered.
+        return " Private chunks are included (saved before the Private Mode setting)."
+    if not sc["private_mode"]:
+        return " Private Mode is off: private chunks are included."
+    _x = sc.get("private_excluded") or {}
+    _n = (f" Private Mode left out {_x.get('refs', 0):,} references to {_x.get('chunks', 0):,} private chunks."
+          if _x.get("refs") else " Private Mode is on (no private chunk was referenced).")
+    if _x.get("unknown_collections"):
+        _n += (" Could not check (collection no longer there): "
+               + ", ".join(_x["unknown_collections"][:5]) + ("…" if len(_x["unknown_collections"]) > 5 else "") + ".")
+    return _n
 
 
 def _pe_km_cache_key():
@@ -8253,6 +8473,8 @@ def _pe_user_section():
     _span = (f" Backed-up history covers {_opt['first']:%Y-%m-%d %H:%M} – {_opt['last']:%Y-%m-%d %H:%M}."
              if _opt["first"] and _opt["last"] else "")
     st.caption(f"Times are in {_tz}.{_span} A user who belongs to several groups counts in each of them.")
+    _private = st.checkbox("Private Mode", value=_pe_wval("pe_private", True), key=_pe_wkey("pe_private"),
+                           help="Same as the chat's Private Mode: leave out the knowledge chunks flagged private (vector Knowledge / Book). Graph and PageIndex have no private flag and stay.")
 
     _clicked = st.button("Run analysis", key="pe_run", type="primary")
     _busy = _pe_busy_slot()
@@ -8271,7 +8493,7 @@ def _pe_user_section():
                         min(i / max(n, 1), 1.0), text=f"Extracting keywords... {i}/{n}"))
                     _bar.empty()
                     with st.spinner("Loading references..."):
-                        dmpe.load_refs(_new)
+                        dmpe.load_refs(_new, private_mode=_private)
             st.session_state._pe_scope = _new
             for _k in _PE_STATE_KEYS:
                 st.session_state.pop(_k, None)
@@ -8300,6 +8522,7 @@ def _pe_user_section():
     _note = f" Left out as not typed by a user: {' and '.join(_left)}." if _left else ""
     if _lo.get("skill_blocks"):
         _note += f" Text a skill injected (web search results) was removed from {_lo['skill_blocks']:,} inputs."
+    _note += _pe_private_note(_sc)
     dmper.arm("Performance Explorer — User", f"Times are in {_tz}.")
     st.caption("Showing: " + " / ".join(_desc) + "." + _note)
 
@@ -8820,6 +9043,8 @@ def _pe_agent_section():
     _t_to = _c[3].time_input("To (time):", value=_pe_wval("pea_to_t", dt_time(23, 59)), step=60, key=_pe_wkey("pea_to_t"))
     _agents = st.multiselect("Agents:", _opt["agents"], default=_pe_wsel("pea_agents", _opt["agents"]), key=_pe_wkey("pea_agents"), placeholder="All agents")
     st.caption(f"Times are in {_tz}. A turn answered by several agents counts for each of them.")
+    _private = st.checkbox("Private Mode", value=_pe_wval("pea_private", True), key=_pe_wkey("pea_private"),
+                           help="Same as the chat's Private Mode: leave out the knowledge chunks flagged private (vector Knowledge / Book). Graph and PageIndex have no private flag and stay.")
 
     _clicked = st.button("Run analysis", key="pea_run", type="primary")
     _busy = _pe_busy_slot()
@@ -8838,7 +9063,7 @@ def _pe_agent_section():
                         min(i / max(n, 1), 1.0), text=f"Extracting keywords... {i}/{n}"), inputs=False)
                     _bar.empty()
                     with st.spinner("Loading references and steps..."):
-                        dmpe.load_refs(_new)
+                        dmpe.load_refs(_new, private_mode=_private)
                         dmpe.load_steps(_new)
             st.session_state._pea_scope = _new
             for _k in (_M, "_pea_reask"):
@@ -8856,6 +9081,7 @@ def _pe_agent_section():
     _desc = [f"{_pf:%Y-%m-%d %H:%M} – {(_pt - timedelta(minutes=1)):%Y-%m-%d %H:%M}"]
     if _sc["filters"]["agents"]:
         _desc.append("agents: " + ", ".join(dmpe.agent_label(a) for a in _sc["filters"]["agents"]))
+    _desc.append(_pe_private_note(_sc).strip().rstrip("."))
     dmper.arm("Performance Explorer — Agent summary", f"Times are in {_tz}.")
     st.caption("Showing: " + " / ".join(_desc))
 
@@ -9010,7 +9236,8 @@ def _pe_agent_section():
                    "This agent's file is no longer there, so its knowledge bases are listed by references.")
 
         def _maps():
-            return {_x["rag_name"]: dmpe.knowledge_map(_x["collections"]) for _x in _secs
+            return {_x["rag_name"]: dmpe.knowledge_map(_x["collections"], private_mode=bool(_sc.get("private_mode")))
+                    for _x in _secs
                     if _x["collections"] and len(_x["ranking"])}
         if ("kn_maps", _ka) not in st.session_state.get(_M, {}):
             with _kn_busy, st.spinner("Placing the knowledge on a map..."):
@@ -9259,6 +9486,8 @@ def _agent_performance_explorer():
     _pcol1, _pcol2 = st.columns(2)
     _ape_from = _pcol1.date_input("Period From:", value=_pe_wval("ape_from", _def_from), key=_pe_wkey("ape_from"))
     _ape_to   = _pcol2.date_input("Period To:",   value=_pe_wval("ape_to", _today), key=_pe_wkey("ape_to"))
+    _ape_private = st.checkbox("Private Mode", value=_pe_wval("ape_private", True), key=_pe_wkey("ape_private"),
+                               help="Same as the chat's Private Mode: leave out the knowledge chunks flagged private (vector Knowledge / Book). Graph and PageIndex have no private flag and stay.")
 
     # --- Scan + cache -----------------------------------------------------
     _cache_key = f"_ape_cache_{_ape_af}_{_ape_from}_{_ape_to}"
@@ -9316,6 +9545,12 @@ def _agent_performance_explorer():
     # =================================================================
     with _tab_kb:
         _agg = ape.aggregate_chunk_refs(_turns)
+        if _ape_private and _agg:
+            _agg, _priv_n, _priv_missing = ape.exclude_private(_agg)
+            st.caption(f"Private Mode left out {_priv_n:,} private chunks." if _priv_n else
+                       "Private Mode is on (no private chunk was referenced).")
+            if _priv_missing:
+                st.caption("Could not check (collection no longer there): " + ", ".join(_priv_missing[:5]))
         if not _agg:
             st.info("No RAG references were captured in these turns.")
             return
@@ -9382,6 +9617,7 @@ def _agent_performance_explorer():
                         dim=_ape_dim, perp=_ape_tsne_perp,
                         size_mode=_ape_size_mode,
                         uniform=_ape_uniform_size,
+                        exclude_private=_ape_private,
                     )
                 elif _retr == "PageIndex" and _def:
                     _render_ape_pageindex_tree(_def, _rag, _rag_agg)
@@ -9441,7 +9677,8 @@ def _ape_size_for_value(value, mode, uniform=False):
     return 40 + 220 * min(abs(value) / cap, 1.0)
 
 
-def _render_ape_vector_scatter(rag_def, rag_name, rag_agg, dim, perp, size_mode, uniform=False):
+def _render_ape_vector_scatter(rag_def, rag_name, rag_agg, dim, perp, size_mode, uniform=False,
+                               exclude_private=False):
     """Vector RAG scatter. Background = every chunk in every backing Chroma
     collection (gray). Foreground = chunks referenced this period, colored
     by the SIGN of the selected metric (blue+, red−, gray 0) and sized by
@@ -9464,6 +9701,8 @@ def _render_ape_vector_scatter(rag_def, rag_name, rag_agg, dim, perp, size_mode,
         _ids = _resp["ids"]; _metas = _resp["metadatas"]; _embeds = _resp["embeddings"]
         for _i, _id in enumerate(_ids):
             _meta = _metas[_i] or {}
+            if exclude_private and _meta.get("private") is True:
+                continue
             _vec_str = _meta.get("vector_data_value_text", "")
             try:
                 _vec = ast.literal_eval(_vec_str) if isinstance(_vec_str, str) else _vec_str
@@ -10173,6 +10412,8 @@ def main():
             _view_options.append("Support Agent Test")
         if st.session_state.allowed_scheduler:
             _view_options.append("Scheduler")
+        if st.session_state.allowed_master_maintenance:
+            _view_options.append("Master Maintenance")
         if len(_view_options) > 1:
             _current = st.session_state.get("main_view", "Chat")
             _view_index = _view_options.index(_current) if _current in _view_options else 0
@@ -11150,6 +11391,10 @@ def main():
         return
     if st.session_state.get("main_view") == "Scheduler":
         _scheduler_view()
+        return
+    if st.session_state.get("main_view") == "Master Maintenance":
+        if st.session_state.allowed_master_maintenance:
+            _master_maintenance()
         return
 
     # Configure the chat session name

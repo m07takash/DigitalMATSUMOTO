@@ -46,6 +46,7 @@ MASTERS = {
     "category_map":            ("",                         "category_map.json"),
     "scheduled_jobs":          ("",                         "scheduled_jobs.json"),
     "session_summary_presets": ("",                         "session_summary_presets.json"),
+    "services":                ("",                         "services.json"),
 }
 
 _TABLE = "digim_mst"

@@ -575,6 +575,7 @@ pip / Git / apt が使えない閉域ネットワーク下の Azure 環境へ構
 | `sample_notion_db.json` | `notion_db.json` | Notion DB定義 |
 | `sample_scheduled_jobs.json` | `scheduled_jobs.json` | スケジュールされたジョブ（Scheduler 画面で作成） |
 | `sample_session_summary_presets.json` | `session_summary_presets.json` | セッションサマリーのテンプレート |
+| `sample_services.json` | `services.json` | サービス（`SERVICE_ID`）ごとの設定。スケジュールジョブがフロントエンドへ送るときの送り先・1回の件数・間隔 |
 | `sample_web_search_guard.json` | `web_search_guard.json` | Web 検索のガードレール設定 |
 
 運用ファイルが無いマスタは、同名の `sample_` ファイルを読みます（最初に画面から保存したときに運用ファイルが作られます）。
@@ -587,9 +588,20 @@ RAG_MST_FILE=rags.json
 PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
 ```
 
+#### WebUI での編集（Master Maintenance）
+
+`Allowed["Master Maintenance"]` が `true` のユーザーには、画面上部の切り替えに **Master Maintenance** が出ます（既定 `false`）。8つのマスタを、`MST_STORE_METHOD` に応じて JSON ファイルか `digim_mst` の行のどちらでも同じ画面で編集できます（users は `LOGIN_AUTH_METHOD=RDB` の `digim_users` にも対応）。
+
+- **Entry** で1件ずつ（プロンプトテンプレートは `PROMPT_TEMPLATE` / `SPEAKING_STYLE` の下の1件ずつ、テンプレートの本文はテキストのまま）、**Whole document** でマスタ全体を JSON で編集します。新しいエントリの追加と削除もできます。
+- 保存の前に形を検査します（例: テンプレートを `PROMPT_TEMPLATE` の外に置く、`job_id` の重複、`services` の `PUSH` にトークンを直接書く、はエラー）。
+- **開いた後にマスタが変わっていたら保存しません**（別のユーザー、スケジューラの `last_run` の書き込み、別のタブ）。**Reload** で読み直してから編集し直します。
+- 保存の前に、それまでの版を `user/common/mst/_backup/<マスタ名>/` に書きます（どちらの保存先でも、各マスタ最新30件）。**Backups** から選んで戻せます。
+- users の `PW` は `********` で表示します。そのままなら今のパスワード、書き換えればその値を bcrypt でハッシュにして保存します。
+- 反映のタイミングはマスタごとに画面に出ます（users は次のログイン、rags は Update RAG、scheduled_jobs は Reload Schedulers など）。PostgreSQL モードでは、ほかのプロセスへの反映は最大 `MST_STORE_CACHE_SEC` 遅れます。
+
 #### マスタデータの保存バックエンド
 
-`user/common/mst/` 配下の7マスタ（`users` / `rags` / `prompt_templates` / `notion_db` / `category_map` / `scheduled_jobs` / `session_summary_presets`）は、`setting.yaml` の **`MST_STORE_METHOD`** で**まとめて**保存先を切り替えられます。既定は **JSON**（従来通りファイル）。
+`user/common/mst/` 配下の8マスタ（`users` / `rags` / `prompt_templates` / `notion_db` / `category_map` / `scheduled_jobs` / `session_summary_presets` / `services`）は、`setting.yaml` の **`MST_STORE_METHOD`** で**まとめて**保存先を切り替えられます。既定は **JSON**（従来通りファイル）。
 
 | モード | 保存先 | 特徴 |
 |---|---|---|
@@ -656,7 +668,7 @@ CREATE INDEX IF NOT EXISTS idx_digim_chat_history_session_seq
     ON digim_chat_history (session_id, seq DESC);
 
 -- Master data (users / rags / prompt_templates / notion_db / category_map /
--- scheduled_jobs / session_summary_presets) when MST_STORE_METHOD=PostgreSQL.
+-- scheduled_jobs / session_summary_presets / services) when MST_STORE_METHOD=PostgreSQL.
 -- One row per master; the payload is the whole JSON document.
 CREATE TABLE IF NOT EXISTS digim_mst (
     name        TEXT PRIMARY KEY,
@@ -876,6 +888,7 @@ CosmosDB モードで起動しつつパッケージが未インストールの�
       "Download Md": true,
       "Knowledge Explorer": true,
       "Scheduler": false,
+      "Master Maintenance": false,
       "User Memory": true,
       "User Memory Layers": ["persona", "nowaday", "history"]
     },
@@ -913,6 +926,7 @@ CosmosDB モードで起動しつつパッケージが未インストールの�
 | `Download Md` | Markdownダウンロード |
 | `Knowledge Explorer` | RAGデータ分析画面（後述） |
 | `Scheduler` | スケジュール管理画面（バックグラウンドジョブの登録・編集・即時実行） |
+| `Master Maintenance` | マスタの編集画面（後述「WebUI での編集」）。既定 `false` |
 | `User Memory` | ユーザーメモリ（階層的ユーザー理解）の表示・保存・検証ループ |
 | `User Memory Explorer` | ユーザーメモリ分析画面（横断/深掘り + メモリ接地対話、後述）。既定 `false` |
 | `User Memory Layers` | （bool以外。配列）このユーザーが有効化する層 `["persona","nowaday","history"]` のサブセット。未設定なら `USER_MEMORY_DEFAULT_LAYERS` |
@@ -3090,7 +3104,7 @@ USER_MEMORY_PERSONA_BACKEND="EXCEL"
 
 **権限:** Scheduler メニューは `Allowed["Scheduler"] = true` のユーザーのみアクセス可能（`users.json` / `sample_users.json` で設定）。所有者ユーザー（`owner_user_id`）は保存時のログインユーザーが自動セットされ、`agent_run` 実行時のセッションに紐付きます。
 
-**WebUI操作:** ジョブごとに **Edit** / **Run Now**（即時1回実行）/ **Enable/Disable** / **Delete**。ジョブ追加は **Add New Job** から、cron変更後は **Reload Schedulers** で稼働中スケジューラに反映。APScheduler 未インストール環境では cron 起動はスキップされますが Run Now による手動実行は可能。
+**WebUI操作:** ジョブごとに **Edit** / **Run Now**（即時1回実行）/ **Enable/Disable** / **Delete**。ジョブ追加は **Add New Job** から（新しいジョブは Enabled が ON の状態で開くので、そのまま Save すると有効なジョブになります）、追加・cron変更後は **Reload Schedulers** で稼働中スケジューラに反映。APScheduler 未インストール環境では cron 起動はスキップされますが Run Now による手動実行は可能。
 
 #### スケジュール実行と配信（`kind: "agent_run"`）
 
@@ -3104,6 +3118,7 @@ Scheduler の **Add New Job** → Kind `agent_run` で、エージェントの�
 | **Message** | `generated`（プロンプトを渡してエージェントに生成させる）/ `fixed`（LLM を呼ばず、入力文をそのまま投函） |
 | **Compose separately for each target session** | `generated` かつ配信先が既存セッションのとき。ON でセッション毎に個別生成 |
 | **Keep in conversation memory** | 既存セッションへの配信時。OFF で**チャットには表示されるが以降のターンでは想起されない**（`SETTING.MEMORY_FLG="N"`） |
+| **Send to the service's front end via API** | ON で、履歴に書いたメッセージをセッションのサービスのフロントエンドへも送る。送る内容は **Response only** / **Input and response**（下記） |
 | **Execution flags** | 実行時の設定（MEMORY_USE / MEMORY_SAVE / RAG_QUERY_GENE / META_SEARCH / THINKING_MODE / PRIVATE_MODE ほか）。既存セッションへの配信での **MEMORY_SAVE** の意味は下記 |
 
 **送信対象は「グループ」ではなくフィルタ条件**として保持します。ジョブ登録後に作られたセッションも条件に合えば自動的に対象になり、グループの CRUD や整合管理が不要です。フォームには現在の該当件数が表示されます。
@@ -3119,6 +3134,61 @@ Scheduler の **Add New Job** → Kind `agent_run` で、エージェントの�
 配信結果はジョブに `last_push`（`targets` / `delivered[]` / `failed[]`）として記録され、一覧に出ます。1 セッションの失敗で全体は止まらず、残りの配信は継続します。MEMORY_SAVE OFF で既存セッションへ投函されたメッセージは `type: "PUSH"` のターンとして通常の会話履歴に入ります。
 
 > 旧 `kind: "agent_push"` は `agent_run` に統合されました。既存ジョブはそのまま動作し、保存時に `agent_run` へ正規化されます。
+
+#### サービスのフロントエンドへの配信（`services` マスタ）
+
+ジョブの配信は会話履歴に書くだけなので、WebUI の外（LINE / Teams / Slack / Azure Bot Service で作ったアプリなど）にいる利用者には届きません。**Send to the service's front end via API** を ON にすると、履歴に書いたうえで、同じメッセージを**そのセッションのサービスのフロントエンド**へ HTTP で送ります。
+
+- 届け先は、配信先セッションの最終的な対話相手（`status.yaml` の `service_id` / `user_id`）。`service_id` は API の呼び出し元が `service_info.SERVICE_ID` で送っている値です。
+- DigiM は LINE や Teams の API を直接は呼びません。チャネルごとのトークン・形式・送信回数の制限はフロントエンドの側にあり、DigiM は決まった形の JSON を送るだけです。
+- 送る内容は **Response only**（回答だけ）か **Input and response**（ジョブがエージェントに渡した入力と回答。固定文のジョブは入力が空）から選びます。
+- `services` マスタに有効な送り先が無いサービスのセッションは、履歴に書くだけです（結果の `no endpoint` に数えます）。
+
+サービスごとの設定は `user/common/mst/services.json`（サンプルは `sample_services.json`。キーは `SERVICE_ID`）に書きます。
+
+```json
+{
+    "LINE": {
+        "NAME": "LINE (e.g. Azure Bot Service)",
+        "ACTIVE": true,
+        "PUSH": {
+            "URL": "https://bot.example.com/digim/push",
+            "TOKEN_ENV": "PUSH_TOKEN_LINE",
+            "BATCH_SIZE": 20,
+            "INTERVAL_SEC": 1,
+            "TIMEOUT_SEC": 15
+        }
+    }
+}
+```
+
+| 項目 | 意味 |
+|---|---|
+| `URL` | 送信先（フロントエンドの受け口）。空なら送らない |
+| `TOKEN_ENV` | `system.env` のキー名。値を `Authorization: Bearer` で送る（トークン自体はマスタに書かない） |
+| `BATCH_SIZE` | 1回の送信に含めるセッション数（既定 20） |
+| `INTERVAL_SEC` | 同じサービスへの送信の間隔（秒、既定 1） |
+| `TIMEOUT_SEC` | 1回の送信の待ち時間（秒、既定 15） |
+
+フロントエンドが受け取る JSON（ヘッダに `X-DigiM-Event: push`）:
+
+```json
+{
+  "event": "push", "service_id": "LINE", "job_id": "job_...", "job_name": "朝のあいさつ",
+  "content": "response", "sent_at": "2026-11-16 08:00:00",
+  "batch": {"no": 1, "of": 3, "size": 20},
+  "messages": [
+    {"session_id": "...", "session_name": "...", "user_id": "U1234...", "seq": "12",
+     "agent_file": "...", "response": "回答", "response_display": "回答＋参照の節など",
+     "input": "（Input and response のときだけ）"}
+  ]
+}
+```
+
+- `2xx` を返せばその回の全セッションを送信済みにします。一部の相手に届けられなかったときは `{"failed": ["<session_id>", ...]}`（または `[{"session_id": "...", "error": "..."}]`）を返すと、それだけ失敗に数えます。`2xx` 以外・タイムアウトはその回の全件が失敗です。
+- 結果はジョブの `last_push.api`（`sent` / `failed` / `no_endpoint` / `batches`）に入り、一覧に表示されます。送り先があったのに全件失敗したときだけジョブはエラーになります（履歴への書き込みは済んでいるため、一部の失敗では止めません）。
+- `MST_STORE_METHOD=PostgreSQL` のときは、`services.json` を作ったあと `python3 DigiM_MstStore.py import services` で一度取り込みます。
+- 受け口の例として、受け取った JSON を LINE の Messaging API で push する [`demo/push_receiver/line_receiver.py`](demo/push_receiver/README.md) があります（自分の LINE で試す手順つき）。
 
 #### Personaのステータスと自動承認
 
@@ -3385,6 +3455,7 @@ Knowledge Explorerは、RAGデータの分析画面です。サイドバーの�
 
 - **User** — 期間・グループ／ユーザー・エージェントを指定し、「ユーザー入力 → 対応するエージェントの回答 → 活用された知識」の順に分析します。バックエンドは `DigiM_PerformanceExplorer.py`。
 - **Agent** — **Summary**（期間とエージェントを指定し、出力傾向・Habit・知識・SKILL・サポートエージェント・フィードバックの兆候を比べる。下の「Agent セクションの Summary」）と、**Knowledge map**（エージェント1体の累積パフォーマンス。バックエンドは `DigiM_AgentPerformanceExplorer.py`）を切り替えます。この章の「データソース」「Tab 1」「Tab 2」は Knowledge map の説明です。
+- **Private Mode** — どのビューの条件にもあり、既定は ON です。チャットの Private Mode と同じく、private の印が付いたナレッジのチャンク（Vector の Knowledge / Book）を分析から外します。外すのは参照（ランキング・Knowledge Utility・RAG の集計・Achievement の KU）と知識の地図の点で、外した件数は結果の見出しに出ます。Graph と PageIndex には private の印が無いのでそのまま残ります。今は無いコレクションの参照は確かめられないので残し、その名前を表示します。User / Summary は Run analysis のときの設定で決まり、Save Analytics で保存した分析にも残ります（この設定より前に保存した分析は private を含みます）。
 - **分析の保存と HTML** — どのビューでも、分析結果の上にある **Save Analytics** を押すと、そのビューの結果と条件（期間・絞り込み・Top N など）を分析セッションとして `user/common/analytics/performance_explorer/` に保存し、同時にそのとき表示している内容（全タブ・エクスパンダの中身、表、グラフ、ワードクラウド、LLM の説明、選んでいるクラスタやテーマ）を1つの HTML にまとめます。Knowledge Explorer などと同じく、保存した分析はサイドバーに最近の10件が並び、押すと読み込み、**Del** で削除できます。読み込むと条件も戻り、保存した HTML をそのまま **Download HTML** でダウンロードできます。表示を変えたら Save Analytics を押し直してください。その分析で開いた小画面（Example / Knowledge Reference）は、HTML の最後に開いた順で1件ずつ折りたたんで付きます（全行分は入れません。1件約1MBで、全部作ると保存に10分以上かかるため）。表と文章はオフラインでも読めますが、グラフは開いたときに cdn.jsdelivr.net から Vega のライブラリを読み込みます。記録は `DigiM_PEReport.py` が行い、ボタンを押した回の再描画でだけ動きます。
 
 #### User セクションの対象データ

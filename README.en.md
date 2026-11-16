@@ -572,6 +572,7 @@ Place the master data under `user/common/mst/`. Files prefixed with `sample_` ar
 | `sample_notion_db.json` | `notion_db.json` | Notion DB definitions |
 | `sample_scheduled_jobs.json` | `scheduled_jobs.json` | Scheduled jobs (created on the Scheduler screen) |
 | `sample_session_summary_presets.json` | `session_summary_presets.json` | Session summary templates |
+| `sample_services.json` | `services.json` | Per-service (`SERVICE_ID`) settings: where scheduled jobs send messages for the front end, how many per request, and the interval |
 | `sample_web_search_guard.json` | `web_search_guard.json` | Web search guardrail settings |
 
 A master whose working file does not exist is read from its `sample_` file (the working file is written the first time it is saved from the screen).
@@ -584,9 +585,20 @@ RAG_MST_FILE=rags.json
 PROMPT_TEMPLATE_MST_FILE=prompt_templates.json
 ```
 
+#### Editing in the WebUI (Master Maintenance)
+
+Users with `Allowed["Master Maintenance"]: true` get **Master Maintenance** in the view switcher at the top (default `false`). The eight masters are edited on one screen, in the JSON files or the `digim_mst` rows depending on `MST_STORE_METHOD` (users also covers the `digim_users` table of `LOGIN_AUTH_METHOD=RDB`).
+
+- **Entry** edits one entry at a time (prompt templates one under `PROMPT_TEMPLATE` / `SPEAKING_STYLE` at a time, with the template body as plain text); **Whole document** edits the whole master as JSON. Entries can be added and deleted.
+- The shape is checked before saving (e.g. a template outside `PROMPT_TEMPLATE`, a duplicate `job_id`, or a token written straight into a `services` `PUSH` is an error).
+- **A save is refused when the master changed after it was opened** (another user, the scheduler writing `last_run`, another tab). Press **Reload** and apply the edit again.
+- Before saving, the previous version is written to `user/common/mst/_backup/<master>/` (either backend; the newest 30 per master). Restore one from **Backups**.
+- users' `PW` shows as `********`: leave it to keep the password, or type a new one to store its bcrypt hash.
+- When a change takes effect is shown per master (users at next login, rags after Update RAG, scheduled_jobs after Reload Schedulers, ...). In PostgreSQL mode other processes see it up to `MST_STORE_CACHE_SEC` later.
+
 #### Master-data storage backend
 
-The seven masters under `user/common/mst/` (`users` / `rags` / `prompt_templates` / `notion_db` / `category_map` / `scheduled_jobs` / `session_summary_presets`) switch backend **together** through **`MST_STORE_METHOD`** in `setting.yaml`. Default is **JSON** (files, as before).
+The eight masters under `user/common/mst/` (`users` / `rags` / `prompt_templates` / `notion_db` / `category_map` / `scheduled_jobs` / `session_summary_presets` / `services`) switch backend **together** through **`MST_STORE_METHOD`** in `setting.yaml`. Default is **JSON** (files, as before).
 
 | Mode | Storage | Notes |
 |---|---|---|
@@ -653,7 +665,7 @@ CREATE INDEX IF NOT EXISTS idx_digim_chat_history_session_seq
     ON digim_chat_history (session_id, seq DESC);
 
 -- Master data (users / rags / prompt_templates / notion_db / category_map /
--- scheduled_jobs / session_summary_presets) when MST_STORE_METHOD=PostgreSQL.
+-- scheduled_jobs / session_summary_presets / services) when MST_STORE_METHOD=PostgreSQL.
 -- One row per master; the payload is the whole JSON document.
 CREATE TABLE IF NOT EXISTS digim_mst (
     name        TEXT PRIMARY KEY,
@@ -872,6 +884,7 @@ The default period is `ARCHIVE_DAYS` (`ARCHIVE_TURN_DAYS` for prune), the turns 
       "Download Md": true,
       "Knowledge Explorer": true,
       "Scheduler": false,
+      "Master Maintenance": false,
       "User Memory": true,
       "User Memory Layers": ["persona", "nowaday", "history"]
     },
@@ -909,6 +922,7 @@ The default period is `ARCHIVE_DAYS` (`ARCHIVE_TURN_DAYS` for prune), the turns 
 | `Download Md` | Markdown download |
 | `Knowledge Explorer` | RAG data analysis screen (see below) |
 | `Scheduler` | Schedule management screen (register, edit, and immediately execute background jobs) |
+| `Master Maintenance` | Master editing screen (see "Editing in the WebUI" below). Default `false` |
 | `User Memory` | View / save / verification loop for User Memory (Hierarchical User Understanding) |
 | `User Memory Explorer` | User Memory analytics screen (cross-view / deep-dive + memory-grounded dialogue; see below). Default `false` |
 | `User Memory Layers` | (Non-bool; array.) Subset of `["persona","nowaday","history"]` enabled for this user. If unset, falls back to `USER_MEMORY_DEFAULT_LAYERS` |
@@ -2747,6 +2761,7 @@ Scheduler → **Add New Job** → Kind `agent_run` covers both recurring agent r
 | **Message** | `generated` (hand the prompt to the agent) / `fixed` (no LLM call; the text is posted verbatim) |
 | **Compose separately for each target session** | For `generated` into existing sessions. On = one call per session |
 | **Keep in conversation memory** | When delivering into existing sessions. Off means the message **still renders in the chat but is not recalled** by later turns (`SETTING.MEMORY_FLG="N"`) |
+| **Send to the service's front end via API** | On: also send the message written to the history to the session's service front end. Choose **Response only** / **Input and response** (below) |
 | **Execution flags** | MEMORY_USE / MEMORY_SAVE / RAG_QUERY_GENE / META_SEARCH / THINKING_MODE / PRIVATE_MODE, etc. What **MEMORY_SAVE** means when delivering into existing sessions is below |
 
 **Targets are a filter, not a stored group.** Sessions created after the job was registered are picked up automatically when they match, so there is no group CRUD to maintain. The form shows the live match count.
@@ -2762,6 +2777,61 @@ Scheduler → **Add New Job** → Kind `agent_run` covers both recurring agent r
 Each run records `last_push` on the job (`targets` / `delivered[]` / `failed[]`), shown in the job list. One failing session does not abort the rest. With MEMORY_SAVE off, messages delivered into existing sessions land as ordinary `type: "PUSH"` turns.
 
 > The former `kind: "agent_push"` has been folded into `agent_run`. Existing jobs keep running and are normalized to `agent_run` on save.
+
+#### Delivery to the service front end (`services` master)
+
+A job's delivery only writes to the conversation history, so users outside the WebUI (LINE / Teams / Slack / an app built on Azure Bot Service) never see it. With **Send to the service's front end via API** on, the job also POSTs the same message to **the front end of the target session's service** after writing the history.
+
+- The recipient is the target session's final conversation partner (`service_id` / `user_id` in `status.yaml`). `service_id` is what the API caller sends as `service_info.SERVICE_ID`.
+- DigiM does not call the LINE or Teams APIs itself. Channel tokens, formats and rate limits belong to the front end; DigiM sends one JSON shape.
+- Choose what to send: **Response only**, or **Input and response** (the input the job gave the agent and its answer; a fixed-text job has no input).
+- Sessions whose service has no active endpoint in the `services` master are only written to the history (counted as `no endpoint`).
+
+Per-service settings live in `user/common/mst/services.json` (sample `sample_services.json`, keyed by `SERVICE_ID`).
+
+```json
+{
+    "LINE": {
+        "NAME": "LINE (e.g. Azure Bot Service)",
+        "ACTIVE": true,
+        "PUSH": {
+            "URL": "https://bot.example.com/digim/push",
+            "TOKEN_ENV": "PUSH_TOKEN_LINE",
+            "BATCH_SIZE": 20,
+            "INTERVAL_SEC": 1,
+            "TIMEOUT_SEC": 15
+        }
+    }
+}
+```
+
+| Field | Meaning |
+|---|---|
+| `URL` | Where to send (the front end's receiver). Empty sends nothing |
+| `TOKEN_ENV` | A `system.env` key; its value is sent as `Authorization: Bearer` (the token itself never goes in the master) |
+| `BATCH_SIZE` | Sessions per request (default 20) |
+| `INTERVAL_SEC` | Seconds between requests to the same service (default 1) |
+| `TIMEOUT_SEC` | Seconds to wait for one request (default 15) |
+
+What the front end receives (header `X-DigiM-Event: push`):
+
+```json
+{
+  "event": "push", "service_id": "LINE", "job_id": "job_...", "job_name": "Morning greeting",
+  "content": "response", "sent_at": "2026-11-16 08:00:00",
+  "batch": {"no": 1, "of": 3, "size": 20},
+  "messages": [
+    {"session_id": "...", "session_name": "...", "user_id": "U1234...", "seq": "12",
+     "agent_file": "...", "response": "answer", "response_display": "answer + reference sections ...",
+     "input": "(only with Input and response)"}
+  ]
+}
+```
+
+- A `2xx` marks every session of that request as sent. If some users could not be reached, return `{"failed": ["<session_id>", ...]}` (or `[{"session_id": "...", "error": "..."}]`) and only those count as failed. A non-`2xx` or a timeout fails the whole request.
+- Results go to the job's `last_push.api` (`sent` / `failed` / `no_endpoint` / `batches`) and show in the job list. The job errors only when every message that had an endpoint failed (the history write already succeeded, so a partial failure does not stop it).
+- With `MST_STORE_METHOD=PostgreSQL`, run `python3 DigiM_MstStore.py import services` once after creating `services.json`.
+- [`demo/push_receiver/line_receiver.py`](demo/push_receiver/README.md) is a sample receiver that pushes what it gets to LINE through the Messaging API (with steps to try it on your own LINE).
 
 #### Running a SKILL explicitly from the WebUI (slash command)
 
@@ -3059,7 +3129,7 @@ Whatever the mode, the stored value and a human reading of it (e.g. `once at 202
 
 **Permissions:** The Scheduler menu is accessible only to users with `Allowed["Scheduler"] = true` (configured in `users.json` / `sample_users.json`). The owner user (`owner_user_id`) is auto-set to the logged-in user at save time, and is associated with the session at `agent_run` execution.
 
-**WebUI operations:** Per job, **Edit** / **Run Now** (run once immediately) / **Enable/Disable** / **Delete**. Add jobs from **Add New Job**; after cron changes, reflect them in the running scheduler with **Reload Schedulers**. In environments without APScheduler installed, cron triggers are skipped, but manual execution via Run Now is possible.
+**WebUI operations:** Per job, **Edit** / **Run Now** (run once immediately) / **Enable/Disable** / **Delete**. Add jobs from **Add New Job** (a new job opens with Enabled on, so saving it makes an enabled job); after adding a job or changing cron, reflect them in the running scheduler with **Reload Schedulers**. In environments without APScheduler installed, cron triggers are skipped, but manual execution via Run Now is possible.
 
 #### Persona status and auto-approval
 
@@ -3326,6 +3396,7 @@ The **Performance Explorer** sidebar option analyses the accumulated conversatio
 
 - **User** — pick a period, groups / users and agents, and follow "user input → the agent's answers to it → the knowledge those answers used". Backend: `DigiM_PerformanceExplorer.py`.
 - **Agent** — switches between **Summary** (pick a period and agents, and compare output, habits, knowledge, skills, support agents and feedback signals; see "Summary of the Agent section" below) and **Knowledge map** (the cross-session performance of one agent; backend `DigiM_AgentPerformanceExplorer.py`). "Data sources", "Tab 1" and "Tab 2" in this chapter describe the Knowledge map.
+- **Private Mode** — in every view's conditions, on by default. As in the chat's Private Mode, knowledge chunks flagged private (vector Knowledge / Book) are left out: the references (rankings, Knowledge Utility, RAG summary, Achievement KU) and the points of the knowledge maps. The results header says how many were left out. Graph and PageIndex have no private flag and stay; references to a collection that no longer exists cannot be checked, stay, and are named. User / Summary take the setting at Run analysis, and a saved analysis keeps it (one saved before this setting includes private chunks).
 - **Saving an analysis, and HTML** — in every view, **Save Analytics** above the results saves the view's results and conditions (period, filters, Top N and so on) as an analysis session in `user/common/analytics/performance_explorer/`, and at the same time writes what the view shows at that moment (every tab and expander, tables, charts, word clouds, LLM explanations, and the cluster or theme picked) into one HTML file. As in Knowledge Explorer, the sidebar lists the 10 latest saved analyses: click one to load it, **Del** to delete it. Loading brings the conditions back, and the saved HTML is ready for **Download HTML**. Press Save Analytics again after changing the view. The dialogs (Example / Knowledge Reference) opened during the analysis are added at the end of the HTML, one folded section each, in the order they were opened (not every row: about 1 MB each, and making them all would take the save past ten minutes). Tables and text read offline; charts load the Vega libraries from cdn.jsdelivr.net when the file is opened. `DigiM_PEReport.py` does the recording, and only on the rerun the button asks for.
 
 #### What the User section reads

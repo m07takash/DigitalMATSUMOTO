@@ -993,8 +993,35 @@ def representative_inputs(scope, cl, cluster, axis_value=None, n=3):
 
 # ---------------------------------------------------------------- knowledge
 
-def load_refs(scope):
-    """Fills scope["refs"]: one row per reference of the answers in scope, with its utility."""
+def private_chunk_ids(collections):
+    """{(collection, chunk_id)} of the chunks flagged private, and the
+    collections that could not be read (deleted or renamed since).
+
+    Only vector collections carry the flag; Graph and PageIndex references
+    have none, exactly as in the chat's Private Mode.
+    """
+    import DigiM_Context as dmc
+    client = dmc.get_chroma_client()
+    out, missing = set(), []
+    for name in collections:
+        if not name or name in ("Graph", "PageIndex"):
+            continue
+        try:
+            got = client.get_collection(name).get(where={"private": True}, include=[])
+        except Exception:
+            missing.append(name)
+            continue
+        out |= {(name, str(i)) for i in got["ids"]}
+    return out, missing
+
+
+def load_refs(scope, private_mode=True):
+    """Fills scope["refs"]: one row per reference of the answers in scope, with its utility.
+
+    private_mode drops references to chunks flagged private, the same chunks
+    the chat leaves out in Private Mode, so nothing built from the refs
+    (rankings, Knowledge Utility, Achievement) shows them.
+    """
     a = scope["answers"]
     sids = sorted(set(a["session_id"]))
     # A graph edge has no title; its triple text is the only readable name.
@@ -1008,6 +1035,16 @@ def load_refs(scope):
     for c in ("rag_name", "db_name", "chunk_id", "title", "text"):
         r[c] = r[c].fillna("")
     r["chunk"] = r["rag_name"] + " | " + r["db_name"] + " | " + r["chunk_id"]
+    scope["private_mode"] = bool(private_mode)
+    scope["private_excluded"] = {"refs": 0, "chunks": 0, "unknown_collections": []}
+    if private_mode and len(r):
+        priv, missing = private_chunk_ids(sorted(set(r["db_name"])))
+        hit = pd.Series([(d, c) in priv for d, c in zip(r["db_name"], r["chunk_id"])], index=r.index)
+        scope["private_excluded"] = {"refs": int(hit.sum()), "chunks": int(r.loc[hit, "chunk"].nunique()),
+                                     "unknown_collections": missing}
+        # Utility is normalised per answer below, so private references must
+        # be gone first or they would still set the scale for the rest.
+        r = r[~hit]
 
     # The stored values are cosine distances. Graph references carry 0/0 and
     # have no utility. For the rest, utility is the same number the per-turn
@@ -1627,8 +1664,9 @@ def agent_knowledge_config(agent_file):
 _MAP_CACHE = {}
 
 
-def knowledge_map(collections):
+def knowledge_map(collections, private_mode=False):
     """Every chunk of the collections placed in 2D (id, db, title, x, y), or None.
+    private_mode leaves the private chunks out of the picture and the PCA.
 
     The same picture the per-turn Knowledge Utility scatter draws: PCA over
     the chunks' value vectors. Kept per process, keyed by the collections and
@@ -1644,13 +1682,15 @@ def knowledge_map(collections):
             cols.append((name, client.get_collection(name)))
         except Exception:
             continue
-    key = tuple((n, c.count()) for n, c in cols)
+    key = (tuple((n, c.count()) for n, c in cols), bool(private_mode))
     if key in _MAP_CACHE:
         return _MAP_CACHE[key]
     ids, dbs, titles, cats, vecs = [], [], [], [], []
     for name, col in cols:
         got = col.get(include=["metadatas"])
         for cid, meta in zip(got["ids"], got["metadatas"]):
+            if private_mode and (meta or {}).get("private") is True:
+                continue
             raw = str((meta or {}).get("vector_data_value_text", "")).strip("[] ")
             if not raw:
                 continue

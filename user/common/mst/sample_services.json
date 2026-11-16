@@ -1,0 +1,35 @@
+{
+    "LINE": {
+        "NAME": "LINE (e.g. Azure Bot Service)",
+        "ACTIVE": false,
+        "PUSH": {
+            "URL": "",
+            "TOKEN_ENV": "PUSH_TOKEN_LINE",
+            "BATCH_SIZE": 20,
+            "INTERVAL_SEC": 1,
+            "TIMEOUT_SEC": 15
+        }
+    },
+    "Teams": {
+        "NAME": "Microsoft Teams (e.g. Azure Bot Service)",
+        "ACTIVE": false,
+        "PUSH": {
+            "URL": "",
+            "TOKEN_ENV": "PUSH_TOKEN_TEAMS",
+            "BATCH_SIZE": 10,
+            "INTERVAL_SEC": 2,
+            "TIMEOUT_SEC": 15
+        }
+    },
+    "Slack": {
+        "NAME": "Slack",
+        "ACTIVE": false,
+        "PUSH": {
+            "URL": "",
+            "TOKEN_ENV": "PUSH_TOKEN_SLACK",
+            "BATCH_SIZE": 20,
+            "INTERVAL_SEC": 1,
+            "TIMEOUT_SEC": 15
+        }
+    }
+}

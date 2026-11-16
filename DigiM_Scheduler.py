@@ -318,6 +318,9 @@ def _exec_agent_run(job: dict) -> str:
       target.mode = "active_all"/"selected" -> the produced text is posted into
                                                those sessions as a PUSH turn
     message.mode = "fixed" skips the LLM and posts user_input as-is.
+    api_delivery.enabled additionally sends what each session received to its
+    service's front end (services master), as the response alone or with the
+    input (api_delivery.content = "response" | "pair").
     Returns the first session touched (recorded as last_session_id).
     """
     import DigiM_Execute as dme
@@ -360,6 +363,7 @@ def _exec_agent_run(job: dict) -> str:
         exec_dict = {"STREAM_MODE": False, "SAVE_DIGEST": True, "LAST_ONLY": True}
         exec_dict.update(execution)
         first = ""
+        items = []
         for n in range(count):
             session_id = "SCH" + dms.set_new_session_id()
             session_name = f"[Scheduler] {job_name}" + (f" #{n + 1}" if count > 1 else "")
@@ -379,6 +383,7 @@ def _exec_agent_run(job: dict) -> str:
                     user_input, agent_file=agent_file, job_id=job.get("job_id", ""),
                     job_name=job_name, owner_user_id=owner,
                     save_to_memory=bool(save_to_memory))
+                items.append(_pushed_item(session_id, "", user_input, agent_file))
             else:
                 for _ in dme.DigiMatsuExecute_Practice(
                         service_info, user_info, session_id, session_name,
@@ -386,7 +391,10 @@ def _exec_agent_run(job: dict) -> str:
                         in_situation=_scheduled_situation(job, agent_file),
                         in_overwrite_items=overwrite_items, in_execution=exec_dict):
                     pass
+                items.append(_saved_turn_item(session_id, user_input, agent_file))
             first = first or session_id
+        _api_deliver(job, items, record={"targets": count, "delivered": [i["session_id"] for i in items],
+                                         "failed": []})
         return first
 
     targets = _push_resolve_targets(job)
@@ -413,7 +421,7 @@ def _exec_agent_run(job: dict) -> str:
     elif not (per_session or save_turn):
         shared_text = _push_generate_message(job)
 
-    delivered, failed = [], []
+    delivered, failed, items = [], [], []
     for sid in targets:
         try:
             if save_turn:
@@ -424,6 +432,7 @@ def _exec_agent_run(job: dict) -> str:
                     "PUSH": {"job_id": job.get("job_id", ""), "job_name": job_name,
                              "at": str(datetime.now())}})
                 delivered.append(sid)
+                items.append(_saved_turn_item(sid, _push_prompt(params), agent_file))
                 continue
             text = (_push_generate_message(job, sid)
                     if (msg_mode != "fixed" and per_session) else shared_text)
@@ -435,23 +444,66 @@ def _exec_agent_run(job: dict) -> str:
                 save_to_memory=bool(save_to_memory),
                 prompt_text="" if msg_mode == "fixed" else _push_prompt(params))
             delivered.append(sid)
+            items.append(_pushed_item(sid, "" if msg_mode == "fixed" else _push_prompt(params),
+                                      text, agent_file))
         except Exception as e:
             logger.error(f"[scheduler] delivery failed session={sid}: {e}")
             failed.append({"session_id": sid, "error": str(e)})
 
+    if not delivered:
+        _record_push(job, {"targets": len(targets), "delivered": delivered, "failed": failed})
+        raise RuntimeError(f"agent_run delivered to no session ({len(failed)} failed)")
+    _api_deliver(job, items, record={"targets": len(targets), "delivered": delivered, "failed": failed})
+    return delivered[0]
+
+
+def _pushed_item(session_id: str, input_text: str, text: str, agent_file: str) -> dict:
+    import DigiM_Session as dms
+    return {"session_id": session_id, "seq": str(dms.DigiMSession(session_id).get_seq_history()),
+            "input": input_text, "response": text, "response_display": text, "agent_file": agent_file}
+
+
+def _saved_turn_item(session_id: str, input_text: str, agent_file: str) -> dict:
+    """What a run that executed inside the session left as its answer. The
+    stream is not the answer of record: AFTER skills rewrite it on save."""
+    import DigiM_Execute as dme
+    import DigiM_Session as dms
+    import DigiM_Tool as dmt
+    _sess = dms.DigiMSession(session_id)
+    seq = _sess.get_seq_history()
+    sub, text = dme._saved_answer(_sess, seq)
+    entry = ((_sess.chat_history_dict or {}).get(str(seq)) or {}).get(sub) or {}
+    return {"session_id": session_id, "seq": str(seq), "input": input_text, "response": text,
+            "response_display": text + (dmt.render_response_tail(entry) if entry else ""),
+            "agent_file": agent_file}
+
+
+def _record_push(job: dict, result: dict):
     try:
         _j = dmsj.get(job.get("job_id", "")) or dict(job)
-        _j["last_push"] = {
-            "at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "targets": len(targets), "delivered": delivered, "failed": failed,
-        }
+        _j["last_push"] = dict(result, at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         dmsj.upsert(_j)
     except Exception as e:
         logger.warning(f"[scheduler] could not record delivery result: {e}")
 
-    if not delivered:
-        raise RuntimeError(f"agent_run delivered to no session ({len(failed)} failed)")
-    return delivered[0]
+
+def _api_deliver(job: dict, items: list, record: dict):
+    """Record the history delivery and, when the job asks for it, send the
+    same messages to each session's service front end. Fails the step only
+    when every message that had an endpoint was refused — the history write
+    already succeeded, and a partial outage should not hide that."""
+    api = (job.get("params") or {}).get("api_delivery") or {}
+    rep = None
+    if api.get("enabled") and items:
+        import DigiM_Services as dmsv
+        rep = dmsv.deliver(job, items, api.get("content") or "response")
+        logger.info(f"[scheduler] api delivery job_id={job.get('job_id')}: sent={len(rep['sent'])} "
+                    f"failed={len(rep['failed'])} no_endpoint={len(rep['no_endpoint'])} batches={rep['batches']}")
+        record = dict(record, api=rep)
+    _record_push(job, record)
+    if rep and rep["failed"] and not rep["sent"]:
+        raise RuntimeError(f"api delivery failed for all {len(rep['failed'])} session(s): "
+                           f"{rep['failed'][0]['error']}")
 
 
 def _push_resolve_targets(job: dict) -> list:

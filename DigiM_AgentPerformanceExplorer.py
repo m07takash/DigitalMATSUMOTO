@@ -516,6 +516,26 @@ def aggregate_chunk_refs(turns: list[dict]) -> dict:
     return plain
 
 
+def exclude_private(agg: dict) -> tuple:
+    """(agg without the chunks flagged private, number of chunks dropped,
+    collections that could not be read). The chat's Private Mode leaves the
+    same chunks out; Graph / PageIndex have no flag and stay."""
+    import DigiM_PerformanceExplorer as dmpe
+    dbs = sorted({db for dbs_ in agg.values() for db in dbs_})
+    priv, missing = dmpe.private_chunk_ids(dbs)
+    out, dropped = {}, 0
+    for rag, dbs_ in agg.items():
+        out[rag] = {}
+        for db, chunks in dbs_.items():
+            keep = {cid: v for cid, v in chunks.items() if (db, str(cid)) not in priv}
+            dropped += len(chunks) - len(keep)
+            if keep:
+                out[rag][db] = keep
+        if not out[rag]:
+            del out[rag]
+    return out, dropped, missing
+
+
 def rank_chunks(rag_aggregate: dict, by: str = "ref_count",
                  top_n: int = 20) -> list[dict]:
     """Flat ranking table from one RAG's aggregate (single DB-or-multiple).

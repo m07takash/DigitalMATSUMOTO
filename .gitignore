@@ -262,10 +262,13 @@ CLAUDE.md
 user/common/tool/local/*
 !user/common/tool/local/.gitkeep
 
-# Demo mockups: only demo/sample_demo/ is version-controlled.
-# Other subfolders under demo/ (customer-specific mockups, local recordings, etc.)
-# are user-authored and intentionally excluded from the repo.
+# Demo mockups: only demo/sample_demo/ and the sample push receiver are
+# version-controlled. Other subfolders under demo/ (customer-specific mockups,
+# local recordings, etc.) are user-authored and intentionally excluded.
 demo/*
 !demo/sample_demo/
 !demo/sample_demo/**
+!demo/push_receiver/
+!demo/push_receiver/**
+demo/push_receiver/__pycache__/
 setting.yaml
