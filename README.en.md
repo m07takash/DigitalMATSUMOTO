@@ -1506,7 +1506,7 @@ The model with the key name specified in `DEFAULT` is used. It can also be switc
 | OpenAI | `generate_response_T_gpt` | GPT-4.1, GPT-4.1-mini, etc. |
 | Google | `generate_response_T_gemini` | Gemini-3.5-Flash, Gemini-3.1, etc. |
 | Anthropic | `generate_response_T_claude` | Claude-Sonnet-4.5, Claude-Haiku, etc. |
-| XAI | `generate_response_T_grok` | Grok-4, etc. |
+| XAI | `generate_response_T_grok` | Grok-4, etc. `PARAMETER.reasoning_effort` (`low` / `medium` / `high`) sets how much the model reasons. Without it a reasoning model such as grok-4.7 can think for minutes before a long answer (the reasoning is not shown and is billed as output tokens) |
 | **Azure OpenAI** | `generate_response_T_azure_openai` | gpt-* deployments on Azure OpenAI Service (deployment name in `MODEL`) |
 | **Azure AI Foundry** | `generate_response_T_azure_foundry` | **Claude / Gemini / Llama etc.** deployed on Foundry (deployment name in `MODEL`) |
 | **Amazon Bedrock** | `generate_response_T_bedrock_openai` | **OpenAI GPT** models on Bedrock (Responses API). `MODEL` is an inference profile or a model id |

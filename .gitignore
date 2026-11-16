@@ -222,6 +222,7 @@ user/common/csv/pageindex/*
 
 # DigiM Folder
 user/session*/
+user/.session_locks/
 user/common/analytics/*
 !user/common/analytics/knowledge_explorer/
 user/common/analytics/knowledge_explorer/*

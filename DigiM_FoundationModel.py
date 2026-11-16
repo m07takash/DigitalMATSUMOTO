@@ -777,13 +777,31 @@ def generate_response_T_claude(query, system_prompt, model, memories=[], image_p
         )
         yield str(prompt), response, completion
 
+# The pinned xai_sdk (1.2.0) only takes "low"/"high" as strings, while the API
+# also has medium; passing the proto enum reaches all three. Without it a
+# reasoning model like grok-4.7 can think for minutes before the first token.
+def _grok_reasoning_effort(value):
+    from xai_sdk.chat import chat_pb2
+    if not isinstance(value, str):
+        return value
+    effort = getattr(chat_pb2.ReasoningEffort, "EFFORT_" + value.strip().upper(), None)
+    if effort is None:
+        logger.warning(f"generate_response_T_grok: unknown reasoning_effort {value!r} ignored (use low / medium / high)")
+    return effort
+
 # Run Grok
 def generate_response_T_grok(query, system_prompt, model, memories=[], image_paths=[], agent_tools={}, stream_mode=True):
     from xai_sdk import Client
     from xai_sdk.chat import user, assistant, system, image
 
+    params = dict(model.get("PARAMETER") or {})
+    if "reasoning_effort" in params:
+        effort = _grok_reasoning_effort(params.pop("reasoning_effort"))
+        if effort is not None:
+            params["reasoning_effort"] = effort
+
     grok_client = Client(api_key=xai_api_key, timeout=3600)
-    grok_chat = grok_client.chat.create(model=model["MODEL"])
+    grok_chat = grok_client.chat.create(model=model["MODEL"], **params)
 
     # Build the system prompt
     grok_chat.append(system(system_prompt))
